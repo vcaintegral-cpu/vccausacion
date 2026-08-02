@@ -35,16 +35,19 @@ function AuthPage() {
     });
   }, [navigate]);
 
-  async function signIn(e: React.FormEvent) {
+  async function signIn(e: React.FormEvent): Promise<void> {
     e.preventDefault();
     setLoading(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
-    if (error) return toast.error(error.message);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
     navigate({ to: "/panel", replace: true });
   }
 
-  async function signUp(e: React.FormEvent) {
+  async function signUp(e: React.FormEvent): Promise<void> {
     e.preventDefault();
     setLoading(true);
     const { data, error } = await supabase.auth.signUp({
@@ -53,14 +56,20 @@ function AuthPage() {
       options: { emailRedirectTo: window.location.origin, data: { full_name: fullName } },
     });
     setLoading(false);
-    if (error) return toast.error(error.message);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
     if (data.session) navigate({ to: "/panel", replace: true });
     else toast.success("Cuenta creada. Revisa tu correo para confirmarla.");
   }
 
-  async function google() {
+  async function google(): Promise<void> {
     const result = await lovable.auth.signInWithOAuth("google", { redirect_uri: window.location.origin });
-    if (result.error) return toast.error("No fue posible iniciar sesión con Google.");
+    if (result.error) {
+      toast.error("No fue posible iniciar sesión con Google.");
+      return;
+    }
     if (result.redirected) return;
     navigate({ to: "/panel", replace: true });
   }
