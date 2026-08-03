@@ -65,7 +65,7 @@ function Section({
       payload[f.key] = f.type === "number" ? Number(v || 0) : v;
     }
     const { error } = await supabase.from(table).insert(payload as never);
-    if (error) return toast.error(error.message);
+    if (error) { toast.error(error.message); return; }
     setForm({});
     toast.success("Registro agregado.");
     await queryClient.invalidateQueries({ queryKey: [table, companyId] });
@@ -73,7 +73,7 @@ function Section({
 
   async function eliminar(id: string) {
     const { error } = await supabase.from(table).delete().eq("id", id);
-    if (error) return toast.error(error.message);
+    if (error) { toast.error(error.message); return; }
     await queryClient.invalidateQueries({ queryKey: [table, companyId] });
   }
 
@@ -110,14 +110,14 @@ function Section({
           </thead>
           <tbody className="divide-y divide-border">
             {(rows ?? []).map((r) => (
-              <tr key={String(r.id)}>
+              <tr key={String(r['id'])}>
                 {fields.map((f) => (
                   <td key={f.key} className="px-4 py-2">
                     {String(r[f.key] ?? "—")}
                   </td>
                 ))}
                 <td className="px-4 py-2 text-right">
-                  <Button variant="ghost" size="icon" onClick={() => eliminar(String(r.id))}>
+                  <Button variant="ghost" size="icon" onClick={() => eliminar(String(r['id']))}>
                     <Trash2 className="size-4" />
                   </Button>
                 </td>

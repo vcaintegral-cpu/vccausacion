@@ -87,14 +87,14 @@ function Facturas() {
       .select("account_code, account_name, debit, credit, cost_center")
       .eq("invoice_id", inv.id)
       .order("position");
-    if (error || !data?.length) return toast.error("Este comprobante no tiene movimientos.");
+    if (error || !data?.length) { toast.error("Este comprobante no tiene movimientos."); return; }
     const fn = kind === "xlsx" ? exportXlsx : kind === "csv" ? exportCsv : exportTxt;
     fn(inv, data as JournalLine[]);
   }
 
   async function aprobar(inv: Inv) {
     const { error } = await supabase.from("invoices").update({ status: "aprobado" }).eq("id", inv.id);
-    if (error) return toast.error(error.message);
+    if (error) { toast.error(error.message); return; }
     toast.success("Comprobante aprobado.");
     await queryClient.invalidateQueries({ queryKey: ["invoices", companyId] });
   }
@@ -103,7 +103,7 @@ function Facturas() {
     await supabase.from("journal_lines").delete().eq("invoice_id", inv.id);
     await supabase.from("invoice_lines").delete().eq("invoice_id", inv.id);
     const { error } = await supabase.from("invoices").delete().eq("id", inv.id);
-    if (error) return toast.error(error.message);
+    if (error) { toast.error(error.message); return; }
     toast.success("Factura eliminada.");
     await queryClient.invalidateQueries({ queryKey: ["invoices", companyId] });
   }

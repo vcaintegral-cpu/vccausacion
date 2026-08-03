@@ -117,7 +117,7 @@ function Causar() {
   const t = totals(journal);
 
   async function leer() {
-    if (!file) return toast.error("Selecciona un archivo de factura.");
+    if (!file) { toast.error("Selecciona un archivo de factura."); return; }
     setReading(true);
     try {
       const content = await readFile(file);
@@ -147,8 +147,8 @@ function Causar() {
 
   async function guardar(status: "borrador" | "aprobado") {
     if (!companyId) return;
-    if (lines.length === 0) return toast.error("Agrega al menos un renglón.");
-    if (Math.abs(t.diferencia) > 1) return toast.error("El comprobante está descuadrado.");
+    if (lines.length === 0) { toast.error("Agrega al menos un renglón."); return; }
+    if (Math.abs(t.diferencia) > 1) { toast.error("El comprobante está descuadrado."); return; }
     setSaving(true);
     try {
       const { data: auth } = await supabase.auth.getUser();
