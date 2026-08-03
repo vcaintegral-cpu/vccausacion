@@ -1,10 +1,469 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import { useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import { FileUp, Loader2, Save, Sparkles, Trash2 } from "lucide-react";
+
+import { supabase } from "@/integrations/supabase/client";
+import { useActiveCompany } from "@/lib/active-company";
+import { EmptyCompany, useCompanies } from "@/components/app-shell";
+import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
+import { applyRulesToLines, buildJournal, computeRetenciones, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
+import { cop } from "@/lib/format";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 export const Route = createFileRoute("/_authenticated/causar")({
-  component: () => (
-    <div>
-      <h1 className="text-xl font-semibold">Causar factura</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Carga y procesamiento de facturas (en construcción).</p>
-    </div>
-  ),
+  head: () => ({
+    meta: [
+      { title: "Causar factura de compra con IA" },
+      { name: "description", content: "Carga PDF, XML DIAN o imagen y obtén el comprobante contable sugerido automáticamente." },
+      { property: "og:title", content: "Causar factura de compra" },
+      { property: "og:description", content: "Lectura automática de facturas y comprobante contable sugerido." },
+    ],
+  }),
+  component: Causar,
 });
+
+const emptyLine = (): Line => ({
+  description: "",
+  quantity: 1,
+  unit_value: 0,
+  discount: 0,
+  iva: 0,
+  retention: 0,
+  impoconsumo: 0,
+  total: 0,
+  account_code: "",
+  account_name: "",
+});
+
+function readFile(file: File): Promise<{ dataUrl?: string; text?: string }> {
+  const isText = file.type.includes("xml") || file.name.toLowerCase().endsWith(".xml");
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(new Error("No fue posible leer el archivo"));
+    r.onload = () => resolve(isText ? { text: String(r.result) } : { dataUrl: String(r.result) });
+    if (isText) r.readAsText(file);
+    else r.readAsDataURL(file);
+  });
+}
+
+type Header = Omit<ExtractedInvoice, "lines">;
+
+const emptyHeader = (): Header => ({
+  prefix: "", number: "", issue_date: "", due_date: "",
+  provider_nit: "", provider_name: "", provider_address: "", provider_city: "",
+  provider_phone: "", provider_email: "", cufe: "", payment_form: "", payment_method: "",
+  currency: "COP", cost_center: "", notes: "",
+  subtotal: 0, discount: 0, iva: 0, impoconsumo: 0, total: 0,
+});
+
+function Causar() {
+  const navigate = useNavigate();
+  const companyId = useActiveCompany();
+  const { data: companies, isLoading: loadingCompanies } = useCompanies();
+  const extract = useServerFn(extractInvoice);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const [file, setFile] = useState<File | null>(null);
+  const [reading, setReading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [header, setHeader] = useState<Header>(emptyHeader());
+  const [lines, setLines] = useState<Line[]>([]);
+
+  const { data: config } = useQuery({
+    queryKey: ["config", companyId],
+    enabled: !!companyId,
+    queryFn: async () => {
+      const [rules, taxes, centers, accounts] = await Promise.all([
+        supabase.from("accounting_rules").select("*").eq("company_id", companyId!),
+        supabase.from("tax_rates").select("*").eq("company_id", companyId!),
+        supabase.from("cost_centers").select("*").eq("company_id", companyId!).order("code"),
+        supabase.from("puc_accounts").select("code, name").eq("company_id", companyId!).order("code"),
+      ]);
+      return {
+        rules: (rules.data ?? []) as Rule[],
+        taxes: (taxes.data ?? []) as TaxRate[],
+        centers: centers.data ?? [],
+        accounts: accounts.data ?? [],
+      };
+    },
+  });
+
+  const baseGravable = useMemo(
+    () => lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0), 0),
+    [lines],
+  );
+  const ivaTotal = Number(header.iva || 0);
+  const retenciones = useMemo(
+    () => computeRetenciones(baseGravable, ivaTotal, config?.taxes ?? []),
+    [baseGravable, ivaTotal, config],
+  );
+  const journal = useMemo(
+    () =>
+      buildJournal({
+        lines,
+        iva: ivaTotal,
+        impoconsumo: Number(header.impoconsumo || 0),
+        retenciones,
+        costCenter: header.cost_center,
+      }),
+    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones],
+  );
+  const t = totals(journal);
+
+  async function leer() {
+    if (!file) { toast.error("Selecciona un archivo de factura."); return; }
+    setReading(true);
+    try {
+      const content = await readFile(file);
+      const data = (await extract({
+        data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
+      })) as ExtractedInvoice;
+      const { lines: extracted, ...rest } = data;
+      setHeader({ ...emptyHeader(), ...rest });
+      let provider = null;
+      if (rest.provider_nit && companyId) {
+        const { data: p } = await supabase
+          .from("providers").select("*").eq("company_id", companyId).eq("nit", rest.provider_nit).maybeSingle();
+        provider = p;
+      }
+      setLines(applyRulesToLines(extracted.map((l) => ({ ...emptyLine(), ...l })), config?.rules ?? [], provider));
+      toast.success("Factura leída. Revisa y ajusta el comprobante.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No fue posible leer la factura.");
+    } finally {
+      setReading(false);
+    }
+  }
+
+  function setLine(i: number, patch: Partial<Line>) {
+    setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  }
+
+  async function guardar(status: "borrador" | "aprobado") {
+    if (!companyId) return;
+    if (lines.length === 0) { toast.error("Agrega al menos un renglón."); return; }
+    if (Math.abs(t.diferencia) > 1) { toast.error("El comprobante está descuadrado."); return; }
+    setSaving(true);
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth.user?.id;
+
+      let filePath: string | null = null;
+      if (file && userId) {
+        const path = `${userId}/${companyId}/${Date.now()}-${file.name.replace(/[^\w.-]/g, "_")}`;
+        const { error: upErr } = await supabase.storage.from("facturas").upload(path, file);
+        if (!upErr) filePath = path;
+      }
+
+      if (header.provider_nit) {
+        await supabase.from("providers").upsert(
+          {
+            company_id: companyId,
+            nit: header.provider_nit,
+            name: header.provider_name || header.provider_nit,
+            address: header.provider_address,
+            city: header.provider_city,
+            phone: header.provider_phone,
+            email: header.provider_email,
+          },
+          { onConflict: "company_id,nit", ignoreDuplicates: true },
+        );
+      }
+
+      const total = baseGravable + ivaTotal + Number(header.impoconsumo || 0);
+      const { data: inv, error } = await supabase
+        .from("invoices")
+        .insert({
+          company_id: companyId,
+          prefix: header.prefix,
+          number: header.number,
+          issue_date: header.issue_date || null,
+          due_date: header.due_date || null,
+          provider_nit: header.provider_nit,
+          provider_name: header.provider_name,
+          provider_address: header.provider_address,
+          provider_city: header.provider_city,
+          provider_phone: header.provider_phone,
+          provider_email: header.provider_email,
+          cufe: header.cufe,
+          payment_form: header.payment_form,
+          payment_method: header.payment_method,
+          currency: header.currency || "COP",
+          cost_center: header.cost_center,
+          notes: header.notes,
+          subtotal: baseGravable,
+          discount: Number(header.discount || 0),
+          iva: ivaTotal,
+          impoconsumo: Number(header.impoconsumo || 0),
+          retefuente: retenciones.retefuente,
+          reteiva: retenciones.reteiva,
+          reteica: retenciones.reteica,
+          total,
+          status,
+          dian_status: header.cufe ? "con CUFE" : "sin CUFE",
+          file_path: filePath,
+          file_name: file?.name ?? null,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+
+      await Promise.all([
+        supabase.from("invoice_lines").insert(
+          lines.map((l, i) => ({
+            invoice_id: inv.id,
+            company_id: companyId,
+            code: l.code ?? null,
+            description: l.description,
+            quantity: Number(l.quantity || 0),
+            unit_value: Number(l.unit_value || 0),
+            discount: Number(l.discount || 0),
+            iva: Number(l.iva || 0),
+            retention: Number(l.retention || 0),
+            impoconsumo: Number(l.impoconsumo || 0),
+            total: Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
+            account_code: l.account_code ?? null,
+            account_name: l.account_name ?? null,
+            position: i,
+          })),
+        ),
+        supabase.from("journal_lines").insert(
+          journal.map((j, i) => ({
+            invoice_id: inv.id,
+            company_id: companyId,
+            account_code: j.account_code,
+            account_name: j.account_name,
+            debit: j.debit,
+            credit: j.credit,
+            cost_center: j.cost_center ?? null,
+            position: i,
+          })),
+        ),
+        ...lines
+          .filter((l) => l.account_code)
+          .map((l) =>
+            supabase.from("learning_events").insert({
+              company_id: companyId,
+              provider_nit: header.provider_nit,
+              concept: l.description,
+              account_code: l.account_code!,
+            }),
+          ),
+      ]);
+
+      toast.success(status === "aprobado" ? "Comprobante aprobado." : "Comprobante guardado en borrador.");
+      navigate({ to: "/facturas" });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No fue posible guardar el comprobante.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!loadingCompanies && (companies ?? []).length === 0) return <EmptyCompany />;
+
+  const field = (label: string, key: keyof Header, type = "text") => (
+    <div className="space-y-1.5">
+      <Label className="text-xs">{label}</Label>
+      <Input
+        type={type}
+        value={String(header[key] ?? "")}
+        onChange={(e) => setHeader({ ...header, [key]: type === "number" ? Number(e.target.value) : e.target.value })}
+      />
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl font-semibold">Causar factura</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Carga la factura (PDF, XML DIAN, JPG o PNG) y la IA propone el comprobante.</p>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-5">
+        <div className="min-w-64 flex-1 space-y-1.5">
+          <Label htmlFor="archivo">Archivo de la factura</Label>
+          <Input
+            id="archivo"
+            ref={fileRef}
+            type="file"
+            accept=".pdf,.xml,.jpg,.jpeg,.png,application/pdf,text/xml,image/*"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+        </div>
+        <Button onClick={leer} disabled={reading || !file}>
+          {reading ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+          {reading ? "Leyendo…" : "Leer con IA"}
+        </Button>
+        <Button variant="outline" onClick={() => setLines((p) => [...p, emptyLine()])}>
+          <FileUp className="size-4" /> Renglón manual
+        </Button>
+      </div>
+
+      <div className="grid gap-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2 xl:grid-cols-4">
+        {field("Prefijo", "prefix")}
+        {field("Número", "number")}
+        {field("Fecha", "issue_date", "date")}
+        {field("Vencimiento", "due_date", "date")}
+        {field("NIT proveedor", "provider_nit")}
+        {field("Proveedor", "provider_name")}
+        {field("Ciudad", "provider_city")}
+        {field("CUFE", "cufe")}
+        {field("IVA total", "iva", "number")}
+        {field("Impoconsumo", "impoconsumo", "number")}
+        {field("Forma de pago", "payment_form")}
+        <div className="space-y-1.5">
+          <Label className="text-xs">Centro de costo</Label>
+          <select
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            value={header.cost_center ?? ""}
+            onChange={(e) => setHeader({ ...header, cost_center: e.target.value })}
+          >
+            <option value="">Sin centro de costo</option>
+            {(config?.centers ?? []).map((c) => (
+              <option key={c.id} value={c.code}>
+                {c.code} · {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1.5 sm:col-span-2 xl:col-span-4">
+          <Label className="text-xs">Notas</Label>
+          <Textarea rows={2} value={header.notes ?? ""} onChange={(e) => setHeader({ ...header, notes: e.target.value })} />
+        </div>
+      </div>
+
+      {lines.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-border bg-card">
+          <table className="w-full min-w-[900px] text-sm">
+            <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Descripción</th>
+                <th className="px-3 py-2 font-medium">Cant.</th>
+                <th className="px-3 py-2 font-medium">Vr. unitario</th>
+                <th className="px-3 py-2 font-medium">Descuento</th>
+                <th className="px-3 py-2 font-medium">Cuenta PUC</th>
+                <th className="px-3 py-2 text-right font-medium">Valor</th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {lines.map((l, i) => (
+                <tr key={i}>
+                  <td className="px-3 py-1.5">
+                    <Input value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
+                  </td>
+                  <td className="px-3 py-1.5 w-24">
+                    <Input type="number" value={l.quantity} onChange={(e) => setLine(i, { quantity: Number(e.target.value) })} />
+                  </td>
+                  <td className="px-3 py-1.5 w-32">
+                    <Input type="number" value={l.unit_value} onChange={(e) => setLine(i, { unit_value: Number(e.target.value) })} />
+                  </td>
+                  <td className="px-3 py-1.5 w-28">
+                    <Input type="number" value={l.discount} onChange={(e) => setLine(i, { discount: Number(e.target.value) })} />
+                  </td>
+                  <td className="px-3 py-1.5 w-56">
+                    <select
+                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                      value={l.account_code ?? ""}
+                      onChange={(e) => {
+                        const acc = (config?.accounts ?? []).find((a) => a.code === e.target.value);
+                        setLine(i, { account_code: e.target.value, account_name: acc?.name ?? null });
+                      }}
+                    >
+                      <option value="">Seleccionar…</option>
+                      {(config?.accounts ?? []).map((a) => (
+                        <option key={a.code} value={a.code}>
+                          {a.code} · {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums">
+                    {cop(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0))}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <Button variant="ghost" size="icon" onClick={() => setLines((p) => p.filter((_, idx) => idx !== i))}>
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {lines.length > 0 && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-lg border border-border bg-card p-5">
+            <h2 className="text-sm font-semibold">Impuestos y retenciones</h2>
+            <dl className="mt-3 space-y-1.5 text-sm">
+              <Row k="Base gravable" v={cop(baseGravable)} />
+              <Row k="IVA" v={cop(ivaTotal)} />
+              <Row k="Retefuente" v={cop(retenciones.retefuente)} />
+              <Row k="ReteIVA" v={cop(retenciones.reteiva)} />
+              <Row k="ReteICA" v={cop(retenciones.reteica)} />
+              <Row k="Total factura" v={cop(baseGravable + ivaTotal + Number(header.impoconsumo || 0))} />
+              <Row
+                k="Neto a pagar"
+                v={cop(baseGravable + ivaTotal + Number(header.impoconsumo || 0) - retenciones.retefuente - retenciones.reteiva - retenciones.reteica)}
+              />
+            </dl>
+          </div>
+
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
+            <div className="border-b border-border px-5 py-3 text-sm font-semibold">Comprobante contable</div>
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-border">
+                {journal.map((j, i) => (
+                  <tr key={i}>
+                    <td className="px-4 py-1.5 font-mono text-xs">{j.account_code}</td>
+                    <td className="px-4 py-1.5 text-muted-foreground">{j.account_name}</td>
+                    <td className="px-4 py-1.5 text-right font-mono tabular-nums">{j.debit ? cop(j.debit) : ""}</td>
+                    <td className="px-4 py-1.5 text-right font-mono tabular-nums">{j.credit ? cop(j.credit) : ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="border-t border-border bg-muted/40 text-xs">
+                <tr>
+                  <td className="px-4 py-2 font-medium" colSpan={2}>
+                    {Math.abs(t.diferencia) <= 1 ? "Comprobante cuadrado" : `Descuadre ${cop(t.diferencia)}`}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">{cop(t.debito)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{cop(t.credito)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {lines.length > 0 && (
+        <div className="flex flex-wrap gap-3">
+          <Button onClick={() => guardar("borrador")} disabled={saving} variant="outline">
+            <Save className="size-4" /> Guardar borrador
+          </Button>
+          <Button onClick={() => guardar("aprobado")} disabled={saving}>
+            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Aprobar comprobante
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <dt className="text-muted-foreground">{k}</dt>
+      <dd className="font-mono tabular-nums">{v}</dd>
+    </div>
+  );
+}

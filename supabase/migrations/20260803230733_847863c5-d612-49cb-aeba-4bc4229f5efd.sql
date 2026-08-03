@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS providers_company_nit_unique ON public.providers (company_id, nit);
