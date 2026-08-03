@@ -52,7 +52,7 @@ export async function createCompanyWithDefaults(input: { name: string; nit: stri
   if (error) throw error;
 
   const companyId = company.id;
-  await supabase.from("company_members").insert({ company_id: companyId, user_id: userId, role: "propietario" });
+  // El miembro propietario lo crea automáticamente un trigger en la base de datos.
 
   await Promise.all([
     supabase
