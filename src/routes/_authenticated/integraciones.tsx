@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useActiveCompany } from "@/lib/active-company";
-import { fechaHora, moneda } from "@/lib/format";
+import { cop, fechaHora } from "@/lib/format";
 import { siigoImportProviders, siigoImportPuc, siigoListPurchases, siigoStatus } from "@/lib/siigo.functions";
 
 export const Route = createFileRoute("/_authenticated/integraciones")({
@@ -186,7 +186,7 @@ function Integraciones() {
                     <TableCell className="font-mono text-xs">{p.number}</TableCell>
                     <TableCell className="font-mono text-xs">{p.date}</TableCell>
                     <TableCell className="font-mono text-xs">{p.supplier}</TableCell>
-                    <TableCell className="text-right font-mono text-xs">{moneda(p.total)}</TableCell>
+                    <TableCell className="text-right font-mono text-xs">{cop(p.total)}</TableCell>
                   </TableRow>
                 ))
               )}
