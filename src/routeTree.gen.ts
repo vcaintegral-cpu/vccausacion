@@ -16,6 +16,7 @@ import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedCausarRouteImport } from './routes/_authenticated/causar'
 import { Route as AuthenticatedEmpresasRouteImport } from './routes/_authenticated/empresas'
 import { Route as AuthenticatedFacturasRouteImport } from './routes/_authenticated/facturas'
+import { Route as AuthenticatedIntegracionesRouteImport } from './routes/_authenticated/integraciones'
 import { Route as AuthenticatedPanelRouteImport } from './routes/_authenticated/panel'
 
 const IndexRoute = IndexRouteImport.update({
@@ -52,6 +53,12 @@ const AuthenticatedFacturasRoute = AuthenticatedFacturasRouteImport.update({
   path: '/facturas',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedIntegracionesRoute =
+  AuthenticatedIntegracionesRouteImport.update({
+    id: '/integraciones',
+    path: '/integraciones',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedPanelRoute = AuthenticatedPanelRouteImport.update({
   id: '/panel',
   path: '/panel',
@@ -65,6 +72,7 @@ export interface FileRoutesByFullPath {
   '/causar': typeof AuthenticatedCausarRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
+  '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
 }
 export interface FileRoutesByTo {
@@ -74,6 +82,7 @@ export interface FileRoutesByTo {
   '/causar': typeof AuthenticatedCausarRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
+  '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
 }
 export interface FileRoutesById {
@@ -85,15 +94,30 @@ export interface FileRoutesById {
   '/_authenticated/causar': typeof AuthenticatedCausarRoute
   '/_authenticated/empresas': typeof AuthenticatedEmpresasRoute
   '/_authenticated/facturas': typeof AuthenticatedFacturasRoute
+  '/_authenticated/integraciones': typeof AuthenticatedIntegracionesRoute
   '/_authenticated/panel': typeof AuthenticatedPanelRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/auth' | '/admin' | '/causar' | '/empresas' | '/facturas' | '/panel'
+    | '/'
+    | '/auth'
+    | '/admin'
+    | '/causar'
+    | '/empresas'
+    | '/facturas'
+    | '/integraciones'
+    | '/panel'
   fileRoutesByTo: FileRoutesByTo
   to:
-    '/' | '/auth' | '/admin' | '/causar' | '/empresas' | '/facturas' | '/panel'
+    | '/'
+    | '/auth'
+    | '/admin'
+    | '/causar'
+    | '/empresas'
+    | '/facturas'
+    | '/integraciones'
+    | '/panel'
   id:
     | '__root__'
     | '/'
@@ -103,6 +127,7 @@ export interface FileRouteTypes {
     | '/_authenticated/causar'
     | '/_authenticated/empresas'
     | '/_authenticated/facturas'
+    | '/_authenticated/integraciones'
     | '/_authenticated/panel'
   fileRoutesById: FileRoutesById
 }
@@ -163,6 +188,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedFacturasRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/integraciones': {
+      id: '/_authenticated/integraciones'
+      path: '/integraciones'
+      fullPath: '/integraciones'
+      preLoaderRoute: typeof AuthenticatedIntegracionesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/panel': {
       id: '/_authenticated/panel'
       path: '/panel'
@@ -178,6 +210,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedCausarRoute: typeof AuthenticatedCausarRoute
   AuthenticatedEmpresasRoute: typeof AuthenticatedEmpresasRoute
   AuthenticatedFacturasRoute: typeof AuthenticatedFacturasRoute
+  AuthenticatedIntegracionesRoute: typeof AuthenticatedIntegracionesRoute
   AuthenticatedPanelRoute: typeof AuthenticatedPanelRoute
 }
 
@@ -186,6 +219,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCausarRoute: AuthenticatedCausarRoute,
   AuthenticatedEmpresasRoute: AuthenticatedEmpresasRoute,
   AuthenticatedFacturasRoute: AuthenticatedFacturasRoute,
+  AuthenticatedIntegracionesRoute: AuthenticatedIntegracionesRoute,
   AuthenticatedPanelRoute: AuthenticatedPanelRoute,
 }
 
