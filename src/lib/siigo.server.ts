@@ -11,20 +11,28 @@ export type SiigoConfig = {
   accessKey: string;
   partnerId: string;
   missing: string[];
+  /** Avisos no bloqueantes (p. ej. Partner-Id sin configurar). */
+  warnings: string[];
 };
 
 export function siigoConfig(): SiigoConfig {
   const username = (process.env["SIIGO_USERNAME"] ?? "").trim();
   const accessKey = (process.env["SIIGO_ACCESS_KEY"] ?? "").trim();
-  // Sin valor por defecto: Siigo exige un Partner-Id acordado con ellos.
+  // Sin valor por defecto. Es opcional: si no existe, no se envía el header Partner-Id.
   const partnerId = (process.env["SIIGO_PARTNER_ID"] ?? "").trim();
 
   const missing: string[] = [];
   if (!username) missing.push("SIIGO_USERNAME");
   if (!accessKey) missing.push("SIIGO_ACCESS_KEY");
-  if (!partnerId) missing.push("SIIGO_PARTNER_ID");
 
-  return { username, accessKey, partnerId, missing };
+  const warnings: string[] = [];
+  if (!partnerId) {
+    warnings.push(
+      "SIIGO_PARTNER_ID no está configurado: se omite el header Partner-Id. Puedes configurarlo más adelante.",
+    );
+  }
+
+  return { username, accessKey, partnerId, missing, warnings };
 }
 
 export class SiigoError extends Error {
@@ -69,7 +77,9 @@ export async function siigoToken(): Promise<string> {
   if (cached && cached.exp > now + 30_000) return cached.token;
 
   const url = `${SIIGO_BASE}/auth`;
-  const headers = { "Content-Type": "application/json", "Partner-Id": partnerId };
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (partnerId) headers["Partner-Id"] = partnerId;
+  else console.warn("[siigo] SIIGO_PARTNER_ID vacío: se omite el header Partner-Id.");
   console.log("[siigo] POST", url, "headers:", logHeaders(headers), "body: { username: ***, access_key: *** }");
 
   let res: Response;
@@ -113,9 +123,9 @@ async function siigoRequest<T>(method: "GET" | "POST", path: string, payload?: u
   const url = `${SIIGO_BASE}${path}`;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
-    "Partner-Id": partnerId,
     "Content-Type": "application/json",
   };
+  if (partnerId) headers["Partner-Id"] = partnerId;
 
   console.log("[siigo]", method, url, "headers:", logHeaders(headers));
 
