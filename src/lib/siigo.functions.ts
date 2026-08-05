@@ -103,8 +103,22 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { siigoGet } = await import("./siigo.server");
     type Account = { code?: string; name?: string; nature?: string };
-    const res = await siigoGet<Account[]>("/v1/account-groups");
+    const path = "/v1/account-groups";
+    console.log("[siigo][puc] consultando", `https://api.siigo.com${path}`, "companyId:", data.companyId);
+
+    let res: Account[];
+    try {
+      // siigoGet ya registra URL, código HTTP y respuesta completa.
+      res = await siigoGet<Account[]>(path);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : JSON.stringify(e);
+      console.error("[siigo][puc] error consultando", path, detail);
+      throw e;
+    }
+
+    console.log("[siigo][puc] respuesta completa:", JSON.stringify(res));
     const list = Array.isArray(res) ? res : [];
+    console.log("[siigo][puc] registros obtenidos de Siigo:", list.length);
     const rows = list
       .filter((a) => a.code)
       .map((a) => ({
@@ -113,13 +127,35 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
         name: a.name ?? String(a.code),
         nature: (a.nature ?? "").toLowerCase().startsWith("cr") ? "credito" : "debito",
       }));
-    if (rows.length === 0) return { imported: 0 };
-    const { error } = await context.supabase.from("puc_accounts").upsert(rows, {
-      onConflict: "company_id,code",
-      ignoreDuplicates: true,
-    });
-    if (error) throw new Error(error.message);
-    return { imported: rows.length };
+    console.log("[siigo][puc] registros válidos para insertar:", rows.length, "de", list.length);
+    if (rows.length === 0) {
+      console.warn("[siigo][puc] no hay registros con 'code'; no se inserta nada en puc_accounts.");
+      return { imported: 0 };
+    }
+
+    const { data: inserted, error } = await context.supabase
+      .from("puc_accounts")
+      .upsert(rows, { onConflict: "company_id,code", ignoreDuplicates: true })
+      .select("id");
+    if (error) {
+      console.error("[siigo][puc] error de Supabase al insertar:", JSON.stringify(error));
+      throw new Error(
+        `Supabase puc_accounts [${error.code ?? "sin código"}]: ${error.message}` +
+          (error.details ? ` | detalles: ${error.details}` : "") +
+          (error.hint ? ` | hint: ${error.hint}` : ""),
+      );
+    }
+    const insertedCount = inserted?.length ?? 0;
+    console.log(
+      "[siigo][puc] filas insertadas en puc_accounts:",
+      insertedCount,
+      "(enviadas:",
+      rows.length,
+      ", duplicadas ignoradas:",
+      rows.length - insertedCount,
+      ")",
+    );
+    return { imported: insertedCount };
   });
 
 export type SiigoPurchase = {
