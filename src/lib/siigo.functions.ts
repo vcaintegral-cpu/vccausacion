@@ -5,6 +5,8 @@ export type SiigoStatus = {
   configured: boolean;
   connected: boolean;
   user: string | null;
+  partnerId: string | null;
+  missing: string[];
   error: string | null;
   checkedAt: string;
 };
@@ -15,18 +17,38 @@ export const siigoStatus = createServerFn({ method: "POST" })
     const { siigoConfig, siigoGet } = await import("./siigo.server");
     const cfg = siigoConfig();
     const checkedAt = new Date().toISOString();
-    if (!cfg.username || !cfg.accessKey) {
-      return { configured: false, connected: false, user: null, error: null, checkedAt };
+    if (cfg.missing.length > 0) {
+      return {
+        configured: false,
+        connected: false,
+        user: cfg.username || null,
+        partnerId: cfg.partnerId || null,
+        missing: cfg.missing,
+        error: `Faltan variables de entorno: ${cfg.missing.join(", ")}.`,
+        checkedAt,
+      };
     }
     try {
       await siigoGet("/v1/users");
-      return { configured: true, connected: true, user: cfg.username, error: null, checkedAt };
+      return {
+        configured: true,
+        connected: true,
+        user: cfg.username,
+        partnerId: cfg.partnerId,
+        missing: [],
+        error: null,
+        checkedAt,
+      };
     } catch (e) {
+      const message = e instanceof Error ? e.message : JSON.stringify(e);
+      console.error("[siigo] verificación de conexión fallida:", message);
       return {
         configured: true,
         connected: false,
         user: cfg.username,
-        error: e instanceof Error ? e.message : "Error desconocido",
+        partnerId: cfg.partnerId,
+        missing: [],
+        error: message,
         checkedAt,
       };
     }
