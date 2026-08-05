@@ -7,6 +7,7 @@ export type SiigoStatus = {
   user: string | null;
   partnerId: string | null;
   missing: string[];
+  warnings: string[];
   error: string | null;
   checkedAt: string;
 };
@@ -24,6 +25,7 @@ export const siigoStatus = createServerFn({ method: "POST" })
         user: cfg.username || null,
         partnerId: cfg.partnerId || null,
         missing: cfg.missing,
+        warnings: cfg.warnings,
         error: `Faltan variables de entorno: ${cfg.missing.join(", ")}.`,
         checkedAt,
       };
@@ -36,6 +38,7 @@ export const siigoStatus = createServerFn({ method: "POST" })
         user: cfg.username,
         partnerId: cfg.partnerId,
         missing: [],
+        warnings: cfg.warnings,
         error: null,
         checkedAt,
       };
@@ -48,6 +51,7 @@ export const siigoStatus = createServerFn({ method: "POST" })
         user: cfg.username,
         partnerId: cfg.partnerId,
         missing: [],
+        warnings: cfg.warnings,
         error: message,
         checkedAt,
       };
