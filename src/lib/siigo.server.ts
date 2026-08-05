@@ -121,7 +121,9 @@ async function siigoRequest<T>(method: "GET" | "POST", path: string, payload?: u
 
   let res: Response;
   try {
-    res = await fetch(url, { method, headers, body: payload ? JSON.stringify(payload) : undefined });
+    const init: RequestInit = { method, headers };
+    if (payload !== undefined) init.body = JSON.stringify(payload);
+    res = await fetch(url, init);
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     console.error("[siigo] fallo de red en", url, detail);
