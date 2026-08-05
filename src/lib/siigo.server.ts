@@ -123,9 +123,9 @@ async function siigoRequest<T>(method: "GET" | "POST", path: string, payload?: u
   const url = `${SIIGO_BASE}${path}`;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
-    "Partner-Id": partnerId,
     "Content-Type": "application/json",
   };
+  if (partnerId) headers["Partner-Id"] = partnerId;
 
   console.log("[siigo]", method, url, "headers:", logHeaders(headers));
 
