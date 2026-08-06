@@ -574,6 +574,59 @@ export type Database = {
           },
         ]
       }
+      products: {
+        Row: {
+          account_code: string | null
+          account_name: string | null
+          active: boolean
+          category: string | null
+          code: string
+          company_id: string
+          created_at: string
+          id: string
+          kind: string
+          name: string
+          source: string
+          updated_at: string
+        }
+        Insert: {
+          account_code?: string | null
+          account_name?: string | null
+          active?: boolean
+          category?: string | null
+          code: string
+          company_id: string
+          created_at?: string
+          id?: string
+          kind?: string
+          name: string
+          source?: string
+          updated_at?: string
+        }
+        Update: {
+          account_code?: string | null
+          account_name?: string | null
+          active?: boolean
+          category?: string | null
+          code?: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          name?: string
+          source?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "products_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
