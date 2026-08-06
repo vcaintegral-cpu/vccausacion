@@ -104,6 +104,31 @@ function Causar() {
     () => lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0), 0),
     [lines],
   );
+
+  /** Cuenta del producto; si es inválida o vacía se usa la de su categoría. Solo cuentas existentes en el PUC. */
+  const cuentaDeProducto = useCallback(
+    (p: { kind?: string | null; category?: string | null; account_code?: string | null; account_name?: string | null }) => {
+      const n = (s?: string | null) =>
+        (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+      const puc = config?.accounts ?? [];
+      const valida = (code?: string | null) => {
+        const c = (code ?? "").replace(/\s+/g, "");
+        if (!c) return null;
+        return puc.find((a) => a.code === c) ?? (puc.length === 0 ? { code: c, name: "" } : null);
+      };
+      const propia = valida(p.account_code);
+      if (propia) return { code: propia.code, name: p.account_name || propia.name || "" };
+      const cats = config?.categories ?? [];
+      const cat =
+        cats.find((c) => p.category && n(c.name) === n(p.category) && n(c.kind) === n(p.kind)) ??
+        cats.find((c) => p.category && n(c.name) === n(p.category)) ??
+        cats.find((c) => !p.category && n(c.kind) === n(p.kind) && !!c.account_code);
+      const deCat = valida(cat?.account_code);
+      if (deCat) return { code: deCat.code, name: cat?.account_name || deCat.name || "" };
+      return null;
+    },
+    [config?.accounts, config?.categories],
+  );
   // Si la factura trae IVA en los renglones, ese es el IVA que se causa; si no, el del encabezado.
   const ivaLineas = useMemo(() => lines.reduce((s, l) => s + Number(l.iva || 0), 0), [lines]);
   const ivaTotal = ivaLineas > 0 ? ivaLineas : Number(header.iva || 0);
