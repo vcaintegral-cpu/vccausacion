@@ -85,7 +85,7 @@ function Causar() {
         supabase.from("tax_rates").select("*").eq("company_id", companyId!),
         supabase.from("cost_centers").select("*").eq("company_id", companyId!).order("code"),
         supabase.from("puc_accounts").select("code, name").eq("company_id", companyId!).order("code"),
-        supabase.from("products").select("code, name, kind, account_code, account_name").eq("company_id", companyId!).eq("active", true).order("code"),
+        supabase.from("products").select("code, name, kind, category, account_code, account_name").eq("company_id", companyId!).eq("active", true).order("code"),
         supabase.from("product_categories").select("name, kind, account_code, account_name").eq("company_id", companyId!).eq("active", true),
       ]);
       return {
@@ -171,10 +171,13 @@ function Causar() {
           catalogo.find((p) => base.code && norm(p.code) === norm(String(base.code))) ??
           catalogo.find((p) => norm(p.name) === norm(base.description ?? ""));
         if (!prod) return base;
+        const cat = (config?.categories ?? []).find(
+          (c) => prod.category && norm(c.name) === norm(prod.category) && c.kind === prod.kind,
+        ) ?? (config?.categories ?? []).find((c) => prod.category && norm(c.name) === norm(prod.category));
         return {
           ...base,
-          account_code: base.account_code || prod.account_code || "",
-          account_name: base.account_name || prod.account_name || "",
+          account_code: base.account_code || prod.account_code || cat?.account_code || "",
+          account_name: base.account_name || prod.account_name || cat?.account_name || "",
           item_type: prod.kind ?? base.item_type,
         };
       });
