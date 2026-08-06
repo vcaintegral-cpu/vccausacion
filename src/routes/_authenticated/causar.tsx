@@ -9,7 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
-import { applyRulesToLines, buildJournal, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
+import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { AccountCombobox } from "@/components/account-combobox";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { cop } from "@/lib/format";
@@ -411,16 +411,16 @@ function Causar() {
     toast.success(`${ok} de ${bulkFiles.length} facturas causadas como borrador.`);
   }
 
-  /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y cuenta contable. */
+  /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y la cuenta de su categoría. */
   function elegirProducto(i: number, p: ProductOption) {
-    const cuenta = cuentaDeProducto(p);
-    if (!cuenta) toast.warning("El producto no tiene una cuenta contable válida ni en su categoría. Selecciónala manualmente.");
+    const cuenta = resolverCuentaItem(p);
+    if (cuenta.error) toast.warning(cuenta.error);
     setLine(i, {
       code: p.code,
       description: p.name,
       item_type: p.kind,
-      account_code: cuenta?.code ?? "",
-      account_name: cuenta?.name ?? "",
+      account_code: cuenta.code,
+      account_name: cuenta.name,
     });
   }
 
@@ -798,7 +798,7 @@ function Causar() {
                     <select
                       className="h-9 w-full rounded-md border border-input bg-background px-1 text-xs"
                       value={l.item_type ?? "gasto"}
-                      onChange={(e) => setLine(i, { item_type: e.target.value })}
+                      onChange={(e) => cambiarTipo(i, e.target.value)}
                     >
                       {ITEM_TYPES.map((k) => (
                         <option key={k} value={k}>{k}</option>
@@ -823,6 +823,7 @@ function Causar() {
                         if (autoLearning && code) setRecordar({ index: i, code, name });
                       }}
                     />
+                    {lineErrors[i] && <p className="mt-1 text-xs text-destructive">{lineErrors[i]}</p>}
                   </td>
                   <td className="px-3 py-1.5 w-56">
                     <div className="flex items-center gap-1">
@@ -949,7 +950,7 @@ function Causar() {
           <Button onClick={() => guardar("borrador")} disabled={saving} variant="outline">
             <Save className="size-4" /> Guardar borrador
           </Button>
-          <Button onClick={() => guardar("aprobado")} disabled={saving}>
+          <Button onClick={() => guardar("aprobado")} disabled={saving || hayErroresDeCuenta}>
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Aprobar comprobante
           </Button>
         </div>
