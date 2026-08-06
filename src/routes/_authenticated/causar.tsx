@@ -200,8 +200,8 @@ function Causar() {
     setLineTax(seleccion);
   }, [borrador, config, editingId]);
 
-  /** Cuenta del producto; si es inválida o vacía se usa la de su categoría. Solo cuentas existentes en el PUC. */
-  const cuentaDeProducto = useCallback(
+  /** Cuenta del ítem: primero la de su categoría (Producto/Servicio → Categoría → Cuenta PUC) y, si no existe, la propia del producto. */
+  const resolverCuentaItem = useCallback(
     (p: { kind?: string | null; category?: string | null; account_code?: string | null; account_name?: string | null }) => {
       const n = (s?: string | null) =>
         (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
@@ -211,19 +211,75 @@ function Causar() {
         if (!c) return null;
         return puc.find((a) => a.code === c) ?? (puc.length === 0 ? { code: c, name: "" } : null);
       };
-      const propia = valida(p.account_code);
-      if (propia) return { code: propia.code, name: p.account_name || propia.name || "" };
       const cats = config?.categories ?? [];
       const cat =
         cats.find((c) => p.category && n(c.name) === n(p.category) && n(c.kind) === n(p.kind)) ??
-        cats.find((c) => p.category && n(c.name) === n(p.category)) ??
-        cats.find((c) => !p.category && n(c.kind) === n(p.kind) && !!c.account_code);
+        cats.find((c) => p.category && n(c.name) === n(p.category));
       const deCat = valida(cat?.account_code);
-      if (deCat) return { code: deCat.code, name: cat?.account_name || deCat.name || "" };
-      return null;
+      if (deCat) return { code: deCat.code, name: cat?.account_name || deCat.name || "", error: null as string | null };
+      const propia = valida(p.account_code);
+      if (propia) return { code: propia.code, name: p.account_name || propia.name || "", error: null as string | null };
+      const error = !(p.category ?? "").trim()
+        ? "Este producto no tiene una categoría configurada."
+        : "La categoría seleccionada no tiene una cuenta contable asociada.";
+      return { code: "", name: "", error };
     },
     [config?.accounts, config?.categories],
   );
+  /** Compatibilidad con el flujo previo: devuelve la cuenta o null. */
+  const cuentaDeProducto = useCallback(
+    (p: { kind?: string | null; category?: string | null; account_code?: string | null; account_name?: string | null }) => {
+      const r = resolverCuentaItem(p);
+      return r.code ? { code: r.code, name: r.name } : null;
+    },
+    [resolverCuentaItem],
+  );
+
+  const normTxt = (s?: string | null) => (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+  /** Busca el producto/servicio del catálogo que corresponde a un renglón. */
+  const buscarProducto = useCallback(
+    (l: Line, kind: string) => {
+      const catalogo = (config?.products ?? []).filter((p) => normTxt(p.kind) === normTxt(kind));
+      return (
+        catalogo.find((p) => l.code && normTxt(p.code) === normTxt(String(l.code))) ??
+        catalogo.find((p) => normTxt(p.name) === normTxt(l.description ?? ""))
+      );
+    },
+    [config?.products],
+  );
+
+  /** Errores de configuración por renglón (categoría o cuenta PUC faltante). */
+  const lineErrors = useMemo(() => {
+    const out: Record<number, string> = {};
+    lines.forEach((l, i) => {
+      const kind = l.item_type ?? "gasto";
+      if (kind !== "producto" && kind !== "servicio") return;
+      if (l.account_code) return;
+      const prod = buscarProducto(l, kind);
+      if (!prod) return;
+      const r = resolverCuentaItem(prod);
+      if (r.error) out[i] = r.error;
+    });
+    return out;
+  }, [lines, buscarProducto, resolverCuentaItem]);
+  const hayErroresDeCuenta = Object.keys(lineErrors).length > 0;
+
+  /** Al cambiar el tipo de ítem se recalcula la cuenta contable según el nuevo tipo. */
+  function cambiarTipo(i: number, kind: string) {
+    const actual = lines[i];
+    if (!actual) return;
+    if (kind === "producto" || kind === "servicio") {
+      const prod = buscarProducto({ ...actual, item_type: kind }, kind);
+      if (!prod) { setLine(i, { item_type: kind }); return; }
+      const r = resolverCuentaItem(prod);
+      if (r.error) toast.warning(r.error);
+      setLine(i, { item_type: kind, code: prod.code, account_code: r.code, account_name: r.name });
+      return;
+    }
+    const s = suggestAccount(actual.description ?? "", config?.rules ?? [], null);
+    setLine(i, { item_type: kind, account_code: s.code, account_name: s.name });
+  }
   // Si la factura trae IVA en los renglones, ese es el IVA que se causa; si no, el del encabezado.
   const ivaLineas = useMemo(() => lines.reduce((s, l) => s + Number(l.iva || 0), 0), [lines]);
   const ivaTotal = ivaLineas > 0 ? ivaLineas : Number(header.iva || 0);
