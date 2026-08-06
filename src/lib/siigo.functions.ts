@@ -294,11 +294,29 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
           if (parsed.code) return parsed;
         }
       }
-      // Último recurso: busca una cuenta del PUC cuyo nombre contenga el nombre del impuesto.
+      // Búsqueda en el PUC por nombre del impuesto.
       const nombre = String(t.name ?? "").toLowerCase().trim();
       if (nombre) {
         const match = (puc ?? []).find((a) => a.name.toLowerCase().includes(nombre));
         if (match) return { code: match.code, name: match.name };
+      }
+      // Asignación automática desde el PUC según el tipo de impuesto (prefijos PUC estándar).
+      const kind = `${t.type ?? ""} ${t.name ?? ""}`.toLowerCase();
+      const grupos: { test: RegExp; prefijos: string[]; palabras: string[] }[] = [
+        { test: /reteiva|rete iva|retencion.*iva/, prefijos: ["2367"], palabras: ["iva"] },
+        { test: /reteica|rete ica|\bica\b/, prefijos: ["2368"], palabras: ["ica", "industria"] },
+        { test: /retefuente|rete fuente|retencion|withholding|\brte\b/, prefijos: ["2365"], palabras: ["fuente", "renta"] },
+        { test: /iva|impuesto al valor/, prefijos: ["2408"], palabras: ["iva"] },
+        { test: /consumo|impoconsumo/, prefijos: ["2412"], palabras: ["consumo"] },
+      ];
+      const grupo = grupos.find((g) => g.test.test(kind));
+      if (grupo) {
+        const candidatas = (puc ?? []).filter((a) => grupo.prefijos.some((p) => a.code.startsWith(p)));
+        const conPalabra = candidatas.find((a) =>
+          grupo.palabras.some((w) => a.name.toLowerCase().includes(w)),
+        );
+        const elegida = conPalabra ?? candidatas.sort((a, b) => a.code.localeCompare(b.code))[0];
+        if (elegida) return { code: elegida.code, name: elegida.name };
       }
       return { code: null, name: null };
     };
