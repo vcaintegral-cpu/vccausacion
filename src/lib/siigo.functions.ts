@@ -15,7 +15,8 @@ export type SiigoStatus = {
 export const siigoStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async (): Promise<SiigoStatus> => {
-    const { siigoConfig, siigoGet } = await import("./siigo.server");
+    const { siigoConfig, siigoGet, loadSiigoOverrides } = await import("./siigo.server");
+    await loadSiigoOverrides(true);
     const cfg = siigoConfig();
     const checkedAt = new Date().toISOString();
     if (cfg.missing.length > 0) {
