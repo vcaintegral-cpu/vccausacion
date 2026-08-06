@@ -226,8 +226,21 @@ export function buildSiigoJournalPayload(params: {
   providerNit: string | null;
   observations: string | null;
   lines: SiigoJournalLine[];
+  /** Referencia de la factura para el vencimiento de cuentas de cartera/proveedores. */
+  duePrefix?: string | null;
+  dueConsecutive?: string | number | null;
+  dueDate?: string | null;
 }) {
   const { documentId, date, providerNit, observations, lines } = params;
+  const consecutiveDigits = String(params.dueConsecutive ?? "").replace(/\D/g, "");
+  const due = {
+    prefix: (params.duePrefix ?? "").toString().trim() || "FC",
+    consecutive: consecutiveDigits ? Number(consecutiveDigits) : 1,
+    quote: 1,
+    date: params.dueDate ?? date,
+  };
+  // Siigo exige "due" en cuentas que manejan vencimiento (cartera y proveedores).
+  const requiereVencimiento = (code: string) => /^(13|22|23)/.test(code);
   return {
     document: { id: documentId },
     date,
@@ -247,6 +260,7 @@ export function buildSiigoJournalPayload(params: {
       if (providerNit) item["customer"] = { identification: providerNit, branch_office: 0 };
       if (l.cost_center && /^\d+$/.test(l.cost_center)) item["cost_center"] = Number(l.cost_center);
       if (l.tax_id != null && String(l.tax_id).trim()) item["tax"] = { id: l.tax_id };
+      if (requiereVencimiento(l.account_code)) item["due"] = due;
       return item;
     }),
   };

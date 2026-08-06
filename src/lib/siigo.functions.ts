@@ -565,6 +565,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         date: inv.issue_date ?? new Date().toISOString().slice(0, 10),
         providerNit: inv.provider_nit,
         observations: `Factura ${[inv.prefix, inv.number].filter(Boolean).join("-")} · ${inv.provider_name ?? ""} ${inv.notes ?? ""}`.trim(),
+        duePrefix: inv.prefix,
+        dueConsecutive: inv.number,
+        dueDate: inv.issue_date,
         lines: resolvedJournal.map((l, index) => ({
           account_code: l.account_code,
           account_name: l.account_name,
