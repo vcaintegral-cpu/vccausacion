@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { FileUp, Loader2, Save, Sparkles, Trash2 } from "lucide-react";
+import { CheckCircle2, FileUp, Layers, Loader2, Save, Sparkles, Trash2, XCircle } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
@@ -14,6 +14,7 @@ import { AccountCombobox } from "@/components/account-combobox";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
+import { expandInvoiceFiles, processInvoiceFile } from "@/lib/bulk-invoices";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -74,6 +75,10 @@ function Causar() {
   const [header, setHeader] = useState<Header>(emptyHeader());
   const [lines, setLines] = useState<Line[]>([]);
   const [recordar, setRecordar] = useState<{ index: number; code: string; name: string | null } | null>(null);
+  const bulkRef = useRef<HTMLInputElement>(null);
+  const [bulkFiles, setBulkFiles] = useState<File[]>([]);
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkResults, setBulkResults] = useState<{ name: string; ok: boolean; detail: string }[]>([]);
   // Impuesto/retención elegido por renglón (índice -> ids)
   const [lineTax, setLineTax] = useState<Record<number, { iva?: string | undefined; ret?: string | undefined }>>({});
 
