@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
+import { Route as AuthenticatedAprendizajeRouteImport } from './routes/_authenticated/aprendizaje'
 import { Route as AuthenticatedCausarRouteImport } from './routes/_authenticated/causar'
 import { Route as AuthenticatedEmpresasRouteImport } from './routes/_authenticated/empresas'
 import { Route as AuthenticatedFacturasRouteImport } from './routes/_authenticated/facturas'
@@ -39,6 +40,12 @@ const AuthenticatedAdminRoute = AuthenticatedAdminRouteImport.update({
   path: '/admin',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedAprendizajeRoute =
+  AuthenticatedAprendizajeRouteImport.update({
+    id: '/aprendizaje',
+    path: '/aprendizaje',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedCausarRoute = AuthenticatedCausarRouteImport.update({
   id: '/causar',
   path: '/causar',
@@ -75,6 +82,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/admin': typeof AuthenticatedAdminRoute
+  '/aprendizaje': typeof AuthenticatedAprendizajeRoute
   '/causar': typeof AuthenticatedCausarRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
@@ -86,6 +94,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/admin': typeof AuthenticatedAdminRoute
+  '/aprendizaje': typeof AuthenticatedAprendizajeRoute
   '/causar': typeof AuthenticatedCausarRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
@@ -99,6 +108,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRoute
+  '/_authenticated/aprendizaje': typeof AuthenticatedAprendizajeRoute
   '/_authenticated/causar': typeof AuthenticatedCausarRoute
   '/_authenticated/empresas': typeof AuthenticatedEmpresasRoute
   '/_authenticated/facturas': typeof AuthenticatedFacturasRoute
@@ -112,6 +122,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/admin'
+    | '/aprendizaje'
     | '/causar'
     | '/empresas'
     | '/facturas'
@@ -123,6 +134,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/admin'
+    | '/aprendizaje'
     | '/causar'
     | '/empresas'
     | '/facturas'
@@ -135,6 +147,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/admin'
+    | '/_authenticated/aprendizaje'
     | '/_authenticated/causar'
     | '/_authenticated/empresas'
     | '/_authenticated/facturas'
@@ -177,6 +190,13 @@ declare module '@tanstack/react-router' {
       path: '/admin'
       fullPath: '/admin'
       preLoaderRoute: typeof AuthenticatedAdminRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/aprendizaje': {
+      id: '/_authenticated/aprendizaje'
+      path: '/aprendizaje'
+      fullPath: '/aprendizaje'
+      preLoaderRoute: typeof AuthenticatedAprendizajeRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/causar': {
@@ -226,6 +246,7 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedAdminRoute: typeof AuthenticatedAdminRoute
+  AuthenticatedAprendizajeRoute: typeof AuthenticatedAprendizajeRoute
   AuthenticatedCausarRoute: typeof AuthenticatedCausarRoute
   AuthenticatedEmpresasRoute: typeof AuthenticatedEmpresasRoute
   AuthenticatedFacturasRoute: typeof AuthenticatedFacturasRoute
@@ -236,6 +257,7 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAdminRoute: AuthenticatedAdminRoute,
+  AuthenticatedAprendizajeRoute: AuthenticatedAprendizajeRoute,
   AuthenticatedCausarRoute: AuthenticatedCausarRoute,
   AuthenticatedEmpresasRoute: AuthenticatedEmpresasRoute,
   AuthenticatedFacturasRoute: AuthenticatedFacturasRoute,

@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, Download, FileSpreadsheet, FileText, Trash2 } from "lucide-react";
+import { CheckCircle2, Download, FileSpreadsheet, FileText, Send, Trash2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
@@ -42,6 +42,25 @@ type Inv = {
   reteica: number;
   total: number;
   status: string;
+  siigo_status: string;
+  siigo_id: string | null;
+  siigo_number: string | null;
+  siigo_synced_at: string | null;
+  siigo_last_attempt_at: string | null;
+};
+
+const SIIGO_LABEL: Record<string, string> = {
+  pendiente: "Pendiente de enviar",
+  sincronizando: "Sincronizando",
+  sincronizada: "Sincronizada",
+  error: "Error",
+};
+
+const SIIGO_CLASS: Record<string, string> = {
+  pendiente: "bg-muted text-muted-foreground",
+  sincronizando: "bg-secondary text-secondary-foreground",
+  sincronizada: "bg-primary/10 text-primary",
+  error: "bg-destructive/10 text-destructive",
 };
 
 function Facturas() {
@@ -52,6 +71,7 @@ function Facturas() {
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
   const [detalle, setDetalle] = useState<Inv | null>(null);
+  const [estado, setEstado] = useState<"aprobado" | "borrador" | "todas">("aprobado");
 
   const { data: invoices } = useQuery({
     queryKey: ["invoices", companyId],
@@ -59,7 +79,9 @@ function Facturas() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("invoices")
-        .select("id, prefix, number, issue_date, provider_nit, provider_name, cost_center, notes, subtotal, iva, retefuente, reteiva, reteica, total, status")
+        .select(
+          "id, prefix, number, issue_date, provider_nit, provider_name, cost_center, notes, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_synced_at, siigo_last_attempt_at",
+        )
         .eq("company_id", companyId!)
         .order("issue_date", { ascending: false });
       if (error) throw error;
@@ -115,6 +137,7 @@ function Facturas() {
     if (q && !text.includes(q.toLowerCase())) return false;
     if (desde && (r.issue_date ?? "") < desde) return false;
     if (hasta && (r.issue_date ?? "") > hasta) return false;
+    if (estado !== "todas" && r.status !== estado) return false;
     return true;
   });
 
@@ -130,10 +153,19 @@ function Facturas() {
         </Button>
       </div>
 
-      <div className="grid gap-3 rounded-lg border border-border bg-card p-4 sm:grid-cols-[2fr_1fr_1fr]">
+      <div className="grid gap-3 rounded-lg border border-border bg-card p-4 sm:grid-cols-[2fr_1fr_1fr_1fr]">
         <Input placeholder="Buscar por número, proveedor o NIT" value={q} onChange={(e) => setQ(e.target.value)} />
         <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} />
         <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} />
+        <select
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+          value={estado}
+          onChange={(e) => setEstado(e.target.value as typeof estado)}
+        >
+          <option value="aprobado">Aprobadas para causación</option>
+          <option value="borrador">Borradores</option>
+          <option value="todas">Todas</option>
+        </select>
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -148,6 +180,7 @@ function Facturas() {
               <th className="px-4 py-2 text-right font-medium">Retenciones</th>
               <th className="px-4 py-2 text-right font-medium">Total</th>
               <th className="px-4 py-2 font-medium">Estado</th>
+              <th className="px-4 py-2 font-medium">Estado Siigo</th>
               <th className="px-4 py-2 text-right font-medium">Acciones</th>
             </tr>
           </thead>
@@ -168,7 +201,28 @@ function Facturas() {
                 </td>
                 <td className="px-4 py-2 text-right font-mono tabular-nums">{cop(r.total)}</td>
                 <td className="px-4 py-2 text-xs capitalize text-muted-foreground">{r.status}</td>
+                <td className="px-4 py-2">
+                  <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${SIIGO_CLASS[r.siigo_status] ?? "bg-muted text-muted-foreground"}`}>
+                    {SIIGO_LABEL[r.siigo_status] ?? r.siigo_status}
+                  </span>
+                  {r.siigo_status === "sincronizada" && (
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                      {r.siigo_number ? `N° ${r.siigo_number} · ` : ""}
+                      {fecha(r.siigo_synced_at?.slice(0, 10) ?? null)}
+                    </div>
+                  )}
+                  {r.siigo_status === "error" && r.siigo_last_attempt_at && (
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">Último intento {fecha(r.siigo_last_attempt_at.slice(0, 10))}</div>
+                  )}
+                </td>
                 <td className="whitespace-nowrap px-4 py-2 text-right">
+                  {r.status === "aprobado" && r.siigo_status !== "sincronizada" && (
+                    <Button asChild variant="ghost" size="icon" title="Causar en Siigo">
+                      <Link to="/revisar" search={{ id: r.id }}>
+                        <Send className="size-4" />
+                      </Link>
+                    </Button>
+                  )}
                   <Button variant="ghost" size="icon" title="Excel" onClick={() => exportar(r, "xlsx")}>
                     <FileSpreadsheet className="size-4" />
                   </Button>
@@ -191,7 +245,7 @@ function Facturas() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={10} className="px-4 py-8 text-center text-sm text-muted-foreground">
                   No hay facturas que coincidan con el filtro.
                 </td>
               </tr>
