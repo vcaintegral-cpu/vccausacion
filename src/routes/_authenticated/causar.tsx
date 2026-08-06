@@ -11,6 +11,7 @@ import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, computeRetenciones, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { cop } from "@/lib/format";
+import { prepareInvoiceFile } from "@/lib/invoice-file";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,17 +42,6 @@ const emptyLine = (): Line => ({
   account_code: "",
   account_name: "",
 });
-
-function readFile(file: File): Promise<{ dataUrl?: string; text?: string }> {
-  const isText = file.type.includes("xml") || file.name.toLowerCase().endsWith(".xml");
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onerror = () => reject(new Error("No fue posible leer el archivo"));
-    r.onload = () => resolve(isText ? { text: String(r.result) } : { dataUrl: String(r.result) });
-    if (isText) r.readAsText(file);
-    else r.readAsDataURL(file);
-  });
-}
 
 type Header = Omit<ExtractedInvoice, "lines">;
 
@@ -122,7 +112,7 @@ function Causar() {
     if (!file) { toast.error("Selecciona un archivo de factura."); return; }
     setReading(true);
     try {
-      const content = await readFile(file);
+      const content = await prepareInvoiceFile(file);
       const data = (await extract({
         data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
       })) as ExtractedInvoice;
@@ -322,7 +312,7 @@ function Causar() {
         </div>
         <Button onClick={leer} disabled={reading || !file}>
           {reading ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-          {reading ? "Leyendo…" : "Leer con IA"}
+          {reading ? "Preparando y leyendo…" : "Leer con IA"}
         </Button>
         <Button variant="outline" onClick={() => setLines((p) => [...p, emptyLine()])}>
           <FileUp className="size-4" /> Renglón manual
