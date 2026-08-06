@@ -466,6 +466,65 @@ function Causar() {
         </Button>
       </div>
 
+      <div className="space-y-3 rounded-lg border border-border bg-card p-5">
+        <div className="flex items-start gap-3">
+          <div className="flex size-9 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
+            <Layers className="size-4" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold">Carga masiva</h2>
+            <p className="text-xs text-muted-foreground">
+              Sube un archivo .zip con hasta cientos de facturas (o varios archivos a la vez). Cada una se lee con IA y se
+              guarda como borrador para revisarla después.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-64 flex-1 space-y-1.5">
+            <Label htmlFor="masivo">Archivos o comprimido (.zip)</Label>
+            <Input
+              id="masivo"
+              ref={bulkRef}
+              type="file"
+              multiple
+              accept=".zip,.pdf,.xml,.jpg,.jpeg,.png,application/zip,application/pdf,text/xml,image/*"
+              onChange={(e) => void seleccionarMasivo(e.target.files)}
+            />
+          </div>
+          <Button onClick={() => void procesarMasivo()} disabled={bulkRunning || bulkFiles.length === 0 || !companyId}>
+            {bulkRunning ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+            {bulkRunning
+              ? `Procesando ${bulkResults.length + 1} de ${bulkFiles.length}…`
+              : `Procesar ${bulkFiles.length || ""} facturas`}
+          </Button>
+        </div>
+        {bulkFiles.length > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {bulkFiles.length} factura(s) detectada(s). {bulkResults.length > 0 ? `${bulkResults.length} procesada(s).` : ""}
+          </p>
+        ) : null}
+        {bulkResults.length > 0 ? (
+          <ul className="max-h-64 space-y-1 overflow-auto rounded-md border border-border p-2">
+            {bulkResults.map((r, i) => (
+              <li key={`${r.name}-${i}`} className="flex items-start gap-2 text-xs">
+                {r.ok ? (
+                  <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />
+                ) : (
+                  <XCircle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+                )}
+                <span className="truncate font-medium">{r.name}</span>
+                <span className="text-muted-foreground">{r.detail}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {bulkResults.some((r) => r.ok) ? (
+          <Button variant="outline" onClick={() => navigate({ to: "/facturas" })}>
+            Ver facturas causadas
+          </Button>
+        ) : null}
+      </div>
+
       <Dialog open={passwordOpen} onOpenChange={(open) => !reading && setPasswordOpen(open)}>
         <DialogContent>
           <DialogHeader>
