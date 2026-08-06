@@ -203,6 +203,21 @@ function Causar() {
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
+  /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y cuenta contable. */
+  function elegirProducto(i: number, p: ProductOption) {
+    const n = (s: string) => (s ?? "").toLowerCase().trim();
+    const cat =
+      (config?.categories ?? []).find((c) => p.category && n(c.name) === n(p.category) && c.kind === p.kind) ??
+      (config?.categories ?? []).find((c) => p.category && n(c.name) === n(p.category));
+    setLine(i, {
+      code: p.code,
+      description: p.name,
+      item_type: p.kind,
+      account_code: p.account_code || cat?.account_code || "",
+      account_name: p.account_name || cat?.account_name || "",
+    });
+  }
+
   const autoLearning = (companies ?? []).find((c) => c.id === companyId)?.auto_learning ?? true;
 
   async function guardarAprendizaje() {
