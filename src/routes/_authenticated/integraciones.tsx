@@ -2,15 +2,31 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { AlertTriangle, CheckCircle2, Download, Loader2, Plug, RefreshCw, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, KeyRound, Loader2, Plug, RefreshCw, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useActiveCompany } from "@/lib/active-company";
 import { cop, fechaHora } from "@/lib/format";
-import { siigoImportProviders, siigoImportPuc, siigoListPurchases, siigoStatus } from "@/lib/siigo.functions";
+import {
+  siigoImportProviders,
+  siigoImportPuc,
+  siigoListPurchases,
+  siigoSaveCredentials,
+  siigoStatus,
+} from "@/lib/siigo.functions";
 
 export const Route = createFileRoute("/_authenticated/integraciones")({
   head: () => ({
@@ -42,7 +58,10 @@ function Integraciones() {
   const importProviders = useServerFn(siigoImportProviders);
   const importPuc = useServerFn(siigoImportPuc);
   const listPurchases = useServerFn(siigoListPurchases);
+  const saveCreds = useServerFn(siigoSaveCredentials);
   const [purchases, setPurchases] = useState<Awaited<ReturnType<typeof siigoListPurchases>> | null>(null);
+  const [credsOpen, setCredsOpen] = useState(false);
+  const [form, setForm] = useState({ username: "", accessKey: "", partnerId: "" });
 
   const status = useQuery({
     queryKey: ["siigo-status"],
@@ -67,6 +86,24 @@ function Integraciones() {
     },
     onError: (e: Error) => toast.error(e.message),
   });
+  const guardar = useMutation({
+    mutationFn: () => saveCreds({ data: form }),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Credenciales guardadas y conexión verificada.");
+        setCredsOpen(false);
+      } else {
+        toast.error(r.error ?? "No fue posible conectar con Siigo.");
+      }
+      void status.refetch();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const abrirCredenciales = () => {
+    setForm({ username: s?.user ?? "", accessKey: "", partnerId: s?.partnerId ?? "" });
+    setCredsOpen(true);
+  };
 
   const s = status.data;
   const connected = !!s?.connected;
@@ -111,10 +148,14 @@ function Integraciones() {
         </div>
 
         <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
-          <div className="flex justify-between gap-3 rounded-md border border-border px-3 py-2">
+          <button
+            type="button"
+            onClick={abrirCredenciales}
+            className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-left transition-colors hover:bg-muted/60"
+          >
             <dt className="text-muted-foreground">Usuario API</dt>
-            <dd className="truncate font-mono text-xs">{s?.user ?? "—"}</dd>
-          </div>
+            <dd className="truncate font-mono text-xs">{s?.user ?? "Configurar credenciales"}</dd>
+          </button>
           <div className="flex justify-between gap-3 rounded-md border border-border px-3 py-2">
             <dt className="text-muted-foreground">Última verificación</dt>
             <dd className="font-mono text-xs">{s?.checkedAt ? fechaHora(s.checkedAt) : "—"}</dd>
@@ -139,6 +180,10 @@ function Integraciones() {
         ) : null}
 
         <div className="mt-4 flex flex-wrap gap-2">
+          <Button variant="outline" onClick={abrirCredenciales}>
+            <KeyRound className="size-4" />
+            Credenciales API
+          </Button>
           <Button variant="outline" onClick={() => status.refetch()} disabled={status.isFetching}>
             {status.isFetching ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
             Probar conexión
@@ -160,6 +205,59 @@ function Integraciones() {
           <p className="mt-2 text-xs text-muted-foreground">Selecciona una empresa activa para importar datos.</p>
         ) : null}
       </div>
+
+      <Dialog open={credsOpen} onOpenChange={setCredsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Credenciales de Siigo</DialogTitle>
+            <DialogDescription>
+              Ingresa el usuario API, la clave de API (Access Key) y el Partner-Id entregados por Siigo.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="siigo-user">Usuario API</Label>
+              <Input
+                id="siigo-user"
+                autoComplete="off"
+                placeholder="correo@empresa.com"
+                value={form.username}
+                onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="siigo-key">Clave de API (Access Key)</Label>
+              <Input
+                id="siigo-key"
+                type="password"
+                autoComplete="new-password"
+                placeholder="••••••••"
+                value={form.accessKey}
+                onChange={(e) => setForm((f) => ({ ...f, accessKey: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="siigo-partner">Partner-Id</Label>
+              <Input
+                id="siigo-partner"
+                autoComplete="off"
+                placeholder="Opcional"
+                value={form.partnerId}
+                onChange={(e) => setForm((f) => ({ ...f, partnerId: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCredsOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => guardar.mutate()} disabled={guardar.isPending}>
+              {guardar.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
+              Guardar y probar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {purchases ? (
         <div className="rounded-lg border border-border bg-card">
