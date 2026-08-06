@@ -49,6 +49,31 @@ Estructura exacta:
 "lines":[{"code":string|null,"description":string,"quantity":number,"unit_value":number,"discount":number,"iva":number,"retention":number,"impoconsumo":number,"total":number}]}
 Reglas: los importes son números sin separadores ni símbolos. El NIT va sin dígito de verificación separado por guion (usa solo el número base). Si un dato no aparece, usa null o 0. Nunca inventes valores.`;
 
+const MIME_BY_EXT: Record<string, string> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+  heic: "image/heic",
+  xml: "application/xml",
+};
+
+function resolveMime(fileName: string, mimeType: string) {
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  const byExt = MIME_BY_EXT[ext];
+  if (byExt) return byExt;
+  if (mimeType && mimeType !== "application/octet-stream") return mimeType;
+  return "application/pdf";
+}
+
+function withMime(dataUrl: string, mime: string) {
+  const idx = dataUrl.indexOf("base64,");
+  if (idx === -1) return dataUrl;
+  return `data:${mime};base64,${dataUrl.slice(idx + 7)}`;
+}
+
 export const extractInvoice = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((data: { fileName: string; mimeType: string; dataUrl?: string | null; text?: string | null }) => {
@@ -66,10 +91,12 @@ export const extractInvoice = createServerFn({ method: "POST" })
     if (data.text) {
       content.push({ type: "text", text: `Contenido XML/texto de la factura:\n${data.text.slice(0, 120000)}` });
     } else if (data.dataUrl) {
-      if (data.mimeType.startsWith("image/")) {
-        content.push({ type: "image_url", image_url: { url: data.dataUrl } });
+      const mime = resolveMime(data.fileName, data.mimeType);
+      const url = withMime(data.dataUrl, mime);
+      if (mime.startsWith("image/")) {
+        content.push({ type: "image_url", image_url: { url } });
       } else {
-        content.push({ type: "file", file: { filename: data.fileName, file_data: data.dataUrl } });
+        content.push({ type: "file", file: { filename: data.fileName, file_data: url } });
       }
     } else {
       throw new Error("No se recibió contenido del archivo");
@@ -93,7 +120,11 @@ export const extractInvoice = createServerFn({ method: "POST" })
     if (!res.ok) {
       const detail = await res.text();
       console.error("AI gateway error", res.status, detail);
-      throw new Error("No fue posible leer la factura con IA.");
+      let msg = detail;
+      try {
+        msg = (JSON.parse(detail) as { error?: { message?: string } })?.error?.message ?? detail;
+      } catch { /* texto plano */ }
+      throw new Error(`No fue posible leer la factura con IA: ${msg.slice(0, 300)}`);
     }
 
     const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
