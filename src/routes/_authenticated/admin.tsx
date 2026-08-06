@@ -171,6 +171,7 @@ function Admin() {
         </TabsContent>
 
         <TabsContent value="terceros">
+          {/* Productos y servicios */}
           {wrap(
             <Section
               table="providers"
@@ -185,6 +186,10 @@ function Admin() {
               ]}
             />,
           )}
+        </TabsContent>
+
+        <TabsContent value="productos">
+          {wrap(<ProductsPanel companyId={companyId} />)}
         </TabsContent>
 
         <TabsContent value="reglas">
