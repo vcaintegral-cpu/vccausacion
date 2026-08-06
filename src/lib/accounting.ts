@@ -143,8 +143,8 @@ export function buildJournal(params: {
 
   if (iva > 0)
     out.push({
-      account_code: provider?.default_iva_account || "240801",
-      account_name: "IVA descontable",
+      account_code: provider?.default_iva_account || "621008",
+      account_name: "IVA del costo",
       debit: round(iva),
       credit: 0,
       cost_center: costCenter ?? null,

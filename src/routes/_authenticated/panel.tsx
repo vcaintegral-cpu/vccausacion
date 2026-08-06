@@ -52,7 +52,7 @@ function Panel() {
   const cards = [
     { label: "Facturas del mes", value: String(delMes.length), icon: Receipt, hint: `${rows.length} en total` },
     { label: "Valor causado (mes)", value: cop(suma(delMes, "total")), icon: TrendingUp, hint: "Incluye impuestos" },
-    { label: "IVA descontable (mes)", value: cop(suma(delMes, "iva")), icon: Wallet, hint: "Cuenta 240801" },
+    { label: "IVA del costo (mes)", value: cop(suma(delMes, "iva")), icon: Wallet, hint: "Cuenta 621008" },
     { label: "Retenciones (mes)", value: cop(retenciones), icon: ListChecks, hint: "Fuente · IVA · ICA" },
   ];
 
