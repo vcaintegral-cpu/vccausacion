@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CostCentersPanel, HistoryPanel, PucPanel, TaxesPanel } from "@/components/accounting-data";
+import { ProductsPanel } from "@/components/products-panel";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
@@ -158,6 +159,7 @@ function Admin() {
         <TabsList>
           <TabsTrigger value="puc">PUC</TabsTrigger>
           <TabsTrigger value="terceros">Terceros</TabsTrigger>
+          <TabsTrigger value="productos">Productos y servicios</TabsTrigger>
           <TabsTrigger value="reglas">Reglas</TabsTrigger>
           <TabsTrigger value="impuestos">Retenciones</TabsTrigger>
           <TabsTrigger value="centros">Centros de costo</TabsTrigger>
@@ -186,6 +188,7 @@ function Admin() {
         </TabsContent>
 
         <TabsContent value="reglas">
+          {null}
           {wrap(
             <Section
               table="accounting_rules"
