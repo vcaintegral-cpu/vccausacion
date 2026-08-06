@@ -64,6 +64,7 @@ const emptyHeader = (): Header => ({
 
 function Causar() {
   const navigate = useNavigate();
+  const { id: editId } = Route.useSearch();
   const companyId = useActiveCompany();
   const { data: companies, isLoading: loadingCompanies } = useCompanies();
   const extract = useServerFn(extractInvoice);
@@ -84,6 +85,8 @@ function Causar() {
   const [bulkResults, setBulkResults] = useState<{ name: string; ok: boolean; detail: string }[]>([]);
   // Impuesto/retención elegido por renglón (índice -> ids)
   const [lineTax, setLineTax] = useState<Record<number, { iva?: string | undefined; ret?: string | undefined }>>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [existingFile, setExistingFile] = useState<{ path: string | null; name: string | null }>({ path: null, name: null });
 
   const { data: config } = useQuery({
     queryKey: ["config", companyId],
