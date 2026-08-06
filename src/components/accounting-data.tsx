@@ -379,11 +379,83 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
 /* ------------------------------ Impuestos ------------------------------ */
 
 export function TaxesPanel({ companyId }: { companyId: string }) {
+  return <TaxesPanelInner companyId={companyId} />;
+}
+
+/** Celda editable: al hacer clic permite escribir o elegir la cuenta del PUC. */
+function AccountCell({
+  value,
+  options,
+  onSave,
+}: {
+  value: string;
+  options: { code: string; name: string }[];
+  onSave: (code: string) => void | Promise<void>;
+}) {
+  const [editando, setEditando] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const listId = `puc-${Math.abs(hashCode(value + options.length))}`;
+
+  if (!editando) {
+    const cuenta = options.find((o) => o.code === value);
+    return (
+      <button
+        type="button"
+        className="rounded px-2 py-1 text-left underline-offset-2 hover:bg-muted hover:underline"
+        onClick={() => { setDraft(value); setEditando(true); }}
+        title="Clic para asignar la cuenta contable"
+      >
+        {value ? `${value}${cuenta ? ` · ${cuenta.name}` : ""}` : "Asignar cuenta"}
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        autoFocus
+        list={listId}
+        className="w-56"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { void onSave(draft); setEditando(false); }
+          if (e.key === "Escape") setEditando(false);
+        }}
+        onBlur={() => { void onSave(draft); setEditando(false); }}
+      />
+      <datalist id={listId}>
+        {options.map((o) => (
+          <option key={o.code} value={o.code}>{o.name}</option>
+        ))}
+      </datalist>
+    </div>
+  );
+}
+
+function hashCode(s: string) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h << 5) - h + s.charCodeAt(i);
+  return h;
+}
+
+function TaxesPanelInner({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const { data: rows } = useTable("tax_rates", companyId, "kind");
+  const { data: cuentas } = useTable("puc_accounts", companyId, "code");
   const [busy, setBusy] = useState<string | null>(null);
   const [form, setForm] = useState({ kind: "iva", name: "", rate: "", min_base: "", account_code: "" });
   const refresh = () => qc.invalidateQueries({ queryKey: ["tax_rates"] });
+
+  async function guardarCuenta(id: string, code: string) {
+    const { error } = await supabase
+      .from("tax_rates")
+      .update({ account_code: code.trim() || null })
+      .eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Cuenta contable actualizada.");
+    await refresh();
+  }
 
   async function sincronizar() {
     setBusy("siigo");
@@ -489,7 +561,13 @@ export function TaxesPanel({ companyId }: { companyId: string }) {
                 <td className="px-4 py-2">{String(r['kind'])}</td>
                 <td className="px-4 py-2">{String(r['name'])}</td>
                 <td className="px-4 py-2">{String(r['rate'])}%</td>
-                <td className="px-4 py-2">{String(r['account_code'] ?? "—")}</td>
+                <td className="px-4 py-2">
+                  <AccountCell
+                    value={(r['account_code'] as string | null) ?? ""}
+                    options={(cuentas ?? []) as { code: string; name: string }[]}
+                    onSave={(code: string) => guardarCuenta(String(r['id']), code)}
+                  />
+                </td>
                 <td className="px-4 py-2"><SourceTag source={r['source'] as string} /></td>
               </tr>
             ))}
