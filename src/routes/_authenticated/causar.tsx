@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { FileUp, Loader2, Save, Sparkles, Trash2 } from "lucide-react";
 
@@ -10,6 +10,7 @@ import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, computeRetenciones, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,7 @@ function Causar() {
   const [header, setHeader] = useState<Header>(emptyHeader());
   const [lines, setLines] = useState<Line[]>([]);
   const [recordar, setRecordar] = useState<{ index: number; code: string; name: string | null } | null>(null);
+  const [taxesSel, setTaxesSel] = useState<Record<string, boolean>>({});
 
   const { data: config } = useQuery({
     queryKey: ["config", companyId],
@@ -93,11 +95,42 @@ function Causar() {
     () => lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0), 0),
     [lines],
   );
-  const ivaTotal = Number(header.iva || 0);
-  const retenciones = useMemo(
-    () => computeRetenciones(baseGravable, ivaTotal, config?.taxes ?? []),
-    [baseGravable, ivaTotal, config],
-  );
+  // Si la factura trae IVA en los renglones, ese es el IVA que se causa; si no, el del encabezado.
+  const ivaLineas = useMemo(() => lines.reduce((s, l) => s + Number(l.iva || 0), 0), [lines]);
+  const ivaTotal = ivaLineas > 0 ? ivaLineas : Number(header.iva || 0);
+  const retencionLineas = useMemo(() => lines.reduce((s, l) => s + Number(l.retention || 0), 0), [lines]);
+
+  // Solo se aplican los impuestos que el usuario seleccione.
+  const impuestos = config?.taxes ?? [];
+  useEffect(() => {
+    if (impuestos.length === 0) return;
+    setTaxesSel((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const t of impuestos) {
+        const key = String(t.id);
+        if (!(key in next)) { next[key] = false; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+  }, [impuestos]);
+
+  const retenciones = useMemo(() => {
+    const seleccionados = impuestos.filter((t) => taxesSel[String(t.id)]);
+    const r = computeRetenciones(baseGravable, ivaTotal, seleccionados);
+    if (retencionLineas > 0) {
+      r.retefuente += retencionLineas;
+      r.detalle.push({
+        kind: "retefuente",
+        name: "Retención de la factura",
+        rate: 0,
+        base: baseGravable,
+        amount: retencionLineas,
+        account_code: null,
+      });
+    }
+    return r;
+  }, [baseGravable, ivaTotal, impuestos, taxesSel, retencionLineas]);
   const journal = useMemo(
     () =>
       buildJournal({
@@ -411,6 +444,8 @@ function Causar() {
                 <th className="px-3 py-2 font-medium">Vr. unitario</th>
                 <th className="px-3 py-2 font-medium">Descuento</th>
                 <th className="px-3 py-2 font-medium">Cuenta PUC</th>
+                <th className="px-3 py-2 font-medium">IVA</th>
+                <th className="px-3 py-2 font-medium">Retención</th>
                 <th className="px-3 py-2 text-right font-medium">Valor</th>
                 <th className="px-3 py-2" />
               </tr>
@@ -448,6 +483,12 @@ function Causar() {
                       ))}
                     </select>
                   </td>
+                  <td className="px-3 py-1.5 w-28">
+                    <Input type="number" value={l.iva} onChange={(e) => setLine(i, { iva: Number(e.target.value) })} />
+                  </td>
+                  <td className="px-3 py-1.5 w-28">
+                    <Input type="number" value={l.retention} onChange={(e) => setLine(i, { retention: Number(e.target.value) })} />
+                  </td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">
                     {cop(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0))}
                   </td>
@@ -467,6 +508,23 @@ function Causar() {
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-lg border border-border bg-card p-5">
             <h2 className="text-sm font-semibold">Impuestos y retenciones</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Marca solo los impuestos que apliquen a esta factura; únicamente esos entran al comprobante.
+            </p>
+            <div className="mt-3 space-y-2">
+              {impuestos.length === 0 && <p className="text-xs text-muted-foreground">No hay impuestos configurados en esta empresa.</p>}
+              {impuestos.map((tx) => (
+                <label key={String(tx.id)} className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={!!taxesSel[String(tx.id)]}
+                    onCheckedChange={(v) => setTaxesSel((p) => ({ ...p, [String(tx.id)]: v === true }))}
+                  />
+                  <span>
+                    {tx.name} <span className="text-muted-foreground">({tx.kind} · {Number(tx.rate)}%)</span>
+                  </span>
+                </label>
+              ))}
+            </div>
             <dl className="mt-3 space-y-1.5 text-sm">
               <Row k="Base gravable" v={cop(baseGravable)} />
               <Row k="IVA" v={cop(ivaTotal)} />
