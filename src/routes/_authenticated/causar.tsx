@@ -448,6 +448,10 @@ function Causar() {
   async function guardar(status: "borrador" | "aprobado") {
     if (!companyId) return;
     if (lines.length === 0) { toast.error("Agrega al menos un renglón."); return; }
+    if (status === "aprobado" && hayErroresDeCuenta) {
+      toast.error(Object.values(lineErrors)[0] ?? "Hay renglones sin cuenta contable.");
+      return;
+    }
     if (Math.abs(t.diferencia) > 1) { toast.error("El comprobante está descuadrado."); return; }
     setSaving(true);
     try {
