@@ -277,14 +277,6 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
     return { imported: toUpsert.length, skipped: rows.length - toUpsert.length };
   });
 
-export type SiigoPurchaseUnused = {
-  id: string;
-  number: string;
-  date: string;
-  supplier: string;
-  total: number;
-};
-
 export const siigoListPurchases = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async (): Promise<SiigoPurchase[]> => {
