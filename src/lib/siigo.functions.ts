@@ -604,9 +604,49 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const retenciones =
         Number(inv.retefuente ?? 0) + Number(inv.reteiva ?? 0) + Number(inv.reteica ?? 0);
 
+      const r2 = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+      // Subtotal e IVA: se prefieren los valores de la factura y, si vienen en 0,
+      // se recalculan desde los renglones que se envían a Siigo.
+      const subtotalItems = items.reduce(
+        (acc, it) => acc + Number(it.quantity || 1) * Number(it.price || 0) - Number(it.discount || 0),
+        0,
+      );
+      const ivaLineas = (invoiceLines ?? []).reduce((acc, l) => acc + Number(l.iva ?? 0), 0);
+      const subtotal = r2(Number(inv.subtotal ?? 0) > 0 ? Number(inv.subtotal) : subtotalItems);
+      const iva = r2(Number(inv.iva ?? 0) > 0 ? Number(inv.iva) : ivaLineas);
+      const totalFactura = r2(Math.max(subtotal + iva - retenciones, 0));
+
+      if (totalFactura <= 0) {
+        throw new Error(
+          "El total calculado de la factura es 0. Revisa los valores de los renglones (cantidad y valor unitario) antes de causar en Siigo.",
+        );
+      }
+      if (paymentId == null) {
+        throw new Error(
+          "No fue posible obtener la forma de pago de compras desde Siigo. Sincroniza la conexión e intenta nuevamente.",
+        );
+      }
+
+      const esCredito = /cr[eé]d/i.test(String(inv.payment_form ?? ""));
+      const fechaDoc = inv.issue_date ?? new Date().toISOString().slice(0, 10);
+      const dueDate = esCredito ? (inv.due_date ?? fechaDoc) : fechaDoc;
+      const payments = [{ id: paymentId, value: totalFactura, due_date: dueDate }];
+      const sumaPagos = r2(payments.reduce((acc, p) => acc + p.value, 0));
+      if (sumaPagos !== totalFactura) {
+        throw new Error(
+          `La suma de los pagos (${sumaPagos}) no coincide con el total calculado (${totalFactura}). Corrige los valores antes de enviar a Siigo.`,
+        );
+      }
+
+      console.log("[siigo][causacion] Subtotal:", subtotal);
+      console.log("[siigo][causacion] IVA:", iva);
+      console.log("[siigo][causacion] Retenciones:", retenciones);
+      console.log("[siigo][causacion] Total calculado:", totalFactura);
+      console.log("[siigo][causacion] Payments enviados:", JSON.stringify(payments, null, 2));
+
       const payload = buildSiigoPurchasePayload({
         documentId,
-        date: inv.issue_date ?? new Date().toISOString().slice(0, 10),
+        date: fechaDoc,
         providerNit: inv.provider_nit,
         invoicePrefix: inv.prefix,
         invoiceNumber: inv.number,
@@ -614,15 +654,16 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         costCenter: inv.cost_center,
         items,
         paymentId,
-        paymentValue: Math.max(Number(inv.total ?? 0) - retenciones, 0),
-        paymentDueDate: inv.due_date ?? inv.issue_date ?? null,
+        paymentValue: totalFactura,
+        paymentDueDate: dueDate,
       });
-      console.log("[siigo][causacion] payload factura de compra:", JSON.stringify(payload, null, 2));
+      console.log("[siigo][causacion] Payload completo:", JSON.stringify(payload, null, 2));
 
       const res = await siigoPost<{ id?: string; number?: number | string; name?: string; metadata?: { created?: string }; _links?: { self?: { href?: string } } }>(
         "/v1/purchases",
         payload,
       );
+      console.log("[siigo][causacion] Respuesta completa de Siigo:", JSON.stringify(res, null, 2));
 
       const syncedAt = new Date().toISOString();
       const siigoId = res.id ? String(res.id) : null;
