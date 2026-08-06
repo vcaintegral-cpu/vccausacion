@@ -42,14 +42,8 @@ const emptyLine = (): Line => ({
   account_name: "",
 });
 
-async function readFile(file: File): Promise<{ dataUrl?: string; text?: string; pageImages?: string[] }> {
+function readFile(file: File): Promise<{ dataUrl?: string; text?: string }> {
   const isText = file.type.includes("xml") || file.name.toLowerCase().endsWith(".xml");
-  const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-  if (isPdf) {
-    const { pdfToImages } = await import("@/lib/pdf-to-images.client");
-    return { pageImages: await pdfToImages(file) };
-  }
-
   return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onerror = () => reject(new Error("No fue posible leer el archivo"));

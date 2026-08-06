@@ -49,34 +49,9 @@ Estructura exacta:
 "lines":[{"code":string|null,"description":string,"quantity":number,"unit_value":number,"discount":number,"iva":number,"retention":number,"impoconsumo":number,"total":number}]}
 Reglas: los importes son números sin separadores ni símbolos. El NIT va sin dígito de verificación separado por guion (usa solo el número base). Si un dato no aparece, usa null o 0. Nunca inventes valores.`;
 
-const MIME_BY_EXT: Record<string, string> = {
-  pdf: "application/pdf",
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  webp: "image/webp",
-  gif: "image/gif",
-  heic: "image/heic",
-  xml: "application/xml",
-};
-
-function resolveMime(fileName: string, mimeType: string) {
-  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
-  const byExt = MIME_BY_EXT[ext];
-  if (byExt) return byExt;
-  if (mimeType && mimeType !== "application/octet-stream") return mimeType;
-  return "application/pdf";
-}
-
-function withMime(dataUrl: string, mime: string) {
-  const idx = dataUrl.indexOf("base64,");
-  if (idx === -1) return dataUrl;
-  return `data:${mime};base64,${dataUrl.slice(idx + 7)}`;
-}
-
 export const extractInvoice = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((data: { fileName: string; mimeType: string; dataUrl?: string | null; text?: string | null; pageImages?: string[] }) => {
+  .inputValidator((data: { fileName: string; mimeType: string; dataUrl?: string | null; text?: string | null }) => {
     if (!data?.fileName) throw new Error("Archivo requerido");
     return data;
   })
@@ -90,18 +65,11 @@ export const extractInvoice = createServerFn({ method: "POST" })
 
     if (data.text) {
       content.push({ type: "text", text: `Contenido XML/texto de la factura:\n${data.text.slice(0, 120000)}` });
-    } else if (data.pageImages?.length) {
-      content.push({ type: "text", text: `El PDF fue convertido en ${data.pageImages.length} imágenes, una por página. Léelas en orden y consolida toda la factura.` });
-      for (const image of data.pageImages) {
-        content.push({ type: "image_url", image_url: { url: image } });
-      }
     } else if (data.dataUrl) {
-      const mime = resolveMime(data.fileName, data.mimeType);
-      const url = withMime(data.dataUrl, mime);
-      if (mime.startsWith("image/")) {
-        content.push({ type: "image_url", image_url: { url } });
+      if (data.mimeType.startsWith("image/")) {
+        content.push({ type: "image_url", image_url: { url: data.dataUrl } });
       } else {
-        content.push({ type: "file", file: { filename: data.fileName, file_data: url } });
+        content.push({ type: "file", file: { filename: data.fileName, file_data: data.dataUrl } });
       }
     } else {
       throw new Error("No se recibió contenido del archivo");
@@ -111,7 +79,8 @@ export const extractInvoice = createServerFn({ method: "POST" })
       method: "POST",
       headers: { "Content-Type": "application/json", "Lovable-API-Key": apiKey },
       body: JSON.stringify({
-        model: "google/gemini-3.6-flash",
+        model: "openai/gpt-5.6-sol",
+        reasoning_effort: "none",
         messages: [
           { role: "system", content: SYSTEM },
           { role: "user", content },
@@ -125,11 +94,7 @@ export const extractInvoice = createServerFn({ method: "POST" })
     if (!res.ok) {
       const detail = await res.text();
       console.error("AI gateway error", res.status, detail);
-      let msg = detail;
-      try {
-        msg = (JSON.parse(detail) as { error?: { message?: string } })?.error?.message ?? detail;
-      } catch { /* texto plano */ }
-      throw new Error(`No fue posible leer la factura con IA: ${msg.slice(0, 300)}`);
+      throw new Error("No fue posible leer la factura con IA.");
     }
 
     const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };

@@ -15,7 +15,6 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as AuthenticatedAprendizajeRouteImport } from './routes/_authenticated/aprendizaje'
 import { Route as AuthenticatedCausarRouteImport } from './routes/_authenticated/causar'
-import { Route as AuthenticatedConfiguracionIaRouteImport } from './routes/_authenticated/configuracion-ia'
 import { Route as AuthenticatedEmpresasRouteImport } from './routes/_authenticated/empresas'
 import { Route as AuthenticatedFacturasRouteImport } from './routes/_authenticated/facturas'
 import { Route as AuthenticatedIntegracionesRouteImport } from './routes/_authenticated/integraciones'
@@ -52,12 +51,6 @@ const AuthenticatedCausarRoute = AuthenticatedCausarRouteImport.update({
   path: '/causar',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
-const AuthenticatedConfiguracionIaRoute =
-  AuthenticatedConfiguracionIaRouteImport.update({
-    id: '/configuracion-ia',
-    path: '/configuracion-ia',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
 const AuthenticatedEmpresasRoute = AuthenticatedEmpresasRouteImport.update({
   id: '/empresas',
   path: '/empresas',
@@ -91,7 +84,6 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AuthenticatedAdminRoute
   '/aprendizaje': typeof AuthenticatedAprendizajeRoute
   '/causar': typeof AuthenticatedCausarRoute
-  '/configuracion-ia': typeof AuthenticatedConfiguracionIaRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
   '/integraciones': typeof AuthenticatedIntegracionesRoute
@@ -104,7 +96,6 @@ export interface FileRoutesByTo {
   '/admin': typeof AuthenticatedAdminRoute
   '/aprendizaje': typeof AuthenticatedAprendizajeRoute
   '/causar': typeof AuthenticatedCausarRoute
-  '/configuracion-ia': typeof AuthenticatedConfiguracionIaRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
   '/integraciones': typeof AuthenticatedIntegracionesRoute
@@ -119,7 +110,6 @@ export interface FileRoutesById {
   '/_authenticated/admin': typeof AuthenticatedAdminRoute
   '/_authenticated/aprendizaje': typeof AuthenticatedAprendizajeRoute
   '/_authenticated/causar': typeof AuthenticatedCausarRoute
-  '/_authenticated/configuracion-ia': typeof AuthenticatedConfiguracionIaRoute
   '/_authenticated/empresas': typeof AuthenticatedEmpresasRoute
   '/_authenticated/facturas': typeof AuthenticatedFacturasRoute
   '/_authenticated/integraciones': typeof AuthenticatedIntegracionesRoute
@@ -134,7 +124,6 @@ export interface FileRouteTypes {
     | '/admin'
     | '/aprendizaje'
     | '/causar'
-    | '/configuracion-ia'
     | '/empresas'
     | '/facturas'
     | '/integraciones'
@@ -147,7 +136,6 @@ export interface FileRouteTypes {
     | '/admin'
     | '/aprendizaje'
     | '/causar'
-    | '/configuracion-ia'
     | '/empresas'
     | '/facturas'
     | '/integraciones'
@@ -161,7 +149,6 @@ export interface FileRouteTypes {
     | '/_authenticated/admin'
     | '/_authenticated/aprendizaje'
     | '/_authenticated/causar'
-    | '/_authenticated/configuracion-ia'
     | '/_authenticated/empresas'
     | '/_authenticated/facturas'
     | '/_authenticated/integraciones'
@@ -219,13 +206,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCausarRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/configuracion-ia': {
-      id: '/_authenticated/configuracion-ia'
-      path: '/configuracion-ia'
-      fullPath: '/configuracion-ia'
-      preLoaderRoute: typeof AuthenticatedConfiguracionIaRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
     '/_authenticated/empresas': {
       id: '/_authenticated/empresas'
       path: '/empresas'
@@ -268,7 +248,6 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedAdminRoute: typeof AuthenticatedAdminRoute
   AuthenticatedAprendizajeRoute: typeof AuthenticatedAprendizajeRoute
   AuthenticatedCausarRoute: typeof AuthenticatedCausarRoute
-  AuthenticatedConfiguracionIaRoute: typeof AuthenticatedConfiguracionIaRoute
   AuthenticatedEmpresasRoute: typeof AuthenticatedEmpresasRoute
   AuthenticatedFacturasRoute: typeof AuthenticatedFacturasRoute
   AuthenticatedIntegracionesRoute: typeof AuthenticatedIntegracionesRoute
@@ -280,7 +259,6 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAdminRoute: AuthenticatedAdminRoute,
   AuthenticatedAprendizajeRoute: AuthenticatedAprendizajeRoute,
   AuthenticatedCausarRoute: AuthenticatedCausarRoute,
-  AuthenticatedConfiguracionIaRoute: AuthenticatedConfiguracionIaRoute,
   AuthenticatedEmpresasRoute: AuthenticatedEmpresasRoute,
   AuthenticatedFacturasRoute: AuthenticatedFacturasRoute,
   AuthenticatedIntegracionesRoute: AuthenticatedIntegracionesRoute,
