@@ -6,7 +6,7 @@ import { Download, Plus, RefreshCw, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { siigoImportCostCenters, siigoImportPuc, siigoImportTaxes } from "@/lib/siigo.functions";
 import { downloadSheet, num, pick, readSheet } from "@/lib/spreadsheet";
-import { analyzeHistory, type HistoryAnalysis } from "@/lib/history-import";
+import { analyzeHistory, isSiigoAuxiliary, type HistoryAnalysis } from "@/lib/history-import";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -607,6 +607,17 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
     setBusy(true);
     try {
       const sheet = await readSheet(file);
+      if (!isSiigoAuxiliary(sheet)) {
+        const keys = Object.keys(sheet[0] ?? {});
+        const generico = ["cuenta", "codigo cuenta", "cuenta contable", "nit", "identificacion"].some((k) =>
+          keys.some((x) => x.includes(k)),
+        );
+        if (!generico) {
+          throw new Error(
+            "El archivo no corresponde al reporte 'Movimiento auxiliar de cuenta contable por tercero' de Siigo. Verifica que exportaste el reporte correcto.",
+          );
+        }
+      }
       const result = analyzeHistory(sheet);
       if (result.rules.length === 0) {
         throw new Error("No se detectaron movimientos contables. Verifica que el archivo tenga columnas de cuenta, tercero y concepto.");
@@ -636,7 +647,9 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
         if (error) throw new Error(error.message);
       }
       setAnalysis(result);
-      toast.success(`Historial analizado: ${result.rowsUsed} movimiento(s), ${result.rules.length} regla(s) aprendida(s).`);
+      toast.success(
+        `Historial analizado: ${result.rowsUsed} movimiento(s) procesados, ${result.rowsSkipped} omitido(s), ${result.rules.length} regla(s) aprendida(s).`,
+      );
       await qc.invalidateQueries({ queryKey: ["learning_rules"] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible analizar el historial.");
@@ -650,16 +663,17 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
       <div className="rounded-lg border border-border bg-card p-4">
         <h3 className="text-sm font-semibold">Importar historial contable de Siigo</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Sube el Excel exportado desde Siigo. El sistema analiza cuenta por proveedor y por concepto, centro de costo,
-          impuestos, retenciones, frecuencia de uso y última cuenta utilizada para alimentar la IA de esta empresa.
+          Sube el archivo exportado desde Siigo con el reporte "Movimiento auxiliar de cuenta contable por tercero"
+          (Informes contables), en formato .xlsx, para el rango de fechas que quieras usar para entrenar la IA.
         </p>
         <div className="mt-3">
           <FileButton label={busy ? "Analizando…" : "Importar Excel"} onFile={importar} busy={busy} />
         </div>
         {analysis && (
-          <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+          <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4">
             <p>Filas leídas: <strong>{analysis.rowsRead}</strong></p>
-            <p>Movimientos válidos: <strong>{analysis.rowsUsed}</strong></p>
+            <p>Movimientos procesados: <strong>{analysis.rowsUsed}</strong></p>
+            <p>Omitidos: <strong>{analysis.rowsSkipped}</strong></p>
             <p>Terceros aprendidos: <strong>{analysis.providers}</strong></p>
           </div>
         )}

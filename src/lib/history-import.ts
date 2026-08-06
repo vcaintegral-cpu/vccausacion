@@ -50,11 +50,79 @@ type Bucket = {
 export type HistoryAnalysis = {
   rowsRead: number;
   rowsUsed: number;
+  rowsSkipped: number;
   providers: number;
   rules: LearnedRule[];
+  /** "siigo-auxiliar" cuando se detecta el reporte "Movimiento auxiliar de cuenta contable por tercero". */
+  format: "siigo-auxiliar" | "generico";
 };
 
+/** Detecta el reporte de Siigo "Movimiento auxiliar de cuenta contable por tercero". */
+export function isSiigoAuxiliary(rows: SheetRow[]): boolean {
+  const first = rows[0];
+  if (!first) return false;
+  const keys = Object.keys(first);
+  const has = (k: string) => keys.some((x) => x === k);
+  return has("comprobante") && has("codigo contable") && has("identificacion");
+}
+
+/** Convierte el detalle en un concepto reutilizable: sin números variables ni el nombre del tercero. */
+function normalizeConcept(text: string, providerName: string | null): string | null {
+  let out = (text ?? "").trim();
+  if (!out) return null;
+  if (providerName) {
+    const parts = providerName.split(/\s+/).filter((p) => p.length > 2);
+    for (const p of parts) {
+      out = out.replace(new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), " ");
+    }
+  }
+  out = out
+    .replace(/\d+([.,]\d+)?/g, " ")
+    .replace(/\b(dias?|dia|horas?|no\.?|nro\.?|num\.?)\b/gi, " ")
+    .replace(/[-_/|]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .replace(/^[\s\-–]+|[\s\-–]+$/g, "");
+  return out ? out : null;
+}
+
+/** Parser del reporte auxiliar de Siigo: una fila es movimiento si "Comprobante" no está vacío. */
+function siigoRowsToGeneric(rows: SheetRow[]): { rows: SheetRow[]; skipped: number } {
+  const out: SheetRow[] = [];
+  let skipped = 0;
+  for (const row of rows) {
+    const comprobante = (row["comprobante"] ?? "").trim();
+    if (!comprobante) continue; // separadores jerárquicos y filas vacías
+    const code = (row["codigo contable"] ?? "").replace(/\s+/g, "");
+    const nit = (row["identificacion"] ?? "").trim();
+    if (!code || !nit) {
+      skipped += 1;
+      continue;
+    }
+    const providerName = (row["nombre tercero"] ?? "").trim() || null;
+    const raw = (row["descripcion"] ?? "").trim() || (row["detalle"] ?? "").trim();
+    out.push({
+      cuenta: code,
+      "nombre cuenta": (row["cuenta contable"] ?? "").trim(),
+      nit,
+      "razon social": providerName ?? "",
+      concepto: normalizeConcept(raw, providerName) ?? "",
+      "centro de costo": (row["centro de costo"] ?? "").trim(),
+      fecha: (row["fecha elaboracion"] ?? "").trim(),
+    });
+  }
+  return { rows: out, skipped };
+}
+
 export function analyzeHistory(rows: SheetRow[]): HistoryAnalysis {
+  const siigo = isSiigoAuxiliary(rows);
+  const totalRead = rows.length;
+  let rowsSkipped = 0;
+  if (siigo) {
+    const parsed = siigoRowsToGeneric(rows);
+    rows = parsed.rows;
+    rowsSkipped = parsed.skipped;
+  }
   const buckets = new Map<string, Bucket>();
   let used = 0;
 
@@ -146,9 +214,11 @@ export function analyzeHistory(rows: SheetRow[]): HistoryAnalysis {
 
   rules.sort((a, b) => b.times_used - a.times_used);
   return {
-    rowsRead: rows.length,
+    rowsRead: totalRead,
     rowsUsed: used,
+    rowsSkipped,
     providers: new Set(rules.map((r) => r.provider_nit ?? "-")).size,
     rules,
+    format: siigo ? "siigo-auxiliar" : "generico",
   };
 }
