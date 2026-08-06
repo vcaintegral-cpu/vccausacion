@@ -197,13 +197,11 @@ function Causar() {
           catalogo.find((p) => base.code && norm(p.code) === norm(String(base.code))) ??
           catalogo.find((p) => norm(p.name) === norm(base.description ?? ""));
         if (!prod) return base;
-        const cat = (config?.categories ?? []).find(
-          (c) => prod.category && norm(c.name) === norm(prod.category) && c.kind === prod.kind,
-        ) ?? (config?.categories ?? []).find((c) => prod.category && norm(c.name) === norm(prod.category));
+        const cuenta = cuentaDeProducto(prod);
         return {
           ...base,
-          account_code: base.account_code || prod.account_code || cat?.account_code || "",
-          account_name: base.account_name || prod.account_name || cat?.account_name || "",
+          account_code: base.account_code || cuenta?.code || "",
+          account_name: base.account_name || cuenta?.name || "",
           item_type: prod.kind ?? base.item_type,
         };
       });
@@ -230,16 +228,14 @@ function Causar() {
 
   /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y cuenta contable. */
   function elegirProducto(i: number, p: ProductOption) {
-    const n = (s: string) => (s ?? "").toLowerCase().trim();
-    const cat =
-      (config?.categories ?? []).find((c) => p.category && n(c.name) === n(p.category) && c.kind === p.kind) ??
-      (config?.categories ?? []).find((c) => p.category && n(c.name) === n(p.category));
+    const cuenta = cuentaDeProducto(p);
+    if (!cuenta) toast.warning("El producto no tiene una cuenta contable válida ni en su categoría. Selecciónala manualmente.");
     setLine(i, {
       code: p.code,
       description: p.name,
       item_type: p.kind,
-      account_code: p.account_code || cat?.account_code || "",
-      account_name: p.account_name || cat?.account_name || "",
+      account_code: cuenta?.code ?? "",
+      account_name: cuenta?.name ?? "",
     });
   }
 
