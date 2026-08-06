@@ -11,6 +11,7 @@ import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { AccountCombobox } from "@/components/account-combobox";
+import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { Button } from "@/components/ui/button";
@@ -200,6 +201,21 @@ function Causar() {
 
   function setLine(i: number, patch: Partial<Line>) {
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  }
+
+  /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y cuenta contable. */
+  function elegirProducto(i: number, p: ProductOption) {
+    const n = (s: string) => (s ?? "").toLowerCase().trim();
+    const cat =
+      (config?.categories ?? []).find((c) => p.category && n(c.name) === n(p.category) && c.kind === p.kind) ??
+      (config?.categories ?? []).find((c) => p.category && n(c.name) === n(p.category));
+    setLine(i, {
+      code: p.code,
+      description: p.name,
+      item_type: p.kind,
+      account_code: p.account_code || cat?.account_code || "",
+      account_name: p.account_name || cat?.account_name || "",
+    });
   }
 
   const autoLearning = (companies ?? []).find((c) => c.id === companyId)?.auto_learning ?? true;
@@ -477,7 +493,17 @@ function Causar() {
               {lines.map((l, i) => (
                 <tr key={i}>
                   <td className="px-3 py-1.5">
-                    <Input value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
+                    <div className="space-y-1">
+                      {(l.item_type === "producto" || l.item_type === "servicio") && (
+                        <ProductCombobox
+                          products={(config?.products ?? []) as ProductOption[]}
+                          kind={l.item_type}
+                          value={l.code ?? ""}
+                          onSelect={(p) => elegirProducto(i, p)}
+                        />
+                      )}
+                      <Input value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
+                    </div>
                   </td>
                   <td className="px-3 py-1.5 w-32">
                     <select
