@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CostCentersPanel, HistoryPanel, PucPanel, TaxesPanel } from "@/components/accounting-data";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
@@ -160,22 +161,11 @@ function Admin() {
           <TabsTrigger value="reglas">Reglas</TabsTrigger>
           <TabsTrigger value="impuestos">Retenciones</TabsTrigger>
           <TabsTrigger value="centros">Centros de costo</TabsTrigger>
+          <TabsTrigger value="historial">Historial contable</TabsTrigger>
         </TabsList>
 
         <TabsContent value="puc">
-          {wrap(
-            <Section
-              table="puc_accounts"
-              companyId={companyId}
-              order="code"
-              defaults={{ nature: "debito" }}
-              fields={[
-                { key: "code", label: "Código" },
-                { key: "name", label: "Nombre", width: "w-72" },
-                { key: "nature", label: "Naturaleza" },
-              ]}
-            />,
-          )}
+          {wrap(<PucPanel companyId={companyId} />)}
         </TabsContent>
 
         <TabsContent value="terceros">
@@ -214,35 +204,15 @@ function Admin() {
         </TabsContent>
 
         <TabsContent value="impuestos">
-          {wrap(
-            <Section
-              table="tax_rates"
-              companyId={companyId}
-              order="kind"
-              defaults={{ active: true }}
-              fields={[
-                { key: "kind", label: "Tipo" },
-                { key: "name", label: "Nombre", width: "w-60" },
-                { key: "rate", label: "Tarifa %", type: "number", width: "w-28" },
-                { key: "min_base", label: "Base mínima", type: "number" },
-                { key: "account_code", label: "Cuenta" },
-              ]}
-            />,
-          )}
+          {wrap(<TaxesPanel companyId={companyId} />)}
         </TabsContent>
 
         <TabsContent value="centros">
-          {wrap(
-            <Section
-              table="cost_centers"
-              companyId={companyId}
-              order="code"
-              fields={[
-                { key: "code", label: "Código" },
-                { key: "name", label: "Nombre", width: "w-72" },
-              ]}
-            />,
-          )}
+          {wrap(<CostCentersPanel companyId={companyId} />)}
+        </TabsContent>
+
+        <TabsContent value="historial">
+          {wrap(<HistoryPanel companyId={companyId} />)}
         </TabsContent>
       </Tabs>
     </div>
