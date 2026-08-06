@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 const KEY = "causacion.empresa";
+const LOCK_KEY = "causacion.empresa.bloqueada";
 const listeners = new Set<() => void>();
 let value: string | null = null;
 let hydrated = false;
@@ -20,6 +21,24 @@ export function setActiveCompany(id: string | null) {
     else window.localStorage.removeItem(KEY);
   }
   listeners.forEach((l) => l());
+}
+
+export function setCompanyLocked(locked: boolean) {
+  if (typeof window === "undefined") return;
+  if (locked) window.localStorage.setItem(LOCK_KEY, "1");
+  else window.localStorage.removeItem(LOCK_KEY);
+  listeners.forEach((l) => l());
+}
+
+export function useCompanyLocked(): boolean {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => (typeof window !== "undefined" ? window.localStorage.getItem(LOCK_KEY) === "1" : false),
+    () => false,
+  );
 }
 
 export function useActiveCompany(): string | null {
