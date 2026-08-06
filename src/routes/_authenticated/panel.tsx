@@ -1,9 +1,9 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { FileUp, ListChecks, Receipt, TrendingUp, Wallet } from "lucide-react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { FileUp, ListChecks, LogOut, Receipt, TrendingUp, Wallet } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
-import { useActiveCompany } from "@/lib/active-company";
+import { setActiveCompany, useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { cop, fecha } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -21,8 +21,18 @@ export const Route = createFileRoute("/_authenticated/panel")({
 });
 
 function Panel() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const companyId = useActiveCompany();
   const { data: companies, isLoading: loadingCompanies } = useCompanies();
+
+  async function signOut() {
+    await queryClient.cancelQueries();
+    queryClient.clear();
+    setActiveCompany(null);
+    await supabase.auth.signOut();
+    navigate({ to: "/auth", replace: true });
+  }
 
   const { data: invoices } = useQuery({
     queryKey: ["panel-invoices", companyId],
@@ -65,11 +75,16 @@ function Panel() {
             Resumen de causación de la empresa activa. {borradores > 0 ? `${borradores} comprobante(s) en borrador.` : "Sin borradores pendientes."}
           </p>
         </div>
-        <Button asChild>
-          <Link to="/causar">
-            <FileUp className="size-4" /> Causar factura
-          </Link>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={signOut}>
+            <LogOut className="size-4" /> Cerrar sesión
+          </Button>
+          <Button asChild>
+            <Link to="/causar">
+              <FileUp className="size-4" /> Causar factura
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
