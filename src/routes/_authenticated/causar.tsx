@@ -22,6 +22,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/_authenticated/causar")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    id: typeof search['id'] === "string" && search['id'] ? (search['id'] as string) : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Causar factura de compra con IA" },
