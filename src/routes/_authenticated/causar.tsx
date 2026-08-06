@@ -493,7 +493,17 @@ function Causar() {
               {lines.map((l, i) => (
                 <tr key={i}>
                   <td className="px-3 py-1.5">
-                    <Input value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
+                    <div className="space-y-1">
+                      {(l.item_type === "producto" || l.item_type === "servicio") && (
+                        <ProductCombobox
+                          products={(config?.products ?? []) as ProductOption[]}
+                          kind={l.item_type}
+                          value={l.code ?? ""}
+                          onSelect={(p) => elegirProducto(i, p)}
+                        />
+                      )}
+                      <Input value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
+                    </div>
                   </td>
                   <td className="px-3 py-1.5 w-32">
                     <select
