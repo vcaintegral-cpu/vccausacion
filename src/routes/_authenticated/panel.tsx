@@ -21,8 +21,18 @@ export const Route = createFileRoute("/_authenticated/panel")({
 });
 
 function Panel() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const companyId = useActiveCompany();
   const { data: companies, isLoading: loadingCompanies } = useCompanies();
+
+  async function signOut() {
+    await queryClient.cancelQueries();
+    queryClient.clear();
+    setActiveCompany(null);
+    await supabase.auth.signOut();
+    navigate({ to: "/auth", replace: true });
+  }
 
   const { data: invoices } = useQuery({
     queryKey: ["panel-invoices", companyId],
