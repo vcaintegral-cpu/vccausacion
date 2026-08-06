@@ -102,93 +102,67 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
   })
   .handler(async ({ data, context }) => {
     const { siigoGet } = await import("./siigo.server");
-    // El catálogo del PUC en la API actual de Siigo está en /v1/accounts.
-    // /v1/account-groups sólo devuelve los grupos contables (no las cuentas),
-    // por eso se intenta primero /v1/accounts y se deja el otro como respaldo.
-    const candidates = ["/v1/accounts", "/v1/account-groups"];
+    // Verificado contra la API real de Siigo (agosto 2026):
+    //   /v1/accounts, /v1/chart-of-accounts, /v1/accounting-accounts... -> 404
+    //   /v1/account-groups -> grupos de inventario (id/name/active), NO son cuentas del PUC
+    // La API pública de Siigo no expone el catálogo del PUC. Las cuentas contables
+    // sí aparecen dentro de los comprobantes contables: /v1/journals -> results[].items[].account
+    //   { "code": "51350502", "movement": "Debit" }
+    // Por eso el PUC se reconstruye a partir de las cuentas realmente usadas.
+    type JournalItem = { account?: { code?: string | number; movement?: string; name?: string }; description?: string };
+    type Journal = { items?: JournalItem[] };
+    type JournalPage = { pagination?: { page?: number; page_size?: number; total_results?: number }; results?: Journal[] };
 
-    /** Extrae un arreglo de objetos desde cualquier forma de respuesta conocida. */
-    const toArray = (res: unknown): Record<string, unknown>[] => {
-      if (Array.isArray(res)) return res as Record<string, unknown>[];
-      if (res && typeof res === "object") {
-        const obj = res as Record<string, unknown>;
-        for (const key of ["results", "data", "items", "accounts", "value"]) {
-          if (Array.isArray(obj[key])) return obj[key] as Record<string, unknown>[];
-        }
-        // Objeto único con forma de cuenta
-        if (obj["code"] || obj["Code"] || obj["account_code"]) return [obj];
-      }
-      return [];
-    };
+    const pageSize = 100;
+    const maxPages = 40; // hasta 4.000 comprobantes
+    const found = new Map<string, { name: string; nature: string }>();
+    let scanned = 0;
 
-    const pick = (o: Record<string, unknown>, keys: string[]): string | null => {
-      for (const k of keys) {
-        const v = o[k];
-        if (typeof v === "string" && v.trim()) return v.trim();
-        if (typeof v === "number") return String(v);
-      }
-      return null;
-    };
-
-    let list: Record<string, unknown>[] = [];
-    let usedPath = "";
-    let lastError: unknown = null;
-
-    for (const path of candidates) {
+    for (let page = 1; page <= maxPages; page++) {
+      const path = `/v1/journals?page=${page}&page_size=${pageSize}`;
       console.log("[siigo][puc] consultando", `https://api.siigo.com${path}`, "companyId:", data.companyId);
+      let res: JournalPage;
       try {
-        // siigoGet ya registra URL, código HTTP y respuesta completa.
-        const res = await siigoGet<unknown>(path);
-        console.log("[siigo][puc] JSON exacto devuelto por", path, ":", JSON.stringify(res));
-        const parsed = toArray(res);
-        console.log(
-          "[siigo][puc] tipo de respuesta:",
-          Array.isArray(res) ? "array" : typeof res,
-          "| registros detectados:",
-          parsed.length,
-          "| claves del primer registro:",
-          parsed[0] ? JSON.stringify(Object.keys(parsed[0])) : "n/a",
-        );
-        if (parsed.length > 0) {
-          list = parsed;
-          usedPath = path;
-          break;
-        }
-        console.warn("[siigo][puc] respuesta sin registros en", path, "— se intenta el siguiente endpoint.");
+        // siigoGet ya registra URL, código HTTP y cuerpo de la respuesta.
+        res = await siigoGet<JournalPage>(path);
       } catch (e) {
-        lastError = e;
-        const detail = e instanceof Error ? e.message : JSON.stringify(e);
-        console.error("[siigo][puc] error consultando", path, detail);
+        console.error("[siigo][puc] error consultando", path, e instanceof Error ? e.message : JSON.stringify(e));
+        if (page === 1) throw e;
+        break;
       }
+      const results = res.results ?? [];
+      if (page === 1) {
+        console.log(
+          "[siigo][puc] estructura de la respuesta:",
+          JSON.stringify({ pagination: res.pagination, primerRegistro: results[0] ?? null }).slice(0, 2000),
+        );
+      }
+      scanned += results.length;
+      for (const j of results) {
+        for (const it of j.items ?? []) {
+          const code = String(it.account?.code ?? "").trim();
+          if (!code) continue;
+          const nature = (it.account?.movement ?? "").toLowerCase().startsWith("cr") ? "credito" : "debito";
+          const name = (it.account?.name ?? it.description ?? `Cuenta ${code}`).trim() || `Cuenta ${code}`;
+          if (!found.has(code)) found.set(code, { name, nature });
+        }
+      }
+      const total = res.pagination?.total_results ?? 0;
+      console.log("[siigo][puc] página", page, "comprobantes:", results.length, "| cuentas únicas acumuladas:", found.size);
+      if (results.length < pageSize || scanned >= total) break;
     }
 
-    if (list.length === 0 && lastError) throw lastError;
+    console.log("[siigo][puc] comprobantes revisados:", scanned, "| cuentas únicas encontradas:", found.size);
 
-    console.log("[siigo][puc] endpoint usado:", usedPath, "| registros obtenidos de Siigo:", list.length);
-
-    const seen = new Set<string>();
-    const rows = list
-      .map((a) => {
-        const code = pick(a, ["code", "Code", "account_code", "codigo"]);
-        if (!code) return null;
-        const name = pick(a, ["name", "Name", "description", "nombre"]) ?? code;
-        const natureRaw = (pick(a, ["nature", "Nature", "naturaleza", "type"]) ?? "").toLowerCase();
-        return {
-          company_id: data.companyId,
-          code,
-          name,
-          nature: natureRaw.startsWith("cr") ? "credito" : "debito",
-        };
-      })
-      .filter((r): r is NonNullable<typeof r> => {
-        if (!r) return false;
-        if (seen.has(r.code)) return false;
-        seen.add(r.code);
-        return true;
-      });
-    console.log("[siigo][puc] registros válidos para insertar:", rows.length, "de", list.length);
+    const rows = [...found.entries()].map(([code, v]) => ({
+      company_id: data.companyId,
+      code,
+      name: v.name,
+      nature: v.nature,
+    }));
+    console.log("[siigo][puc] registros válidos para insertar:", rows.length);
     if (rows.length === 0) {
-      console.warn("[siigo][puc] no hay registros con 'code'; no se inserta nada en puc_accounts.");
+      console.warn("[siigo][puc] no se encontraron cuentas en los comprobantes de Siigo; no se inserta nada.");
       return { imported: 0 };
     }
 
