@@ -306,7 +306,7 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
         { test: /reteiva|rete iva|retencion.*iva/, prefijos: ["2367"], palabras: ["iva"] },
         { test: /reteica|rete ica|\bica\b/, prefijos: ["2368"], palabras: ["ica", "industria"] },
         { test: /retefuente|rete fuente|retencion|withholding|\brte\b/, prefijos: ["2365"], palabras: ["fuente", "renta"] },
-        { test: /iva|impuesto al valor/, prefijos: ["2408"], palabras: ["iva"] },
+        { test: /iva|impuesto al valor/, prefijos: ["621008", "6210", "2408"], palabras: ["iva"] },
         { test: /consumo|impoconsumo/, prefijos: ["2412"], palabras: ["consumo"] },
       ];
       const grupo = grupos.find((g) => g.test.test(kind));
@@ -431,7 +431,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     const availableCodes = new Set((companyAccounts ?? []).map((account) => account.code));
     const findEquivalent = (baseCode: string) => {
       if (availableCodes.has(baseCode)) return baseCode;
-      if (baseCode === "240801") {
+      if (baseCode === "621008" || baseCode === "240801") {
+        const directo = (companyAccounts ?? []).find((account) => account.code === "621008");
+        if (directo) return directo.code;
         return (companyAccounts ?? []).find((account) => {
           const name = account.name.toLowerCase();
           return account.code.startsWith("2408") && name.includes("iva") && (name.includes("servicio") || name.includes("gasto"));

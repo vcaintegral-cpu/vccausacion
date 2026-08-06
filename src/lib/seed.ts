@@ -10,7 +10,7 @@ const PUC = [
   ["236540", "Retención en la fuente - compras", "credito"],
   ["236701", "Retención de IVA", "credito"],
   ["236805", "Retención de ICA", "credito"],
-  ["240801", "IVA descontable", "debito"],
+  ["621008", "IVA del costo", "debito"],
   ["513595", "Servicios varios", "debito"],
   ["5135", "Seguros", "debito"],
   ["519525", "Papelería y útiles de oficina", "debito"],
@@ -30,7 +30,7 @@ const REGLAS = [
 ];
 
 const IMPUESTOS = [
-  ["iva", "IVA general 19%", 19, 0, "240801"],
+  ["iva", "IVA general 19%", 19, 0, "621008"],
   ["retefuente", "Retefuente compras 2.5%", 2.5, 1_412_000, "236540"],
   ["reteiva", "ReteIVA 15%", 15, 1_412_000, "236701"],
   ["reteica", "ReteICA 9.66 x mil", 0.966, 0, "236805"],
