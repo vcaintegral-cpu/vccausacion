@@ -545,8 +545,12 @@ function Causar() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Causar factura</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Carga la factura (PDF, XML DIAN, JPG o PNG) y la IA propone el comprobante.</p>
+        <h1 className="text-xl font-semibold">{editingId ? "Editar borrador" : "Causar factura"}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {editingId
+            ? "Ajusta cualquier dato del comprobante. Al guardar se actualiza este mismo borrador."
+            : "Carga la factura (PDF, XML DIAN, JPG o PNG) y la IA propone el comprobante."}
+        </p>
       </div>
 
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-5">
