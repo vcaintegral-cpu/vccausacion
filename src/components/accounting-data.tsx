@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Download, Plus, RefreshCw, Upload } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
-import { siigoImportCostCenters, siigoImportPuc, siigoImportTaxes } from "@/lib/siigo.functions";
+import { siigoImportCostCenters, siigoImportProviders, siigoImportPuc, siigoImportTaxes } from "@/lib/siigo.functions";
 import { downloadSheet, num, pick, readSheet } from "@/lib/spreadsheet";
 import { analyzeHistory, isSiigoAuxiliary, type HistoryAnalysis } from "@/lib/history-import";
 import { Button } from "@/components/ui/button";
@@ -57,6 +57,92 @@ function useTable(table: "puc_accounts" | "cost_centers" | "tax_rates", companyI
       return data as Record<string, unknown>[];
     },
   });
+}
+
+/* ------------------------------ Terceros ------------------------------ */
+
+export function ProvidersToolbar({ companyId }: { companyId: string }) {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState<string | null>(null);
+  const refresh = () => qc.invalidateQueries({ queryKey: ["providers"] });
+
+  async function sincronizar() {
+    setBusy("siigo");
+    try {
+      const res = await siigoImportProviders({ data: { companyId } });
+      toast.success(`Terceros importados desde Siigo: ${res.imported}.`);
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No fue posible sincronizar terceros.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function importar(file: File) {
+    setBusy("excel");
+    try {
+      const sheet = await readSheet(file);
+      const parsed = sheet
+        .map((r) => ({
+          company_id: companyId,
+          nit: pick(r, "nit", "identificacion", "documento", "cedula", "id").replace(/[\s.]/g, ""),
+          name: pick(r, "razon social", "nombre", "tercero", "proveedor", "name") || "Sin nombre",
+          address: pick(r, "direccion", "address") || null,
+          city: pick(r, "ciudad", "city") || null,
+          phone: pick(r, "telefono", "celular", "phone") || null,
+          email: pick(r, "correo", "email") || null,
+          default_expense_account: pick(r, "cuenta gasto", "cuenta", "default_expense_account") || null,
+          default_payable_account: pick(r, "cuenta por pagar", "default_payable_account") || null,
+        }))
+        .filter((r) => r.nit);
+      if (parsed.length === 0) throw new Error("No se encontraron terceros (columnas esperadas: NIT, Razón social).");
+      const unicos = Array.from(new Map(parsed.map((r) => [r.nit, r])).values());
+      for (let i = 0; i < unicos.length; i += 500) {
+        const { error } = await supabase
+          .from("providers")
+          .upsert(unicos.slice(i, i + 500), { onConflict: "company_id,nit", ignoreDuplicates: false });
+        if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}`);
+      }
+      toast.success(`Terceros cargados desde Excel: ${unicos.length}.`);
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function exportar() {
+    const { data, error } = await supabase.from("providers").select("*").eq("company_id", companyId).order("name");
+    if (error) { toast.error(error.message); return; }
+    downloadSheet(
+      (data ?? []).map((r) => ({
+        NIT: String(r.nit ?? ""),
+        "Razon social": String(r.name ?? ""),
+        Ciudad: String(r.city ?? ""),
+        Direccion: String(r.address ?? ""),
+        Telefono: String(r.phone ?? ""),
+        Correo: String(r.email ?? ""),
+        "Cuenta gasto": String(r.default_expense_account ?? ""),
+        "Cuenta por pagar": String(r.default_payable_account ?? ""),
+      })),
+      "terceros.xlsx",
+      "Terceros",
+    );
+  }
+
+  return (
+    <Toolbar>
+      <Button onClick={sincronizar} disabled={busy !== null}>
+        <RefreshCw className={`size-4 ${busy === "siigo" ? "animate-spin" : ""}`} /> Sincronizar desde Siigo
+      </Button>
+      <FileButton label="Importar Excel" onFile={importar} busy={busy !== null} />
+      <Button variant="outline" onClick={exportar} disabled={busy !== null}>
+        <Download className="size-4" /> Exportar Excel
+      </Button>
+    </Toolbar>
+  );
 }
 
 /* ------------------------------- PUC ------------------------------- */

@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CostCentersPanel, HistoryPanel, PucPanel, TaxesPanel } from "@/components/accounting-data";
+import { CostCentersPanel, HistoryPanel, ProvidersToolbar, PucPanel, TaxesPanel } from "@/components/accounting-data";
 import { ProductsPanel } from "@/components/products-panel";
 import { ProductCategoriesPanel } from "@/components/product-categories-panel";
 
@@ -173,9 +173,10 @@ function Admin() {
         </TabsContent>
 
         <TabsContent value="terceros">
-          {/* Productos y servicios */}
           {wrap(
-            <Section
+            <div className="space-y-4">
+              <ProvidersToolbar companyId={companyId} />
+              <Section
               table="providers"
               companyId={companyId}
               order="name"
@@ -186,7 +187,8 @@ function Admin() {
                 { key: "default_expense_account", label: "Cuenta gasto" },
                 { key: "default_payable_account", label: "Cuenta por pagar" },
               ]}
-            />,
+              />
+            </div>,
           )}
         </TabsContent>
 
