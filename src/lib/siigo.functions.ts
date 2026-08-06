@@ -633,6 +633,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const payments = [{ id: paymentId, value: totalFactura, due_date: dueDate }];
       const sumaPagos = r2(payments.reduce((acc, p) => acc + p.value, 0));
       if (sumaPagos !== totalFactura) {
+        console.log("[siigo][causacion] ⚠ Suma de payments distinta al total calculado");
+        console.log("[siigo][causacion] Suma de payments:", sumaPagos);
+        console.log("[siigo][causacion] Total calculado:", totalFactura);
         throw new Error(
           `La suma de los pagos (${sumaPagos}) no coincide con el total calculado (${totalFactura}). Corrige los valores antes de enviar a Siigo.`,
         );
@@ -643,6 +646,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       console.log("[siigo][causacion] Retenciones:", retenciones);
       console.log("[siigo][causacion] Total calculado:", totalFactura);
       console.log("[siigo][causacion] Payments enviados:", JSON.stringify(payments, null, 2));
+      console.log("[siigo][causacion] Suma de payments:", sumaPagos);
 
       const payload = buildSiigoPurchasePayload({
         documentId,
@@ -657,7 +661,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         paymentValue: totalFactura,
         paymentDueDate: dueDate,
       });
-      console.log("[siigo][causacion] Payload completo:", JSON.stringify(payload, null, 2));
+      console.log("========== PAYLOAD SIIGO ==========");
+      console.log(JSON.stringify(payload, null, 2));
+      console.log("===================================");
 
       const res = await siigoPost<{ id?: string; number?: number | string; name?: string; metadata?: { created?: string }; _links?: { self?: { href?: string } } }>(
         "/v1/purchases",
