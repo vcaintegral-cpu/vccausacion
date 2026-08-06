@@ -98,9 +98,15 @@ export function PucPanel({ companyId }: { companyId: string }) {
         }))
         .filter((r) => r.code);
       if (parsed.length === 0) throw new Error("No se encontraron cuentas en el archivo (columnas esperadas: Código, Nombre, Naturaleza).");
-      const { error } = await supabase.from("puc_accounts").upsert(parsed, { onConflict: "company_id,code" });
-      if (error) throw new Error(error.message);
-      toast.success(`Se importaron ${parsed.length} cuenta(s) desde Excel.`);
+      // Evita "cannot affect row a second time": una sola fila por código.
+      const unicas = Array.from(new Map(parsed.map((r) => [r.code, r])).values());
+      for (let i = 0; i < unicas.length; i += 500) {
+        const { error } = await supabase
+          .from("puc_accounts")
+          .upsert(unicas.slice(i, i + 500), { onConflict: "company_id,code", ignoreDuplicates: false });
+        if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}${error.hint ? ` (${error.hint})` : ""}`);
+      }
+      toast.success(`Se actualizaron ${unicas.length} cuenta(s) desde Excel.`);
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
