@@ -833,3 +833,29 @@ export const siigoCreateProduct = createServerFn({ method: "POST" })
     });
     return { id: String(res.id ?? ""), code: String(res.code ?? data.code), name: String(res.name ?? data.name) };
   });
+
+// ---------------------------------------------------------------------------
+// Credenciales de Siigo administradas desde la aplicación.
+// ---------------------------------------------------------------------------
+
+export const siigoSaveCredentials = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { username: string; accessKey: string; partnerId: string }) => {
+    if (!input?.username?.trim()) throw new Error("El usuario API es obligatorio.");
+    if (!input?.accessKey?.trim()) throw new Error("La clave de API (Access Key) es obligatoria.");
+    return {
+      username: input.username.trim(),
+      accessKey: input.accessKey.trim(),
+      partnerId: (input.partnerId ?? "").trim(),
+    };
+  })
+  .handler(async ({ data }) => {
+    const { saveSiigoOverrides, siigoGet } = await import("./siigo.server");
+    await saveSiigoOverrides(data);
+    try {
+      await siigoGet("/v1/users");
+      return { ok: true, error: null as string | null };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
