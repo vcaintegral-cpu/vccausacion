@@ -400,12 +400,15 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }): Promise<SiigoSyncResult> => {
-    const { siigoGet, siigoPost, siigoJournalDocumentId, buildSiigoJournalPayload } = await import("./siigo.server");
+    const { siigoGet, siigoPost, siigoPurchaseDocumentId, siigoPurchasePaymentTypeId, buildSiigoPurchasePayload } =
+      await import("./siigo.server");
     const supabase = context.supabase;
 
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
-      .select("id, company_id, prefix, number, issue_date, provider_nit, provider_name, notes, total, iva")
+      .select(
+        "id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, notes, total, iva, subtotal, retefuente, reteiva, reteica, cost_center, payment_form",
+      )
       .eq("id", data.invoiceId)
       .single();
     if (invErr || !inv) throw new Error(invErr?.message ?? "Factura no encontrada.");
