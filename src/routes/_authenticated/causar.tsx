@@ -80,12 +80,13 @@ function Causar() {
     queryKey: ["config", companyId],
     enabled: !!companyId,
     queryFn: async () => {
-      const [rules, taxes, centers, accounts, products] = await Promise.all([
+      const [rules, taxes, centers, accounts, products, categories] = await Promise.all([
         supabase.from("accounting_rules").select("*").eq("company_id", companyId!),
         supabase.from("tax_rates").select("*").eq("company_id", companyId!),
         supabase.from("cost_centers").select("*").eq("company_id", companyId!).order("code"),
         supabase.from("puc_accounts").select("code, name").eq("company_id", companyId!).order("code"),
         supabase.from("products").select("code, name, kind, account_code, account_name").eq("company_id", companyId!).eq("active", true).order("code"),
+        supabase.from("product_categories").select("name, kind, account_code, account_name").eq("company_id", companyId!).eq("active", true),
       ]);
       return {
         rules: (rules.data ?? []) as Rule[],
@@ -93,6 +94,7 @@ function Causar() {
         centers: centers.data ?? [],
         accounts: accounts.data ?? [],
         products: products.data ?? [],
+        categories: categories.data ?? [],
       };
     },
   });
