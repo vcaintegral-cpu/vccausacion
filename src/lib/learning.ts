@@ -19,6 +19,9 @@ export type LearningRule = {
   active: boolean;
   times_used: number;
   created_at: string;
+  /** manual | excel | siigo. Lo importado manualmente tiene prioridad sobre la API. */
+  source?: string;
+  last_used_at?: string | null;
 };
 
 export type HistoryEvent = { provider_nit: string | null; concept: string | null; account_code: string };
@@ -40,6 +43,14 @@ const norm = (s: string) =>
     .trim();
 
 const tokens = (s: string) => norm(s).split(/[^a-z0-9]+/).filter((t) => t.length > 3);
+
+/** manual/excel primero; luego más usada; luego la más reciente. */
+export function bySourcePriority(a: LearningRule, b: LearningRule) {
+  const weight = (r: LearningRule) => (r.source === "siigo" ? 0 : 1);
+  if (weight(a) !== weight(b)) return weight(b) - weight(a);
+  if (a.times_used !== b.times_used) return b.times_used - a.times_used;
+  return (b.last_used_at ?? b.created_at ?? "").localeCompare(a.last_used_at ?? a.created_at ?? "");
+}
 
 function similar(a: string, b: string) {
   const ta = tokens(a);
@@ -74,7 +85,7 @@ export function suggestSmart(params: {
     const byConcept = sameProvider
       .map((r) => ({ r, score: similar(description, r.concept ?? "") }))
       .filter((x) => x.score >= 0.5)
-      .sort((a, b) => b.score - a.score)[0];
+      .sort((a, b) => (b.score - a.score) || bySourcePriority(a.r, b.r))[0];
     if (byConcept)
       return {
         code: byConcept.r.account_code,
@@ -85,7 +96,7 @@ export function suggestSmart(params: {
         item_type: byConcept.r.item_type,
       };
     // 2) regla aprendida del proveedor (la más usada)
-    const best = [...sameProvider].sort((a, b) => b.times_used - a.times_used)[0];
+    const best = [...sameProvider].sort(bySourcePriority)[0];
     if (best)
       return {
         code: best.account_code,
@@ -102,7 +113,7 @@ export function suggestSmart(params: {
     .filter((r) => !r.provider_nit)
     .map((r) => ({ r, score: similar(description, r.concept ?? "") }))
     .filter((x) => x.score >= 0.6)
-    .sort((a, b) => b.score - a.score)[0];
+    .sort((a, b) => (b.score - a.score) || bySourcePriority(a.r, b.r))[0];
   if (generic)
     return {
       code: generic.r.account_code,
