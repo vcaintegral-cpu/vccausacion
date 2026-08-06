@@ -11,18 +11,49 @@ const normKey = (s: string) =>
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 
-/** Lee la primera hoja de un Excel/CSV y devuelve filas con encabezados normalizados. */
+const HEADER_HINTS = [
+  "codigo", "cuenta", "code", "nombre", "descripcion", "name", "naturaleza",
+  "centro", "impuesto", "tarifa", "nit", "proveedor", "fecha",
+];
+
+/** Lee la primera hoja de un Excel/CSV y devuelve filas con encabezados normalizados.
+ *  Detecta automáticamente la fila de encabezados (ignora títulos/filas vacías arriba). */
 export async function readSheet(file: File): Promise<SheetRow[]> {
   const buffer = await file.arrayBuffer();
   const wb = XLSX.read(buffer, { type: "array" });
   const first = wb.SheetNames[0];
   if (!first) return [];
-  const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[first]!, { defval: "" });
-  return raw.map((r) => {
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[first]!, { header: 1, defval: "", blankrows: false });
+  if (matrix.length === 0) return [];
+
+  // Busca en las primeras 15 filas la que contenga más encabezados reconocibles.
+  let headerIdx = 0;
+  let bestScore = -1;
+  for (let i = 0; i < Math.min(matrix.length, 15); i++) {
+    const cells = (matrix[i] ?? []).map((c) => normKey(String(c ?? "")));
+    const filled = cells.filter(Boolean).length;
+    if (filled < 2) continue;
+    const score = cells.filter((c) => HEADER_HINTS.some((h) => c.includes(h))).length * 10 + filled;
+    if (score > bestScore) {
+      bestScore = score;
+      headerIdx = i;
+    }
+  }
+
+  const headers = (matrix[headerIdx] ?? []).map((c, i) => normKey(String(c ?? "")) || `col ${i + 1}`);
+  const rows: SheetRow[] = [];
+  for (let i = headerIdx + 1; i < matrix.length; i++) {
+    const cells = matrix[i] ?? [];
     const out: SheetRow = {};
-    for (const [k, v] of Object.entries(r)) out[normKey(k)] = String(v ?? "").trim();
-    return out;
-  });
+    let any = false;
+    headers.forEach((h, c) => {
+      const v = String(cells[c] ?? "").trim();
+      if (v) any = true;
+      if (!out[h]) out[h] = v;
+    });
+    if (any) rows.push(out);
+  }
+  return rows;
 }
 
 /** Devuelve el primer valor no vacío entre varios encabezados posibles. */
