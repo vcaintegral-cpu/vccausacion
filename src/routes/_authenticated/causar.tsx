@@ -22,6 +22,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/_authenticated/causar")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    id: typeof search['id'] === "string" && search['id'] ? (search['id'] as string) : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Causar factura de compra con IA" },
@@ -61,6 +64,7 @@ const emptyHeader = (): Header => ({
 
 function Causar() {
   const navigate = useNavigate();
+  const { id: editId } = Route.useSearch();
   const companyId = useActiveCompany();
   const { data: companies, isLoading: loadingCompanies } = useCompanies();
   const extract = useServerFn(extractInvoice);
@@ -81,6 +85,8 @@ function Causar() {
   const [bulkResults, setBulkResults] = useState<{ name: string; ok: boolean; detail: string }[]>([]);
   // Impuesto/retención elegido por renglón (índice -> ids)
   const [lineTax, setLineTax] = useState<Record<number, { iva?: string | undefined; ret?: string | undefined }>>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [existingFile, setExistingFile] = useState<{ path: string | null; name: string | null }>({ path: null, name: null });
 
   const { data: config } = useQuery({
     queryKey: ["config", companyId],
@@ -109,6 +115,90 @@ function Causar() {
     () => lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0), 0),
     [lines],
   );
+
+  /** Borrador existente (carga individual o masiva): se abre en este mismo editor. */
+  const { data: borrador } = useQuery({
+    queryKey: ["invoice-edit", editId],
+    enabled: !!editId && !!companyId,
+    queryFn: async () => {
+      const [inv, invLines] = await Promise.all([
+        supabase.from("invoices").select("*").eq("id", editId!).maybeSingle(),
+        supabase.from("invoice_lines").select("*").eq("invoice_id", editId!).order("position"),
+      ]);
+      if (inv.error) throw inv.error;
+      return { invoice: inv.data, lines: invLines.data ?? [] };
+    },
+  });
+
+  useEffect(() => {
+    if (!borrador?.invoice || !config) return;
+    if (editingId === borrador.invoice.id) return;
+    const inv = borrador.invoice as Record<string, any>;
+    setEditingId(inv['id'] as string);
+    setExistingFile({ path: (inv['file_path'] as string) ?? null, name: (inv['file_name'] as string) ?? null });
+    setHeader({
+      ...emptyHeader(),
+      prefix: inv['prefix'] ?? "",
+      number: inv['number'] ?? "",
+      issue_date: inv['issue_date'] ?? "",
+      due_date: inv['due_date'] ?? "",
+      provider_nit: inv['provider_nit'] ?? "",
+      provider_name: inv['provider_name'] ?? "",
+      provider_address: inv['provider_address'] ?? "",
+      provider_city: inv['provider_city'] ?? "",
+      provider_phone: inv['provider_phone'] ?? "",
+      provider_email: inv['provider_email'] ?? "",
+      cufe: inv['cufe'] ?? "",
+      payment_form: inv['payment_form'] ?? "",
+      payment_method: inv['payment_method'] ?? "",
+      currency: inv['currency'] ?? "COP",
+      cost_center: inv['cost_center'] ?? "",
+      notes: inv['notes'] ?? "",
+      subtotal: Number(inv['subtotal'] ?? 0),
+      discount: Number(inv['discount'] ?? 0),
+      iva: Number(inv['iva'] ?? 0),
+      impoconsumo: Number(inv['impoconsumo'] ?? 0),
+      total: Number(inv['total'] ?? 0),
+    });
+    const cargadas: Line[] = (borrador.lines as Record<string, any>[]).map((l) => ({
+      code: l['code'] ?? null,
+      description: l['description'] ?? "",
+      quantity: Number(l['quantity'] ?? 0),
+      unit_value: Number(l['unit_value'] ?? 0),
+      discount: Number(l['discount'] ?? 0),
+      iva: Number(l['iva'] ?? 0),
+      retention: Number(l['retention'] ?? 0),
+      impoconsumo: Number(l['impoconsumo'] ?? 0),
+      total: Number(l['total'] ?? 0),
+      account_code: l['account_code'] ?? "",
+      account_name: l['account_name'] ?? "",
+      item_type: l['item_type'] ?? "gasto",
+    }));
+    setLines(cargadas);
+    // Reconstruye la tarifa elegida por renglón a partir de los valores guardados.
+    const impuestosGuardados = config.taxes ?? [];
+    const seleccion: Record<number, { iva?: string | undefined; ret?: string | undefined }> = {};
+    cargadas.forEach((l, i) => {
+      const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+      const ivaTax = Number(l.iva || 0)
+        ? impuestosGuardados.find(
+            (t) =>
+              (String(t.kind) === "iva" || String(t.kind) === "impoconsumo") &&
+              Math.abs(Math.round((base * Number(t.rate)) / 100) - Number(l.iva)) <= 1,
+          )
+        : undefined;
+      const retTax = Number(l.retention || 0)
+        ? impuestosGuardados.find((t) => {
+            if (!String(t.kind).startsWith("rete")) return false;
+            const b = String(t.kind) === "reteiva" ? Number(l.iva || 0) : base;
+            return Math.abs(Math.round((b * Number(t.rate)) / 100) - Number(l.retention)) <= 1;
+          })
+        : undefined;
+      if (ivaTax || retTax)
+        seleccion[i] = { iva: ivaTax ? String(ivaTax.id) : undefined, ret: retTax ? String(retTax.id) : undefined };
+    });
+    setLineTax(seleccion);
+  }, [borrador, config, editingId]);
 
   /** Cuenta del producto; si es inválida o vacía se usa la de su categoría. Solo cuentas existentes en el PUC. */
   const cuentaDeProducto = useCallback(
@@ -331,10 +421,7 @@ function Causar() {
       }
 
       const total = baseGravable + ivaTotal + Number(header.impoconsumo || 0);
-      const { data: inv, error } = await supabase
-        .from("invoices")
-        .insert({
-          company_id: companyId,
+      const payload = {
           prefix: header.prefix,
           number: header.number,
           issue_date: header.issue_date || null,
@@ -361,12 +448,33 @@ function Causar() {
           total,
           status,
           dian_status: header.cufe ? "con CUFE" : "sin CUFE",
-          file_path: filePath,
-          file_name: file?.name ?? null,
-        })
-        .select()
-        .single();
-      if (error) throw error;
+        file_path: filePath ?? existingFile.path,
+        file_name: file?.name ?? existingFile.name,
+      };
+
+      let inv: { id: string };
+      if (editingId) {
+        const { data, error } = await supabase
+          .from("invoices")
+          .update(payload)
+          .eq("id", editingId)
+          .select("id")
+          .single();
+        if (error) throw error;
+        inv = data as { id: string };
+        await Promise.all([
+          supabase.from("invoice_lines").delete().eq("invoice_id", editingId),
+          supabase.from("journal_lines").delete().eq("invoice_id", editingId),
+        ]);
+      } else {
+        const { data, error } = await supabase
+          .from("invoices")
+          .insert({ company_id: companyId, ...payload })
+          .select("id")
+          .single();
+        if (error) throw error;
+        inv = data as { id: string };
+      }
 
       await Promise.all([
         supabase.from("invoice_lines").insert(
@@ -437,8 +545,12 @@ function Causar() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Causar factura</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Carga la factura (PDF, XML DIAN, JPG o PNG) y la IA propone el comprobante.</p>
+        <h1 className="text-xl font-semibold">{editingId ? "Editar borrador" : "Causar factura"}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {editingId
+            ? "Ajusta cualquier dato del comprobante. Al guardar se actualiza este mismo borrador."
+            : "Carga la factura (PDF, XML DIAN, JPG o PNG) y la IA propone el comprobante."}
+        </p>
       </div>
 
       <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-5">

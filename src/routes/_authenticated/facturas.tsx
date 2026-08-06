@@ -1,8 +1,8 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, Download, FileSpreadsheet, FileText, Send, Trash2 } from "lucide-react";
+import { CheckCircle2, Download, FileSpreadsheet, FileText, Pencil, Send, Trash2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
@@ -65,6 +65,7 @@ const SIIGO_CLASS: Record<string, string> = {
 
 function Facturas() {
   const companyId = useActiveCompany();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: companies, isLoading: loadingCompanies } = useCompanies();
   const [q, setQ] = useState("");
@@ -102,6 +103,11 @@ function Facturas() {
       return data as JournalLine[];
     },
   });
+
+  const abrir = (r: Inv) => {
+    if (r.status !== "aprobado") navigate({ to: "/causar", search: { id: r.id } });
+    else setDetalle(r);
+  };
 
   async function exportar(inv: Inv, kind: "xlsx" | "csv" | "txt") {
     const { data, error } = await supabase
@@ -187,10 +193,10 @@ function Facturas() {
           <tbody className="divide-y divide-border">
             {rows.map((r) => (
               <tr key={r.id} className="hover:bg-muted/30">
-                <td className="cursor-pointer px-4 py-2 font-mono text-xs" onClick={() => setDetalle(r)}>
+                <td className="cursor-pointer px-4 py-2 font-mono text-xs" onClick={() => abrir(r)}>
                   {[r.prefix, r.number].filter(Boolean).join("-") || "—"}
                 </td>
-                <td className="cursor-pointer px-4 py-2" onClick={() => setDetalle(r)}>
+                <td className="cursor-pointer px-4 py-2" onClick={() => abrir(r)}>
                   {r.provider_name ?? "—"}
                 </td>
                 <td className="px-4 py-2 text-muted-foreground">{fecha(r.issue_date)}</td>
@@ -216,6 +222,13 @@ function Facturas() {
                   )}
                 </td>
                 <td className="whitespace-nowrap px-4 py-2 text-right">
+                  {r.status !== "aprobado" && (
+                    <Button asChild variant="ghost" size="icon" title="Editar borrador">
+                      <Link to="/causar" search={{ id: r.id }}>
+                        <Pencil className="size-4" />
+                      </Link>
+                    </Button>
+                  )}
                   {r.status === "aprobado" && r.siigo_status !== "sincronizada" && (
                     <Button asChild variant="ghost" size="icon" title="Causar en Siigo">
                       <Link to="/revisar" search={{ id: r.id }}>

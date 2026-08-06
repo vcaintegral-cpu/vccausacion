@@ -701,7 +701,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       console.error("[siigo][causacion] error:", message);
       await supabase
         .from("invoices")
-        .update({ siigo_status: "error", siigo_error: message, siigo_synced_by: context.userId })
+        // Si Siigo falla, el comprobante vuelve a Borrador para corregirlo y reenviarlo.
+        .update({ siigo_status: "error", siigo_error: message, siigo_synced_by: context.userId, status: "borrador" })
         .eq("id", data.invoiceId);
       return { ok: false, siigoId: null, siigoNumber: null, documentUrl: null, syncedAt: null, status: "error", error: message };
     }
