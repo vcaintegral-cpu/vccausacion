@@ -1,7 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, type ReactNode } from "react";
-import { Building2, FileUp, LayoutDashboard, ListChecks, LogOut, Plug, Settings2 } from "lucide-react";
+import { Brain, Building2, FileUp, LayoutDashboard, ListChecks, LogOut, Plug, Settings2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { setActiveCompany, useActiveCompany } from "@/lib/active-company";
@@ -12,6 +12,7 @@ const NAV = [
   { to: "/panel", label: "Panel", icon: LayoutDashboard },
   { to: "/causar", label: "Causar factura", icon: FileUp },
   { to: "/facturas", label: "Historial", icon: ListChecks },
+  { to: "/aprendizaje", label: "Aprendizaje contable", icon: Brain },
   { to: "/integraciones", label: "Integraciones", icon: Plug },
   { to: "/admin", label: "Administración", icon: Settings2 },
   { to: "/empresas", label: "Empresas", icon: Building2 },
