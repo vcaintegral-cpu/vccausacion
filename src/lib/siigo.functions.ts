@@ -445,15 +445,21 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           return account.code.startsWith("2205") && name.includes("proveedor");
         })?.code ?? (companyAccounts ?? []).find((account) => account.code.startsWith("220505"))?.code ?? null;
       }
-      return baseCode;
+      // Siigo solo acepta cuentas de movimiento (auxiliares). Si la cuenta del
+      // asiento es de nivel superior, se usa la auxiliar más corta que dependa de ella.
+      const hijas = (companyAccounts ?? [])
+        .filter((account) => account.code.startsWith(baseCode) && account.code.length > baseCode.length)
+        .sort((a, b) => a.code.length - b.code.length || a.code.localeCompare(b.code));
+      if (hijas.length > 0) return hijas[0]!.code;
+      return null;
     };
 
     const resolvedJournal = journal.map((line) => {
       const resolvedCode = findEquivalent(line.account_code);
       if (!resolvedCode) {
         throw new Error(
-          `La cuenta base ${line.account_code} no existe en Siigo y no se encontró una equivalente en el PUC importado. ` +
-            "Importa el PUC desde Integraciones o configura la cuenta del proveedor antes de volver a causar.",
+          `La cuenta ${line.account_code} no es una cuenta de movimiento en Siigo y no se encontró una auxiliar equivalente en el PUC importado. ` +
+            "Cambia la cuenta del renglón por una auxiliar (por ejemplo 51959501) o importa el PUC desde Integraciones antes de volver a causar.",
         );
       }
       return { ...line, account_code: resolvedCode };
@@ -521,7 +527,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
       return { ok: true, siigoId, siigoNumber, documentUrl, syncedAt, status: "sincronizada", error: null };
     } catch (e) {
-      const message = e instanceof Error ? e.message : JSON.stringify(e);
+      const raw = e instanceof Error ? e.message : JSON.stringify(e);
+      const cuenta = /"?code"?:\s*"?(\d{4,10})/.exec(raw)?.[1] ?? /(\d{6,10}) cannot be used/.exec(raw)?.[1];
+      const message = raw.includes("account_not_allowed")
+        ? `Siigo no permite registrar movimientos en la cuenta ${cuenta ?? "seleccionada"} (no es cuenta auxiliar de movimiento). ` +
+          "Cambia la cuenta del renglón por una auxiliar del PUC de Siigo y vuelve a causar."
+        : raw;
       console.error("[siigo][causacion] error:", message);
       await supabase
         .from("invoices")
