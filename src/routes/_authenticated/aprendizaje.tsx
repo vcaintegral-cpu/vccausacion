@@ -315,12 +315,3 @@ function Campo({ label, children, full }: { label: string; children: React.React
     </div>
   );
 }
-import { createFileRoute } from '@tanstack/react-router'
-
-export const Route = createFileRoute('/_authenticated/aprendizaje')({
-  component: RouteComponent,
-})
-
-function RouteComponent() {
-  return <div>Hello "/_authenticated/aprendizaje"!</div>
-}
