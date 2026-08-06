@@ -8,7 +8,8 @@ const MAX_RENDER_WIDTH = 1800;
 
 export async function pdfToImages(file: File): Promise<string[]> {
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const pdf = await getDocument({ data: bytes }).promise;
+  const loadingTask = getDocument({ data: bytes });
+  const pdf = await loadingTask.promise;
   const pageCount = Math.min(pdf.numPages, MAX_PAGES);
   const images: string[] = [];
 
@@ -28,7 +29,7 @@ export async function pdfToImages(file: File): Promise<string[]> {
     page.cleanup();
   }
 
-  await pdf.destroy();
+  await loadingTask.destroy();
   if (images.length === 0) throw new Error("El PDF no contiene páginas legibles.");
   return images;
 }
