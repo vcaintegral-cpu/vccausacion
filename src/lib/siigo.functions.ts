@@ -532,12 +532,15 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           : 0;
         const tax =
           taxes.find((candidate) =>
-            [candidate.account, candidate.accounting_account, candidate.account_code]
-              .map((value) => readCode(value as SiigoTax["account"]))
-              .includes(ivaAccount),
+            Number(candidate.percentage ?? 0) === invoiceRate && /compra.*costo|costo.*compra/i.test(candidate.name ?? ""),
           ) ??
           taxes.find((candidate) =>
             Number(candidate.percentage ?? 0) === invoiceRate && /costo|compra/i.test(candidate.name ?? ""),
+          ) ??
+          taxes.find((candidate) =>
+            [candidate.account, candidate.accounting_account, candidate.account_code]
+              .map((value) => readCode(value as SiigoTax["account"]))
+              .includes(ivaAccount),
           ) ??
           taxes.find((candidate) => Number(candidate.percentage ?? 0) === invoiceRate);
         if (!tax?.id) {
