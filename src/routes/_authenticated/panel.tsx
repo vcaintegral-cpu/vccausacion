@@ -75,11 +75,16 @@ function Panel() {
             Resumen de causación de la empresa activa. {borradores > 0 ? `${borradores} comprobante(s) en borrador.` : "Sin borradores pendientes."}
           </p>
         </div>
-        <Button asChild>
-          <Link to="/causar">
-            <FileUp className="size-4" /> Causar factura
-          </Link>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={signOut}>
+            <LogOut className="size-4" /> Cerrar sesión
+          </Button>
+          <Button asChild>
+            <Link to="/causar">
+              <FileUp className="size-4" /> Causar factura
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
