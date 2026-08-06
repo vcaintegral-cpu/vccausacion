@@ -90,8 +90,20 @@ export function PucPanel({ companyId }: { companyId: string }) {
       const parsed = sheet
         .map((r) => ({
           company_id: companyId,
-          code: pick(r, "codigo", "cuenta", "codigo cuenta", "code").replace(/\s+/g, ""),
-          name: pick(r, "nombre", "descripcion", "nombre cuenta", "name") || "Sin nombre",
+          code: pick(r, "codigo cuenta", "codigo", "cuenta", "code", "cuenta contable").replace(/\s+/g, ""),
+          name:
+            pick(
+              r,
+              "nombre cuenta",
+              "nombre de la cuenta",
+              "nombre",
+              "descripcion cuenta",
+              "descripcion",
+              "detalle",
+              "concepto",
+              "name",
+              "description",
+            ) || "Sin nombre",
           nature: /cr/i.test(pick(r, "naturaleza", "movimiento", "nature")) ? "credito" : "debito",
           active: true,
           source: "excel" satisfies Source,
@@ -110,7 +122,11 @@ export function PucPanel({ companyId }: { companyId: string }) {
           .upsert(unicas.slice(i, i + 500), { onConflict: "company_id,code", ignoreDuplicates: false });
         if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}${error.hint ? ` (${error.hint})` : ""}`);
       }
-      toast.success(`PUC reemplazado: ${unicas.length} cuenta(s) cargadas desde Excel.`);
+      const sinNombre = unicas.filter((r) => r.name === "Sin nombre").length;
+      toast.success(
+        `PUC reemplazado: ${unicas.length} cuenta(s) cargadas desde Excel.` +
+          (sinNombre ? ` ${sinNombre} sin nombre detectado (revisa el encabezado de la columna de nombre).` : ""),
+      );
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
