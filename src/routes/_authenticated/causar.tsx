@@ -231,6 +231,44 @@ function Causar() {
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
+  async function seleccionarMasivo(selected: FileList | null) {
+    setBulkResults([]);
+    if (!selected || selected.length === 0) { setBulkFiles([]); return; }
+    try {
+      const expanded = await expandInvoiceFiles(Array.from(selected));
+      setBulkFiles(expanded);
+      if (expanded.length === 0) toast.error("El archivo no contiene facturas PDF, XML, JPG o PNG.");
+    } catch {
+      toast.error("No fue posible abrir el archivo comprimido.");
+      setBulkFiles([]);
+    }
+  }
+
+  async function procesarMasivo() {
+    if (!companyId || bulkFiles.length === 0 || !config) return;
+    setBulkRunning(true);
+    setBulkResults([]);
+    let ok = 0;
+    for (const f of bulkFiles) {
+      try {
+        const r = await processInvoiceFile({ file: f, companyId, config: config as never, extract: extract as never });
+        ok += 1;
+        setBulkResults((p) => [...p, { name: f.name, ok: true, detail: `${r.numero} · ${cop(r.total)}` }]);
+      } catch (err) {
+        setBulkResults((p) => [
+          ...p,
+          { name: f.name, ok: false, detail: err instanceof Error ? err.message : "Error al procesar" },
+        ]);
+      }
+    }
+    setBulkRunning(false);
+    toast.success(`${ok} de ${bulkFiles.length} facturas causadas como borrador.`);
+  }
+
+  function setLineUnused(i: number, patch: Partial<Line>) {
+    setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  }
+
   /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y cuenta contable. */
   function elegirProducto(i: number, p: ProductOption) {
     const cuenta = cuentaDeProducto(p);
