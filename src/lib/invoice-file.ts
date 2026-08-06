@@ -7,7 +7,17 @@ export type PreparedInvoiceFile = {
 const MAX_PDF_PAGES = 8;
 const MAX_RENDER_WIDTH = 1800;
 
-export async function prepareInvoiceFile(file: File): Promise<PreparedInvoiceFile> {
+export class InvoicePdfPasswordError extends Error {
+  readonly incorrect: boolean;
+
+  constructor(incorrect = false) {
+    super(incorrect ? "La contraseña del PDF es incorrecta." : "Este PDF está protegido con contraseña.");
+    this.name = "InvoicePdfPasswordError";
+    this.incorrect = incorrect;
+  }
+}
+
+export async function prepareInvoiceFile(file: File, password?: string): Promise<PreparedInvoiceFile> {
   const extension = file.name.toLowerCase().split(".").pop() ?? "";
   const isXml = file.type.includes("xml") || extension === "xml";
   if (isXml) return { text: await file.text() };
@@ -24,8 +34,17 @@ export async function prepareInvoiceFile(file: File): Promise<PreparedInvoiceFil
     throw new Error("El archivo seleccionado no contiene un PDF válido.");
   }
 
-  const loadingTask = pdfjs.getDocument({ data: bytes });
-  const pdf = await loadingTask.promise;
+  const loadingTask = pdfjs.getDocument({ data: bytes, ...(password ? { password } : {}) });
+  let pdf;
+  try {
+    pdf = await loadingTask.promise;
+  } catch (error) {
+    await loadingTask.destroy();
+    const detail = error as { name?: string; code?: number; message?: string };
+    const isPasswordError = detail.name === "PasswordException" || /password/i.test(detail.message ?? "");
+    if (isPasswordError) throw new InvoicePdfPasswordError(detail.code === 2);
+    throw error;
+  }
   const pageCount = Math.min(pdf.numPages, MAX_PDF_PAGES);
   const images: Array<{ dataUrl: string; mimeType: string }> = [];
 
