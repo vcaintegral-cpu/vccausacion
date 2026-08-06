@@ -159,6 +159,7 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
       code,
       name: v.name,
       nature: v.nature,
+      source: "siigo",
     }));
     console.log("[siigo][puc] registros válidos para insertar:", rows.length);
     if (rows.length === 0) {
