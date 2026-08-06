@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { FileUp, Loader2, Save, Sparkles, Trash2 } from "lucide-react";
 
@@ -104,6 +104,31 @@ function Causar() {
     () => lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0), 0),
     [lines],
   );
+
+  /** Cuenta del producto; si es inválida o vacía se usa la de su categoría. Solo cuentas existentes en el PUC. */
+  const cuentaDeProducto = useCallback(
+    (p: { kind?: string | null; category?: string | null; account_code?: string | null; account_name?: string | null }) => {
+      const n = (s?: string | null) =>
+        (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+      const puc = config?.accounts ?? [];
+      const valida = (code?: string | null) => {
+        const c = (code ?? "").replace(/\s+/g, "");
+        if (!c) return null;
+        return puc.find((a) => a.code === c) ?? (puc.length === 0 ? { code: c, name: "" } : null);
+      };
+      const propia = valida(p.account_code);
+      if (propia) return { code: propia.code, name: p.account_name || propia.name || "" };
+      const cats = config?.categories ?? [];
+      const cat =
+        cats.find((c) => p.category && n(c.name) === n(p.category) && n(c.kind) === n(p.kind)) ??
+        cats.find((c) => p.category && n(c.name) === n(p.category)) ??
+        cats.find((c) => !p.category && n(c.kind) === n(p.kind) && !!c.account_code);
+      const deCat = valida(cat?.account_code);
+      if (deCat) return { code: deCat.code, name: cat?.account_name || deCat.name || "" };
+      return null;
+    },
+    [config?.accounts, config?.categories],
+  );
   // Si la factura trae IVA en los renglones, ese es el IVA que se causa; si no, el del encabezado.
   const ivaLineas = useMemo(() => lines.reduce((s, l) => s + Number(l.iva || 0), 0), [lines]);
   const ivaTotal = ivaLineas > 0 ? ivaLineas : Number(header.iva || 0);
@@ -172,13 +197,11 @@ function Causar() {
           catalogo.find((p) => base.code && norm(p.code) === norm(String(base.code))) ??
           catalogo.find((p) => norm(p.name) === norm(base.description ?? ""));
         if (!prod) return base;
-        const cat = (config?.categories ?? []).find(
-          (c) => prod.category && norm(c.name) === norm(prod.category) && c.kind === prod.kind,
-        ) ?? (config?.categories ?? []).find((c) => prod.category && norm(c.name) === norm(prod.category));
+        const cuenta = cuentaDeProducto(prod);
         return {
           ...base,
-          account_code: base.account_code || prod.account_code || cat?.account_code || "",
-          account_name: base.account_name || prod.account_name || cat?.account_name || "",
+          account_code: base.account_code || cuenta?.code || "",
+          account_name: base.account_name || cuenta?.name || "",
           item_type: prod.kind ?? base.item_type,
         };
       });
@@ -205,16 +228,14 @@ function Causar() {
 
   /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y cuenta contable. */
   function elegirProducto(i: number, p: ProductOption) {
-    const n = (s: string) => (s ?? "").toLowerCase().trim();
-    const cat =
-      (config?.categories ?? []).find((c) => p.category && n(c.name) === n(p.category) && c.kind === p.kind) ??
-      (config?.categories ?? []).find((c) => p.category && n(c.name) === n(p.category));
+    const cuenta = cuentaDeProducto(p);
+    if (!cuenta) toast.warning("El producto no tiene una cuenta contable válida ni en su categoría. Selecciónala manualmente.");
     setLine(i, {
       code: p.code,
       description: p.name,
       item_type: p.kind,
-      account_code: p.account_code || cat?.account_code || "",
-      account_name: p.account_name || cat?.account_name || "",
+      account_code: cuenta?.code ?? "",
+      account_name: cuenta?.name ?? "",
     });
   }
 
@@ -496,7 +517,9 @@ function Causar() {
                     <div className="space-y-1">
                       {(l.item_type === "producto" || l.item_type === "servicio") && (
                         <ProductCombobox
-                          products={(config?.products ?? []) as ProductOption[]}
+                          products={((config?.products ?? []) as ProductOption[]).filter(
+                            (p) => !!(p.code ?? "").trim() && !!(p.name ?? "").trim(),
+                          )}
                           kind={l.item_type}
                           value={l.code ?? ""}
                           onSelect={(p) => elegirProducto(i, p)}
