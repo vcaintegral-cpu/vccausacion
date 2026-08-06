@@ -9,8 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
-import { applyRulesToLines, buildJournal, computeRetenciones, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
-import { Checkbox } from "@/components/ui/checkbox";
+import { applyRulesToLines, buildJournal, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { Button } from "@/components/ui/button";
@@ -70,7 +69,8 @@ function Causar() {
   const [header, setHeader] = useState<Header>(emptyHeader());
   const [lines, setLines] = useState<Line[]>([]);
   const [recordar, setRecordar] = useState<{ index: number; code: string; name: string | null } | null>(null);
-  const [taxesSel, setTaxesSel] = useState<Record<string, boolean>>({});
+  // Impuesto/retención elegido por renglón (índice -> ids)
+  const [lineTax, setLineTax] = useState<Record<number, { iva?: string | undefined; ret?: string | undefined }>>({});
 
   const { data: config } = useQuery({
     queryKey: ["config", companyId],
@@ -100,37 +100,32 @@ function Causar() {
   const ivaTotal = ivaLineas > 0 ? ivaLineas : Number(header.iva || 0);
   const retencionLineas = useMemo(() => lines.reduce((s, l) => s + Number(l.retention || 0), 0), [lines]);
 
-  // Solo se aplican los impuestos que el usuario seleccione.
+  // Solo se aplican los impuestos/retenciones elegidos en cada renglón.
   const impuestos = config?.taxes ?? [];
-  useEffect(() => {
-    if (impuestos.length === 0) return;
-    setTaxesSel((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      for (const t of impuestos) {
-        const key = String(t.id);
-        if (!(key in next)) { next[key] = false; changed = true; }
-      }
-      return changed ? next : prev;
-    });
-  }, [impuestos]);
+  const impuestosIva = impuestos.filter((t) => String(t.kind) === "iva" || String(t.kind) === "impoconsumo");
+  const impuestosRet = impuestos.filter((t) => String(t.kind).startsWith("rete"));
 
   const retenciones = useMemo(() => {
-    const seleccionados = impuestos.filter((t) => taxesSel[String(t.id)]);
-    const r = computeRetenciones(baseGravable, ivaTotal, seleccionados);
-    if (retencionLineas > 0) {
-      r.retefuente += retencionLineas;
+    const r = { retefuente: 0, reteiva: 0, reteica: 0, autorretencion: 0, detalle: [] as any[] };
+    lines.forEach((l, i) => {
+      const amount = Number(l.retention || 0);
+      if (!amount) return;
+      const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+      const tx = impuestosRet.find((t) => String(t.id) === lineTax[i]?.ret);
+      const kind = (String(tx?.kind ?? "retefuente") as "retefuente" | "reteiva" | "reteica");
+      const key = kind === "reteiva" ? "reteiva" : kind === "reteica" ? "reteica" : "retefuente";
+      r[key] += amount;
       r.detalle.push({
-        kind: "retefuente",
-        name: "Retención de la factura",
-        rate: 0,
-        base: baseGravable,
-        amount: retencionLineas,
-        account_code: null,
+        kind: key,
+        name: tx?.name ?? "Retención de la factura",
+        rate: Number(tx?.rate ?? 0),
+        base,
+        amount,
+        account_code: (tx as any)?.account_code ?? null,
       });
-    }
+    });
     return r;
-  }, [baseGravable, ivaTotal, impuestos, taxesSel, retencionLineas]);
+  }, [lines, impuestosRet, lineTax]);
   const journal = useMemo(
     () =>
       buildJournal({
@@ -483,11 +478,62 @@ function Causar() {
                       ))}
                     </select>
                   </td>
-                  <td className="px-3 py-1.5 w-28">
-                    <Input type="number" value={l.iva} onChange={(e) => setLine(i, { iva: Number(e.target.value) })} />
+                  <td className="px-3 py-1.5 w-56">
+                    <div className="flex items-center gap-1">
+                      <Input
+                        className="w-24"
+                        type="number"
+                        value={l.iva}
+                        onChange={(e) => setLine(i, { iva: Number(e.target.value) })}
+                      />
+                      <select
+                        className="h-9 w-28 rounded-md border border-input bg-background px-1 text-xs"
+                        value={lineTax[i]?.iva ?? ""}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          setLineTax((p) => ({ ...p, [i]: { ...p[i], iva: id || undefined } }));
+                          const tx = impuestosIva.find((t) => String(t.id) === id);
+                          const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+                          setLine(i, { iva: tx ? Math.round((base * Number(tx.rate)) / 100) : 0 });
+                        }}
+                      >
+                        <option value="">Sin impuesto</option>
+                        {impuestosIva.map((t) => (
+                          <option key={String(t.id)} value={String(t.id)}>
+                            {t.name} {Number(t.rate)}%
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </td>
-                  <td className="px-3 py-1.5 w-28">
-                    <Input type="number" value={l.retention} onChange={(e) => setLine(i, { retention: Number(e.target.value) })} />
+                  <td className="px-3 py-1.5 w-56">
+                    <div className="flex items-center gap-1">
+                      <Input
+                        className="w-24"
+                        type="number"
+                        value={l.retention}
+                        onChange={(e) => setLine(i, { retention: Number(e.target.value) })}
+                      />
+                      <select
+                        className="h-9 w-28 rounded-md border border-input bg-background px-1 text-xs"
+                        value={lineTax[i]?.ret ?? ""}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          setLineTax((p) => ({ ...p, [i]: { ...p[i], ret: id || undefined } }));
+                          const tx = impuestosRet.find((t) => String(t.id) === id);
+                          const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+                          const baseRet = String(tx?.kind) === "reteiva" ? Number(l.iva || 0) : base;
+                          setLine(i, { retention: tx ? Math.round((baseRet * Number(tx.rate)) / 100) : 0 });
+                        }}
+                      >
+                        <option value="">Sin retención</option>
+                        {impuestosRet.map((t) => (
+                          <option key={String(t.id)} value={String(t.id)}>
+                            {t.name} {Number(t.rate)}%
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">
                     {cop(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0))}
@@ -507,24 +553,10 @@ function Causar() {
       {lines.length > 0 && (
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-lg border border-border bg-card p-5">
-            <h2 className="text-sm font-semibold">Impuestos y retenciones</h2>
+            <h2 className="text-sm font-semibold">Resumen de impuestos</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Marca solo los impuestos que apliquen a esta factura; únicamente esos entran al comprobante.
+              Los impuestos y retenciones se eligen en cada renglón, junto al valor.
             </p>
-            <div className="mt-3 space-y-2">
-              {impuestos.length === 0 && <p className="text-xs text-muted-foreground">No hay impuestos configurados en esta empresa.</p>}
-              {impuestos.map((tx) => (
-                <label key={String(tx.id)} className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={!!taxesSel[String(tx.id)]}
-                    onCheckedChange={(v) => setTaxesSel((p) => ({ ...p, [String(tx.id)]: v === true }))}
-                  />
-                  <span>
-                    {tx.name} <span className="text-muted-foreground">({tx.kind} · {Number(tx.rate)}%)</span>
-                  </span>
-                </label>
-              ))}
-            </div>
             <dl className="mt-3 space-y-1.5 text-sm">
               <Row k="Base gravable" v={cop(baseGravable)} />
               <Row k="IVA" v={cop(ivaTotal)} />
