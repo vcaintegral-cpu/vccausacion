@@ -281,3 +281,125 @@ export function buildSiigoJournalPayload(params: {
     }),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Factura de compra (FC): POST /v1/purchases
+// Las compras se registran como Factura de Compra, no como comprobante contable.
+// ---------------------------------------------------------------------------
+
+export type SiigoPurchaseItem = {
+  /** Cuenta contable seleccionada por la IA / el usuario. */
+  account_code: string;
+  description: string;
+  quantity: number;
+  price: number;
+  discount?: number;
+  tax_ids?: Array<number | string>;
+};
+
+/** Tipo de documento de Factura de Compra (FC) configurado en Siigo. */
+export async function siigoPurchaseDocumentId(): Promise<number> {
+  const forced = (process.env["SIIGO_PURCHASE_DOCUMENT_ID"] ?? "").trim();
+  if (forced && /^\d+$/.test(forced)) return Number(forced);
+
+  type DocType = { id?: number; code?: string; name?: string; type?: string; active?: boolean };
+  const errors: string[] = [];
+  for (const path of ["/v1/document-types?type=FC", "/v1/document-types"]) {
+    try {
+      const res = await siigoGet<DocType[] | { results?: DocType[] }>(path);
+      const list: DocType[] = Array.isArray(res) ? res : (res?.results ?? []);
+      const fc = list.filter((t) => String(t.type ?? "").toUpperCase() === "FC" || !t.type);
+      const pick = fc.find((t) => t.active !== false && t.id) ?? fc.find((t) => t.id);
+      if (pick?.id) return pick.id;
+      errors.push(`${path}: sin tipos de factura de compra (${JSON.stringify(list).slice(0, 400)})`);
+    } catch (e) {
+      errors.push(`${path}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  throw new SiigoError({
+    status: 0,
+    url: "/v1/document-types?type=FC",
+    body: errors.join(" | "),
+    message:
+      "No fue posible obtener el tipo de documento de Factura de Compra (FC) en Siigo. " +
+      "Verifica que la empresa tenga un tipo FC activo o configura SIIGO_PURCHASE_DOCUMENT_ID. Detalle: " +
+      errors.join(" | "),
+  });
+}
+
+/** Forma de pago de compras: intenta coincidir con la forma de pago de la factura. */
+export async function siigoPurchasePaymentTypeId(preferido?: string | null): Promise<number | null> {
+  const forced = (process.env["SIIGO_PURCHASE_PAYMENT_ID"] ?? "").trim();
+  if (forced && /^\d+$/.test(forced)) return Number(forced);
+
+  type PayType = { id?: number; name?: string; active?: boolean; type?: string };
+  try {
+    const res = await siigoGet<PayType[] | { results?: PayType[] }>("/v1/payment-types?document_type=FC");
+    const list = (Array.isArray(res) ? res : (res?.results ?? [])).filter((p) => p.id && p.active !== false);
+    if (list.length === 0) return null;
+    const clave = (preferido ?? "").toLowerCase();
+    const esCredito = clave.includes("cr");
+    const match =
+      (clave &&
+        list.find((p) => (p.name ?? "").toLowerCase().includes(clave.slice(0, 6)))) ??
+      (esCredito ? list.find((p) => /cr[eé]dito/i.test(p.name ?? "")) : list.find((p) => /contado|efectivo/i.test(p.name ?? "")));
+    return (match ?? list[0])!.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function buildSiigoPurchasePayload(params: {
+  documentId: number;
+  date: string;
+  providerNit: string;
+  providerBranch?: number;
+  invoicePrefix: string | null;
+  invoiceNumber: string | null;
+  observations: string | null;
+  costCenter?: string | null;
+  items: SiigoPurchaseItem[];
+  paymentId: number | null;
+  paymentValue: number;
+  paymentDueDate: string | null;
+  /** Retenciones aplicadas al documento (ids de Siigo). */
+  retentionIds?: Array<number | string>;
+}) {
+  const payload: Record<string, unknown> = {
+    document: { id: params.documentId },
+    date: params.date,
+    supplier: { identification: params.providerNit, branch_office: params.providerBranch ?? 0 },
+    provider_invoice: {
+      prefix: (params.invoicePrefix ?? "").toString().trim() || "FC",
+      number: String(params.invoiceNumber ?? "").replace(/\D/g, "") || "1",
+    },
+    discount_type: "Value",
+    supplier_by_item: false,
+    tax_included: false,
+    observations: (params.observations ?? "").slice(0, 500),
+    items: params.items.map((item) => {
+      const line: Record<string, unknown> = {
+        type: "Account",
+        code: item.account_code,
+        description: (item.description || `Cuenta ${item.account_code}`).slice(0, 500),
+        quantity: item.quantity > 0 ? item.quantity : 1,
+        price: item.price,
+      };
+      if (item.discount && item.discount > 0) line["discount"] = item.discount;
+      if (item.tax_ids && item.tax_ids.length > 0) line["taxes"] = item.tax_ids.map((id) => ({ id }));
+      return line;
+    }),
+    payments: [
+      {
+        ...(params.paymentId != null ? { id: params.paymentId } : {}),
+        value: Math.round(params.paymentValue * 100) / 100,
+        due_date: params.paymentDueDate ?? params.date,
+      },
+    ],
+  };
+  if (params.costCenter && /^\d+$/.test(params.costCenter)) payload["cost_center"] = Number(params.costCenter);
+  if (params.retentionIds && params.retentionIds.length > 0) {
+    payload["retentions"] = params.retentionIds.map((id) => ({ id }));
+  }
+  return payload;
+}
