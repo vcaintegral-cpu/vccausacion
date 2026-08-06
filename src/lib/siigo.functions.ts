@@ -405,7 +405,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
-      .select("id, company_id, prefix, number, issue_date, provider_nit, provider_name, notes, total")
+      .select("id, company_id, prefix, number, issue_date, provider_nit, provider_name, notes, total, iva")
       .eq("id", data.invoiceId)
       .single();
     if (invErr || !inv) throw new Error(invErr?.message ?? "Factura no encontrada.");
