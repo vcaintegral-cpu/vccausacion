@@ -1,9 +1,9 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { FileUp, ListChecks, Receipt, TrendingUp, Wallet } from "lucide-react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { FileUp, ListChecks, LogOut, Receipt, TrendingUp, Wallet } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
-import { useActiveCompany } from "@/lib/active-company";
+import { setActiveCompany, useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { cop, fecha } from "@/lib/format";
 import { Button } from "@/components/ui/button";
