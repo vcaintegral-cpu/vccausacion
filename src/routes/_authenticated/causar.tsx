@@ -70,7 +70,8 @@ function Causar() {
   const [header, setHeader] = useState<Header>(emptyHeader());
   const [lines, setLines] = useState<Line[]>([]);
   const [recordar, setRecordar] = useState<{ index: number; code: string; name: string | null } | null>(null);
-  const [taxesSel, setTaxesSel] = useState<Record<string, boolean>>({});
+  // Impuesto/retención elegido por renglón (índice -> ids)
+  const [lineTax, setLineTax] = useState<Record<number, { iva?: string; ret?: string }>>({});
 
   const { data: config } = useQuery({
     queryKey: ["config", companyId],
@@ -100,37 +101,32 @@ function Causar() {
   const ivaTotal = ivaLineas > 0 ? ivaLineas : Number(header.iva || 0);
   const retencionLineas = useMemo(() => lines.reduce((s, l) => s + Number(l.retention || 0), 0), [lines]);
 
-  // Solo se aplican los impuestos que el usuario seleccione.
+  // Solo se aplican los impuestos/retenciones elegidos en cada renglón.
   const impuestos = config?.taxes ?? [];
-  useEffect(() => {
-    if (impuestos.length === 0) return;
-    setTaxesSel((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      for (const t of impuestos) {
-        const key = String(t.id);
-        if (!(key in next)) { next[key] = false; changed = true; }
-      }
-      return changed ? next : prev;
-    });
-  }, [impuestos]);
+  const impuestosIva = impuestos.filter((t) => String(t.kind) === "iva" || String(t.kind) === "impoconsumo");
+  const impuestosRet = impuestos.filter((t) => String(t.kind).startsWith("rete"));
 
   const retenciones = useMemo(() => {
-    const seleccionados = impuestos.filter((t) => taxesSel[String(t.id)]);
-    const r = computeRetenciones(baseGravable, ivaTotal, seleccionados);
-    if (retencionLineas > 0) {
-      r.retefuente += retencionLineas;
+    const r = { retefuente: 0, reteiva: 0, reteica: 0, detalle: [] as any[] };
+    lines.forEach((l, i) => {
+      const amount = Number(l.retention || 0);
+      if (!amount) return;
+      const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+      const tx = impuestosRet.find((t) => String(t.id) === lineTax[i]?.ret);
+      const kind = (String(tx?.kind ?? "retefuente") as "retefuente" | "reteiva" | "reteica");
+      const key = kind === "reteiva" ? "reteiva" : kind === "reteica" ? "reteica" : "retefuente";
+      r[key] += amount;
       r.detalle.push({
-        kind: "retefuente",
-        name: "Retención de la factura",
-        rate: 0,
-        base: baseGravable,
-        amount: retencionLineas,
-        account_code: null,
+        kind: key,
+        name: tx?.name ?? "Retención de la factura",
+        rate: Number(tx?.rate ?? 0),
+        base,
+        amount,
+        account_code: (tx as any)?.account_code ?? null,
       });
-    }
+    });
     return r;
-  }, [baseGravable, ivaTotal, impuestos, taxesSel, retencionLineas]);
+  }, [lines, impuestosRet, lineTax]);
   const journal = useMemo(
     () =>
       buildJournal({
