@@ -11,7 +11,7 @@ import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, computeRetenciones, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { cop } from "@/lib/format";
-import { prepareInvoiceFile } from "@/lib/invoice-file";
+import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -63,6 +63,9 @@ function Causar() {
   const [file, setFile] = useState<File | null>(null);
   const [reading, setReading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [pdfPassword, setPdfPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
   const [header, setHeader] = useState<Header>(emptyHeader());
   const [lines, setLines] = useState<Line[]>([]);
   const [recordar, setRecordar] = useState<{ index: number; code: string; name: string | null } | null>(null);
@@ -108,11 +111,11 @@ function Causar() {
   );
   const t = totals(journal);
 
-  async function leer() {
+  async function leer(password?: string) {
     if (!file) { toast.error("Selecciona un archivo de factura."); return; }
     setReading(true);
     try {
-      const content = await prepareInvoiceFile(file);
+      const content = await prepareInvoiceFile(file, password);
       const data = (await extract({
         data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
       })) as ExtractedInvoice;
@@ -125,8 +128,16 @@ function Causar() {
         provider = p;
       }
       setLines(applyRulesToLines(extracted.map((l) => ({ ...emptyLine(), ...l })), config?.rules ?? [], provider));
+      setPasswordOpen(false);
+      setPdfPassword("");
+      setPasswordError("");
       toast.success("Factura leída. Revisa y ajusta el comprobante.");
     } catch (err) {
+      if (err instanceof InvoicePdfPasswordError) {
+        setPasswordError(err.incorrect ? "La contraseña no es correcta. Inténtala nuevamente." : "");
+        setPasswordOpen(true);
+        return;
+      }
       toast.error(err instanceof Error ? err.message : "No fue posible leer la factura.");
     } finally {
       setReading(false);
@@ -307,10 +318,15 @@ function Causar() {
             ref={fileRef}
             type="file"
             accept=".pdf,.xml,.jpg,.jpeg,.png,application/pdf,text/xml,image/*"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => {
+              setFile(e.target.files?.[0] ?? null);
+              setPdfPassword("");
+              setPasswordError("");
+              setPasswordOpen(false);
+            }}
           />
         </div>
-        <Button onClick={leer} disabled={reading || !file}>
+        <Button onClick={() => void leer()} disabled={reading || !file}>
           {reading ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
           {reading ? "Preparando y leyendo…" : "Leer con IA"}
         </Button>
@@ -318,6 +334,39 @@ function Causar() {
           <FileUp className="size-4" /> Renglón manual
         </Button>
       </div>
+
+      <Dialog open={passwordOpen} onOpenChange={(open) => !reading && setPasswordOpen(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>PDF protegido</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="pdf-password">Contraseña del archivo</Label>
+            <Input
+              id="pdf-password"
+              type="password"
+              autoComplete="off"
+              autoFocus
+              value={pdfPassword}
+              onChange={(event) => {
+                setPdfPassword(event.target.value);
+                setPasswordError("");
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && pdfPassword && !reading) void leer(pdfPassword);
+              }}
+            />
+            {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPasswordOpen(false)} disabled={reading}>Cancelar</Button>
+            <Button onClick={() => void leer(pdfPassword)} disabled={!pdfPassword || reading}>
+              {reading && <Loader2 className="size-4 animate-spin" />}
+              Desbloquear y leer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="grid gap-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2 xl:grid-cols-4">
         {field("Prefijo", "prefix")}
