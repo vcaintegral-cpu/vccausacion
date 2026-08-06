@@ -71,7 +71,7 @@ function Causar() {
   const [lines, setLines] = useState<Line[]>([]);
   const [recordar, setRecordar] = useState<{ index: number; code: string; name: string | null } | null>(null);
   // Impuesto/retención elegido por renglón (índice -> ids)
-  const [lineTax, setLineTax] = useState<Record<number, { iva?: string; ret?: string }>>({});
+  const [lineTax, setLineTax] = useState<Record<number, { iva?: string | undefined; ret?: string | undefined }>>({});
 
   const { data: config } = useQuery({
     queryKey: ["config", companyId],
