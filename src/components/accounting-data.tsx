@@ -381,9 +381,20 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
 export function TaxesPanel({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const { data: rows } = useTable("tax_rates", companyId, "kind");
+  const { data: cuentas } = useTable("puc_accounts", companyId, "code");
   const [busy, setBusy] = useState<string | null>(null);
   const [form, setForm] = useState({ kind: "iva", name: "", rate: "", min_base: "", account_code: "" });
   const refresh = () => qc.invalidateQueries({ queryKey: ["tax_rates"] });
+
+  async function guardarCuenta(id: string, code: string) {
+    const { error } = await supabase
+      .from("tax_rates")
+      .update({ account_code: code.trim() || null })
+      .eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Cuenta contable actualizada.");
+    await refresh();
+  }
 
   async function sincronizar() {
     setBusy("siigo");
@@ -489,7 +500,13 @@ export function TaxesPanel({ companyId }: { companyId: string }) {
                 <td className="px-4 py-2">{String(r['kind'])}</td>
                 <td className="px-4 py-2">{String(r['name'])}</td>
                 <td className="px-4 py-2">{String(r['rate'])}%</td>
-                <td className="px-4 py-2">{String(r['account_code'] ?? "—")}</td>
+                <td className="px-4 py-2">
+                  <AccountCell
+                    value={(r['account_code'] as string | null) ?? ""}
+                    options={(cuentas ?? []) as { code: string; name: string }[]}
+                    onSave={(code) => guardarCuenta(String(r['id']), code)}
+                  />
+                </td>
                 <td className="px-4 py-2"><SourceTag source={r['source'] as string} /></td>
               </tr>
             ))}
