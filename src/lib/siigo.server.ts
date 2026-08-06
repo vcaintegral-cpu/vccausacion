@@ -145,6 +145,11 @@ async function siigoRequest<T>(method: "GET" | "POST", path: string, payload?: u
   try {
     const init: RequestInit = { method, headers };
     if (bodyString !== undefined) init.body = bodyString;
+    if (path === "/v1/purchases" && payload !== undefined) {
+      console.log("========== SIIGO REQUEST ==========");
+      console.log(JSON.stringify(payload, null, 2));
+      console.log("===================================");
+    }
     res = await fetch(url, init);
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
@@ -153,6 +158,11 @@ async function siigoRequest<T>(method: "GET" | "POST", path: string, payload?: u
   }
 
   const text = await res.text();
+  if (path === "/v1/purchases") {
+    console.log("STATUS:", res.status);
+    console.log("RESPONSE:");
+    console.log(text);
+  }
   console.log("[siigo] ===== RESPONSE =====");
   console.log("[siigo] URL:", url, "STATUS:", res.status, res.statusText);
   console.log("[siigo] RESPONSE HEADERS:", JSON.stringify(Object.fromEntries(res.headers.entries()), null, 2));
