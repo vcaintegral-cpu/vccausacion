@@ -246,19 +246,83 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
   })
   .handler(async ({ data, context }) => {
     const { siigoGet } = await import("./siigo.server");
-    type Tax = { id?: number | string; name?: string; type?: string; percentage?: number; active?: boolean };
+    type Tax = {
+      id?: number | string;
+      name?: string;
+      type?: string;
+      percentage?: number;
+      active?: boolean;
+      // Siigo devuelve la cuenta contable con nombres distintos según el tipo de impuesto.
+      account?: { code?: string | number; name?: string } | string | number;
+      accounting_account?: { code?: string | number; name?: string } | string | number;
+      account_code?: string | number;
+      account_id?: string | number;
+    };
     const res = await siigoGet<Tax[] | { results?: Tax[] }>("/v1/taxes");
     const list = Array.isArray(res) ? res : (res.results ?? []);
+    console.log("[siigo][taxes] respuesta cruda:", JSON.stringify(res).slice(0, 4000));
+
+    // Cuentas del PUC de la empresa, para resolver la cuenta contable por código o por nombre.
+    const { data: puc } = await context.supabase
+      .from("puc_accounts")
+      .select("code, name")
+      .eq("company_id", data.companyId);
+    const pucCodes = new Set((puc ?? []).map((a) => a.code));
+
+    const readAccount = (v: Tax["account"]): { code: string | null; name: string | null } => {
+      if (v == null) return { code: null, name: null };
+      if (typeof v === "object") {
+        return {
+          code: v.code != null ? String(v.code).trim() : null,
+          name: v.name ? String(v.name).trim() : null,
+        };
+      }
+      const s = String(v).trim();
+      return { code: /^\d+$/.test(s) ? s : null, name: /^\d+$/.test(s) ? null : s };
+    };
+
+    const resolveAccount = (t: Tax): { code: string | null; name: string | null } => {
+      for (const candidate of [t.account, t.accounting_account, t.account_code, t.account_id]) {
+        const parsed = readAccount(candidate as Tax["account"]);
+        if (parsed.code || parsed.name) {
+          // Si el código no existe en el PUC pero sí el nombre, intenta emparejar por nombre.
+          if (parsed.code && pucCodes.has(parsed.code)) return parsed;
+          if (parsed.name) {
+            const byName = (puc ?? []).find((a) => a.name.toLowerCase() === parsed.name!.toLowerCase());
+            if (byName) return { code: byName.code, name: byName.name };
+          }
+          if (parsed.code) return parsed;
+        }
+      }
+      // Último recurso: busca una cuenta del PUC cuyo nombre contenga el nombre del impuesto.
+      const nombre = String(t.name ?? "").toLowerCase().trim();
+      if (nombre) {
+        const match = (puc ?? []).find((a) => a.name.toLowerCase().includes(nombre));
+        if (match) return { code: match.code, name: match.name };
+      }
+      return { code: null, name: null };
+    };
+
     const rows = list
-      .map((t) => ({
-        company_id: data.companyId,
-        kind: String(t.type ?? "IVA").toLowerCase(),
-        name: String(t.name ?? "").trim(),
-        rate: Number(t.percentage ?? 0),
-        active: t.active !== false,
-        source: "siigo",
-      }))
+      .map((t) => {
+        const account = resolveAccount(t);
+        return {
+          company_id: data.companyId,
+          kind: String(t.type ?? "IVA").toLowerCase(),
+          name: String(t.name ?? "").trim(),
+          rate: Number(t.percentage ?? 0),
+          account_code: account.code,
+          active: t.active !== false,
+          source: "siigo",
+        };
+      })
       .filter((r) => r.name);
+    console.log(
+      "[siigo][taxes] impuestos con cuenta contable:",
+      rows.filter((r) => r.account_code).length,
+      "de",
+      rows.length,
+    );
     if (rows.length === 0) return { imported: 0, skipped: 0 };
 
     const { data: existing } = await context.supabase
