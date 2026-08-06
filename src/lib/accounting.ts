@@ -29,6 +29,8 @@ export type Line = {
   total: number;
   account_code?: string | null;
   account_name?: string | null;
+  /** producto | servicio | gasto | activo (tipo de Siigo) */
+  item_type?: string;
 };
 
 export type ProviderConfig = {
