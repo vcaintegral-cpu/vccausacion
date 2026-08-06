@@ -479,11 +479,62 @@ function Causar() {
                       ))}
                     </select>
                   </td>
-                  <td className="px-3 py-1.5 w-28">
-                    <Input type="number" value={l.iva} onChange={(e) => setLine(i, { iva: Number(e.target.value) })} />
+                  <td className="px-3 py-1.5 w-56">
+                    <div className="flex items-center gap-1">
+                      <Input
+                        className="w-24"
+                        type="number"
+                        value={l.iva}
+                        onChange={(e) => setLine(i, { iva: Number(e.target.value) })}
+                      />
+                      <select
+                        className="h-9 w-28 rounded-md border border-input bg-background px-1 text-xs"
+                        value={lineTax[i]?.iva ?? ""}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          setLineTax((p) => ({ ...p, [i]: { ...p[i], iva: id || undefined } }));
+                          const tx = impuestosIva.find((t) => String(t.id) === id);
+                          const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+                          setLine(i, { iva: tx ? Math.round((base * Number(tx.rate)) / 100) : 0 });
+                        }}
+                      >
+                        <option value="">Sin impuesto</option>
+                        {impuestosIva.map((t) => (
+                          <option key={String(t.id)} value={String(t.id)}>
+                            {t.name} {Number(t.rate)}%
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </td>
-                  <td className="px-3 py-1.5 w-28">
-                    <Input type="number" value={l.retention} onChange={(e) => setLine(i, { retention: Number(e.target.value) })} />
+                  <td className="px-3 py-1.5 w-56">
+                    <div className="flex items-center gap-1">
+                      <Input
+                        className="w-24"
+                        type="number"
+                        value={l.retention}
+                        onChange={(e) => setLine(i, { retention: Number(e.target.value) })}
+                      />
+                      <select
+                        className="h-9 w-28 rounded-md border border-input bg-background px-1 text-xs"
+                        value={lineTax[i]?.ret ?? ""}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          setLineTax((p) => ({ ...p, [i]: { ...p[i], ret: id || undefined } }));
+                          const tx = impuestosRet.find((t) => String(t.id) === id);
+                          const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+                          const baseRet = String(tx?.kind) === "reteiva" ? Number(l.iva || 0) : base;
+                          setLine(i, { retention: tx ? Math.round((baseRet * Number(tx.rate)) / 100) : 0 });
+                        }}
+                      >
+                        <option value="">Sin retención</option>
+                        {impuestosRet.map((t) => (
+                          <option key={String(t.id)} value={String(t.id)}>
+                            {t.name} {Number(t.rate)}%
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">
                     {cop(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0))}
@@ -503,24 +554,10 @@ function Causar() {
       {lines.length > 0 && (
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-lg border border-border bg-card p-5">
-            <h2 className="text-sm font-semibold">Impuestos y retenciones</h2>
+            <h2 className="text-sm font-semibold">Resumen de impuestos</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Marca solo los impuestos que apliquen a esta factura; únicamente esos entran al comprobante.
+              Los impuestos y retenciones se eligen en cada renglón, junto al valor.
             </p>
-            <div className="mt-3 space-y-2">
-              {impuestos.length === 0 && <p className="text-xs text-muted-foreground">No hay impuestos configurados en esta empresa.</p>}
-              {impuestos.map((tx) => (
-                <label key={String(tx.id)} className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={!!taxesSel[String(tx.id)]}
-                    onCheckedChange={(v) => setTaxesSel((p) => ({ ...p, [String(tx.id)]: v === true }))}
-                  />
-                  <span>
-                    {tx.name} <span className="text-muted-foreground">({tx.kind} · {Number(tx.rate)}%)</span>
-                  </span>
-                </label>
-              ))}
-            </div>
             <dl className="mt-3 space-y-1.5 text-sm">
               <Row k="Base gravable" v={cop(baseGravable)} />
               <Row k="IVA" v={cop(ivaTotal)} />
