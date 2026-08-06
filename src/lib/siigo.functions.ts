@@ -452,10 +452,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
     const findEquivalent = (baseCode: string) => {
       if (baseCode === "621008") {
-        // Cuenta específica de IVA del costo configurada por la empresa.
-        // No debe traducirse a una 2408: esas auxiliares tienen otra naturaleza
-        // fiscal y Siigo rechaza el impuesto "Compra de Costo" sobre ellas.
-        return availableCodes.has("621008") ? "621008" : null;
+        // 621008 (IVA de Costo) es transaccional en Siigo: se envía tal cual,
+        // exista o no en el PUC importado.
+        return "621008";
       }
       if (baseCode === "240801") {
         const directo = (companyAccounts ?? []).find((account) => account.code === "621008");
@@ -464,14 +463,18 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           const name = account.name.toLowerCase();
           return account.code.startsWith("2408") && name.includes("iva") && name.includes("descontable") && !name.includes("devoluci");
         })?.code;
-        return auxiliarDe(porNombre ?? "240810", ["iva", "descontable"]);
+        return auxiliarDe(porNombre ?? "240810", ["iva", "descontable"]) ?? porNombre ?? baseCode;
       }
       if (baseCode.startsWith("2205")) {
-        return auxiliarDe("220505", ["nacional", "proveedor"]) ?? auxiliarDe("2205", ["proveedor", "nacional"]);
+        return (
+          auxiliarDe("220505", ["nacional", "proveedor"]) ?? auxiliarDe("2205", ["proveedor", "nacional"]) ?? baseCode
+        );
       }
       // Siigo solo acepta cuentas de movimiento (auxiliares). Si la cuenta del
       // asiento tiene auxiliares dependientes, se baja hasta la auxiliar final.
-      return auxiliarDe(baseCode);
+      // Si el PUC importado no aporta información, se envía la cuenta tal cual
+      // y es Siigo quien valida.
+      return auxiliarDe(baseCode) ?? baseCode;
     };
 
     const resolvedJournal = journal.map((line) => {
