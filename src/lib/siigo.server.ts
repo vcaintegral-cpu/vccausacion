@@ -233,9 +233,14 @@ export function buildSiigoJournalPayload(params: {
     observations: observations ?? "",
     items: lines.map((l) => {
       const isDebit = Number(l.debit || 0) > 0;
+      // Siigo rechaza el comprobante si algún renglón va sin descripción.
+      const description =
+        [l.account_name, observations, l.account_code ? `Cuenta ${l.account_code}` : ""]
+          .map((v) => (v ?? "").toString().trim())
+          .find((v) => v.length > 0) ?? "Causación de factura de compra";
       const item: Record<string, unknown> = {
         account: { code: l.account_code, movement: isDebit ? "Debit" : "Credit" },
-        description: l.account_name ?? l.account_code,
+        description: description.slice(0, 500),
         value: Math.abs(isDebit ? Number(l.debit) : Number(l.credit)),
       };
       if (providerNit) item["customer"] = { identification: providerNit, branch_office: 0 };
