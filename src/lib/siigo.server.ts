@@ -165,3 +165,52 @@ export async function siigoGet<T>(path: string): Promise<T> {
 export async function siigoPost<T>(path: string, payload: unknown): Promise<T> {
   return siigoRequest<T>("POST", path, payload);
 }
+
+// ---------------------------------------------------------------------------
+// Causación: construcción y envío del comprobante contable a Siigo.
+// El comprobante se registra en /v1/journals usando las cuentas del asiento
+// ya generado por el motor contable de la aplicación.
+// ---------------------------------------------------------------------------
+
+export type SiigoJournalLine = {
+  account_code: string;
+  account_name: string | null;
+  debit: number;
+  credit: number;
+  cost_center: string | null;
+};
+
+export async function siigoJournalDocumentId(): Promise<number> {
+  const types = await siigoGet<{ id?: number; code?: string; name?: string; active?: boolean }[]>(
+    "/v1/document-types?type=Journal",
+  );
+  const first = (Array.isArray(types) ? types : []).find((t) => t.active !== false && t.id) ?? types?.[0];
+  if (!first?.id) throw new SiigoError({ status: 0, url: "/v1/document-types?type=Journal", body: JSON.stringify(types), message: "Siigo no devolvió tipos de comprobante contable (Journal)." });
+  return first.id;
+}
+
+export function buildSiigoJournalPayload(params: {
+  documentId: number;
+  date: string;
+  providerNit: string | null;
+  observations: string | null;
+  lines: SiigoJournalLine[];
+}) {
+  const { documentId, date, providerNit, observations, lines } = params;
+  return {
+    document: { id: documentId },
+    date,
+    observations: observations ?? "",
+    items: lines.map((l) => {
+      const isDebit = Number(l.debit || 0) > 0;
+      const item: Record<string, unknown> = {
+        account: { code: l.account_code, movement: isDebit ? "Debit" : "Credit" },
+        description: l.account_name ?? l.account_code,
+        value: Math.abs(isDebit ? Number(l.debit) : Number(l.credit)),
+      };
+      if (providerNit) item["customer"] = { identification: providerNit, branch_office: 0 };
+      if (l.cost_center && /^\d+$/.test(l.cost_center)) item["cost_center"] = Number(l.cost_center);
+      return item;
+    }),
+  };
+}
