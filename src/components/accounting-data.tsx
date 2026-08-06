@@ -1,12 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Download, Plus, RefreshCw, Upload } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
-import { useActiveCompany } from "@/lib/active-company";
-import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { siigoImportCostCenters, siigoImportPuc, siigoImportTaxes } from "@/lib/siigo.functions";
 import { downloadSheet, num, pick, readSheet } from "@/lib/spreadsheet";
 import { analyzeHistory, type HistoryAnalysis } from "@/lib/history-import";
@@ -14,24 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-export const Route = createFileRoute("/_authenticated/datos-contables")({
-  head: () => ({
-    meta: [
-      { title: "Datos contables: PUC, centros de costo e impuestos" },
-      {
-        name: "description",
-        content: "Administra el PUC, centros de costo, impuestos e historial contable por empresa: sincroniza desde Siigo, importa Excel o crea registros manualmente.",
-      },
-      { property: "og:title", content: "Datos contables" },
-      { property: "og:description", content: "PUC, centros de costo, impuestos e historial contable por empresa." },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-    ],
-  }),
-  component: DatosContables,
-});
 
 type Source = "manual" | "excel" | "siigo";
 
@@ -81,7 +61,7 @@ function useTable(table: "puc_accounts" | "cost_centers" | "tax_rates", companyI
 
 /* ------------------------------- PUC ------------------------------- */
 
-function PucPanel({ companyId }: { companyId: string }) {
+export function PucPanel({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const { data: rows } = useTable("puc_accounts", companyId, "code");
   const [busy, setBusy] = useState<string | null>(null);
@@ -262,7 +242,7 @@ function PucPanel({ companyId }: { companyId: string }) {
 
 /* --------------------------- Centros de costo --------------------------- */
 
-function CostCentersPanel({ companyId }: { companyId: string }) {
+export function CostCentersPanel({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const { data: rows } = useTable("cost_centers", companyId, "code");
   const [busy, setBusy] = useState<string | null>(null);
@@ -364,7 +344,7 @@ function CostCentersPanel({ companyId }: { companyId: string }) {
 
 /* ------------------------------ Impuestos ------------------------------ */
 
-function TaxesPanel({ companyId }: { companyId: string }) {
+export function TaxesPanel({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const { data: rows } = useTable("tax_rates", companyId, "kind");
   const [busy, setBusy] = useState<string | null>(null);
@@ -483,7 +463,7 @@ function TaxesPanel({ companyId }: { companyId: string }) {
 
 /* --------------------------- Historial contable --------------------------- */
 
-function HistoryPanel({ companyId }: { companyId: string }) {
+export function HistoryPanel({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [analysis, setAnalysis] = useState<HistoryAnalysis | null>(null);
@@ -593,39 +573,6 @@ function HistoryPanel({ companyId }: { companyId: string }) {
           </tbody>
         </table>
       </div>
-    </div>
-  );
-}
-
-function DatosContables() {
-  const companyId = useActiveCompany();
-  const { data: companies, isLoading } = useCompanies();
-
-  if (!isLoading && (companies ?? []).length === 0) return <EmptyCompany />;
-  if (!companyId) return <p className="text-sm text-muted-foreground">Selecciona una empresa activa.</p>;
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold">Datos contables</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Administra el PUC, centros de costo, impuestos e historial de la empresa activa. Lo cargado manualmente o por
-          Excel tiene prioridad sobre lo sincronizado desde Siigo.
-        </p>
-      </div>
-
-      <Tabs defaultValue="puc">
-        <TabsList>
-          <TabsTrigger value="puc">PUC</TabsTrigger>
-          <TabsTrigger value="centros">Centros de costo</TabsTrigger>
-          <TabsTrigger value="impuestos">Impuestos</TabsTrigger>
-          <TabsTrigger value="historial">Historial contable</TabsTrigger>
-        </TabsList>
-        <TabsContent value="puc" className="mt-4"><PucPanel companyId={companyId} /></TabsContent>
-        <TabsContent value="centros" className="mt-4"><CostCentersPanel companyId={companyId} /></TabsContent>
-        <TabsContent value="impuestos" className="mt-4"><TaxesPanel companyId={companyId} /></TabsContent>
-        <TabsContent value="historial" className="mt-4"><HistoryPanel companyId={companyId} /></TabsContent>
-      </Tabs>
     </div>
   );
 }
