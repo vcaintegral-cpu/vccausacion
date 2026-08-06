@@ -60,45 +60,75 @@ export const extractInvoice = createServerFn({ method: "POST" })
     if (!apiKey) throw new Error("Falta la configuración de IA (LOVABLE_API_KEY)");
 
     const content: unknown[] = [
-      { type: "text", text: `Extrae la información contable de esta factura de compra (archivo: ${data.fileName}).` },
+      {
+        type: "input_text",
+        text: `Extrae la información contable de esta factura de compra (archivo: ${data.fileName}). Responde solo con un objeto JSON válido.`,
+      },
     ];
 
     if (data.text) {
-      content.push({ type: "text", text: `Contenido XML/texto de la factura:\n${data.text.slice(0, 120000)}` });
+      content.push({ type: "input_text", text: `Contenido XML/texto de la factura:\n${data.text.slice(0, 120000)}` });
     } else if (data.dataUrl) {
       if (data.mimeType.startsWith("image/")) {
-        content.push({ type: "image_url", image_url: { url: data.dataUrl } });
+        content.push({ type: "input_image", image_url: data.dataUrl });
       } else {
-        content.push({ type: "file", file: { filename: data.fileName, file_data: data.dataUrl } });
+        content.push({ type: "input_file", filename: data.fileName, file_data: data.dataUrl });
       }
     } else {
       throw new Error("No se recibió contenido del archivo");
     }
 
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/responses", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Lovable-API-Key": apiKey },
+      headers: { "Content-Type": "application/json", "Lovable-API-Key": apiKey, "X-Lovable-AIG-SDK": "fetch" },
       body: JSON.stringify({
         model: "openai/gpt-5.6-sol",
-        reasoning_effort: "none",
-        messages: [
-          { role: "system", content: SYSTEM },
+        stream: true,
+        instructions: SYSTEM,
+        input: [
           { role: "user", content },
         ],
-        response_format: { type: "json_object" },
+        text: { format: { type: "json_object" } },
       }),
     });
 
     if (res.status === 429) throw new Error("Límite de solicitudes de IA alcanzado. Intenta de nuevo en unos minutos.");
     if (res.status === 402) throw new Error("Créditos de IA agotados. Recarga créditos para seguir procesando facturas.");
-    if (!res.ok) {
+    if (!res.ok || !res.body) {
       const detail = await res.text();
       console.error("AI gateway error", res.status, detail);
-      throw new Error("No fue posible leer la factura con IA.");
+      throw new Error(`No fue posible leer la factura con IA (${res.status}): ${detail.slice(0, 500)}`);
     }
 
-    const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    const raw = json.choices?.[0]?.message?.content ?? "";
+    // SSE: acumulamos los deltas de texto de salida.
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let raw = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n");
+      buffer = parts.pop() ?? "";
+      for (const line of parts) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          const evt = JSON.parse(payload) as {
+            type?: string;
+            delta?: string;
+            response?: { output_text?: string };
+          };
+          if (evt.type === "response.output_text.delta" && typeof evt.delta === "string") raw += evt.delta;
+          else if (evt.type === "response.completed" && !raw && evt.response?.output_text) raw = evt.response.output_text;
+        } catch {
+          // ignorar eventos no JSON
+        }
+      }
+    }
     const cleaned = raw.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
     let parsed: ExtractedInvoice;
     try {
