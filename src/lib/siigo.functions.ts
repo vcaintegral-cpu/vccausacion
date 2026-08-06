@@ -244,18 +244,72 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
-      .select("id, prefix, number, issue_date, provider_nit, provider_name, notes, total")
+      .select("id, company_id, prefix, number, issue_date, provider_nit, provider_name, notes, total")
       .eq("id", data.invoiceId)
       .single();
     if (invErr || !inv) throw new Error(invErr?.message ?? "Factura no encontrada.");
 
     const { data: journal, error: jErr } = await supabase
       .from("journal_lines")
-      .select("account_code, account_name, debit, credit, cost_center")
+      .select("id, account_code, account_name, debit, credit, cost_center")
       .eq("invoice_id", data.invoiceId)
       .order("position");
     if (jErr) throw new Error(jErr.message);
     if (!journal || journal.length === 0) throw new Error("La factura no tiene asiento contable generado.");
+
+    // Las cuentas base del PUC colombiano pueden no existir con el mismo nivel
+    // de detalle en Siigo. Antes de enviar, cambia únicamente esos códigos base
+    // por la cuenta equivalente que ya fue importada desde esta empresa.
+    const { data: companyAccounts, error: accountsErr } = await supabase
+      .from("puc_accounts")
+      .select("code, name")
+      .eq("company_id", inv.company_id)
+      .order("code");
+    if (accountsErr) throw new Error(`No fue posible validar el PUC de Siigo: ${accountsErr.message}`);
+
+    const availableCodes = new Set((companyAccounts ?? []).map((account) => account.code));
+    const findEquivalent = (baseCode: string) => {
+      if (availableCodes.has(baseCode)) return baseCode;
+      if (baseCode === "240801") {
+        return (companyAccounts ?? []).find((account) => {
+          const name = account.name.toLowerCase();
+          return account.code.startsWith("2408") && name.includes("iva") && (name.includes("servicio") || name.includes("gasto"));
+        })?.code ?? null;
+      }
+      if (baseCode === "220505") {
+        return (companyAccounts ?? []).find((account) => {
+          const name = account.name.toLowerCase();
+          return account.code.startsWith("2205") && name.includes("proveedor");
+        })?.code ?? (companyAccounts ?? []).find((account) => account.code.startsWith("220505"))?.code ?? null;
+      }
+      return baseCode;
+    };
+
+    const resolvedJournal = journal.map((line) => {
+      const resolvedCode = findEquivalent(line.account_code);
+      if (!resolvedCode) {
+        throw new Error(
+          `La cuenta base ${line.account_code} no existe en Siigo y no se encontró una equivalente en el PUC importado. ` +
+            "Importa el PUC desde Integraciones o configura la cuenta del proveedor antes de volver a causar.",
+        );
+      }
+      return { ...line, account_code: resolvedCode };
+    });
+
+    const replacements = resolvedJournal.filter((line, index) => line.account_code !== journal[index]?.account_code);
+    if (replacements.length > 0) {
+      console.log(
+        "[siigo][causacion] cuentas base reemplazadas:",
+        replacements.map((line) => ({ id: line.id, account_code: line.account_code })),
+      );
+      const updates = await Promise.all(
+        replacements.map((line) =>
+          supabase.from("journal_lines").update({ account_code: line.account_code }).eq("id", line.id),
+        ),
+      );
+      const updateError = updates.find((result) => result.error)?.error;
+      if (updateError) throw new Error(`No fue posible guardar las cuentas equivalentes: ${updateError.message}`);
+    }
 
     await supabase
       .from("invoices")
@@ -269,7 +323,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         date: inv.issue_date ?? new Date().toISOString().slice(0, 10),
         providerNit: inv.provider_nit,
         observations: `Factura ${[inv.prefix, inv.number].filter(Boolean).join("-")} · ${inv.provider_name ?? ""} ${inv.notes ?? ""}`.trim(),
-        lines: journal.map((l) => ({
+        lines: resolvedJournal.map((l) => ({
           account_code: l.account_code,
           account_name: l.account_name,
           debit: Number(l.debit ?? 0),
