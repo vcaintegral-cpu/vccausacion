@@ -9,7 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
-import { applyRulesToLines, buildJournal, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
+import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { AccountCombobox } from "@/components/account-combobox";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { cop } from "@/lib/format";
@@ -200,8 +200,8 @@ function Causar() {
     setLineTax(seleccion);
   }, [borrador, config, editingId]);
 
-  /** Cuenta del producto; si es inválida o vacía se usa la de su categoría. Solo cuentas existentes en el PUC. */
-  const cuentaDeProducto = useCallback(
+  /** Cuenta del ítem: primero la de su categoría (Producto/Servicio → Categoría → Cuenta PUC) y, si no existe, la propia del producto. */
+  const resolverCuentaItem = useCallback(
     (p: { kind?: string | null; category?: string | null; account_code?: string | null; account_name?: string | null }) => {
       const n = (s?: string | null) =>
         (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
@@ -211,19 +211,75 @@ function Causar() {
         if (!c) return null;
         return puc.find((a) => a.code === c) ?? (puc.length === 0 ? { code: c, name: "" } : null);
       };
-      const propia = valida(p.account_code);
-      if (propia) return { code: propia.code, name: p.account_name || propia.name || "" };
       const cats = config?.categories ?? [];
       const cat =
         cats.find((c) => p.category && n(c.name) === n(p.category) && n(c.kind) === n(p.kind)) ??
-        cats.find((c) => p.category && n(c.name) === n(p.category)) ??
-        cats.find((c) => !p.category && n(c.kind) === n(p.kind) && !!c.account_code);
+        cats.find((c) => p.category && n(c.name) === n(p.category));
       const deCat = valida(cat?.account_code);
-      if (deCat) return { code: deCat.code, name: cat?.account_name || deCat.name || "" };
-      return null;
+      if (deCat) return { code: deCat.code, name: cat?.account_name || deCat.name || "", error: null as string | null };
+      const propia = valida(p.account_code);
+      if (propia) return { code: propia.code, name: p.account_name || propia.name || "", error: null as string | null };
+      const error = !(p.category ?? "").trim()
+        ? "Este producto no tiene una categoría configurada."
+        : "La categoría seleccionada no tiene una cuenta contable asociada.";
+      return { code: "", name: "", error };
     },
     [config?.accounts, config?.categories],
   );
+  /** Compatibilidad con el flujo previo: devuelve la cuenta o null. */
+  const cuentaDeProducto = useCallback(
+    (p: { kind?: string | null; category?: string | null; account_code?: string | null; account_name?: string | null }) => {
+      const r = resolverCuentaItem(p);
+      return r.code ? { code: r.code, name: r.name } : null;
+    },
+    [resolverCuentaItem],
+  );
+
+  const normTxt = (s?: string | null) => (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+  /** Busca el producto/servicio del catálogo que corresponde a un renglón. */
+  const buscarProducto = useCallback(
+    (l: Line, kind: string) => {
+      const catalogo = (config?.products ?? []).filter((p) => normTxt(p.kind) === normTxt(kind));
+      return (
+        catalogo.find((p) => l.code && normTxt(p.code) === normTxt(String(l.code))) ??
+        catalogo.find((p) => normTxt(p.name) === normTxt(l.description ?? ""))
+      );
+    },
+    [config?.products],
+  );
+
+  /** Errores de configuración por renglón (categoría o cuenta PUC faltante). */
+  const lineErrors = useMemo(() => {
+    const out: Record<number, string> = {};
+    lines.forEach((l, i) => {
+      const kind = l.item_type ?? "gasto";
+      if (kind !== "producto" && kind !== "servicio") return;
+      if (l.account_code) return;
+      const prod = buscarProducto(l, kind);
+      if (!prod) return;
+      const r = resolverCuentaItem(prod);
+      if (r.error) out[i] = r.error;
+    });
+    return out;
+  }, [lines, buscarProducto, resolverCuentaItem]);
+  const hayErroresDeCuenta = Object.keys(lineErrors).length > 0;
+
+  /** Al cambiar el tipo de ítem se recalcula la cuenta contable según el nuevo tipo. */
+  function cambiarTipo(i: number, kind: string) {
+    const actual = lines[i];
+    if (!actual) return;
+    if (kind === "producto" || kind === "servicio") {
+      const prod = buscarProducto({ ...actual, item_type: kind }, kind);
+      if (!prod) { setLine(i, { item_type: kind }); return; }
+      const r = resolverCuentaItem(prod);
+      if (r.error) toast.warning(r.error);
+      setLine(i, { item_type: kind, code: prod.code, account_code: r.code, account_name: r.name });
+      return;
+    }
+    const s = suggestAccount(actual.description ?? "", config?.rules ?? [], null);
+    setLine(i, { item_type: kind, account_code: s.code, account_name: s.name });
+  }
   // Si la factura trae IVA en los renglones, ese es el IVA que se causa; si no, el del encabezado.
   const ivaLineas = useMemo(() => lines.reduce((s, l) => s + Number(l.iva || 0), 0), [lines]);
   const ivaTotal = ivaLineas > 0 ? ivaLineas : Number(header.iva || 0);
@@ -355,16 +411,16 @@ function Causar() {
     toast.success(`${ok} de ${bulkFiles.length} facturas causadas como borrador.`);
   }
 
-  /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y cuenta contable. */
+  /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y la cuenta de su categoría. */
   function elegirProducto(i: number, p: ProductOption) {
-    const cuenta = cuentaDeProducto(p);
-    if (!cuenta) toast.warning("El producto no tiene una cuenta contable válida ni en su categoría. Selecciónala manualmente.");
+    const cuenta = resolverCuentaItem(p);
+    if (cuenta.error) toast.warning(cuenta.error);
     setLine(i, {
       code: p.code,
       description: p.name,
       item_type: p.kind,
-      account_code: cuenta?.code ?? "",
-      account_name: cuenta?.name ?? "",
+      account_code: cuenta.code,
+      account_name: cuenta.name,
     });
   }
 
@@ -392,6 +448,10 @@ function Causar() {
   async function guardar(status: "borrador" | "aprobado") {
     if (!companyId) return;
     if (lines.length === 0) { toast.error("Agrega al menos un renglón."); return; }
+    if (status === "aprobado" && hayErroresDeCuenta) {
+      toast.error(Object.values(lineErrors)[0] ?? "Hay renglones sin cuenta contable.");
+      return;
+    }
     if (Math.abs(t.diferencia) > 1) { toast.error("El comprobante está descuadrado."); return; }
     setSaving(true);
     try {
@@ -742,7 +802,7 @@ function Causar() {
                     <select
                       className="h-9 w-full rounded-md border border-input bg-background px-1 text-xs"
                       value={l.item_type ?? "gasto"}
-                      onChange={(e) => setLine(i, { item_type: e.target.value })}
+                      onChange={(e) => cambiarTipo(i, e.target.value)}
                     >
                       {ITEM_TYPES.map((k) => (
                         <option key={k} value={k}>{k}</option>
@@ -767,6 +827,7 @@ function Causar() {
                         if (autoLearning && code) setRecordar({ index: i, code, name });
                       }}
                     />
+                    {lineErrors[i] && <p className="mt-1 text-xs text-destructive">{lineErrors[i]}</p>}
                   </td>
                   <td className="px-3 py-1.5 w-56">
                     <div className="flex items-center gap-1">
@@ -893,7 +954,7 @@ function Causar() {
           <Button onClick={() => guardar("borrador")} disabled={saving} variant="outline">
             <Save className="size-4" /> Guardar borrador
           </Button>
-          <Button onClick={() => guardar("aprobado")} disabled={saving}>
+          <Button onClick={() => guardar("aprobado")} disabled={saving || hayErroresDeCuenta}>
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Aprobar comprobante
           </Button>
         </div>

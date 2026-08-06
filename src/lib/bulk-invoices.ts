@@ -76,11 +76,11 @@ export async function processInvoiceFile(params: {
   }
 
   const cuentaDeProducto = (p: { kind?: string | null; category?: string | null; account_code?: string | null; account_name?: string | null }) => {
-    if (p.account_code) return { code: p.account_code, name: p.account_name ?? "" };
     const cat =
       config.categories.find((c) => p.category && norm(c.name) === norm(p.category) && norm(c.kind) === norm(p.kind)) ??
       config.categories.find((c) => p.category && norm(c.name) === norm(p.category));
     if (cat?.account_code) return { code: cat.account_code, name: cat.account_name ?? "" };
+    if (p.account_code) return { code: p.account_code, name: p.account_name ?? "" };
     return null;
   };
 
