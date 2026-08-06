@@ -301,9 +301,17 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
         }))
         .filter((r) => r.code);
       if (parsed.length === 0) throw new Error("No se encontraron centros de costo (columnas esperadas: Código, Nombre).");
-      const { error } = await supabase.from("cost_centers").upsert(parsed, { onConflict: "company_id,code" });
-      if (error) throw new Error(error.message);
-      toast.success(`Se importaron ${parsed.length} centro(s) de costo.`);
+      const unicos = Array.from(new Map(parsed.map((r) => [r.code, r])).values());
+      if (!window.confirm(`Se reemplazarán los centros de costo actuales por ${unicos.length} del archivo. ¿Continuar?`)) return;
+      const { error: delErr } = await supabase.from("cost_centers").delete().eq("company_id", companyId);
+      if (delErr) throw new Error(`No fue posible reemplazar los centros actuales: ${delErr.message}`);
+      for (let i = 0; i < unicos.length; i += 500) {
+        const { error } = await supabase
+          .from("cost_centers")
+          .upsert(unicos.slice(i, i + 500), { onConflict: "company_id,code", ignoreDuplicates: false });
+        if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}${error.hint ? ` (${error.hint})` : ""}`);
+      }
+      toast.success(`Centros de costo reemplazados: ${unicos.length} cargado(s) desde Excel.`);
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
@@ -407,9 +415,17 @@ export function TaxesPanel({ companyId }: { companyId: string }) {
         }))
         .filter((r) => r.name);
       if (parsed.length === 0) throw new Error("No se encontraron impuestos (columnas esperadas: Tipo, Nombre, Tarifa).");
-      const { error } = await supabase.from("tax_rates").upsert(parsed, { onConflict: "company_id,kind,name" });
-      if (error) throw new Error(error.message);
-      toast.success(`Se importaron ${parsed.length} impuesto(s).`);
+      const unicos = Array.from(new Map(parsed.map((r) => [`${r.kind}|${r.name}`, r])).values());
+      if (!window.confirm(`Se reemplazarán los impuestos actuales por ${unicos.length} del archivo. ¿Continuar?`)) return;
+      const { error: delErr } = await supabase.from("tax_rates").delete().eq("company_id", companyId);
+      if (delErr) throw new Error(`No fue posible reemplazar los impuestos actuales: ${delErr.message}`);
+      for (let i = 0; i < unicos.length; i += 500) {
+        const { error } = await supabase
+          .from("tax_rates")
+          .upsert(unicos.slice(i, i + 500), { onConflict: "company_id,kind,name", ignoreDuplicates: false });
+        if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}${error.hint ? ` (${error.hint})` : ""}`);
+      }
+      toast.success(`Impuestos reemplazados: ${unicos.length} cargado(s) desde Excel.`);
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
