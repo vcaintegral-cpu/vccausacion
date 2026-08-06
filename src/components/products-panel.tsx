@@ -132,7 +132,9 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
     await refresh();
   }
 
-  async function actualizar(id: string, patch: Record<string, unknown>) {
+  type ProductPatch = { kind?: string; category?: string | null; account_code?: string | null; account_name?: string | null };
+
+  async function actualizar(id: string, patch: ProductPatch) {
     const { error } = await supabase.from("products").update(patch).eq("id", id);
     if (error) { toast.error(error.message); return; }
     await refresh();
