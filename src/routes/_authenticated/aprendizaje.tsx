@@ -55,6 +55,7 @@ function Aprendizaje() {
   const [saving, setSaving] = useState(false);
 
   const empresa = (companies ?? []).find((c) => c.id === companyId)?.name ?? "—";
+  const autoLearning = (companies ?? []).find((c) => c.id === companyId)?.auto_learning ?? true;
 
   const { data: rules } = useQuery({
     queryKey: ["learning_rules", companyId],
