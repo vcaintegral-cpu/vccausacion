@@ -88,10 +88,12 @@ export const extractInvoice = createServerFn({ method: "POST" })
     if (data.text) {
       content.push({ type: "input_text", text: `Contenido XML/texto de la factura:\n${data.text.slice(0, 120000)}` });
     } else if (data.dataUrl) {
-      if (data.mimeType.startsWith("image/")) {
-        content.push({ type: "input_image", image_url: data.dataUrl });
+      const { mime, url, safeName } = normalizeDataUrl(data.fileName, data.mimeType, data.dataUrl);
+      console.log("extractInvoice archivo", { fileName: safeName, mime, bytes: url.length });
+      if (mime.startsWith("image/")) {
+        content.push({ type: "input_image", image_url: url });
       } else {
-        content.push({ type: "input_file", filename: data.fileName, file_data: data.dataUrl });
+        content.push({ type: "input_file", filename: safeName, file_data: url });
       }
     } else {
       throw new Error("No se recibió contenido del archivo");
