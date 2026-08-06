@@ -42,7 +42,10 @@ const emptyLine = (): Line => ({
   total: 0,
   account_code: "",
   account_name: "",
+  item_type: "gasto",
 });
+
+const ITEM_TYPES = ["producto", "servicio", "gasto", "activo"] as const;
 
 type Header = Omit<ExtractedInvoice, "lines">;
 
@@ -82,12 +85,14 @@ function Causar() {
         supabase.from("tax_rates").select("*").eq("company_id", companyId!),
         supabase.from("cost_centers").select("*").eq("company_id", companyId!).order("code"),
         supabase.from("puc_accounts").select("code, name").eq("company_id", companyId!).order("code"),
+        supabase.from("products").select("code, name, kind, account_code, account_name").eq("company_id", companyId!).eq("active", true).order("code"),
       ]);
       return {
         rules: (rules.data ?? []) as Rule[],
         taxes: (taxes.data ?? []) as TaxRate[],
         centers: centers.data ?? [],
         accounts: accounts.data ?? [],
+        products: products.data ?? [],
       };
     },
   });
