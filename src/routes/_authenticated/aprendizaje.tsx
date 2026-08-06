@@ -149,6 +149,22 @@ function Aprendizaje() {
         </Button>
       </div>
 
+      <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
+        <Switch
+          checked={autoLearning}
+          onCheckedChange={async (v) => {
+            if (!companyId) return;
+            const { error } = await supabase.from("companies").update({ auto_learning: v }).eq("id", companyId);
+            if (error) { toast.error(error.message); return; }
+            await qc.invalidateQueries({ queryKey: ["companies"] });
+          }}
+        />
+        <div>
+          <p className="text-sm font-medium">Aprendizaje automático</p>
+          <p className="text-xs text-muted-foreground">Cuando está activo, la app pregunta si desea recordar la cuenta al cambiarla.</p>
+        </div>
+      </div>
+
       <Input
         placeholder="Buscar por proveedor, concepto o cuenta contable"
         value={q}
