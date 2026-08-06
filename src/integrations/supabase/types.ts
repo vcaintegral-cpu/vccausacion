@@ -58,6 +58,50 @@ export type Database = {
           },
         ]
       }
+      ai_settings: {
+        Row: {
+          api_key: string | null
+          company_id: string
+          created_at: string
+          extraction_prompt: string
+          id: string
+          mapping_prompt: string
+          model: string
+          provider: string
+          updated_at: string
+        }
+        Insert: {
+          api_key?: string | null
+          company_id: string
+          created_at?: string
+          extraction_prompt?: string
+          id?: string
+          mapping_prompt?: string
+          model?: string
+          provider?: string
+          updated_at?: string
+        }
+        Update: {
+          api_key?: string | null
+          company_id?: string
+          created_at?: string
+          extraction_prompt?: string
+          id?: string
+          mapping_prompt?: string
+          model?: string
+          provider?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_settings_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: true
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       companies: {
         Row: {
           auto_learning: boolean
