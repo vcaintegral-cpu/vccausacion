@@ -30,9 +30,13 @@ export const Route = createFileRoute("/_authenticated/configuracion-ia")({
 });
 
 const PROVIDERS = [
-  { value: "lovable", label: "IA incluida (sin clave)", models: ["openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "google/gemini-3.6-flash"] },
+  {
+    value: "lovable",
+    label: "IA incluida (sin clave) · Gemini",
+    models: ["google/gemini-3.6-flash", "google/gemini-3.1-pro-preview", "google/gemini-2.5-flash", "google/gemini-2.5-pro"],
+  },
+  { value: "google", label: "Gemini de Google (clave propia)", models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"] },
   { value: "openai", label: "OpenAI", models: ["gpt-4.1", "gpt-4o", "gpt-4o-mini"] },
-  { value: "google", label: "Géminis de Google", models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
   { value: "anthropic", label: "Anthropic", models: ["claude-sonnet-4-20250514"] },
 ];
 
@@ -55,7 +59,7 @@ function ConfiguracionIA() {
   const { data: companies, isLoading: loadingCompanies } = useCompanies();
 
   const [provider, setProvider] = useState("lovable");
-  const [model, setModel] = useState("openai/gpt-5.6-sol");
+  const [model, setModel] = useState("google/gemini-3.6-flash");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [extraction, setExtraction] = useState(DEFAULT_EXTRACTION);
@@ -180,10 +184,15 @@ function ConfiguracionIA() {
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Modelo</Label>
-            <Input value={model} onChange={(e) => setModel(e.target.value)} list="ai-models" className="font-mono text-sm" />
-            <datalist id="ai-models">
-              {providerDef.models.map((m) => <option key={m} value={m} />)}
-            </datalist>
+            <Select value={model} onValueChange={setModel}>
+              <SelectTrigger className="font-mono text-sm"><SelectValue placeholder="Selecciona un modelo" /></SelectTrigger>
+              <SelectContent>
+                {providerDef.models.map((m) => (
+                  <SelectItem key={m} value={m} className="font-mono text-sm">{m}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">Solo modelos verificados: evita errores 404 por nombres inexistentes.</p>
           </div>
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wide text-muted-foreground">Clave API</Label>

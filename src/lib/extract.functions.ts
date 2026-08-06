@@ -79,8 +79,7 @@ export const extractInvoice = createServerFn({ method: "POST" })
       method: "POST",
       headers: { "Content-Type": "application/json", "Lovable-API-Key": apiKey },
       body: JSON.stringify({
-        model: "openai/gpt-5.6-sol",
-        reasoning_effort: "none",
+        model: "google/gemini-3.6-flash",
         messages: [
           { role: "system", content: SYSTEM },
           { role: "user", content },
