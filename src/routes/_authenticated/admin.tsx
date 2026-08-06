@@ -188,7 +188,6 @@ function Admin() {
         </TabsContent>
 
         <TabsContent value="reglas">
-          {null}
           {wrap(
             <Section
               table="accounting_rules"
