@@ -10,6 +10,7 @@ import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
+import { AccountCombobox } from "@/components/account-combobox";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { Button } from "@/components/ui/button";
@@ -461,22 +462,14 @@ function Causar() {
                     <Input type="number" value={l.discount} onChange={(e) => setLine(i, { discount: Number(e.target.value) })} />
                   </td>
                   <td className="px-3 py-1.5 w-56">
-                    <select
-                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                    <AccountCombobox
+                      accounts={config?.accounts ?? []}
                       value={l.account_code ?? ""}
-                      onChange={(e) => {
-                        const acc = (config?.accounts ?? []).find((a) => a.code === e.target.value);
-                        setLine(i, { account_code: e.target.value, account_name: acc?.name ?? null });
-                        if (autoLearning && e.target.value) setRecordar({ index: i, code: e.target.value, name: acc?.name ?? null });
+                      onChange={(code, name) => {
+                        setLine(i, { account_code: code, account_name: name });
+                        if (autoLearning && code) setRecordar({ index: i, code, name });
                       }}
-                    >
-                      <option value="">Seleccionar…</option>
-                      {(config?.accounts ?? []).map((a) => (
-                        <option key={a.code} value={a.code}>
-                          {a.code} · {a.name}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </td>
                   <td className="px-3 py-1.5 w-56">
                     <div className="flex items-center gap-1">
