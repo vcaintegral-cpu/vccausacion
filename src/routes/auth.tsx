@@ -4,6 +4,7 @@ import { toast } from "sonner";
 
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable/index";
+import { setActiveCompany, setCompanyLocked } from "@/lib/active-company";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +28,7 @@ function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
+  const [nit, setNit] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -35,15 +37,38 @@ function AuthPage() {
     });
   }, [navigate]);
 
+  const soloDigitos = (v: string) => v.replace(/\D/g, "");
+
+  async function vincularEmpresaPorNit(): Promise<boolean> {
+    const objetivo = soloDigitos(nit);
+    const { data, error } = await supabase.from("companies").select("id, nit, name");
+    if (error) {
+      toast.error(error.message);
+      return false;
+    }
+    const empresa = (data ?? []).find((c) => soloDigitos(c.nit ?? "").replace(/^0+/, "") === objetivo.replace(/^0+/, ""));
+    if (!empresa) {
+      await supabase.auth.signOut();
+      toast.error("El NIT no corresponde a ninguna empresa de tu cuenta.");
+      return false;
+    }
+    setActiveCompany(empresa.id);
+    setCompanyLocked(true);
+    return true;
+  }
+
   async function signIn(e: React.FormEvent): Promise<void> {
     e.preventDefault();
     setLoading(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
     if (error) {
+      setLoading(false);
       toast.error(error.message);
       return;
     }
+    const ok = await vincularEmpresaPorNit();
+    setLoading(false);
+    if (!ok) return;
     navigate({ to: "/panel", replace: true });
   }
 
@@ -60,7 +85,10 @@ function AuthPage() {
       toast.error(error.message);
       return;
     }
-    if (data.session) navigate({ to: "/panel", replace: true });
+    if (data.session) {
+      setCompanyLocked(false);
+      navigate({ to: "/empresas", replace: true });
+    }
     else toast.success("Cuenta creada. Revisa tu correo para confirmarla.");
   }
 
@@ -71,6 +99,7 @@ function AuthPage() {
       return;
     }
     if (result.redirected) return;
+    setCompanyLocked(false);
     navigate({ to: "/panel", replace: true });
   }
 
@@ -107,6 +136,10 @@ function AuthPage() {
                 <div className="space-y-1.5">
                   <Label htmlFor="password">Contraseña</Label>
                   <Input id="password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="nit">NIT de la empresa</Label>
+                  <Input id="nit" required value={nit} onChange={(e) => setNit(e.target.value)} placeholder="900123456" />
                 </div>
                 <Button type="submit" className="w-full" disabled={loading}>
                   Ingresar
