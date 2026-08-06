@@ -5,11 +5,23 @@ import { toast } from "sonner";
 
 import { supabase } from "@/integrations/supabase/client";
 import { createCompanyWithDefaults } from "@/lib/seed";
-import { setActiveCompany } from "@/lib/active-company";
+import { setActiveCompany, useActiveCompany } from "@/lib/active-company";
 import { useCompanies } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Trash2 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/empresas")({
   component: Empresas,
@@ -18,9 +30,26 @@ export const Route = createFileRoute("/_authenticated/empresas")({
 function Empresas() {
   const queryClient = useQueryClient();
   const { data: companies } = useCompanies();
+  const active = useActiveCompany();
   const [name, setName] = useState("");
   const [nit, setNit] = useState("");
   const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  async function eliminar(id: string): Promise<void> {
+    setDeleting(id);
+    try {
+      const { error } = await supabase.from("companies").delete().eq("id", id);
+      if (error) throw error;
+      if (active === id) setActiveCompany(null);
+      await queryClient.invalidateQueries({ queryKey: ["companies"] });
+      toast.success("Empresa eliminada junto con toda su información.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No fue posible eliminar la empresa.");
+    } finally {
+      setDeleting(null);
+    }
+  }
 
   async function crear(e: React.FormEvent): Promise<void> {
     e.preventDefault();
@@ -69,9 +98,31 @@ function Empresas() {
               <p className="text-sm font-medium">{c.name}</p>
               <p className="font-mono text-xs text-muted-foreground">NIT {c.nit}</p>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => setActiveCompany(c.id)}>
-              Activar
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="sm" onClick={() => setActiveCompany(c.id)}>
+                Activar
+              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="ghost" size="icon" disabled={deleting === c.id} aria-label={`Eliminar ${c.name}`}>
+                    <Trash2 className="size-4 text-destructive" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>¿Eliminar «{c.name}»?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Se eliminarán de forma permanente sus facturas, comprobantes, PUC, impuestos, terceros,
+                      productos y reglas de aprendizaje. Esta acción no se puede deshacer.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => void eliminar(c.id)}>Eliminar</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           </li>
         ))}
         {(companies ?? []).length === 0 && (
