@@ -6,7 +6,7 @@ import { Download, Plus, RefreshCw, Upload } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { siigoImportCostCenters, siigoImportPuc, siigoImportTaxes } from "@/lib/siigo.functions";
 import { downloadSheet, num, pick, readSheet } from "@/lib/spreadsheet";
-import { analyzeHistory, type HistoryAnalysis } from "@/lib/history-import";
+import { analyzeHistory, isSiigoAuxiliary, type HistoryAnalysis } from "@/lib/history-import";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
