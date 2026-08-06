@@ -429,29 +429,43 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     if (accountsErr) throw new Error(`No fue posible validar el PUC de Siigo: ${accountsErr.message}`);
 
     const availableCodes = new Set((companyAccounts ?? []).map((account) => account.code));
+    const accounts = companyAccounts ?? [];
+    /** Una cuenta es de grupo (no de movimiento) si el PUC tiene auxiliares que dependen de ella. */
+    const hijasDe = (code: string) =>
+      accounts
+        .filter((account) => account.code.startsWith(code) && account.code.length > code.length)
+        .sort((a, b) => a.code.length - b.code.length || a.code.localeCompare(b.code));
+    /** Baja hasta la auxiliar final, prefiriendo la que coincida con las palabras dadas. */
+    const auxiliarDe = (code: string, palabras: string[] = []): string | null => {
+      let actual = code;
+      for (let i = 0; i < 6; i += 1) {
+        const hijas = hijasDe(actual);
+        if (hijas.length === 0) return availableCodes.has(actual) ? actual : null;
+        const preferida =
+          palabras.length > 0
+            ? hijas.find((h) => palabras.some((p) => h.name.toLowerCase().includes(p)))
+            : undefined;
+        actual = (preferida ?? hijas[0]!).code;
+      }
+      return availableCodes.has(actual) ? actual : null;
+    };
+
     const findEquivalent = (baseCode: string) => {
-      if (availableCodes.has(baseCode)) return baseCode;
       if (baseCode === "621008" || baseCode === "240801") {
         const directo = (companyAccounts ?? []).find((account) => account.code === "621008");
-        if (directo) return directo.code;
-        return (companyAccounts ?? []).find((account) => {
+        if (directo && hijasDe(directo.code).length === 0) return directo.code;
+        const porNombre = (companyAccounts ?? []).find((account) => {
           const name = account.name.toLowerCase();
           return account.code.startsWith("2408") && name.includes("iva") && (name.includes("servicio") || name.includes("gasto"));
-        })?.code ?? null;
+        })?.code;
+        return auxiliarDe(directo?.code ?? porNombre ?? "6210", ["iva", "costo"]) ?? auxiliarDe("2408", ["iva"]);
       }
-      if (baseCode === "220505") {
-        return (companyAccounts ?? []).find((account) => {
-          const name = account.name.toLowerCase();
-          return account.code.startsWith("2205") && name.includes("proveedor");
-        })?.code ?? (companyAccounts ?? []).find((account) => account.code.startsWith("220505"))?.code ?? null;
+      if (baseCode.startsWith("2205")) {
+        return auxiliarDe("220505", ["nacional", "proveedor"]) ?? auxiliarDe("2205", ["proveedor", "nacional"]);
       }
       // Siigo solo acepta cuentas de movimiento (auxiliares). Si la cuenta del
-      // asiento es de nivel superior, se usa la auxiliar más corta que dependa de ella.
-      const hijas = (companyAccounts ?? [])
-        .filter((account) => account.code.startsWith(baseCode) && account.code.length > baseCode.length)
-        .sort((a, b) => a.code.length - b.code.length || a.code.localeCompare(b.code));
-      if (hijas.length > 0) return hijas[0]!.code;
-      return null;
+      // asiento tiene auxiliares dependientes, se baja hasta la auxiliar final.
+      return auxiliarDe(baseCode);
     };
 
     const resolvedJournal = journal.map((line) => {
