@@ -146,6 +146,23 @@ async function siigoRequest<T>(method: "GET" | "POST", path: string, payload?: u
     const init: RequestInit = { method, headers };
     if (bodyString !== undefined) init.body = bodyString;
     if (path === "/v1/purchases" && payload !== undefined) {
+      console.log("SIIGO PURCHASE PAYLOAD", JSON.stringify(payload, null, 2));
+      console.log("TOTAL FACTURA:", (payload as Record<string, unknown>)['total']);
+      console.log("PAYMENTS:", (payload as Record<string, unknown>)['payments']);
+      const purchasePayload = payload as Record<string, unknown>;
+      const paymentsArr = Array.isArray(purchasePayload['payments']) ? purchasePayload['payments'] : [];
+      const paymentsTotal = paymentsArr.reduce(
+        (a, p) => a + Number((p as Record<string, unknown>)['value'] || 0),
+        0,
+      );
+      console.log("SUMA PAYMENTS", paymentsTotal);
+      const totalFactura = Number(purchasePayload['total'] || 0);
+      if (paymentsTotal !== totalFactura && paymentsArr.length > 0) {
+        const lastPayment = paymentsArr[paymentsArr.length - 1] as Record<string, unknown>;
+        lastPayment['value'] = totalFactura;
+        console.log("[siigo] corrección payment:", totalFactura);
+      }
+      console.log("SIIGO FINAL PAYLOAD", JSON.stringify(payload, null, 2));
       console.log("========== SIIGO REQUEST ==========");
       console.log(JSON.stringify(payload, null, 2));
       console.log("===================================");
@@ -376,6 +393,7 @@ export function buildSiigoPurchasePayload(params: {
   /** Retenciones aplicadas al documento (ids de Siigo). */
   retentionIds?: Array<number | string>;
 }) {
+  const total = Math.round(Number(params.paymentValue));
   const payload: Record<string, unknown> = {
     document: { id: params.documentId },
     date: params.date,
@@ -387,6 +405,7 @@ export function buildSiigoPurchasePayload(params: {
     discount_type: "Value",
     supplier_by_item: false,
     tax_included: false,
+    total,
     observations: (params.observations ?? "").slice(0, 500),
     items: params.items.map((item) => {
       const line: Record<string, unknown> = {
@@ -403,7 +422,7 @@ export function buildSiigoPurchasePayload(params: {
     payments: [
       {
         ...(params.paymentId != null ? { id: params.paymentId } : {}),
-        value: Math.round(params.paymentValue * 100) / 100,
+        value: total,
         due_date: params.paymentDueDate ?? params.date,
       },
     ],
