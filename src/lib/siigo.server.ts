@@ -147,19 +147,19 @@ async function siigoRequest<T>(method: "GET" | "POST", path: string, payload?: u
     if (bodyString !== undefined) init.body = bodyString;
     if (path === "/v1/purchases" && payload !== undefined) {
       console.log("SIIGO PURCHASE PAYLOAD", JSON.stringify(payload, null, 2));
-      console.log("TOTAL FACTURA:", (payload as Record<string, unknown>).total);
-      console.log("PAYMENTS:", (payload as Record<string, unknown>).payments);
+      console.log("TOTAL FACTURA:", (payload as Record<string, unknown>)['total']);
+      console.log("PAYMENTS:", (payload as Record<string, unknown>)['payments']);
       const purchasePayload = payload as Record<string, unknown>;
-      const paymentsArr = Array.isArray(purchasePayload.payments) ? purchasePayload.payments : [];
+      const paymentsArr = Array.isArray(purchasePayload['payments']) ? purchasePayload['payments'] : [];
       const paymentsTotal = paymentsArr.reduce(
-        (a, p) => a + Number((p as { value?: unknown }).value || 0),
+        (a, p) => a + Number((p as Record<string, unknown>)['value'] || 0),
         0,
       );
       console.log("SUMA PAYMENTS", paymentsTotal);
-      const totalFactura = Number(purchasePayload.total || 0);
+      const totalFactura = Number(purchasePayload['total'] || 0);
       if (paymentsTotal !== totalFactura && paymentsArr.length > 0) {
         const lastPayment = paymentsArr[paymentsArr.length - 1] as Record<string, unknown>;
-        lastPayment.value = totalFactura;
+        lastPayment['value'] = totalFactura;
         console.log("[siigo] corrección payment:", totalFactura);
       }
       console.log("SIIGO FINAL PAYLOAD", JSON.stringify(payload, null, 2));
