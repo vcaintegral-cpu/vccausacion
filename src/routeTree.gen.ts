@@ -18,6 +18,7 @@ import { Route as AuthenticatedEmpresasRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedFacturasRouteImport } from './routes/_authenticated/facturas'
 import { Route as AuthenticatedIntegracionesRouteImport } from './routes/_authenticated/integraciones'
 import { Route as AuthenticatedPanelRouteImport } from './routes/_authenticated/panel'
+import { Route as AuthenticatedRevisarRouteImport } from './routes/_authenticated/revisar'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -64,6 +65,11 @@ const AuthenticatedPanelRoute = AuthenticatedPanelRouteImport.update({
   path: '/panel',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedRevisarRoute = AuthenticatedRevisarRouteImport.update({
+  id: '/revisar',
+  path: '/revisar',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -74,6 +80,7 @@ export interface FileRoutesByFullPath {
   '/facturas': typeof AuthenticatedFacturasRoute
   '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
+  '/revisar': typeof AuthenticatedRevisarRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -84,6 +91,7 @@ export interface FileRoutesByTo {
   '/facturas': typeof AuthenticatedFacturasRoute
   '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
+  '/revisar': typeof AuthenticatedRevisarRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -96,6 +104,7 @@ export interface FileRoutesById {
   '/_authenticated/facturas': typeof AuthenticatedFacturasRoute
   '/_authenticated/integraciones': typeof AuthenticatedIntegracionesRoute
   '/_authenticated/panel': typeof AuthenticatedPanelRoute
+  '/_authenticated/revisar': typeof AuthenticatedRevisarRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -108,6 +117,7 @@ export interface FileRouteTypes {
     | '/facturas'
     | '/integraciones'
     | '/panel'
+    | '/revisar'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -118,6 +128,7 @@ export interface FileRouteTypes {
     | '/facturas'
     | '/integraciones'
     | '/panel'
+    | '/revisar'
   id:
     | '__root__'
     | '/'
@@ -129,6 +140,7 @@ export interface FileRouteTypes {
     | '/_authenticated/facturas'
     | '/_authenticated/integraciones'
     | '/_authenticated/panel'
+    | '/_authenticated/revisar'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -202,6 +214,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedPanelRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/revisar': {
+      id: '/_authenticated/revisar'
+      path: '/revisar'
+      fullPath: '/revisar'
+      preLoaderRoute: typeof AuthenticatedRevisarRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
@@ -212,6 +231,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedFacturasRoute: typeof AuthenticatedFacturasRoute
   AuthenticatedIntegracionesRoute: typeof AuthenticatedIntegracionesRoute
   AuthenticatedPanelRoute: typeof AuthenticatedPanelRoute
+  AuthenticatedRevisarRoute: typeof AuthenticatedRevisarRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
@@ -221,6 +241,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedFacturasRoute: AuthenticatedFacturasRoute,
   AuthenticatedIntegracionesRoute: AuthenticatedIntegracionesRoute,
   AuthenticatedPanelRoute: AuthenticatedPanelRoute,
+  AuthenticatedRevisarRoute: AuthenticatedRevisarRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =
@@ -234,13 +255,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

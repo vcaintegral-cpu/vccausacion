@@ -60,6 +60,7 @@ export type Database = {
       }
       companies: {
         Row: {
+          auto_learning: boolean
           created_at: string
           created_by: string
           currency: string
@@ -68,6 +69,7 @@ export type Database = {
           nit: string | null
         }
         Insert: {
+          auto_learning?: boolean
           created_at?: string
           created_by?: string
           currency?: string
@@ -76,6 +78,7 @@ export type Database = {
           nit?: string | null
         }
         Update: {
+          auto_learning?: boolean
           created_at?: string
           created_by?: string
           currency?: string
@@ -160,6 +163,7 @@ export type Database = {
           id: string
           impoconsumo: number
           invoice_id: string
+          item_type: string
           iva: number
           position: number
           quantity: number
@@ -177,6 +181,7 @@ export type Database = {
           id?: string
           impoconsumo?: number
           invoice_id: string
+          item_type?: string
           iva?: number
           position?: number
           quantity?: number
@@ -194,6 +199,7 @@ export type Database = {
           id?: string
           impoconsumo?: number
           invoice_id?: string
+          item_type?: string
           iva?: number
           position?: number
           quantity?: number
@@ -250,6 +256,14 @@ export type Database = {
           retefuente: number
           reteica: number
           reteiva: number
+          siigo_document_url: string | null
+          siigo_error: string | null
+          siigo_id: string | null
+          siigo_last_attempt_at: string | null
+          siigo_number: string | null
+          siigo_status: string
+          siigo_synced_at: string | null
+          siigo_synced_by: string | null
           status: string
           subtotal: number
           total: number
@@ -286,6 +300,14 @@ export type Database = {
           retefuente?: number
           reteica?: number
           reteiva?: number
+          siigo_document_url?: string | null
+          siigo_error?: string | null
+          siigo_id?: string | null
+          siigo_last_attempt_at?: string | null
+          siigo_number?: string | null
+          siigo_status?: string
+          siigo_synced_at?: string | null
+          siigo_synced_by?: string | null
           status?: string
           subtotal?: number
           total?: number
@@ -322,6 +344,14 @@ export type Database = {
           retefuente?: number
           reteica?: number
           reteiva?: number
+          siigo_document_url?: string | null
+          siigo_error?: string | null
+          siigo_id?: string | null
+          siigo_last_attempt_at?: string | null
+          siigo_number?: string | null
+          siigo_status?: string
+          siigo_synced_at?: string | null
+          siigo_synced_by?: string | null
           status?: string
           subtotal?: number
           total?: number
@@ -419,6 +449,68 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "learning_events_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      learning_rules: {
+        Row: {
+          account_code: string
+          account_name: string | null
+          active: boolean
+          company_id: string
+          concept: string | null
+          cost_center: string | null
+          created_at: string
+          created_by: string
+          id: string
+          item_type: string
+          iva: number
+          provider_name: string | null
+          provider_nit: string | null
+          retentions: string | null
+          times_used: number
+        }
+        Insert: {
+          account_code: string
+          account_name?: string | null
+          active?: boolean
+          company_id: string
+          concept?: string | null
+          cost_center?: string | null
+          created_at?: string
+          created_by?: string
+          id?: string
+          item_type?: string
+          iva?: number
+          provider_name?: string | null
+          provider_nit?: string | null
+          retentions?: string | null
+          times_used?: number
+        }
+        Update: {
+          account_code?: string
+          account_name?: string | null
+          active?: boolean
+          company_id?: string
+          concept?: string | null
+          cost_center?: string | null
+          created_at?: string
+          created_by?: string
+          id?: string
+          item_type?: string
+          iva?: number
+          provider_name?: string | null
+          provider_nit?: string | null
+          retentions?: string | null
+          times_used?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "learning_rules_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
