@@ -100,13 +100,17 @@ export function PucPanel({ companyId }: { companyId: string }) {
       if (parsed.length === 0) throw new Error("No se encontraron cuentas en el archivo (columnas esperadas: Código, Nombre, Naturaleza).");
       // Evita "cannot affect row a second time": una sola fila por código.
       const unicas = Array.from(new Map(parsed.map((r) => [r.code, r])).values());
+      if (!window.confirm(`Se reemplazará el PUC actual por ${unicas.length} cuenta(s) del archivo. ¿Continuar?`)) return;
+      // Reemplazo total: elimina el PUC actual de la empresa y carga el del archivo.
+      const { error: delErr } = await supabase.from("puc_accounts").delete().eq("company_id", companyId);
+      if (delErr) throw new Error(`No fue posible reemplazar el PUC actual: ${delErr.message}`);
       for (let i = 0; i < unicas.length; i += 500) {
         const { error } = await supabase
           .from("puc_accounts")
           .upsert(unicas.slice(i, i + 500), { onConflict: "company_id,code", ignoreDuplicates: false });
         if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}${error.hint ? ` (${error.hint})` : ""}`);
       }
-      toast.success(`Se actualizaron ${unicas.length} cuenta(s) desde Excel.`);
+      toast.success(`PUC reemplazado: ${unicas.length} cuenta(s) cargadas desde Excel.`);
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
