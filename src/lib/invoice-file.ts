@@ -24,7 +24,8 @@ export async function prepareInvoiceFile(file: File): Promise<PreparedInvoiceFil
     throw new Error("El archivo seleccionado no contiene un PDF válido.");
   }
 
-  const pdf = await pdfjs.getDocument({ data: bytes }).promise;
+  const loadingTask = pdfjs.getDocument({ data: bytes });
+  const pdf = await loadingTask.promise;
   const pageCount = Math.min(pdf.numPages, MAX_PDF_PAGES);
   const images: Array<{ dataUrl: string; mimeType: string }> = [];
 
@@ -45,7 +46,7 @@ export async function prepareInvoiceFile(file: File): Promise<PreparedInvoiceFil
     page.cleanup();
   }
 
-  await pdf.destroy();
+  await loadingTask.destroy();
   if (images.length === 0) throw new Error("El PDF no contiene páginas que se puedan leer.");
   return { images };
 }
