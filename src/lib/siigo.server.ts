@@ -181,12 +181,42 @@ export type SiigoJournalLine = {
 };
 
 export async function siigoJournalDocumentId(): Promise<number> {
-  const types = await siigoGet<{ id?: number; code?: string; name?: string; active?: boolean }[]>(
-    "/v1/document-types?type=Journal",
-  );
-  const first = (Array.isArray(types) ? types : []).find((t) => t.active !== false && t.id) ?? types?.[0];
-  if (!first?.id) throw new SiigoError({ status: 0, url: "/v1/document-types?type=Journal", body: JSON.stringify(types), message: "Siigo no devolvió tipos de comprobante contable (Journal)." });
-  return first.id;
+  // Permite fijar el comprobante manualmente si la empresa tiene varios.
+  const forced = (process.env["SIIGO_JOURNAL_DOCUMENT_ID"] ?? "").trim();
+  if (forced && /^\d+$/.test(forced)) return Number(forced);
+
+  type DocType = { id?: number; code?: string; name?: string; type?: string; active?: boolean };
+  // Siigo espera códigos de tipo de documento, no la palabra "Journal".
+  // "CC" = Comprobante Contable. Se prueban candidatos y se cae al listado completo.
+  const candidates = ["/v1/document-types?type=CC", "/v1/document-types"];
+  const errors: string[] = [];
+
+  for (const path of candidates) {
+    try {
+      const res = await siigoGet<DocType[] | { results?: DocType[] }>(path);
+      const list: DocType[] = Array.isArray(res) ? res : (res?.results ?? []);
+      const journals = list.filter((t) => {
+        const kind = String(t.type ?? "").toUpperCase();
+        return !kind || kind === "CC" || kind === "JOURNAL";
+      });
+      const pick =
+        journals.find((t) => t.active !== false && t.id) ?? journals[0] ?? list.find((t) => t.id);
+      if (pick?.id) return pick.id;
+      errors.push(`${path}: sin tipos de comprobante contable (${JSON.stringify(list).slice(0, 500)})`);
+    } catch (e) {
+      errors.push(`${path}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  throw new SiigoError({
+    status: 0,
+    url: "/v1/document-types",
+    body: errors.join(" | "),
+    message:
+      "No fue posible obtener el tipo de comprobante contable (CC) en Siigo. " +
+      "Verifica que la empresa tenga un comprobante contable activo o configura SIIGO_JOURNAL_DOCUMENT_ID. Detalle: " +
+      errors.join(" | "),
+  });
 }
 
 export function buildSiigoJournalPayload(params: {
