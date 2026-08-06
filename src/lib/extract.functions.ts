@@ -49,6 +49,25 @@ Estructura exacta:
 "lines":[{"code":string|null,"description":string,"quantity":number,"unit_value":number,"discount":number,"iva":number,"retention":number,"impoconsumo":number,"total":number}]}
 Reglas: los importes son números sin separadores ni símbolos. El NIT va sin dígito de verificación separado por guion (usa solo el número base). Si un dato no aparece, usa null o 0. Nunca inventes valores.`;
 
+function normalizeDataUrl(fileName: string, mimeType: string, dataUrl: string) {
+  const ext = fileName.toLowerCase().split(".").pop() ?? "";
+  const byExt: Record<string, string> = {
+    pdf: "application/pdf",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    webp: "image/webp",
+    gif: "image/gif",
+  };
+  const mime = byExt[ext] ?? (mimeType && mimeType !== "application/octet-stream" ? mimeType : "application/pdf");
+  // Reconstruye el data URL con el MIME real: FileReader puede devolver
+  // "data:;base64,..." o "data:application/octet-stream;base64,..." y el proveedor lo rechaza.
+  const base64 = dataUrl.includes(",") ? dataUrl.slice(dataUrl.indexOf(",") + 1) : dataUrl;
+  const clean = base64.replace(/\s/g, "");
+  const safeName = /\.[a-z0-9]+$/i.test(fileName) ? fileName : `${fileName}.pdf`;
+  return { mime, url: `data:${mime};base64,${clean}`, safeName };
+}
+
 export const extractInvoice = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((data: { fileName: string; mimeType: string; dataUrl?: string | null; text?: string | null }) => {
@@ -69,10 +88,12 @@ export const extractInvoice = createServerFn({ method: "POST" })
     if (data.text) {
       content.push({ type: "input_text", text: `Contenido XML/texto de la factura:\n${data.text.slice(0, 120000)}` });
     } else if (data.dataUrl) {
-      if (data.mimeType.startsWith("image/")) {
-        content.push({ type: "input_image", image_url: data.dataUrl });
+      const { mime, url, safeName } = normalizeDataUrl(data.fileName, data.mimeType, data.dataUrl);
+      console.log("extractInvoice archivo", { fileName: safeName, mime, bytes: url.length });
+      if (mime.startsWith("image/")) {
+        content.push({ type: "input_image", image_url: url });
       } else {
-        content.push({ type: "input_file", filename: data.fileName, file_data: data.dataUrl });
+        content.push({ type: "input_file", filename: safeName, file_data: url });
       }
     } else {
       throw new Error("No se recibió contenido del archivo");
