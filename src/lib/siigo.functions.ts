@@ -533,6 +533,87 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
 export type SiigoProduct = { id: string; code: string; name: string };
 
+/** Importa productos y servicios desde Siigo (catálogo local con cuenta contable). */
+export const siigoImportProducts = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    const { siigoGet } = await import("./siigo.server");
+    type P = {
+      id?: string;
+      code?: string | number;
+      name?: string;
+      type?: string;
+      active?: boolean;
+      account_group?: { id?: number; name?: string } | null;
+      accounting_account?: string | number | null;
+      account?: { code?: string | number; name?: string } | null;
+    };
+    const list: P[] = [];
+    for (let page = 1; page <= 20; page++) {
+      const res = await siigoGet<{ results?: P[]; pagination?: { total_results?: number } }>(
+        `/v1/products?page=${page}&page_size=100`,
+      );
+      const chunk = res.results ?? [];
+      list.push(...chunk);
+      if (chunk.length < 100) break;
+    }
+
+    const { data: puc } = await context.supabase
+      .from("puc_accounts")
+      .select("code, name")
+      .eq("company_id", data.companyId);
+    const cuentas = puc ?? [];
+    const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+    const rows = list
+      .map((p) => {
+        const rawAccount = String(p.accounting_account ?? p.account?.code ?? "").replace(/\s+/g, "");
+        let account_code: string | null = rawAccount || null;
+        let account_name: string | null = p.account?.name ?? null;
+        if (!account_code && p.account_group?.name) {
+          const match = cuentas.find((c) => norm(c.name ?? "") === norm(p.account_group?.name ?? ""));
+          if (match) { account_code = match.code; account_name = match.name; }
+        }
+        if (account_code && !account_name) {
+          account_name = cuentas.find((c) => c.code === account_code)?.name ?? null;
+        }
+        return {
+          company_id: data.companyId,
+          code: String(p.code ?? p.id ?? "").trim(),
+          name: String(p.name ?? "").trim() || `Producto ${p.code ?? ""}`,
+          kind: String(p.type ?? "").toLowerCase().startsWith("serv") ? "servicio" : "producto",
+          category: p.account_group?.name ?? null,
+          account_code,
+          account_name,
+          active: p.active !== false,
+          source: "siigo",
+        };
+      })
+      .filter((r) => r.code);
+
+    if (rows.length === 0) return { imported: 0, skipped: 0 };
+
+    const { data: existing } = await context.supabase
+      .from("products")
+      .select("code, source")
+      .eq("company_id", data.companyId);
+    const protectedCodes = new Set((existing ?? []).filter((e) => e.source !== "siigo").map((e) => e.code));
+    const unicos = Array.from(new Map(rows.map((r) => [r.code, r])).values()).filter((r) => !protectedCodes.has(r.code));
+    if (unicos.length === 0) return { imported: 0, skipped: rows.length };
+
+    for (let i = 0; i < unicos.length; i += 500) {
+      const { error } = await context.supabase
+        .from("products")
+        .upsert(unicos.slice(i, i + 500), { onConflict: "company_id,code" });
+      if (error) throw new Error(error.message);
+    }
+    return { imported: unicos.length, skipped: rows.length - unicos.length };
+  });
+
 /** Busca un producto en Siigo por código o nombre (para renglones de inventario). */
 export const siigoFindProduct = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
