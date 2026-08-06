@@ -463,10 +463,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           const name = account.name.toLowerCase();
           return account.code.startsWith("2408") && name.includes("iva") && name.includes("descontable") && !name.includes("devoluci");
         })?.code;
-        return auxiliarDe(porNombre ?? "240810", ["iva", "descontable"]);
+        return auxiliarDe(porNombre ?? "240810", ["iva", "descontable"]) ?? porNombre ?? baseCode;
       }
       if (baseCode.startsWith("2205")) {
-        return auxiliarDe("220505", ["nacional", "proveedor"]) ?? auxiliarDe("2205", ["proveedor", "nacional"]);
+        return (
+          auxiliarDe("220505", ["nacional", "proveedor"]) ?? auxiliarDe("2205", ["proveedor", "nacional"]) ?? baseCode
+        );
       }
       // Siigo solo acepta cuentas de movimiento (auxiliares). Si la cuenta del
       // asiento tiene auxiliares dependientes, se baja hasta la auxiliar final.
