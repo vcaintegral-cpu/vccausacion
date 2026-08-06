@@ -65,6 +65,21 @@ function normalizeDataUrl(fileName: string, mimeType: string, dataUrl: string) {
   const base64 = dataUrl.includes(",") ? dataUrl.slice(dataUrl.indexOf(",") + 1) : dataUrl;
   const clean = base64.replace(/\s/g, "");
   const safeName = /\.[a-z0-9]+$/i.test(fileName) ? fileName : `${fileName}.pdf`;
+
+  // Diagnóstico del archivo recibido
+  const decoded = Buffer.from(clean, "base64");
+  console.log("[normalizeDataUrl] diagnóstico", {
+    mimeRecibido: mimeType,
+    mimeResuelto: mime,
+    filename: fileName,
+    safeName,
+    dataUrlLength: dataUrl.length,
+    dataUrlPrefix: dataUrl.slice(0, 80),
+    primeros20BytesDecodificados: decoded.slice(0, 20).toString("hex"),
+    decodedSizeBytes: decoded.length,
+    finalUrlLength: `data:${mime};base64,${clean}`.length,
+  });
+
   return { mime, url: `data:${mime};base64,${clean}`, safeName };
 }
 
