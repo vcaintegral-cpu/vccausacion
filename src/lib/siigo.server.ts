@@ -339,10 +339,11 @@ export async function siigoPurchasePaymentTypeId(preferido?: string | null): Pro
     if (list.length === 0) return null;
     const clave = (preferido ?? "").toLowerCase();
     const esCredito = clave.includes("cr");
-    const match =
-      (clave &&
-        list.find((p) => (p.name ?? "").toLowerCase().includes(clave.slice(0, 6)))) ??
-      (esCredito ? list.find((p) => /cr[eé]dito/i.test(p.name ?? "")) : list.find((p) => /contado|efectivo/i.test(p.name ?? "")));
+    const porNombre = clave ? list.find((p) => (p.name ?? "").toLowerCase().includes(clave.slice(0, 6))) : undefined;
+    const porTipo = esCredito
+      ? list.find((p) => /cr[eé]dito/i.test(p.name ?? ""))
+      : list.find((p) => /contado|efectivo/i.test(p.name ?? ""));
+    const match = porNombre ?? porTipo;
     return (match ?? list[0])!.id ?? null;
   } catch {
     return null;
