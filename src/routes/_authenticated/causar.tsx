@@ -265,10 +265,6 @@ function Causar() {
     toast.success(`${ok} de ${bulkFiles.length} facturas causadas como borrador.`);
   }
 
-  function setLineUnused(i: number, patch: Partial<Line>) {
-    setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
-  }
-
   /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y cuenta contable. */
   function elegirProducto(i: number, p: ProductOption) {
     const cuenta = cuentaDeProducto(p);
