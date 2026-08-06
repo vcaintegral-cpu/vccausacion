@@ -517,7 +517,9 @@ function Causar() {
                     <div className="space-y-1">
                       {(l.item_type === "producto" || l.item_type === "servicio") && (
                         <ProductCombobox
-                          products={(config?.products ?? []) as ProductOption[]}
+                          products={((config?.products ?? []) as ProductOption[]).filter(
+                            (p) => !!(p.code ?? "").trim() && !!(p.name ?? "").trim(),
+                          )}
                           kind={l.item_type}
                           value={l.code ?? ""}
                           onSelect={(p) => elegirProducto(i, p)}
