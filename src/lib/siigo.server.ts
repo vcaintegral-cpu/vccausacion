@@ -178,6 +178,7 @@ export type SiigoJournalLine = {
   debit: number;
   credit: number;
   cost_center: string | null;
+  tax_id?: number | string | null;
 };
 
 export async function siigoJournalDocumentId(): Promise<number> {
@@ -245,6 +246,7 @@ export function buildSiigoJournalPayload(params: {
       };
       if (providerNit) item["customer"] = { identification: providerNit, branch_office: 0 };
       if (l.cost_center && /^\d+$/.test(l.cost_center)) item["cost_center"] = Number(l.cost_center);
+      if (l.tax_id != null && String(l.tax_id).trim()) item["tax"] = { id: l.tax_id };
       return item;
     }),
   };

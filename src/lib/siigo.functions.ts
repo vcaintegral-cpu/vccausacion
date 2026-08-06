@@ -400,12 +400,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }): Promise<SiigoSyncResult> => {
-    const { siigoPost, siigoJournalDocumentId, buildSiigoJournalPayload } = await import("./siigo.server");
+    const { siigoGet, siigoPost, siigoJournalDocumentId, buildSiigoJournalPayload } = await import("./siigo.server");
     const supabase = context.supabase;
 
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
-      .select("id, company_id, prefix, number, issue_date, provider_nit, provider_name, notes, total")
+      .select("id, company_id, prefix, number, issue_date, provider_nit, provider_name, notes, total, iva")
       .eq("id", data.invoiceId)
       .single();
     if (invErr || !inv) throw new Error(invErr?.message ?? "Factura no encontrada.");
@@ -451,14 +451,20 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     };
 
     const findEquivalent = (baseCode: string) => {
-      if (baseCode === "621008" || baseCode === "240801") {
+      if (baseCode === "621008") {
+        // Cuenta específica de IVA del costo configurada por la empresa.
+        // No debe traducirse a una 2408: esas auxiliares tienen otra naturaleza
+        // fiscal y Siigo rechaza el impuesto "Compra de Costo" sobre ellas.
+        return availableCodes.has("621008") ? "621008" : null;
+      }
+      if (baseCode === "240801") {
         const directo = (companyAccounts ?? []).find((account) => account.code === "621008");
-        if (directo && hijasDe(directo.code).length === 0) return directo.code;
+        if (directo) return directo.code;
         const porNombre = (companyAccounts ?? []).find((account) => {
           const name = account.name.toLowerCase();
-          return account.code.startsWith("2408") && name.includes("iva") && (name.includes("servicio") || name.includes("gasto"));
+          return account.code.startsWith("2408") && name.includes("iva") && name.includes("descontable") && !name.includes("devoluci");
         })?.code;
-        return auxiliarDe(directo?.code ?? porNombre ?? "6210", ["iva", "costo"]) ?? auxiliarDe("2408", ["iva"]);
+        return auxiliarDe(porNombre ?? "240810", ["iva", "descontable"]);
       }
       if (baseCode.startsWith("2205")) {
         return auxiliarDe("220505", ["nacional", "proveedor"]) ?? auxiliarDe("2205", ["proveedor", "nacional"]);
@@ -501,17 +507,68 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
     try {
       const documentId = await siigoJournalDocumentId();
+      type SiigoTax = {
+        id?: number | string;
+        name?: string;
+        type?: string;
+        percentage?: number;
+        active?: boolean;
+        account?: { code?: string | number } | string | number;
+        accounting_account?: { code?: string | number } | string | number;
+        account_code?: string | number;
+      };
+      const ivaLineIndex = resolvedJournal.findIndex((line) => {
+        const name = String(line.account_name ?? "").toLowerCase();
+        return Number(line.debit ?? 0) > 0 && (name.includes("iva") || line.account_code.startsWith("2408") || line.account_code.startsWith("621008"));
+      });
+      let ivaTaxId: number | string | null = null;
+      if (Number(inv.iva ?? 0) > 0 && ivaLineIndex >= 0) {
+        const response = await siigoGet<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
+        const taxes = (Array.isArray(response) ? response : (response.results ?? [])).filter(
+          (tax) => tax.active !== false && tax.id != null && /iva|value.added/i.test(`${tax.type ?? ""} ${tax.name ?? ""}`),
+        );
+        const readCode = (value: SiigoTax["account"]): string => {
+          if (value == null) return "";
+          if (typeof value === "object") return String(value.code ?? "").trim();
+          return String(value).trim();
+        };
+        const ivaAccount = resolvedJournal[ivaLineIndex]?.account_code ?? "";
+        const invoiceRate = Number(inv.total ?? 0) > Number(inv.iva ?? 0)
+          ? Math.round((Number(inv.iva) / (Number(inv.total) - Number(inv.iva))) * 10000) / 100
+          : 0;
+        const tax =
+          taxes.find((candidate) =>
+            Number(candidate.percentage ?? 0) === invoiceRate && /compra.*costo|costo.*compra/i.test(candidate.name ?? ""),
+          ) ??
+          taxes.find((candidate) =>
+            Number(candidate.percentage ?? 0) === invoiceRate && /costo|compra/i.test(candidate.name ?? ""),
+          ) ??
+          taxes.find((candidate) =>
+            [candidate.account, candidate.accounting_account, candidate.account_code]
+              .map((value) => readCode(value as SiigoTax["account"]))
+              .includes(ivaAccount),
+          ) ??
+          taxes.find((candidate) => Number(candidate.percentage ?? 0) === invoiceRate);
+        if (!tax?.id) {
+          throw new Error(
+            `La cuenta ${ivaAccount} exige un impuesto de Siigo, pero no se encontró un IVA activo de ${invoiceRate}% con identificador válido. ` +
+              "Sincroniza nuevamente los impuestos desde Integraciones y vuelve a intentar.",
+          );
+        }
+        ivaTaxId = tax.id;
+      }
       const payload = buildSiigoJournalPayload({
         documentId,
         date: inv.issue_date ?? new Date().toISOString().slice(0, 10),
         providerNit: inv.provider_nit,
         observations: `Factura ${[inv.prefix, inv.number].filter(Boolean).join("-")} · ${inv.provider_name ?? ""} ${inv.notes ?? ""}`.trim(),
-        lines: resolvedJournal.map((l) => ({
+        lines: resolvedJournal.map((l, index) => ({
           account_code: l.account_code,
           account_name: l.account_name,
           debit: Number(l.debit ?? 0),
           credit: Number(l.credit ?? 0),
           cost_center: l.cost_center,
+          tax_id: index === ivaLineIndex ? ivaTaxId : null,
         })),
       });
       console.log("[siigo][causacion] payload:", JSON.stringify(payload).slice(0, 4000));
