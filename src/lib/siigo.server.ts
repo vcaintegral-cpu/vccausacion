@@ -376,6 +376,7 @@ export function buildSiigoPurchasePayload(params: {
   /** Retenciones aplicadas al documento (ids de Siigo). */
   retentionIds?: Array<number | string>;
 }) {
+  const total = Math.round(Number(params.paymentValue));
   const payload: Record<string, unknown> = {
     document: { id: params.documentId },
     date: params.date,
@@ -387,6 +388,7 @@ export function buildSiigoPurchasePayload(params: {
     discount_type: "Value",
     supplier_by_item: false,
     tax_included: false,
+    total,
     observations: (params.observations ?? "").slice(0, 500),
     items: params.items.map((item) => {
       const line: Record<string, unknown> = {
@@ -403,7 +405,7 @@ export function buildSiigoPurchasePayload(params: {
     payments: [
       {
         ...(params.paymentId != null ? { id: params.paymentId } : {}),
-        value: Math.round(params.paymentValue * 100) / 100,
+        value: total,
         due_date: params.paymentDueDate ?? params.date,
       },
     ],
