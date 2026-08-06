@@ -4,7 +4,7 @@ import { useEffect, type ReactNode } from "react";
 import { Brain, Building2, FileUp, LayoutDashboard, ListChecks, LogOut, Plug, Settings2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
-import { setActiveCompany, useActiveCompany } from "@/lib/active-company";
+import { setActiveCompany, setCompanyLocked, useActiveCompany, useCompanyLocked } from "@/lib/active-company";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -33,18 +33,20 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const active = useActiveCompany();
+  const locked = useCompanyLocked();
   const { data: companies } = useCompanies();
 
   useEffect(() => {
-    if (companies && companies.length > 0 && !companies.some((c) => c.id === active)) {
+    if (!locked && companies && companies.length > 0 && !companies.some((c) => c.id === active)) {
       setActiveCompany(companies[0]!.id);
     }
-  }, [companies, active]);
+  }, [companies, active, locked]);
 
   async function signOut() {
     await queryClient.cancelQueries();
     queryClient.clear();
     setActiveCompany(null);
+    setCompanyLocked(false);
     await supabase.auth.signOut();
     navigate({ to: "/auth", replace: true });
   }
@@ -92,8 +94,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
           <div className="ml-auto flex items-center gap-2">
             <span className="text-xs text-muted-foreground">Empresa</span>
-            <Select {...(active ? { value: active } : {})} onValueChange={(v) => setActiveCompany(v)}>
-              <SelectTrigger className="w-56 bg-background">
+            <Select {...(active ? { value: active } : {})} onValueChange={(v) => setActiveCompany(v)} disabled={locked}>
+              <SelectTrigger className="w-56 bg-background" title={locked ? "Sesión iniciada con el NIT de esta empresa. Cierra sesión para cambiar de empresa." : undefined}>
                 <SelectValue placeholder="Sin empresas" />
               </SelectTrigger>
               <SelectContent>
