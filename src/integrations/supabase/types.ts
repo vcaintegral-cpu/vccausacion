@@ -795,6 +795,30 @@ export type Database = {
           },
         ]
       }
+      siigo_credentials: {
+        Row: {
+          access_key: string
+          id: string
+          partner_id: string | null
+          updated_at: string
+          username: string
+        }
+        Insert: {
+          access_key: string
+          id?: string
+          partner_id?: string | null
+          updated_at?: string
+          username: string
+        }
+        Update: {
+          access_key?: string
+          id?: string
+          partner_id?: string | null
+          updated_at?: string
+          username?: string
+        }
+        Relationships: []
+      }
       tax_rates: {
         Row: {
           account_code: string | null
