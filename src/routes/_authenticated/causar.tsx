@@ -161,7 +161,22 @@ function Causar() {
           .from("providers").select("*").eq("company_id", companyId).eq("nit", rest.provider_nit).maybeSingle();
         provider = p;
       }
-      setLines(applyRulesToLines(extracted.map((l) => ({ ...emptyLine(), ...l })), config?.rules ?? [], provider));
+      const catalogo = config?.products ?? [];
+      const norm = (s: string) => (s ?? "").toLowerCase().trim();
+      const conCatalogo = extracted.map((l) => {
+        const base = { ...emptyLine(), ...l };
+        const prod =
+          catalogo.find((p) => base.code && norm(p.code) === norm(String(base.code))) ??
+          catalogo.find((p) => norm(p.name) === norm(base.description ?? ""));
+        if (!prod) return base;
+        return {
+          ...base,
+          account_code: base.account_code || prod.account_code || "",
+          account_name: base.account_name || prod.account_name || "",
+          item_type: prod.kind ?? base.item_type,
+        };
+      });
+      setLines(applyRulesToLines(conCatalogo, config?.rules ?? [], provider));
       setPasswordOpen(false);
       setPdfPassword("");
       setPasswordError("");
@@ -288,6 +303,7 @@ function Causar() {
             total: Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
             account_code: l.account_code ?? null,
             account_name: l.account_name ?? null,
+            item_type: l.item_type ?? "gasto",
             position: i,
           })),
         ),
@@ -441,6 +457,7 @@ function Causar() {
             <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-medium">Descripción</th>
+                <th className="px-3 py-2 font-medium">Tipo</th>
                 <th className="px-3 py-2 font-medium">Cant.</th>
                 <th className="px-3 py-2 font-medium">Vr. unitario</th>
                 <th className="px-3 py-2 font-medium">Descuento</th>
@@ -456,6 +473,17 @@ function Causar() {
                 <tr key={i}>
                   <td className="px-3 py-1.5">
                     <Input value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
+                  </td>
+                  <td className="px-3 py-1.5 w-32">
+                    <select
+                      className="h-9 w-full rounded-md border border-input bg-background px-1 text-xs"
+                      value={l.item_type ?? "gasto"}
+                      onChange={(e) => setLine(i, { item_type: e.target.value })}
+                    >
+                      {ITEM_TYPES.map((k) => (
+                        <option key={k} value={k}>{k}</option>
+                      ))}
+                    </select>
                   </td>
                   <td className="px-3 py-1.5 w-24">
                     <Input type="number" value={l.quantity} onChange={(e) => setLine(i, { quantity: Number(e.target.value) })} />
