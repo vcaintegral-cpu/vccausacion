@@ -451,14 +451,20 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     };
 
     const findEquivalent = (baseCode: string) => {
-      if (baseCode === "621008" || baseCode === "240801") {
+      if (baseCode === "621008") {
+        // Cuenta específica de IVA del costo configurada por la empresa.
+        // No debe traducirse a una 2408: esas auxiliares tienen otra naturaleza
+        // fiscal y Siigo rechaza el impuesto "Compra de Costo" sobre ellas.
+        return availableCodes.has("621008") ? "621008" : null;
+      }
+      if (baseCode === "240801") {
         const directo = (companyAccounts ?? []).find((account) => account.code === "621008");
-        if (directo && hijasDe(directo.code).length === 0) return directo.code;
+        if (directo) return directo.code;
         const porNombre = (companyAccounts ?? []).find((account) => {
           const name = account.name.toLowerCase();
-          return account.code.startsWith("2408") && name.includes("iva") && (name.includes("servicio") || name.includes("gasto"));
+          return account.code.startsWith("2408") && name.includes("iva") && name.includes("descontable") && !name.includes("devoluci");
         })?.code;
-        return auxiliarDe(directo?.code ?? porNombre ?? "6210", ["iva", "costo"]) ?? auxiliarDe("2408", ["iva"]);
+        return auxiliarDe(porNombre ?? "240810", ["iva", "descontable"]);
       }
       if (baseCode.startsWith("2205")) {
         return auxiliarDe("220505", ["nacional", "proveedor"]) ?? auxiliarDe("2205", ["proveedor", "nacional"]);
