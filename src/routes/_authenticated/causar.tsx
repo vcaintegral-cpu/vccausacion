@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/_authenticated/causar")({
   head: () => ({
@@ -74,6 +75,7 @@ function Causar() {
   const [saving, setSaving] = useState(false);
   const [header, setHeader] = useState<Header>(emptyHeader());
   const [lines, setLines] = useState<Line[]>([]);
+  const [recordar, setRecordar] = useState<{ index: number; code: string; name: string | null } | null>(null);
 
   const { data: config } = useQuery({
     queryKey: ["config", companyId],
@@ -143,6 +145,27 @@ function Causar() {
 
   function setLine(i: number, patch: Partial<Line>) {
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  }
+
+  const autoLearning = (companies ?? []).find((c) => c.id === companyId)?.auto_learning ?? true;
+
+  async function guardarAprendizaje() {
+    if (!recordar || !companyId) return;
+    const line = lines[recordar.index];
+    const { error } = await supabase.from("learning_rules").insert({
+      company_id: companyId,
+      provider_nit: header.provider_nit || null,
+      provider_name: header.provider_name || null,
+      concept: line?.description || null,
+      account_code: recordar.code,
+      account_name: recordar.name,
+      cost_center: header.cost_center || null,
+      iva: Number(line?.iva ?? 0),
+      item_type: "gasto",
+    });
+    setRecordar(null);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Regla aprendida guardada para este proveedor.");
   }
 
   async function guardar(status: "borrador" | "aprobado") {
@@ -375,6 +398,7 @@ function Causar() {
                       onChange={(e) => {
                         const acc = (config?.accounts ?? []).find((a) => a.code === e.target.value);
                         setLine(i, { account_code: e.target.value, account_name: acc?.name ?? null });
+                        if (autoLearning && e.target.value) setRecordar({ index: i, code: e.target.value, name: acc?.name ?? null });
                       }}
                     >
                       <option value="">Seleccionar…</option>
@@ -455,6 +479,24 @@ function Causar() {
           </Button>
         </div>
       )}
+
+      <Dialog open={!!recordar} onOpenChange={(o) => !o && setRecordar(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>¿Desea recordar esta cuenta para futuras facturas de este proveedor?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Se guardará una regla de aprendizaje para {header.provider_name || header.provider_nit || "este proveedor"} con la cuenta{" "}
+            <span className="font-mono">{recordar?.code}</span>. Solo aplica a esta empresa.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRecordar(null)}>
+              No
+            </Button>
+            <Button onClick={guardarAprendizaje}>Sí, recordar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
