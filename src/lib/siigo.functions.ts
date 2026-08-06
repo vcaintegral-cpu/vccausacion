@@ -512,7 +512,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       .eq("id", data.invoiceId);
 
     try {
-      const documentId = await siigoJournalDocumentId();
+      const documentId = await siigoPurchaseDocumentId();
       type SiigoTax = {
         id?: number | string;
         name?: string;
@@ -563,27 +563,64 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         }
         ivaTaxId = tax.id;
       }
-      const payload = buildSiigoJournalPayload({
+      if (!inv.provider_nit) throw new Error("La factura no tiene NIT de proveedor; Siigo lo exige para la factura de compra.");
+
+      // Renglones de la factura de compra: se usan las cuentas de gasto/costo
+      // seleccionadas por la IA (líneas del detalle) y, si no existen, los
+      // débitos del asiento excluyendo impuestos y proveedores.
+      const { data: invoiceLines } = await supabase
+        .from("invoice_lines")
+        .select("description, quantity, unit_value, discount, iva, account_code, account_name, position")
+        .eq("invoice_id", data.invoiceId)
+        .order("position");
+
+      const esCuentaFiscal = (code: string) => /^(2205|2365|2367|2368|2408|621008)/.test(code);
+      const items = (invoiceLines ?? []).length
+        ? (invoiceLines ?? []).map((l) => {
+            const code = findEquivalent(l.account_code ?? "") || (l.account_code ?? "");
+            return {
+              account_code: code,
+              description: (l.description ?? l.account_name ?? `Cuenta ${code}`) as string,
+              quantity: Number(l.quantity ?? 1) || 1,
+              price: Number(l.unit_value ?? 0),
+              discount: Number(l.discount ?? 0),
+              tax_ids: Number(l.iva ?? 0) > 0 && ivaTaxId != null ? [ivaTaxId] : [],
+            };
+          })
+        : resolvedJournal
+            .filter((l) => Number(l.debit ?? 0) > 0 && !esCuentaFiscal(l.account_code))
+            .map((l) => ({
+              account_code: l.account_code,
+              description: (l.account_name ?? `Cuenta ${l.account_code}`) as string,
+              quantity: 1,
+              price: Number(l.debit ?? 0),
+              discount: 0,
+              tax_ids: ivaTaxId != null ? [ivaTaxId] : [],
+            }));
+
+      if (items.length === 0) throw new Error("La factura no tiene renglones de gasto/costo para enviar a Siigo.");
+
+      const paymentId = await siigoPurchasePaymentTypeId(inv.payment_form);
+      const retenciones =
+        Number(inv.retefuente ?? 0) + Number(inv.reteiva ?? 0) + Number(inv.reteica ?? 0);
+
+      const payload = buildSiigoPurchasePayload({
         documentId,
         date: inv.issue_date ?? new Date().toISOString().slice(0, 10),
         providerNit: inv.provider_nit,
+        invoicePrefix: inv.prefix,
+        invoiceNumber: inv.number,
         observations: `Factura ${[inv.prefix, inv.number].filter(Boolean).join("-")} · ${inv.provider_name ?? ""} ${inv.notes ?? ""}`.trim(),
-        duePrefix: inv.prefix,
-        dueConsecutive: inv.number,
-        dueDate: inv.issue_date,
-        lines: resolvedJournal.map((l, index) => ({
-          account_code: l.account_code,
-          account_name: l.account_name,
-          debit: Number(l.debit ?? 0),
-          credit: Number(l.credit ?? 0),
-          cost_center: l.cost_center,
-          tax_id: index === ivaLineIndex ? ivaTaxId : null,
-        })),
+        costCenter: inv.cost_center,
+        items,
+        paymentId,
+        paymentValue: Math.max(Number(inv.total ?? 0) - retenciones, 0),
+        paymentDueDate: inv.due_date ?? inv.issue_date ?? null,
       });
-      console.log("[siigo][causacion] payload:", JSON.stringify(payload).slice(0, 4000));
+      console.log("[siigo][causacion] payload factura de compra:", JSON.stringify(payload, null, 2));
 
       const res = await siigoPost<{ id?: string; number?: number | string; name?: string; metadata?: { created?: string }; _links?: { self?: { href?: string } } }>(
-        "/v1/journals",
+        "/v1/purchases",
         payload,
       );
 
