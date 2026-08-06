@@ -145,17 +145,6 @@ export function ProvidersToolbar({ companyId }: { companyId: string }) {
   );
 }
 
-function useTableLegacy(table: "puc_accounts" | "cost_centers" | "tax_rates", companyId: string, order: string) {
-  return useQuery({
-    queryKey: [table, companyId, "datos-contables"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from(table).select("*").eq("company_id", companyId).order(order);
-      if (error) throw error;
-      return data as Record<string, unknown>[];
-    },
-  });
-}
-
 /* ------------------------------- PUC ------------------------------- */
 
 export function PucPanel({ companyId }: { companyId: string }) {
