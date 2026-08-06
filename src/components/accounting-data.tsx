@@ -565,7 +565,7 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
                   <AccountCell
                     value={(r['account_code'] as string | null) ?? ""}
                     options={(cuentas ?? []) as { code: string; name: string }[]}
-                    onSave={(code) => guardarCuenta(String(r['id']), code)}
+                    onSave={(code: string) => guardarCuenta(String(r['id']), code)}
                   />
                 </td>
                 <td className="px-4 py-2"><SourceTag source={r['source'] as string} /></td>
