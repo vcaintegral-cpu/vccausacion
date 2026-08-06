@@ -107,7 +107,7 @@ function Causar() {
   const impuestosRet = impuestos.filter((t) => String(t.kind).startsWith("rete"));
 
   const retenciones = useMemo(() => {
-    const r = { retefuente: 0, reteiva: 0, reteica: 0, detalle: [] as any[] };
+    const r = { retefuente: 0, reteiva: 0, reteica: 0, autorretencion: 0, detalle: [] as any[] };
     lines.forEach((l, i) => {
       const amount = Number(l.retention || 0);
       if (!amount) return;
