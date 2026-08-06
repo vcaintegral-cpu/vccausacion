@@ -129,10 +129,22 @@ async function siigoRequest<T>(method: "GET" | "POST", path: string, payload?: u
 
   console.log("[siigo]", method, url, "headers:", logHeaders(headers));
 
+  const bodyString = payload !== undefined ? JSON.stringify(payload) : undefined;
+  console.log("[siigo] ===== REQUEST =====");
+  console.log("[siigo] URL:", url);
+  console.log("[siigo] METHOD:", method);
+  console.log("[siigo] HEADERS:", JSON.stringify(logHeaders(headers), null, 2));
+  if (payload !== undefined) {
+    console.log("[siigo] BODY:");
+    console.log(JSON.stringify(payload, null, 2));
+  } else {
+    console.log("[siigo] BODY: (sin cuerpo)");
+  }
+
   let res: Response;
   try {
     const init: RequestInit = { method, headers };
-    if (payload !== undefined) init.body = JSON.stringify(payload);
+    if (bodyString !== undefined) init.body = bodyString;
     res = await fetch(url, init);
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
@@ -141,7 +153,11 @@ async function siigoRequest<T>(method: "GET" | "POST", path: string, payload?: u
   }
 
   const text = await res.text();
-  console.log("[siigo] respuesta", url, "status:", res.status, "body:", text.slice(0, 4000));
+  console.log("[siigo] ===== RESPONSE =====");
+  console.log("[siigo] URL:", url, "STATUS:", res.status, res.statusText);
+  console.log("[siigo] RESPONSE HEADERS:", JSON.stringify(Object.fromEntries(res.headers.entries()), null, 2));
+  console.log("[siigo] RESPONSE BODY (completa):");
+  console.log(text);
 
   if (res.status === 401) {
     // El token pudo expirar antes de tiempo: se limpia la caché para el próximo intento.
