@@ -80,7 +80,7 @@ function Causar() {
     queryKey: ["config", companyId],
     enabled: !!companyId,
     queryFn: async () => {
-      const [rules, taxes, centers, accounts] = await Promise.all([
+      const [rules, taxes, centers, accounts, products] = await Promise.all([
         supabase.from("accounting_rules").select("*").eq("company_id", companyId!),
         supabase.from("tax_rates").select("*").eq("company_id", companyId!),
         supabase.from("cost_centers").select("*").eq("company_id", companyId!).order("code"),
