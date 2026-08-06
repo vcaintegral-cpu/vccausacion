@@ -76,7 +76,7 @@ function withMime(dataUrl: string, mime: string) {
 
 export const extractInvoice = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((data: { fileName: string; mimeType: string; dataUrl?: string | null; text?: string | null }) => {
+  .inputValidator((data: { fileName: string; mimeType: string; dataUrl?: string | null; text?: string | null; pageImages?: string[] }) => {
     if (!data?.fileName) throw new Error("Archivo requerido");
     return data;
   })
@@ -90,6 +90,11 @@ export const extractInvoice = createServerFn({ method: "POST" })
 
     if (data.text) {
       content.push({ type: "text", text: `Contenido XML/texto de la factura:\n${data.text.slice(0, 120000)}` });
+    } else if (data.pageImages?.length) {
+      content.push({ type: "text", text: `El PDF fue convertido en ${data.pageImages.length} imágenes, una por página. Léelas en orden y consolida toda la factura.` });
+      for (const image of data.pageImages) {
+        content.push({ type: "image_url", image_url: { url: image } });
+      }
     } else if (data.dataUrl) {
       const mime = resolveMime(data.fileName, data.mimeType);
       const url = withMime(data.dataUrl, mime);
