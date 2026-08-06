@@ -171,6 +171,7 @@ export type Database = {
           created_at: string
           id: string
           name: string
+          source: string
         }
         Insert: {
           code: string
@@ -178,6 +179,7 @@ export type Database = {
           created_at?: string
           id?: string
           name: string
+          source?: string
         }
         Update: {
           code?: string
@@ -185,6 +187,7 @@ export type Database = {
           created_at?: string
           id?: string
           name?: string
+          source?: string
         }
         Relationships: [
           {
@@ -513,9 +516,12 @@ export type Database = {
           id: string
           item_type: string
           iva: number
+          last_used_at: string | null
           provider_name: string | null
           provider_nit: string | null
           retentions: string | null
+          source: string
+          taxes: string | null
           times_used: number
         }
         Insert: {
@@ -530,9 +536,12 @@ export type Database = {
           id?: string
           item_type?: string
           iva?: number
+          last_used_at?: string | null
           provider_name?: string | null
           provider_nit?: string | null
           retentions?: string | null
+          source?: string
+          taxes?: string | null
           times_used?: number
         }
         Update: {
@@ -547,9 +556,12 @@ export type Database = {
           id?: string
           item_type?: string
           iva?: number
+          last_used_at?: string | null
           provider_name?: string | null
           provider_nit?: string | null
           retentions?: string | null
+          source?: string
+          taxes?: string | null
           times_used?: number
         }
         Relationships: [
@@ -644,28 +656,34 @@ export type Database = {
       }
       puc_accounts: {
         Row: {
+          active: boolean
           code: string
           company_id: string
           created_at: string
           id: string
           name: string
           nature: string
+          source: string
         }
         Insert: {
+          active?: boolean
           code: string
           company_id: string
           created_at?: string
           id?: string
           name: string
           nature?: string
+          source?: string
         }
         Update: {
+          active?: boolean
           code?: string
           company_id?: string
           created_at?: string
           id?: string
           name?: string
           nature?: string
+          source?: string
         }
         Relationships: [
           {
@@ -688,6 +706,7 @@ export type Database = {
           min_base: number
           name: string
           rate: number
+          source: string
         }
         Insert: {
           account_code?: string | null
@@ -699,6 +718,7 @@ export type Database = {
           min_base?: number
           name: string
           rate?: number
+          source?: string
         }
         Update: {
           account_code?: string | null
@@ -710,6 +730,7 @@ export type Database = {
           min_base?: number
           name?: string
           rate?: number
+          source?: string
         }
         Relationships: [
           {

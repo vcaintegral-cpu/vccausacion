@@ -159,6 +159,7 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
       code,
       name: v.name,
       nature: v.nature,
+      source: "siigo",
     }));
     console.log("[siigo][puc] registros válidos para insertar:", rows.length);
     if (rows.length === 0) {
@@ -198,6 +199,84 @@ export type SiigoPurchase = {
   supplier: string;
   total: number;
 };
+
+/** Importa centros de costo desde Siigo sin pisar los creados manualmente o por Excel. */
+export const siigoImportCostCenters = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    const { siigoGet } = await import("./siigo.server");
+    type CC = { id?: number | string; code?: string | number; name?: string; active?: boolean };
+    const res = await siigoGet<CC[] | { results?: CC[] }>("/v1/cost-centers");
+    const list = Array.isArray(res) ? res : (res.results ?? []);
+    const rows = list
+      .map((c) => ({
+        company_id: data.companyId,
+        code: String(c.code ?? c.id ?? "").trim(),
+        name: String(c.name ?? "").trim() || `Centro ${c.code ?? c.id}`,
+        source: "siigo",
+      }))
+      .filter((r) => r.code);
+    if (rows.length === 0) return { imported: 0, skipped: 0 };
+
+    const { data: existing } = await context.supabase
+      .from("cost_centers")
+      .select("code, source")
+      .eq("company_id", data.companyId);
+    const protectedCodes = new Set((existing ?? []).filter((e) => e.source !== "siigo").map((e) => e.code));
+    const toUpsert = rows.filter((r) => !protectedCodes.has(r.code));
+    if (toUpsert.length === 0) return { imported: 0, skipped: rows.length };
+
+    const { error } = await context.supabase
+      .from("cost_centers")
+      .upsert(toUpsert, { onConflict: "company_id,code" });
+    if (error) throw new Error(error.message);
+    return { imported: toUpsert.length, skipped: rows.length - toUpsert.length };
+  });
+
+/** Importa impuestos y retenciones desde Siigo sin pisar los definidos manualmente. */
+export const siigoImportTaxes = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    const { siigoGet } = await import("./siigo.server");
+    type Tax = { id?: number | string; name?: string; type?: string; percentage?: number; active?: boolean };
+    const res = await siigoGet<Tax[] | { results?: Tax[] }>("/v1/taxes");
+    const list = Array.isArray(res) ? res : (res.results ?? []);
+    const rows = list
+      .map((t) => ({
+        company_id: data.companyId,
+        kind: String(t.type ?? "IVA").toLowerCase(),
+        name: String(t.name ?? "").trim(),
+        rate: Number(t.percentage ?? 0),
+        active: t.active !== false,
+        source: "siigo",
+      }))
+      .filter((r) => r.name);
+    if (rows.length === 0) return { imported: 0, skipped: 0 };
+
+    const { data: existing } = await context.supabase
+      .from("tax_rates")
+      .select("kind, name, source")
+      .eq("company_id", data.companyId);
+    const protectedKeys = new Set(
+      (existing ?? []).filter((e) => e.source !== "siigo").map((e) => `${e.kind}|${e.name}`),
+    );
+    const toUpsert = rows.filter((r) => !protectedKeys.has(`${r.kind}|${r.name}`));
+    if (toUpsert.length === 0) return { imported: 0, skipped: rows.length };
+
+    const { error } = await context.supabase
+      .from("tax_rates")
+      .upsert(toUpsert, { onConflict: "company_id,kind,name" });
+    if (error) throw new Error(error.message);
+    return { imported: toUpsert.length, skipped: rows.length - toUpsert.length };
+  });
 
 export const siigoListPurchases = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
