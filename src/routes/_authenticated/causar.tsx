@@ -96,9 +96,9 @@ function Causar() {
         supabase.from("accounting_rules").select("*").eq("company_id", companyId!),
         supabase.from("tax_rates").select("*").eq("company_id", companyId!),
         supabase.from("cost_centers").select("*").eq("company_id", companyId!).order("code"),
-        supabase.from("puc_accounts").select("code, name").eq("company_id", companyId!).order("code"),
-        supabase.from("products").select("code, name, kind, category, account_code, account_name").eq("company_id", companyId!).eq("active", true).order("code"),
-        supabase.from("product_categories").select("name, kind, account_code, account_name").eq("company_id", companyId!).eq("active", true),
+        supabase.from("puc_accounts").select("code, name").eq("company_id", companyId!).order("code").range(0, 19999),
+        supabase.from("products").select("code, name, kind, category, account_code, account_name").eq("company_id", companyId!).eq("active", true).order("code").range(0, 19999),
+        supabase.from("product_categories").select("name, kind, account_code, account_name").eq("company_id", companyId!).eq("active", true).range(0, 19999),
       ]);
       return {
         rules: (rules.data ?? []) as Rule[],
@@ -206,10 +206,11 @@ function Causar() {
       const n = (s?: string | null) =>
         (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
       const puc = config?.accounts ?? [];
+      // Se acepta la cuenta configurada aunque no esté cargada en el PUC local (catálogos grandes o parciales).
       const valida = (code?: string | null) => {
         const c = (code ?? "").replace(/\s+/g, "");
         if (!c) return null;
-        return puc.find((a) => a.code === c) ?? (puc.length === 0 ? { code: c, name: "" } : null);
+        return puc.find((a) => a.code === c) ?? { code: c, name: "" };
       };
       const cats = config?.categories ?? [];
       const cat =
