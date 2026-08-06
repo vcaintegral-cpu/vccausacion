@@ -421,10 +421,7 @@ function Causar() {
       }
 
       const total = baseGravable + ivaTotal + Number(header.impoconsumo || 0);
-      const { data: inv, error } = await supabase
-        .from("invoices")
-        .insert({
-          company_id: companyId,
+      const payload = {
           prefix: header.prefix,
           number: header.number,
           issue_date: header.issue_date || null,
@@ -451,12 +448,33 @@ function Causar() {
           total,
           status,
           dian_status: header.cufe ? "con CUFE" : "sin CUFE",
-          file_path: filePath,
-          file_name: file?.name ?? null,
-        })
-        .select()
-        .single();
-      if (error) throw error;
+        file_path: filePath ?? existingFile.path,
+        file_name: file?.name ?? existingFile.name,
+      };
+
+      let inv: { id: string };
+      if (editingId) {
+        const { data, error } = await supabase
+          .from("invoices")
+          .update(payload)
+          .eq("id", editingId)
+          .select("id")
+          .single();
+        if (error) throw error;
+        inv = data as { id: string };
+        await Promise.all([
+          supabase.from("invoice_lines").delete().eq("invoice_id", editingId),
+          supabase.from("journal_lines").delete().eq("invoice_id", editingId),
+        ]);
+      } else {
+        const { data, error } = await supabase
+          .from("invoices")
+          .insert({ company_id: companyId, ...payload })
+          .select("id")
+          .single();
+        if (error) throw error;
+        inv = data as { id: string };
+      }
 
       await Promise.all([
         supabase.from("invoice_lines").insert(
