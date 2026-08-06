@@ -211,7 +211,7 @@ function Causar() {
       account_name: recordar.name,
       cost_center: header.cost_center || null,
       iva: Number(line?.iva ?? 0),
-      item_type: "gasto",
+      item_type: line?.item_type ?? "gasto",
     });
     setRecordar(null);
     if (error) { toast.error(error.message); return; }
