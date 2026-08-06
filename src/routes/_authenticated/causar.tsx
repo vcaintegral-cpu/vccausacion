@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { FileUp, Loader2, Save, Sparkles, Trash2 } from "lucide-react";
+import { CheckCircle2, FileUp, Layers, Loader2, Save, Sparkles, Trash2, XCircle } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
@@ -14,6 +14,7 @@ import { AccountCombobox } from "@/components/account-combobox";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
+import { expandInvoiceFiles, processInvoiceFile } from "@/lib/bulk-invoices";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -74,6 +75,10 @@ function Causar() {
   const [header, setHeader] = useState<Header>(emptyHeader());
   const [lines, setLines] = useState<Line[]>([]);
   const [recordar, setRecordar] = useState<{ index: number; code: string; name: string | null } | null>(null);
+  const bulkRef = useRef<HTMLInputElement>(null);
+  const [bulkFiles, setBulkFiles] = useState<File[]>([]);
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkResults, setBulkResults] = useState<{ name: string; ok: boolean; detail: string }[]>([]);
   // Impuesto/retención elegido por renglón (índice -> ids)
   const [lineTax, setLineTax] = useState<Record<number, { iva?: string | undefined; ret?: string | undefined }>>({});
 
@@ -224,6 +229,40 @@ function Causar() {
 
   function setLine(i: number, patch: Partial<Line>) {
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  }
+
+  async function seleccionarMasivo(selected: FileList | null) {
+    setBulkResults([]);
+    if (!selected || selected.length === 0) { setBulkFiles([]); return; }
+    try {
+      const expanded = await expandInvoiceFiles(Array.from(selected));
+      setBulkFiles(expanded);
+      if (expanded.length === 0) toast.error("El archivo no contiene facturas PDF, XML, JPG o PNG.");
+    } catch {
+      toast.error("No fue posible abrir el archivo comprimido.");
+      setBulkFiles([]);
+    }
+  }
+
+  async function procesarMasivo() {
+    if (!companyId || bulkFiles.length === 0 || !config) return;
+    setBulkRunning(true);
+    setBulkResults([]);
+    let ok = 0;
+    for (const f of bulkFiles) {
+      try {
+        const r = await processInvoiceFile({ file: f, companyId, config: config as never, extract: extract as never });
+        ok += 1;
+        setBulkResults((p) => [...p, { name: f.name, ok: true, detail: `${r.numero} · ${cop(r.total)}` }]);
+      } catch (err) {
+        setBulkResults((p) => [
+          ...p,
+          { name: f.name, ok: false, detail: err instanceof Error ? err.message : "Error al procesar" },
+        ]);
+      }
+    }
+    setBulkRunning(false);
+    toast.success(`${ok} de ${bulkFiles.length} facturas causadas como borrador.`);
   }
 
   /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y cuenta contable. */
@@ -425,6 +464,65 @@ function Causar() {
         <Button variant="outline" onClick={() => setLines((p) => [...p, emptyLine()])}>
           <FileUp className="size-4" /> Renglón manual
         </Button>
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-border bg-card p-5">
+        <div className="flex items-start gap-3">
+          <div className="flex size-9 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
+            <Layers className="size-4" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold">Carga masiva</h2>
+            <p className="text-xs text-muted-foreground">
+              Sube un archivo .zip con hasta cientos de facturas (o varios archivos a la vez). Cada una se lee con IA y se
+              guarda como borrador para revisarla después.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-64 flex-1 space-y-1.5">
+            <Label htmlFor="masivo">Archivos o comprimido (.zip)</Label>
+            <Input
+              id="masivo"
+              ref={bulkRef}
+              type="file"
+              multiple
+              accept=".zip,.pdf,.xml,.jpg,.jpeg,.png,application/zip,application/pdf,text/xml,image/*"
+              onChange={(e) => void seleccionarMasivo(e.target.files)}
+            />
+          </div>
+          <Button onClick={() => void procesarMasivo()} disabled={bulkRunning || bulkFiles.length === 0 || !companyId}>
+            {bulkRunning ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+            {bulkRunning
+              ? `Procesando ${bulkResults.length + 1} de ${bulkFiles.length}…`
+              : `Procesar ${bulkFiles.length || ""} facturas`}
+          </Button>
+        </div>
+        {bulkFiles.length > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {bulkFiles.length} factura(s) detectada(s). {bulkResults.length > 0 ? `${bulkResults.length} procesada(s).` : ""}
+          </p>
+        ) : null}
+        {bulkResults.length > 0 ? (
+          <ul className="max-h-64 space-y-1 overflow-auto rounded-md border border-border p-2">
+            {bulkResults.map((r, i) => (
+              <li key={`${r.name}-${i}`} className="flex items-start gap-2 text-xs">
+                {r.ok ? (
+                  <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />
+                ) : (
+                  <XCircle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+                )}
+                <span className="truncate font-medium">{r.name}</span>
+                <span className="text-muted-foreground">{r.detail}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {bulkResults.some((r) => r.ok) ? (
+          <Button variant="outline" onClick={() => navigate({ to: "/facturas" })}>
+            Ver facturas causadas
+          </Button>
+        ) : null}
       </div>
 
       <Dialog open={passwordOpen} onOpenChange={(open) => !reading && setPasswordOpen(open)}>
