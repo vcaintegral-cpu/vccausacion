@@ -43,6 +43,38 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
       return (data ?? []) as { code: string; name: string }[];
     },
   });
+  const { data: categorias } = useQuery({
+    queryKey: ["product_categories", companyId, "productos-panel"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("product_categories")
+        .select("id, name, kind")
+        .eq("company_id", companyId)
+        .range(0, 19999);
+      return (data ?? []) as { id: string; name: string; kind: string }[];
+    },
+  });
+
+  const normTxt = (s?: string | null) =>
+    (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+
+  /** Devuelve el id de la categoría; la crea si no existe para no perder el vínculo. */
+  async function categoriaId(name?: string | null, kind = "producto"): Promise<string | null> {
+    const nombre = (name ?? "").trim();
+    if (!nombre) return null;
+    const existente =
+      (categorias ?? []).find((c) => normTxt(c.name) === normTxt(nombre) && normTxt(c.kind) === normTxt(kind)) ??
+      (categorias ?? []).find((c) => normTxt(c.name) === normTxt(nombre));
+    if (existente) return existente.id;
+    const { data, error } = await supabase
+      .from("product_categories")
+      .upsert({ company_id: companyId, name: nombre, kind, active: true, source: "auto" }, { onConflict: "company_id,kind,name" })
+      .select("id, name, kind")
+      .maybeSingle();
+    if (error || !data) return null;
+    await qc.invalidateQueries({ queryKey: ["product_categories"] });
+    return data.id;
+  }
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["products"] });
 
@@ -89,9 +121,20 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
         .filter((r) => r.code);
       if (parsed.length === 0)
         throw new Error("No se encontraron productos (columnas esperadas: Código, Nombre, Tipo, Categoría, Cuenta).");
-      const unicos = Array.from(new Map(parsed.map((r) => [r.code, r])).values()).map((r) => ({
+      const base = Array.from(new Map(parsed.map((r) => [r.code, r])).values()).map((r) => ({
         ...r,
         account_name: r.account_name ?? (cuentas ?? []).find((c) => c.code === r.account_code)?.name ?? null,
+      }));
+      // Se resuelve (o crea) la categoría para guardar el vínculo por identificador, no solo el nombre.
+      const mapaCat = new Map<string, string | null>();
+      for (const r of base) {
+        const clave = `${normTxt(r.category)}|${normTxt(r.kind)}`;
+        if (!r.category || mapaCat.has(clave)) continue;
+        mapaCat.set(clave, await categoriaId(r.category, r.kind));
+      }
+      const unicos = base.map((r) => ({
+        ...r,
+        category_id: r.category ? (mapaCat.get(`${normTxt(r.category)}|${normTxt(r.kind)}`) ?? null) : null,
       }));
       if (!window.confirm(`Se reemplazará el catálogo actual por ${unicos.length} producto(s)/servicio(s) del archivo. ¿Continuar?`)) return;
       const { error: delErr } = await supabase.from("products").delete().eq("company_id", companyId);
@@ -112,6 +155,7 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
   async function crear(e: React.FormEvent) {
     e.preventDefault();
     if (!form.code) return;
+    const category_id = await categoriaId(form.category, form.kind);
     const { error } = await supabase.from("products").upsert(
       {
         company_id: companyId,
@@ -119,6 +163,7 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
         name: form.name || "Sin nombre",
         kind: form.kind,
         category: form.category || null,
+        category_id,
         account_code: form.account_code || null,
         account_name: form.account_name || null,
         active: true,
@@ -132,7 +177,13 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
     await refresh();
   }
 
-  type ProductPatch = { kind?: string; category?: string | null; account_code?: string | null; account_name?: string | null };
+  type ProductPatch = {
+    kind?: string;
+    category?: string | null;
+    category_id?: string | null;
+    account_code?: string | null;
+    account_name?: string | null;
+  };
 
   async function actualizar(id: string, patch: ProductPatch) {
     const { error } = await supabase.from("products").update(patch).eq("id", id);
@@ -258,7 +309,12 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
                     className="h-8 w-40"
                     defaultValue={r.category ?? ""}
                     onBlur={(e) => {
-                      if (e.target.value !== (r.category ?? "")) void actualizar(r.id, { category: e.target.value || null });
+                      const valor = e.target.value;
+                      if (valor === (r.category ?? "")) return;
+                      void (async () => {
+                        const category_id = await categoriaId(valor, r.kind);
+                        await actualizar(r.id, { category: valor || null, category_id });
+                      })();
                     }}
                   />
                 </td>
