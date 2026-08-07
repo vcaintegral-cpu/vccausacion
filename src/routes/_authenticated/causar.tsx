@@ -253,7 +253,7 @@ function Causar() {
       if (kind !== "producto" && kind !== "servicio") return;
       if (l.account_code) return;
       const prod = buscarProducto(l, kind);
-      if (!prod) return;
+      if (!prod) { out[i] = SIN_CUENTA_MSG; return; }
       const r = resolverCuentaItem(prod);
       if (r.error) out[i] = r.error;
     });
@@ -268,7 +268,7 @@ function Causar() {
     if (kind === "producto" || kind === "servicio") {
       const prod = buscarProducto({ ...actual, item_type: kind }, kind);
       if (!prod) { setLine(i, { item_type: kind }); return; }
-      const r = resolverCuentaItem(prod);
+      const r = resolverCuentaItem(prod, true);
       if (r.error) toast.warning(r.error);
       setLine(i, { item_type: kind, code: prod.code, account_code: r.code, account_name: r.name });
       return;
@@ -409,7 +409,7 @@ function Causar() {
 
   /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y la cuenta de su categoría. */
   function elegirProducto(i: number, p: ProductOption) {
-    const cuenta = resolverCuentaItem(p);
+    const cuenta = resolverCuentaItem(p, true);
     if (cuenta.error) toast.warning(cuenta.error);
     setLine(i, {
       code: p.code,
