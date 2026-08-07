@@ -93,12 +93,20 @@ export function resolveProductAccount(
 
   if (options.log) {
     // Diagnóstico temporal de la asignación automática de cuentas.
-    console.info("[Causación] Producto seleccionado:", product.code, product.name);
-    console.info("[Causación] Categoría encontrada:", category?.name ?? "(ninguna)");
-    console.info("[Causación] Cuenta del producto:", product.account_code ?? "(ninguna)");
-    console.info("[Causación] Cuenta de la categoría:", category?.account_code ?? "(ninguna)");
-    console.info("[Causación] Cuenta finalmente utilizada:", result.code || "(ninguna)");
-    console.info("[Causación] Origen de la cuenta:", result.origin);
+    console.info("[Causación] PRODUCTO SELECCIONADO", {
+      codigo: product.code,
+      nombre: product.name,
+      categoria: product.category,
+      category_id: product.category_id,
+      account_code: product.account_code,
+    });
+    console.info("[Causación] CATEGORÍA ENCONTRADA", category
+      ? { id: category.id, nombre: category.name, account_code: category.account_code, account_name: category.account_name }
+      : "(ninguna)");
+    console.info("[Causación] RESULTADO", {
+      cuenta: result.code || "(ninguna)",
+      origen: { producto: "PRODUCTO", categoria: "CATEGORÍA", ia: "REGLA", ninguna: "NO ENCONTRADA" }[result.origin],
+    });
   }
   return result;
 }
