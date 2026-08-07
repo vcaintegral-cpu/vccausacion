@@ -5,6 +5,7 @@ import { Download, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { siigoImportProducts } from "@/lib/siigo.functions";
+import { normalizeCategoryName } from "@/lib/product-account";
 import { downloadSheet, pick, readSheet } from "@/lib/spreadsheet";
 import { AccountCombobox } from "@/components/account-combobox";
 import { Button } from "@/components/ui/button";
@@ -55,8 +56,50 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
     },
   });
 
-  const normTxt = (s?: string | null) =>
-    (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+  const normTxt = (s?: string | null) => normalizeCategoryName(s);
+
+  /** Reparación: vincula productos sin category_id con su categoría por nombre (misma empresa). */
+  async function repararVinculos() {
+    setBusy("reparar");
+    try {
+      const { data: cats } = await supabase
+        .from("product_categories")
+        .select("id, name, kind")
+        .eq("company_id", companyId)
+        .range(0, 19999);
+      const { data: prods } = await supabase
+        .from("products")
+        .select("id, category, category_id, kind")
+        .eq("company_id", companyId)
+        .is("category_id", null)
+        .range(0, 19999);
+      const lista = cats ?? [];
+      let corregidos = 0;
+      let sinCategoria = 0;
+      let ambiguos = 0;
+      for (const p of prods ?? []) {
+        const clave = normTxt(p.category);
+        if (!clave) { sinCategoria++; continue; }
+        const iguales = lista.filter((c) => normTxt(c.name) === clave);
+        const elegido = iguales.find((c) => normTxt(c.kind) === normTxt(p.kind)) ?? (iguales.length === 1 ? iguales[0] : undefined);
+        if (!elegido) {
+          if (iguales.length > 1) { ambiguos++; console.warn("[Productos] Categoría ambigua:", p.category); }
+          else sinCategoria++;
+          continue;
+        }
+        const { error } = await supabase.from("products").update({ category_id: elegido.id }).eq("id", p.id);
+        if (!error) corregidos++;
+      }
+      toast.success(
+        `Productos revisados: ${(prods ?? []).length}. Corregidos: ${corregidos}. Sin categoría encontrada: ${sinCategoria}${ambiguos ? `. Ambiguos: ${ambiguos}` : ""}.`,
+      );
+      await refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No fue posible reparar los vínculos.");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   /** Devuelve el id de la categoría; la crea si no existe para no perder el vínculo. */
   async function categoriaId(name?: string | null, kind = "producto"): Promise<string | null> {
@@ -235,6 +278,9 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
         </Button>
         <Button variant="outline" onClick={exportar}>
           <Download className="size-4" /> Exportar Excel
+        </Button>
+        <Button variant="outline" disabled={busy !== null} onClick={() => void repararVinculos()}>
+          <RefreshCw className={`size-4 ${busy === "reparar" ? "animate-spin" : ""}`} /> Reparar categorías
         </Button>
         <Input className="ml-auto w-64" placeholder="Buscar…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
       </div>
