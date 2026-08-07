@@ -12,6 +12,7 @@ import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { AccountCombobox } from "@/components/account-combobox";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
+import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { expandInvoiceFiles, processInvoiceFile } from "@/lib/bulk-invoices";
@@ -97,8 +98,8 @@ function Causar() {
         supabase.from("tax_rates").select("*").eq("company_id", companyId!),
         supabase.from("cost_centers").select("*").eq("company_id", companyId!).order("code"),
         supabase.from("puc_accounts").select("code, name").eq("company_id", companyId!).order("code").range(0, 19999),
-        supabase.from("products").select("code, name, kind, category, account_code, account_name").eq("company_id", companyId!).eq("active", true).order("code").range(0, 19999),
-        supabase.from("product_categories").select("name, kind, account_code, account_name").eq("company_id", companyId!).eq("active", true).range(0, 19999),
+        supabase.from("products").select("code, name, kind, category, category_id, account_code, account_name").eq("company_id", companyId!).eq("active", true).order("code").range(0, 19999),
+        supabase.from("product_categories").select("id, name, kind, account_code, account_name").eq("company_id", companyId!).eq("active", true).range(0, 19999),
       ]);
       return {
         rules: (rules.data ?? []) as Rule[],
@@ -200,36 +201,30 @@ function Causar() {
     setLineTax(seleccion);
   }, [borrador, config, editingId]);
 
-  /** Cuenta del ítem: primero la de su categoría (Producto/Servicio → Categoría → Cuenta PUC) y, si no existe, la propia del producto. */
+  /** Cuenta del ítem: 1) cuenta propia del producto, 2) cuenta de su categoría, 3) reglas de aprendizaje. */
   const resolverCuentaItem = useCallback(
-    (p: { kind?: string | null; category?: string | null; account_code?: string | null; account_name?: string | null }) => {
-      const n = (s?: string | null) =>
-        (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
-      const puc = config?.accounts ?? [];
-      // Se acepta la cuenta configurada aunque no esté cargada en el PUC local (catálogos grandes o parciales).
-      const valida = (code?: string | null) => {
-        const c = (code ?? "").replace(/\s+/g, "");
-        if (!c) return null;
-        return puc.find((a) => a.code === c) ?? { code: c, name: "" };
-      };
-      const cats = config?.categories ?? [];
-      const cat =
-        cats.find((c) => p.category && n(c.name) === n(p.category) && n(c.kind) === n(p.kind)) ??
-        cats.find((c) => p.category && n(c.name) === n(p.category));
-      const deCat = valida(cat?.account_code);
-      if (deCat) return { code: deCat.code, name: cat?.account_name || deCat.name || "", error: null as string | null };
-      const propia = valida(p.account_code);
-      if (propia) return { code: propia.code, name: p.account_name || propia.name || "", error: null as string | null };
-      const error = !(p.category ?? "").trim()
-        ? "Este producto no tiene una categoría configurada."
-        : "La categoría seleccionada no tiene una cuenta contable asociada.";
-      return { code: "", name: "", error };
+    (
+      p: {
+        code?: string | null;
+        name?: string | null;
+        kind?: string | null;
+        category?: string | null;
+        category_id?: string | null;
+        account_code?: string | null;
+        account_name?: string | null;
+      },
+      log = false,
+    ) => {
+      const r = resolveProductAccount(p, config?.categories ?? [], config?.rules ?? [], { log });
+      const nombre =
+        r.name || (config?.accounts ?? []).find((a) => a.code === r.code)?.name || "";
+      return { code: r.code, name: nombre, origin: r.origin, error: r.error };
     },
-    [config?.accounts, config?.categories],
+    [config?.accounts, config?.categories, config?.rules],
   );
   /** Compatibilidad con el flujo previo: devuelve la cuenta o null. */
   const cuentaDeProducto = useCallback(
-    (p: { kind?: string | null; category?: string | null; account_code?: string | null; account_name?: string | null }) => {
+    (p: { kind?: string | null; category?: string | null; category_id?: string | null; account_code?: string | null; account_name?: string | null }) => {
       const r = resolverCuentaItem(p);
       return r.code ? { code: r.code, name: r.name } : null;
     },
@@ -258,7 +253,7 @@ function Causar() {
       if (kind !== "producto" && kind !== "servicio") return;
       if (l.account_code) return;
       const prod = buscarProducto(l, kind);
-      if (!prod) return;
+      if (!prod) { out[i] = SIN_CUENTA_MSG; return; }
       const r = resolverCuentaItem(prod);
       if (r.error) out[i] = r.error;
     });
@@ -273,7 +268,7 @@ function Causar() {
     if (kind === "producto" || kind === "servicio") {
       const prod = buscarProducto({ ...actual, item_type: kind }, kind);
       if (!prod) { setLine(i, { item_type: kind }); return; }
-      const r = resolverCuentaItem(prod);
+      const r = resolverCuentaItem(prod, true);
       if (r.error) toast.warning(r.error);
       setLine(i, { item_type: kind, code: prod.code, account_code: r.code, account_name: r.name });
       return;
@@ -414,7 +409,7 @@ function Causar() {
 
   /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y la cuenta de su categoría. */
   function elegirProducto(i: number, p: ProductOption) {
-    const cuenta = resolverCuentaItem(p);
+    const cuenta = resolverCuentaItem(p, true);
     if (cuenta.error) toast.warning(cuenta.error);
     setLine(i, {
       code: p.code,

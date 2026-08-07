@@ -2,6 +2,7 @@ import { unzipSync } from "fflate";
 import { supabase } from "@/integrations/supabase/client";
 import { prepareInvoiceFile } from "@/lib/invoice-file";
 import type { ExtractedInvoice } from "@/lib/extract.functions";
+import { resolveProductAccount } from "@/lib/product-account";
 import {
   applyRulesToLines,
   buildJournal,
@@ -45,8 +46,16 @@ export async function expandInvoiceFiles(input: File[]): Promise<File[]> {
 export type BulkConfig = {
   rules: Rule[];
   taxes: TaxRate[];
-  products: { code: string; name: string; kind: string; category: string | null; account_code: string | null; account_name: string | null }[];
-  categories: { name: string; kind: string; account_code: string | null; account_name: string | null }[];
+  products: {
+    code: string;
+    name: string;
+    kind: string;
+    category: string | null;
+    category_id?: string | null;
+    account_code: string | null;
+    account_name: string | null;
+  }[];
+  categories: { id?: string | null; name: string; kind: string; account_code: string | null; account_name: string | null }[];
 };
 
 type ExtractFn = (args: { data: { fileName: string; mimeType: string } & Record<string, unknown> }) => Promise<unknown>;
@@ -75,13 +84,16 @@ export async function processInvoiceFile(params: {
     provider = p;
   }
 
-  const cuentaDeProducto = (p: { kind?: string | null; category?: string | null; account_code?: string | null; account_name?: string | null }) => {
-    const cat =
-      config.categories.find((c) => p.category && norm(c.name) === norm(p.category) && norm(c.kind) === norm(p.kind)) ??
-      config.categories.find((c) => p.category && norm(c.name) === norm(p.category));
-    if (cat?.account_code) return { code: cat.account_code, name: cat.account_name ?? "" };
-    if (p.account_code) return { code: p.account_code, name: p.account_name ?? "" };
-    return null;
+  const cuentaDeProducto = (p: {
+    name?: string | null;
+    kind?: string | null;
+    category?: string | null;
+    category_id?: string | null;
+    account_code?: string | null;
+    account_name?: string | null;
+  }) => {
+    const r = resolveProductAccount(p, config.categories, config.rules);
+    return r.code ? { code: r.code, name: r.name } : null;
   };
 
   const conCatalogo: Line[] = extracted.map((l) => {

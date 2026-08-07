@@ -627,6 +627,7 @@ export type Database = {
           account_name: string | null
           active: boolean
           category: string | null
+          category_id: string | null
           code: string
           company_id: string
           created_at: string
@@ -641,6 +642,7 @@ export type Database = {
           account_name?: string | null
           active?: boolean
           category?: string | null
+          category_id?: string | null
           code: string
           company_id: string
           created_at?: string
@@ -655,6 +657,7 @@ export type Database = {
           account_name?: string | null
           active?: boolean
           category?: string | null
+          category_id?: string | null
           code?: string
           company_id?: string
           created_at?: string
@@ -665,6 +668,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "products_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "product_categories"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "products_company_id_fkey"
             columns: ["company_id"]

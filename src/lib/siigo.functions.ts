@@ -746,6 +746,27 @@ export const siigoImportProducts = createServerFn({ method: "POST" })
     const cuentas = puc ?? [];
     const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
+    // Categorías existentes: el producto se enlaza por identificador, no solo por el nombre.
+    const { data: cats } = await context.supabase
+      .from("product_categories")
+      .select("id, name, kind")
+      .eq("company_id", data.companyId);
+    const categorias = new Map<string, string>();
+    for (const c of cats ?? []) categorias.set(norm(String(c.name ?? "")), c.id as string);
+    const nuevas = Array.from(
+      new Set(list.map((p) => (p.account_group?.name ?? "").trim()).filter((n2) => n2 && !categorias.has(norm(n2)))),
+    );
+    if (nuevas.length > 0) {
+      const { data: creadas } = await context.supabase
+        .from("product_categories")
+        .upsert(
+          nuevas.map((name) => ({ company_id: data.companyId, name, kind: "producto", active: true, source: "siigo" })),
+          { onConflict: "company_id,kind,name" },
+        )
+        .select("id, name");
+      for (const c of creadas ?? []) categorias.set(norm(String(c.name ?? "")), c.id as string);
+    }
+
     const rows = list
       .map((p) => {
         const rawAccount = String(p.accounting_account ?? p.account?.code ?? "").replace(/\s+/g, "");
@@ -764,6 +785,7 @@ export const siigoImportProducts = createServerFn({ method: "POST" })
           name: String(p.name ?? "").trim() || `Producto ${p.code ?? ""}`,
           kind: String(p.type ?? "").toLowerCase().startsWith("serv") ? "servicio" : "producto",
           category: p.account_group?.name ?? null,
+          category_id: p.account_group?.name ? (categorias.get(norm(p.account_group.name)) ?? null) : null,
           account_code,
           account_name,
           active: p.active !== false,
