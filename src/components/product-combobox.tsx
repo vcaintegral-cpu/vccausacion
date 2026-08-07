@@ -10,6 +10,7 @@ export type ProductOption = {
   name: string;
   kind: string;
   category?: string | null;
+  category_id?: string | null;
   account_code?: string | null;
   account_name?: string | null;
 };
