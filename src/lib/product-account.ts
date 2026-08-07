@@ -21,8 +21,18 @@ export type ProductRef = {
 export const SIN_CUENTA_MSG =
   "Este producto no tiene una cuenta contable parametrizada. Configure la cuenta en Administración → Categorías o directamente en el Producto.";
 
-const n = (s?: string | null) =>
-  (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+/** Normaliza un nombre: sin código inicial, sin tildes, sin puntuación y sin espacios dobles. */
+export const normalizeCategoryName = (s?: string | null) =>
+  (s ?? "")
+    .replace(/^[A-Za-z]{0,2}\d+[\s.-]+/, "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const n = normalizeCategoryName;
 
 /** Categoría del producto: primero por identificador y, si no existe, por nombre (compatibilidad con catálogos antiguos). */
 export function findCategory(product: ProductRef, categories: CategoryRef[]): CategoryRef | undefined {
@@ -83,12 +93,20 @@ export function resolveProductAccount(
 
   if (options.log) {
     // Diagnóstico temporal de la asignación automática de cuentas.
-    console.info("[Causación] Producto seleccionado:", product.code, product.name);
-    console.info("[Causación] Categoría encontrada:", category?.name ?? "(ninguna)");
-    console.info("[Causación] Cuenta del producto:", product.account_code ?? "(ninguna)");
-    console.info("[Causación] Cuenta de la categoría:", category?.account_code ?? "(ninguna)");
-    console.info("[Causación] Cuenta finalmente utilizada:", result.code || "(ninguna)");
-    console.info("[Causación] Origen de la cuenta:", result.origin);
+    console.info("[Causación] PRODUCTO SELECCIONADO", {
+      codigo: product.code,
+      nombre: product.name,
+      categoria: product.category,
+      category_id: product.category_id,
+      account_code: product.account_code,
+    });
+    console.info("[Causación] CATEGORÍA ENCONTRADA", category
+      ? { id: category.id, nombre: category.name, account_code: category.account_code, account_name: category.account_name }
+      : "(ninguna)");
+    console.info("[Causación] RESULTADO", {
+      cuenta: result.code || "(ninguna)",
+      origen: { producto: "PRODUCTO", categoria: "CATEGORÍA", ia: "REGLA", ninguna: "NO ENCONTRADA" }[result.origin],
+    });
   }
   return result;
 }

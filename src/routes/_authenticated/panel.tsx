@@ -80,7 +80,7 @@ function Panel() {
             <LogOut className="size-4" /> Cerrar sesión
           </Button>
           <Button asChild>
-            <Link to="/causar">
+            <Link to="/causar" search={{}}>
               <FileUp className="size-4" /> Causar factura
             </Link>
           </Button>
