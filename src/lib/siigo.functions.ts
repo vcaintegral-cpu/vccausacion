@@ -754,7 +754,11 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const ivaLineas = (invoiceLines ?? []).reduce((acc, l) => acc + Number(l.iva ?? 0), 0);
       const subtotal = r2(Number(inv.subtotal ?? 0) > 0 ? Number(inv.subtotal) : subtotalItems);
       const iva = r2(Number(inv.iva ?? 0) > 0 ? Number(inv.iva) : ivaLineas);
-      const totalFactura = r2(Math.max(subtotal + iva - retenciones, 0));
+      // Siigo calcula el total de la compra como base + impuestos. Las retenciones
+      // son información tributaria del documento y NO se descuentan del total ni de
+      // los pagos (de lo contrario devuelve invalid_total_payments).
+      const impoconsumo = r2((invoiceLines ?? []).reduce((acc, l) => acc + Number(l.impoconsumo ?? 0), 0));
+      const totalFactura = r2(Math.max(subtotal + iva + impoconsumo, 0));
 
       if (totalFactura <= 0) {
         throw new Error(
@@ -772,7 +776,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const dueDate = esCredito ? (inv.due_date ?? fechaDoc) : fechaDoc;
       const payments = [{ id: paymentId, value: totalFactura, due_date: dueDate }];
       const sumaPagos = r2(payments.reduce((acc, p) => acc + p.value, 0));
-      if (sumaPagos !== totalFactura) {
+      if (Math.abs(sumaPagos - totalFactura) > 0.009) {
         console.log("[siigo][causacion] ⚠ Suma de payments distinta al total calculado");
         console.log("[siigo][causacion] Suma de payments:", sumaPagos);
         console.log("[siigo][causacion] Total calculado:", totalFactura);
@@ -783,8 +787,11 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
       console.log("[siigo][causacion] Subtotal:", subtotal);
       console.log("[siigo][causacion] IVA:", iva);
-      console.log("[siigo][causacion] Retenciones:", retenciones);
-      console.log("[siigo][causacion] Total calculado:", totalFactura);
+      console.log("[siigo][causacion] Impoconsumo:", impoconsumo);
+      console.log("[siigo][causacion] Retenciones (informativas, no afectan el pago):", retenciones);
+      console.log("[siigo][causacion] Total factura (contable):", r2(subtotal + iva + impoconsumo - retenciones));
+      console.log("[siigo][causacion] Total enviado a Siigo:", totalFactura);
+      console.log("[siigo][causacion] Diferencia payments vs total:", r2(sumaPagos - totalFactura));
       console.log("[siigo][causacion] Payments enviados:", JSON.stringify(payments, null, 2));
       console.log("[siigo][causacion] Suma de payments:", sumaPagos);
 
