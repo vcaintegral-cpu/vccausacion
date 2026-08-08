@@ -1152,7 +1152,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         });
       }
 
-      const esCredito = /cr[eé]d/i.test(String(inv.payment_form ?? ""));
+      const esCredito = formaPago === "crédito";
 
       // Validación bloqueante: toda retención con valor debe tener su ID real de Siigo.
       if (retencionesPorTipo.length > 0) {
