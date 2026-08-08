@@ -181,7 +181,7 @@ function Causar() {
       buyer_nit: inv['buyer_nit'] ?? "",
       buyer_name: inv['buyer_name'] ?? "",
       cufe: inv['cufe'] ?? "",
-      payment_form: "Crédito",
+      payment_form: creditTermFromDates(inv['issue_date'], inv['due_date']),
       payment_method: inv['payment_method'] ?? "",
       currency: inv['currency'] ?? "COP",
       cost_center: inv['cost_center'] ?? "",
