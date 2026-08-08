@@ -83,6 +83,8 @@ function Revisar() {
   const [sending, setSending] = useState(false);
   const [ok, setOk] = useState<{ number: string | null; id: string | null; date: string | null; url: string | null } | null>(null);
   const [inventario, setInventario] = useState<{ index: number; query: string; results: { id: string; code: string; name: string }[] | null; busy: boolean } | null>(null);
+  const [centroSugerido, setCentroSugerido] = useState<string | null>(null);
+  const [centroTocado, setCentroTocado] = useState(false);
 
   const { data } = useQuery({
     queryKey: ["revisar", id],
@@ -92,7 +94,7 @@ function Revisar() {
         supabase.from("invoices").select("*").eq("id", id).single(),
         supabase.from("invoice_lines").select("*").eq("invoice_id", id).order("position"),
         supabase.from("cost_centers").select("code, name").eq("company_id", companyId ?? "").order("code"),
-        supabase.from("puc_accounts").select("code, name").eq("company_id", companyId ?? "").order("code"),
+        supabase.from("puc_accounts").select("code, name").eq("company_id", companyId ?? "").order("code").range(0, 19999),
         supabase.from("learning_rules").select("*").eq("company_id", companyId ?? ""),
       ]);
       if (inv.error) throw inv.error;
@@ -112,6 +114,21 @@ function Revisar() {
       setLines(data.lines);
     }
   }, [data]);
+
+  /** Centro de costo sugerido por el historial del proveedor en esta empresa. */
+  useEffect(() => {
+    const nit = header?.provider_nit;
+    const company = header?.company_id;
+    if (!company || !nit) return;
+    let cancelado = false;
+    void suggestCostCenter({ companyId: company, providerNit: nit }).then((s) => {
+      if (cancelado || !s) return;
+      setCentroSugerido(s.detail);
+      console.log("[revision] centro de costo sugerido:", { proveedor: nit, centro: s.code, origen: s.origin });
+      setHeader((prev) => (!prev || centroTocado || prev.cost_center ? prev : { ...prev, cost_center: s.code }));
+    });
+    return () => { cancelado = true; };
+  }, [header?.provider_nit, header?.company_id, centroTocado]);
 
   const base = useMemo(
     () => lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0), 0),
@@ -311,7 +328,7 @@ function Revisar() {
           <select
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={header.cost_center ?? ""}
-            onChange={(e) => setHeader({ ...header, cost_center: e.target.value })}
+            onChange={(e) => { setCentroTocado(true); setHeader({ ...header, cost_center: e.target.value }); }}
           >
             <option value="">Sin centro de costo</option>
             {(data?.centers ?? []).map((c) => (
@@ -320,6 +337,7 @@ function Revisar() {
               </option>
             ))}
           </select>
+          {centroSugerido && !centroTocado && <p className="text-xs text-muted-foreground">{centroSugerido}</p>}
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Forma de pago</Label>
