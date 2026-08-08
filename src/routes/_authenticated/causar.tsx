@@ -88,6 +88,8 @@ function Causar() {
   const [lineTax, setLineTax] = useState<Record<number, { iva?: string | undefined; ret?: string | undefined }>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [existingFile, setExistingFile] = useState<{ path: string | null; name: string | null }>({ path: null, name: null });
+  const [centroSugerido, setCentroSugerido] = useState<string | null>(null);
+  const [centroTocado, setCentroTocado] = useState(false);
 
   const { data: config } = useQuery({
     queryKey: ["config", companyId],
@@ -743,7 +745,7 @@ function Causar() {
           <select
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={header.cost_center ?? ""}
-            onChange={(e) => setHeader({ ...header, cost_center: e.target.value })}
+            onChange={(e) => { setCentroTocado(true); setHeader({ ...header, cost_center: e.target.value }); }}
           >
             <option value="">Sin centro de costo</option>
             {(config?.centers ?? []).map((c) => (
@@ -752,6 +754,9 @@ function Causar() {
               </option>
             ))}
           </select>
+          {centroSugerido && !centroTocado && (
+            <p className="text-xs text-muted-foreground">{centroSugerido}</p>
+          )}
         </div>
         <div className="space-y-1.5 sm:col-span-2 xl:col-span-4">
           <Label className="text-xs">Notas</Label>
