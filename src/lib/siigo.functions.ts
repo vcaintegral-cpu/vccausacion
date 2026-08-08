@@ -599,6 +599,10 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       is_movement: boolean;
       siigo_id: string | null;
       siigo_code: string | null;
+      parent_code: string | null;
+      siigo_active: boolean | null;
+      siigo_is_movement: boolean | null;
+      siigo_seen_at: string | null;
     };
     const companyAccounts: PucRow[] = [];
     for (let from = 0; ; from += 1000) {
