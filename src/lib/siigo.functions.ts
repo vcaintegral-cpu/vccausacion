@@ -921,6 +921,14 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // Retenciones: resolver siempre el ID real configurado en Siigo. La cuenta
       // contable del asiento se usa como criterio de selección, pero no se modifica.
       const retentionIds: Array<number | string> = [];
+      const retencionesTrace: Array<{
+        tipo: string;
+        cuenta: string;
+        tarifa: number;
+        valor: number;
+        siigo_id: string | null;
+        nombre: string | null;
+      }> = [];
       if (retencionesPorTipo.length > 0) {
         // Reglas tributarias configuradas por empresa: la tarifa oficial sale de aquí,
         // nunca se infiere desde el valor monetario redondeado de la retención.
@@ -1005,6 +1013,14 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             });
             if (!retentionIds.some((id) => String(id) === String(regla.siigo_id)))
               retentionIds.push(regla.siigo_id);
+            retencionesTrace.push({
+              tipo: retention.label,
+              cuenta: accountCode,
+              tarifa: configuredRate,
+              valor: retention.amount,
+              siigo_id: String(regla.siigo_id),
+              nombre: regla.siigo_name ?? regla.name ?? null,
+            });
             continue;
           }
 
@@ -1035,10 +1051,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
                 ));
           if (tax?.id == null) {
             throw new Error(
-              `No se encontró en Siigo el impuesto activo de ${retention.label} para la cuenta ${accountCode}` +
-                (configuredRate > 0
-                  ? ` y tarifa configurada ${configuredRate}%. Sincronice los impuestos desde Integraciones.`
-                  : ". Configure la tarifa de retención en Impuestos y sincronice los impuestos desde Integraciones."),
+              `No se encontró en Siigo el impuesto correspondiente para esta empresa y tarifa (${retention.label}` +
+                (configuredRate > 0 ? ` ${configuredRate}%` : "") +
+                `, cuenta ${accountCode}). Sincronice nuevamente los impuestos desde Integraciones.`,
             );
           }
           console.log("[siigo][retencion] ID desde /v1/taxes:", {
@@ -1053,12 +1068,25 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           if (regla) {
             await supabase
               .from("tax_rates")
-              .update({ siigo_id: String(tax.id), siigo_name: tax.name ?? null })
+              .update({
+                siigo_id: String(tax.id),
+                siigo_name: tax.name ?? null,
+                siigo_code: String(tax.id),
+                siigo_synced_at: new Date().toISOString(),
+              })
               .eq("company_id", inv.company_id)
               .eq("kind", regla.kind)
               .eq("name", regla.name);
           }
           if (!retentionIds.some((id) => String(id) === String(tax.id))) retentionIds.push(tax.id);
+          retencionesTrace.push({
+            tipo: retention.label,
+            cuenta: accountCode,
+            tarifa: configuredRate || Number(tax.percentage ?? 0),
+            valor: retention.amount,
+            siigo_id: String(tax.id),
+            nombre: tax.name ?? null,
+          });
         }
       }
 
