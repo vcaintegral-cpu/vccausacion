@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "./company-validation";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { normalizeItemType } from "@/lib/item-type";
+import type { Json } from "@/integrations/supabase/types";
 
 export type SiigoStatus = {
   configured: boolean;
