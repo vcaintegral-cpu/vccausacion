@@ -43,6 +43,7 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [progreso, setProgreso] = useState<string | null>(null);
   const [filtro, setFiltro] = useState("");
   const [form, setForm] = useState({ code: "", name: "", kind: "producto", category: "", account_code: "", account_name: "" });
 
@@ -327,6 +328,9 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
         </Button>
         <Input className="ml-auto w-64" placeholder="Buscar…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
       </div>
+      {progreso ? (
+        <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">{progreso}</p>
+      ) : null}
 
       <form onSubmit={crear} className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-4">
         <div className="w-36 space-y-1.5">
