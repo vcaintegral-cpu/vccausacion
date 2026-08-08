@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, Download, FileSpreadsheet, FileText, Pencil, Send, Trash2 } from "lucide-react";
+import { CheckCircle2, Download, Eye, FileSpreadsheet, FileText, Pencil, Send, Trash2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
@@ -10,6 +10,7 @@ import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { cop, fecha } from "@/lib/format";
 import { exportCsv, exportTxt, exportXlsx } from "@/lib/export";
 import { ESTADO_LABEL, estadoUnico } from "@/lib/invoice-duplicates";
+import { downloadInvoiceFile, openInvoiceFile } from "@/lib/invoice-pdf";
 import type { JournalLine } from "@/lib/accounting";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,6 +50,8 @@ type Inv = {
   siigo_synced_at: string | null;
   siigo_last_attempt_at: string | null;
   siigo_error?: string | null;
+  file_path: string | null;
+  file_name: string | null;
 };
 
 const SIIGO_LABEL: Record<string, string> = {
@@ -83,7 +86,7 @@ function Facturas() {
       const { data, error } = await supabase
         .from("invoices")
         .select(
-          "id, prefix, number, issue_date, provider_nit, provider_name, cost_center, notes, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_synced_at, siigo_last_attempt_at, siigo_error",
+          "id, prefix, number, issue_date, provider_nit, provider_name, cost_center, notes, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_synced_at, siigo_last_attempt_at, siigo_error, file_path, file_name",
         )
         .eq("company_id", companyId!)
         .order("issue_date", { ascending: false });
@@ -121,6 +124,15 @@ function Facturas() {
     if (error || !data?.length) { toast.error("Este comprobante no tiene movimientos."); return; }
     const fn = kind === "xlsx" ? exportXlsx : kind === "csv" ? exportCsv : exportTxt;
     fn(inv, data as JournalLine[]);
+  }
+
+  async function verPdf(inv: Inv, descargar = false) {
+    try {
+      if (descargar) await downloadInvoiceFile(inv);
+      else await openInvoiceFile(inv);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "PDF no disponible");
+    }
   }
 
   async function aprobar(inv: Inv) {
@@ -197,6 +209,7 @@ function Facturas() {
               <th className="px-4 py-2 text-right font-medium">Total</th>
               <th className="px-4 py-2 font-medium">Estado</th>
               <th className="px-4 py-2 font-medium">Estado Siigo</th>
+              <th className="px-4 py-2 font-medium">Consecutivo Siigo</th>
               <th className="px-4 py-2 text-right font-medium">Acciones</th>
             </tr>
           </thead>
@@ -240,6 +253,13 @@ function Facturas() {
                     <div className="mt-0.5 text-[11px] text-muted-foreground">Último intento {fecha(r.siigo_last_attempt_at.slice(0, 10))}</div>
                   )}
                 </td>
+                <td className="px-4 py-2">
+                  {r.siigo_number || r.siigo_id ? (
+                    <span className="font-mono text-xs">{r.siigo_number ?? r.siigo_id}</span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">Pendiente</span>
+                  )}
+                </td>
                 <td className="whitespace-nowrap px-4 py-2 text-right">
                   {estadoUnico(r) === "borrador" && (
                     <Button asChild variant="ghost" size="icon" title="Continuar borrador">
@@ -270,11 +290,23 @@ function Facturas() {
                   <Button variant="ghost" size="icon" title="Excel" onClick={() => exportar(r, "xlsx")}>
                     <FileSpreadsheet className="size-4" />
                   </Button>
-                  <Button variant="ghost" size="icon" title="CSV" onClick={() => exportar(r, "csv")}>
-                    <Download className="size-4" />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title={r.file_path ? "Ver PDF original" : "PDF no disponible"}
+                    disabled={!r.file_path}
+                    onClick={() => verPdf(r)}
+                  >
+                    <Eye className="size-4" />
                   </Button>
-                  <Button variant="ghost" size="icon" title="TXT" onClick={() => exportar(r, "txt")}>
-                    <FileText className="size-4" />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title={r.file_path ? "Descargar PDF original" : "PDF no disponible"}
+                    disabled={!r.file_path}
+                    onClick={() => verPdf(r, true)}
+                  >
+                    <Download className="size-4" />
                   </Button>
                   {estadoUnico(r) === "borrador" && (
                     <Button variant="ghost" size="icon" title="Aprobar" onClick={() => aprobar(r)}>
@@ -289,7 +321,7 @@ function Facturas() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={11} className="px-4 py-8 text-center text-sm text-muted-foreground">
                   No hay facturas que coincidan con el filtro.
                 </td>
               </tr>

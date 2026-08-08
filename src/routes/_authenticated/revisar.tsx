@@ -344,7 +344,7 @@ function Revisar() {
       const res = await sync({ data: { invoiceId: header.id } });
       if (!res.ok) { toast.error(res.error ?? "Siigo rechazó el comprobante."); return; }
       setOk({ number: res.siigoNumber, id: res.siigoId, date: res.syncedAt, url: res.documentUrl });
-      toast.success("Factura sincronizada correctamente.");
+      toast.success(res.error ?? "Factura sincronizada correctamente.");
       await queryClient.invalidateQueries({ queryKey: ["invoices", companyId] });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "No fue posible causar la factura en Siigo.");

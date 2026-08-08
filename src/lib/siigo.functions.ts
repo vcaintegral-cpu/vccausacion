@@ -439,8 +439,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       throw new Error(mensaje);
     }
 
-    // Protección contra doble envío: si ya está sincronizada no se vuelve a crear en Siigo.
-    if (inv.siigo_status === "sincronizada" || inv.status === "sincronizada") {
+    // Protección contra doble envío: si ya está sincronizada o ya tiene consecutivo real
+    // devuelto por Siigo, no se vuelve a crear otro comprobante.
+    if (inv.siigo_status === "sincronizada" || inv.status === "sincronizada" || inv.siigo_id || inv.siigo_number) {
       return {
         ok: true,
         siigoId: inv.siigo_id ?? null,
@@ -448,7 +449,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         documentUrl: inv.siigo_document_url ?? null,
         syncedAt: inv.siigo_synced_at ?? null,
         status: "sincronizada",
-        error: null,
+        error: `Esta factura ya fue causada en Siigo. Consecutivo: ${inv.siigo_number ?? inv.siigo_id}`,
       };
     }
 
