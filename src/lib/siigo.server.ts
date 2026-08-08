@@ -475,8 +475,9 @@ export function buildSiigoPurchasePayload(params: {
   /** Retenciones aplicadas al documento (ids de Siigo). */
   retentionIds?: Array<number | string>;
 }) {
-  const total = Math.round(Number(params.purchaseTotal));
-  const paymentValue = Math.round(Number(params.paymentValue));
+  const roundMoney = (value: number) => Math.round(Number(value) * 100) / 100;
+  const total = roundMoney(params.purchaseTotal);
+  const paymentValue = roundMoney(params.paymentValue);
   const payload: Record<string, unknown> = {
     document: { id: params.documentId },
     date: params.date,
