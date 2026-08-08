@@ -10,6 +10,7 @@ import { fetchCompanyPuc } from "@/lib/puc-data";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 import { useActiveCompany } from "@/lib/active-company";
 import { buildJournal, totals, type JournalLine, type Retenciones } from "@/lib/accounting";
+import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
 import { type LearningRule } from "@/lib/learning";
 import { ITEM_TYPES, isValidItemType, normalizeItemType } from "@/lib/item-type";
 import { cop, fecha } from "@/lib/format";
@@ -74,6 +75,8 @@ type LineRow = {
   account_name: string | null;
   item_type: string;
   position: number;
+  iva_tax_id?: string | null;
+  ret_tax_id?: string | null;
 };
 
 function Revisar() {
@@ -99,12 +102,13 @@ function Revisar() {
     queryKey: ["revisar", id],
     enabled: !!id,
     queryFn: async () => {
-      const [inv, ln, centers, accounts, learning] = await Promise.all([
+      const [inv, ln, centers, accounts, learning, taxes] = await Promise.all([
         supabase.from("invoices").select("*").eq("id", id).single(),
         supabase.from("invoice_lines").select("*").eq("invoice_id", id).order("position"),
         supabase.from("cost_centers").select("code, name").eq("company_id", companyId ?? "").order("code"),
         fetchCompanyPuc(companyId ?? ""),
         supabase.from("learning_rules").select("*").eq("company_id", companyId ?? ""),
+        supabase.from("tax_rates").select("*").eq("company_id", companyId ?? "").order("name"),
       ]);
       if (inv.error) throw inv.error;
       const company = await supabase.from("companies").select("id, name, nit").eq("id", companyId ?? "").maybeSingle();
@@ -115,6 +119,7 @@ function Revisar() {
         centers: centers.data ?? [],
         accounts,
         learning: (learning.data ?? []) as unknown as LearningRule[],
+        taxes: (taxes.data ?? []) as unknown as TaxRecord[],
       };
     },
   });
