@@ -32,7 +32,7 @@ export async function readSheetIndexed(file: File): Promise<{ row: SheetRow; row
   const matrix = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[first]!, {
     header: 1,
     defval: "",
-    blankrows: false,
+    blankrows: true,
     raw: false,
   });
   if (matrix.length === 0) return [];
