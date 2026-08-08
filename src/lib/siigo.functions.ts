@@ -757,7 +757,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // Siigo calcula el total de la compra como base + impuestos. Las retenciones
       // son información tributaria del documento y NO se descuentan del total ni de
       // los pagos (de lo contrario devuelve invalid_total_payments).
-      const impoconsumo = r2((invoiceLines ?? []).reduce((acc, l) => acc + Number(l.impoconsumo ?? 0), 0));
+      const impoconsumo = r2(
+        (invoiceLines ?? []).reduce(
+          (acc, l) => acc + Number((l as unknown as { impoconsumo?: number }).impoconsumo ?? 0),
+          0,
+        ),
+      );
       const totalFactura = r2(Math.max(subtotal + iva + impoconsumo, 0));
 
       if (totalFactura <= 0) {
