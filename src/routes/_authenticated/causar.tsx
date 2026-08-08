@@ -18,6 +18,13 @@ import { suggestCostCenter } from "@/lib/cost-center";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { expandInvoiceFiles, processInvoiceFile } from "@/lib/bulk-invoices";
+import {
+  ESTADO_LABEL,
+  estadoUnico,
+  findExistingInvoice,
+  mensajeDuplicado,
+  type DuplicateInvoice,
+} from "@/lib/invoice-duplicates";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -91,6 +98,7 @@ function Causar() {
   const [existingFile, setExistingFile] = useState<{ path: string | null; name: string | null }>({ path: null, name: null });
   const [centroSugerido, setCentroSugerido] = useState<string | null>(null);
   const [centroTocado, setCentroTocado] = useState(false);
+  const [duplicado, setDuplicado] = useState<DuplicateInvoice | null>(null);
 
   const { data: config } = useQuery({
     queryKey: ["config", companyId],
@@ -349,6 +357,19 @@ function Causar() {
         data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
       })) as ExtractedInvoice;
       const { lines: extracted, ...rest } = data;
+      // Control de duplicados por empresa antes de crear cualquier borrador.
+      if (companyId) {
+        const existente = await findExistingInvoice(
+          companyId,
+          { cufe: rest.cufe, provider_nit: rest.provider_nit, prefix: rest.prefix, number: rest.number },
+          editingId,
+        );
+        if (existente) {
+          setDuplicado(existente);
+          toast.error(mensajeDuplicado(existente));
+          return;
+        }
+      }
       setHeader({ ...emptyHeader(), ...rest });
       let provider = null;
       if (rest.provider_nit && companyId) {
@@ -471,6 +492,16 @@ function Causar() {
     if (Math.abs(t.diferencia) > 1) { toast.error("El comprobante está descuadrado."); return; }
     setSaving(true);
     try {
+      const existente = await findExistingInvoice(
+        companyId,
+        { cufe: header.cufe, provider_nit: header.provider_nit, prefix: header.prefix, number: header.number },
+        editingId,
+      );
+      if (existente) {
+        setDuplicado(existente);
+        toast.error(mensajeDuplicado(existente));
+        return;
+      }
       const { data: auth } = await supabase.auth.getUser();
       const userId = auth.user?.id;
 
@@ -599,7 +630,12 @@ function Causar() {
       toast.success(status === "aprobado" ? "Comprobante aprobado." : "Comprobante guardado en borrador.");
       navigate({ to: "/facturas" });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "No fue posible guardar el comprobante.");
+      const msg = err instanceof Error ? err.message : "No fue posible guardar el comprobante.";
+      toast.error(
+        /duplicate key|ux_invoices_company/.test(msg)
+          ? "Esta factura ya está registrada en esta empresa."
+          : msg,
+      );
     } finally {
       setSaving(false);
     }
@@ -993,6 +1029,47 @@ function Causar() {
               No
             </Button>
             <Button onClick={guardarAprendizaje}>Sí, recordar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!duplicado} onOpenChange={(o) => !o && setDuplicado(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {duplicado && estadoUnico(duplicado) === "sincronizada" ? "Factura ya sincronizada" : "Esta factura ya fue procesada"}
+            </DialogTitle>
+          </DialogHeader>
+          {duplicado && (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">{mensajeDuplicado(duplicado)}</p>
+              <dl className="space-y-1">
+                <Row k="Proveedor" v={duplicado.provider_name ?? "—"} />
+                <Row k="NIT" v={duplicado.provider_nit ?? "—"} />
+                <Row k="Factura" v={[duplicado.prefix, duplicado.number].filter(Boolean).join("-") || "—"} />
+                <Row k="Fecha" v={duplicado.issue_date ?? "—"} />
+                <Row k="Total" v={cop(Number(duplicado.total ?? 0))} />
+                <Row k="CUFE" v={duplicado.cufe ? `${duplicado.cufe.slice(0, 16)}…` : "—"} />
+                <Row k="Estado" v={ESTADO_LABEL[estadoUnico(duplicado)] ?? estadoUnico(duplicado)} />
+                {duplicado.siigo_number && <Row k="Documento Siigo" v={duplicado.siigo_number} />}
+                {duplicado.siigo_synced_at && <Row k="Sincronización" v={duplicado.siigo_synced_at.slice(0, 10)} />}
+              </dl>
+            </div>
+          )}
+          <DialogFooter>
+            {duplicado && estadoUnico(duplicado) !== "sincronizada" && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const id = duplicado.id;
+                  setDuplicado(null);
+                  navigate({ to: "/causar", search: { id } });
+                }}
+              >
+                Continuar con el registro existente
+              </Button>
+            )}
+            <Button onClick={() => { setDuplicado(null); navigate({ to: "/facturas" }); }}>Ver histórico</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

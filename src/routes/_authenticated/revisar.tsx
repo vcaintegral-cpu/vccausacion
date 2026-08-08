@@ -603,7 +603,8 @@ function Revisar() {
           Guardar cambios
         </Button>
         <Button onClick={causar} disabled={sending || errores.length > 0}>
-          {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} Causar en Siigo
+          {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+          {sending ? "Enviando a Siigo…" : "Causar en Siigo"}
         </Button>
       </div>
 

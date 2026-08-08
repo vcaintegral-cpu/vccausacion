@@ -415,11 +415,24 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
       .select(
-        "id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, notes, total, iva, subtotal, retefuente, reteiva, reteica, cost_center, payment_form",
+        "id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, notes, total, iva, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at",
       )
       .eq("id", data.invoiceId)
       .single();
     if (invErr || !inv) throw new Error(invErr?.message ?? "Factura no encontrada.");
+
+    // Protección contra doble envío: si ya está sincronizada no se vuelve a crear en Siigo.
+    if (inv.siigo_status === "sincronizada" || inv.status === "sincronizada") {
+      return {
+        ok: true,
+        siigoId: inv.siigo_id ?? null,
+        siigoNumber: inv.siigo_number ?? null,
+        documentUrl: inv.siigo_document_url ?? null,
+        syncedAt: inv.siigo_synced_at ?? null,
+        status: "sincronizada",
+        error: null,
+      };
+    }
 
     const { data: journal, error: jErr } = await supabase
       .from("journal_lines")
@@ -807,6 +820,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .from("invoices")
         .update({
           siigo_status: "sincronizada",
+          status: "sincronizada",
           siigo_id: siigoId,
           siigo_number: siigoNumber,
           siigo_document_url: documentUrl,
@@ -827,8 +841,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       console.error("[siigo][causacion] error:", message);
       await supabase
         .from("invoices")
-        // Si Siigo falla, el comprobante vuelve a Borrador para corregirlo y reenviarlo.
-        .update({ siigo_status: "error", siigo_error: message, siigo_synced_by: context.userId, status: "borrador" })
+        // Si Siigo falla, la factura queda en estado Error para revisarla y reenviarla.
+        .update({ siigo_status: "error", siigo_error: message, siigo_synced_by: context.userId, status: "error" })
         .eq("id", data.invoiceId);
       return { ok: false, siigoId: null, siigoNumber: null, documentUrl: null, syncedAt: null, status: "error", error: message };
     }
