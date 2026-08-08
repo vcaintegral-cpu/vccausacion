@@ -8,6 +8,8 @@ import type { Tables } from "@/integrations/supabase/types";
 import { siigoImportProducts } from "@/lib/siigo.functions";
 import { normalizeCategoryName } from "@/lib/product-account";
 import { downloadSheet, pick, readSheet } from "@/lib/spreadsheet";
+import { fetchAllKeys, runReliableImport, sameImportValues, type ImportDetail, type ImportIssue } from "@/lib/import-system";
+import { ImportDetailPanel } from "@/components/import-detail";
 import { AccountCombobox } from "@/components/account-combobox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +47,8 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [progreso, setProgreso] = useState<string | null>(null);
   const [filtro, setFiltro] = useState("");
+  const [pagina, setPagina] = useState(1);
+  const [detail, setDetail] = useState<ImportDetail | null>(null);
   const [form, setForm] = useState({ code: "", name: "", kind: "producto", category: "", account_code: "", account_name: "" });
 
   const { data: rows } = useQuery({
@@ -145,6 +149,9 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
       [r.code, r.name, r.category, r.account_code].some((v) => String(v ?? "").toLowerCase().includes(q)),
     );
   }, [rows, filtro]);
+  const totalPaginas = Math.max(1, Math.ceil(visibles.length / 100));
+  const paginaActual = Math.min(pagina, totalPaginas);
+  const paginaRows = visibles.slice((paginaActual - 1) * 100, paginaActual * 100);
 
   async function sincronizar() {
     setBusy("siigo");
@@ -166,10 +173,10 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
     setBusy("excel");
     try {
       const sheet = await readSheet(file);
-      const parsed = sheet
-        .map((r) => {
+       const parsed = sheet.map((r, index) => {
           const account_code = pick(r, "cuenta", "cuenta contable", "codigo cuenta", "puc", "account").replace(/\s+/g, "");
           return {
+            rowNumber: index + 2,
             company_id: companyId,
             code: pick(r, "codigo", "codigo producto", "code", "referencia").replace(/\s+/g, ""),
             name: pick(r, "nombre", "producto", "servicio", "descripcion", "detalle", "name") || "Sin nombre",
@@ -180,11 +187,12 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
             active: true,
             source: "excel",
           };
-        })
-        .filter((r) => r.code);
-      if (parsed.length === 0)
+        });
+      const invalidIssues: ImportIssue[] = parsed.filter((r) => !r.code).map((r) => ({ row: r.rowNumber, key: "", message: "Código vacío; registro rechazado." }));
+      const valid = parsed.filter((r) => r.code);
+      if (valid.length === 0)
         throw new Error("No se encontraron productos (columnas esperadas: Código, Nombre, Tipo, Categoría, Cuenta).");
-      const base = Array.from(new Map(parsed.map((r) => [r.code, r])).values()).map((r) => ({
+      const base = Array.from(new Map(valid.map((r) => [r.code, r])).values()).map((r) => ({
         ...r,
         account_name: r.account_name ?? (cuentas ?? []).find((c) => c.code === r.account_code)?.name ?? null,
       }));
@@ -199,37 +207,30 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
         ...r,
         category_id: r.category ? (mapaCat.get(`${normTxt(r.category)}|${normTxt(r.kind)}`) ?? null) : null,
       }));
-      if (!window.confirm(`Se reemplazará el catálogo actual por ${unicos.length} producto(s)/servicio(s) del archivo. ¿Continuar?`)) return;
-      const { error: delErr } = await supabase.from("products").delete().eq("company_id", companyId);
-      if (delErr) throw new Error(`No fue posible reemplazar el catálogo actual: ${delErr.message}`);
-      // Lotes de MÁXIMO 500: se continúa automáticamente hasta procesar TODOS los registros.
-      const LOTE = 500;
-      const totalLotes = Math.ceil(unicos.length / LOTE);
-      let procesados = 0;
-      for (let i = 0; i < totalLotes; i++) {
-        const lote = unicos.slice(i * LOTE, (i + 1) * LOTE);
-        setProgreso(`Importando lote ${i + 1} de ${totalLotes} (${procesados + 1}–${procesados + lote.length} de ${unicos.length})…`);
-        const { error } = await supabase.from("products").upsert(lote, { onConflict: "company_id,code" });
-        if (error)
-          throw new Error(
-            `Lote ${i + 1} de ${totalLotes} (registros ${procesados + 1}–${procesados + lote.length}): ${error.message}${error.details ? ` — ${error.details}` : ""}`,
-          );
-        procesados += lote.length;
-      }
-      setProgreso("Verificando registros guardados…");
-      const { count } = await supabase
-        .from("products")
-        .select("id", { count: "exact", head: true })
-        .eq("company_id", companyId);
-      if ((count ?? 0) < unicos.length) {
-        toast.warning(
-          `Se procesaron ${procesados} de ${unicos.length} registros en ${totalLotes} lote(s), pero la base tiene ${count ?? 0}. Revise el archivo por códigos repetidos.`,
-        );
-      } else {
-        toast.success(
-          `Importación completada: ${procesados} de ${unicos.length} registros en ${totalLotes} lote(s) de máximo ${LOTE}. Guardados en la base: ${count ?? 0}.`,
-        );
-      }
+      if (!window.confirm(`Se encontraron ${sheet.length.toLocaleString("es-CO")} registros. Se procesarán todos en lotes de 500 sin eliminar información existente. ¿Continuar?`)) return;
+      const existing = new Map((rows ?? []).map((row) => [row.code, { ...row, rowNumber: 0 }]));
+      const { data: auth } = await supabase.auth.getUser();
+      const result = await runReliableImport({
+        module: "Productos y servicios", fileName: file.name, user: auth.user?.email ?? null, found: sheet.length,
+        rows: unicos, invalidIssues, duplicateCount: valid.length - unicos.length, keyOf: (row) => row.code,
+        rowNumberOf: (row) => row.rowNumber, existingByKey: existing,
+        equals: sameImportValues(["name", "kind", "category", "account_code", "account_name", "active"]),
+        saveBatch: async (batch) => {
+          const payload = batch.map(({ rowNumber: _rowNumber, ...row }) => row);
+          const { error } = await supabase.from("products").upsert(payload, { onConflict: "company_id,code" });
+          return { error };
+        },
+        verifyKeys: () => fetchAllKeys(async (from, to) => {
+          const { data, error } = await supabase.from("products").select("code").eq("company_id", companyId).order("code").range(from, to);
+          if (error) return { keys: [], error: error.message };
+          return { keys: (data ?? []).map((row) => row.code) };
+        }),
+        onProgress: (p) => setProgreso(`Importando productos… Lote ${p.batch} de ${p.batches} · Registros ${p.from.toLocaleString("es-CO")}–${p.to.toLocaleString("es-CO")} de ${p.total.toLocaleString("es-CO")}`),
+      });
+      setDetail(result);
+      if (result.status === "COMPLETADA") toast.success("IMPORTACIÓN COMPLETADA");
+      else if (result.status === "COMPLETADA CON ERRORES") toast.warning("Importación completada con errores. Revisa el detalle.");
+      else toast.error(`Importación incompleta: se encontraron ${result.found} registros y se verificaron ${result.saved}.`);
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
@@ -326,11 +327,19 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
         <Button variant="outline" disabled={busy !== null} onClick={() => void repararVinculos()}>
           <RefreshCw className={`size-4 ${busy === "reparar" ? "animate-spin" : ""}`} /> Reparar categorías
         </Button>
-        <Input className="ml-auto w-64" placeholder="Buscar…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
+        <Input className="ml-auto w-64" placeholder="Buscar…" value={filtro} onChange={(e) => { setFiltro(e.target.value); setPagina(1); }} />
       </div>
       {progreso ? (
         <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">{progreso}</p>
       ) : null}
+      <ImportDetailPanel detail={detail} />
+      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span>Mostrando {paginaRows.length} de {visibles.length} · Página {paginaActual} de {totalPaginas}</span>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" disabled={paginaActual <= 1} onClick={() => setPagina(paginaActual - 1)}>Anterior</Button>
+          <Button variant="outline" size="sm" disabled={paginaActual >= totalPaginas} onClick={() => setPagina(paginaActual + 1)}>Siguiente</Button>
+        </div>
+      </div>
 
       <form onSubmit={crear} className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-4">
         <div className="w-36 space-y-1.5">
@@ -382,7 +391,7 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {visibles.map((r) => (
+            {paginaRows.map((r) => (
               <tr key={r.id}>
                 <td className="px-4 py-2 font-mono text-xs">{r.code}</td>
                 <td className="px-4 py-2">{r.name}</td>
