@@ -1539,6 +1539,18 @@ export const siigoFindProduct = createServerFn({ method: "POST" })
     return (byName.results ?? []).map((p) => ({ id: String(p.id ?? ""), code: String(p.code ?? ""), name: String(p.name ?? "") }));
   });
 
+/** Diagnóstico autenticado de catálogos que intervienen en Facturas de Compra. */
+export const siigoPurchaseCatalogDiagnostics = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async () => {
+    const { siigoGet } = await import("./siigo.server");
+    const [taxes, paymentTypes] = await Promise.all([
+      siigoGet<unknown>("/v1/taxes"),
+      siigoGet<unknown>("/v1/payment-types?document_type=FC"),
+    ]);
+    return { taxes, paymentTypes };
+  });
+
 /** Crea un producto en Siigo. Solo se ejecuta con autorización explícita del usuario. */
 export const siigoCreateProduct = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
