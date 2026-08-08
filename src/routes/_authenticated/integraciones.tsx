@@ -21,6 +21,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useActiveCompany } from "@/lib/active-company";
 import { cop, fechaHora } from "@/lib/format";
 import {
+  pucAccountsOverview,
   siigoImportProviders,
   siigoImportPuc,
   siigoImportTaxes,
@@ -59,6 +60,7 @@ function Integraciones() {
   const checkStatus = useServerFn(siigoStatus);
   const importProviders = useServerFn(siigoImportProviders);
   const importPuc = useServerFn(siigoImportPuc);
+  const listAccounts = useServerFn(pucAccountsOverview);
   const importTaxes = useServerFn(siigoImportTaxes);
   const listTaxes = useServerFn(siigoSyncedTaxes);
   const listPurchases = useServerFn(siigoListPurchases);
@@ -77,9 +79,17 @@ function Integraciones() {
     onSuccess: (r) => toast.success(`${r.imported} terceros importados desde Siigo.`),
     onError: (e: Error) => toast.error(e.message),
   });
+  const cuentasSync = useQuery({
+    queryKey: ["puc-overview", companyId],
+    queryFn: () => listAccounts({ data: { companyId: companyId! } }),
+    enabled: !!companyId,
+  });
   const puc = useMutation({
     mutationFn: () => importPuc({ data: { companyId: companyId! } }),
-    onSuccess: (r) => toast.success(`${r.imported} cuentas del PUC importadas.`),
+    onSuccess: (r) => {
+      toast.success(`${r.imported} cuentas importadas · ${r.movimiento} cuentas de movimiento de ${r.total}.`);
+      void cuentasSync.refetch();
+    },
     onError: (e: Error) => toast.error(e.message),
   });
   const impuestosSync = useQuery({
@@ -210,8 +220,8 @@ function Integraciones() {
             Importar terceros
           </Button>
           <Button onClick={() => puc.mutate()} disabled={!connected || !companyId || puc.isPending}>
-            {puc.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-            Importar PUC
+            {puc.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            Sincronizar cuentas contables desde Siigo
           </Button>
           <Button onClick={() => impuestos.mutate()} disabled={!connected || !companyId || impuestos.isPending}>
             {impuestos.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
@@ -342,6 +352,75 @@ function Integraciones() {
             )}
           </TableBody>
         </Table>
+      </div>
+
+
+      <div className="rounded-lg border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+          <div>
+            <h2 className="text-sm font-semibold">Cuentas contables sincronizadas</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Solo las cuentas de movimiento (sin auxiliares y activas) pueden usarse para causar en Siigo.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => puc.mutate()}
+            disabled={!connected || !companyId || puc.isPending}
+          >
+            {puc.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            Sincronizar cuentas contables desde Siigo
+          </Button>
+        </div>
+        <div className="max-h-[520px] overflow-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Código</TableHead>
+                <TableHead>Nombre</TableHead>
+                <TableHead>Nivel</TableHead>
+                <TableHead>Cuenta padre</TableHead>
+                <TableHead>Tiene hijos</TableHead>
+                <TableHead>Cuenta de movimiento</TableHead>
+                <TableHead>Activa</TableHead>
+                <TableHead>ID Siigo</TableHead>
+                <TableHead>Última sincronización</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(cuentasSync.data ?? []).length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
+                    {companyId
+                      ? "Sin cuentas sincronizadas. Usa “Sincronizar cuentas contables desde Siigo”."
+                      : "Selecciona una empresa activa."}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                (cuentasSync.data ?? []).map((a) => (
+                  <TableRow key={a.code}>
+                    <TableCell className="font-mono text-xs">{a.code}</TableCell>
+                    <TableCell className="text-xs">{a.name}</TableCell>
+                    <TableCell className="text-xs capitalize">{a.level}</TableCell>
+                    <TableCell className="font-mono text-xs">{a.parent_code ?? "—"}</TableCell>
+                    <TableCell className="text-xs">{a.has_children ? "Sí" : "No"}</TableCell>
+                    <TableCell className="text-xs">
+                      {a.is_movement ? (
+                        <Badge className="bg-success text-success-foreground hover:bg-success">Sí</Badge>
+                      ) : (
+                        <Badge variant="secondary">No</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs">{a.active ? "Sí" : "No"}</TableCell>
+                    <TableCell className="font-mono text-xs">{a.siigo_id ?? a.siigo_code ?? "—"}</TableCell>
+                    <TableCell className="font-mono text-xs">{a.synced_at ? fechaHora(a.synced_at) : "—"}</TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
       </div>
 
       {purchases ? (

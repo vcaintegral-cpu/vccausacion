@@ -12,6 +12,7 @@ import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { AccountCombobox } from "@/components/account-combobox";
+import { CUENTA_PADRE_MSG, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { BulkApply } from "@/components/bulk-apply";
 import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
@@ -134,7 +135,7 @@ function Causar() {
         supabase.from("accounting_rules").select("*").eq("company_id", companyId!),
         supabase.from("tax_rates").select("*").eq("company_id", companyId!),
         supabase.from("cost_centers").select("*").eq("company_id", companyId!).order("code"),
-        supabase.from("puc_accounts").select("code, name").eq("company_id", companyId!).order("code").range(0, 19999),
+        supabase.from("puc_accounts").select("code, name, active, level, parent_code, has_children, is_movement, siigo_id, siigo_code").eq("company_id", companyId!).order("code").range(0, 19999),
         supabase.from("products").select("code, name, kind, category, category_id, account_code, account_name").eq("company_id", companyId!).eq("active", true).order("code").range(0, 19999),
         supabase.from("product_categories").select("id, name, kind, account_code, account_name").eq("company_id", companyId!).eq("active", true).range(0, 19999),
       ]);
@@ -304,8 +305,17 @@ function Causar() {
   /** Errores de configuración por renglón (categoría o cuenta PUC faltante). */
   const lineErrors = useMemo(() => {
     const out: Record<number, string> = {};
+    const puc = (config?.accounts ?? []) as PucAccount[];
     lines.forEach((l, i) => {
       const kind = normalizeItemType(l.item_type);
+      // La cuenta escogida debe ser cuenta de movimiento del PUC de esta empresa.
+      if (l.account_code && puc.length > 0) {
+        const check = validarCuenta(puc, l.account_code);
+        if (!check.ok && check.problema) {
+          out[i] = check.problema;
+          return;
+        }
+      }
       if (kind !== "producto" && kind !== "servicio") return;
       if (l.account_code) return;
       const prod = buscarProducto(l, kind);
@@ -314,8 +324,9 @@ function Causar() {
       if (r.error) out[i] = r.error;
     });
     return out;
-  }, [lines, buscarProducto, resolverCuentaItem]);
+  }, [lines, buscarProducto, resolverCuentaItem, config?.accounts]);
   const hayErroresDeCuenta = Object.keys(lineErrors).length > 0;
+
 
   // Validación determinística: el NIT del comprador de la factura debe ser el de la empresa activa.
   const empresaActiva = useMemo(() => (companies ?? []).find((c) => c.id === companyId) ?? null, [companies, companyId]);
@@ -468,6 +479,25 @@ function Causar() {
   );
   const t = totals(journal);
 
+  /** Validación contable del asiento: toda cuenta debe ser de movimiento, activa y estar en el PUC de la empresa. */
+  const validacionAsiento = useMemo(() => {
+    const puc = (config?.accounts ?? []) as PucAccount[];
+    const codes = [...new Set(journal.map((j) => j.account_code).filter(Boolean))];
+    return codes.map((code) => {
+      const cuenta = puc.find((a) => a.code === code) ?? null;
+      const check = puc.length > 0 ? validarCuenta(puc, code) : { ok: true, problema: null, cuenta };
+      return {
+        code,
+        movimiento: cuenta ? cuenta.is_movement !== false && !cuenta.has_children : true,
+        activa: cuenta ? cuenta.active !== false : true,
+        enSiigo: !!cuenta,
+        ok: check.ok,
+        problema: check.problema ?? "",
+      };
+    });
+  }, [journal, config?.accounts]);
+  const asientoInvalido = validacionAsiento.some((v) => !v.ok);
+
   async function leer(password?: string) {
     if (!file) { toast.error("Selecciona un archivo de factura."); return; }
     setReading(true);
@@ -590,6 +620,16 @@ function Causar() {
 
   async function guardarAprendizaje() {
     if (!recordar || !companyId) return;
+    // El aprendizaje nunca memoriza una cuenta que no permita movimiento en Siigo.
+    const puc = (config?.accounts ?? []) as PucAccount[];
+    if (puc.length > 0) {
+      const check = validarCuenta(puc, recordar.code);
+      if (!check.ok) {
+        setRecordar(null);
+        toast.error(check.problema ?? CUENTA_PADRE_MSG);
+        return;
+      }
+    }
     const line = lines[recordar.index];
     const { error } = await supabase.from("learning_rules").insert({
       company_id: companyId,
@@ -1286,6 +1326,36 @@ function Causar() {
         </div>
       )}
 
+      {lines.length > 0 && journal.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className="border-b border-border px-5 py-3 text-sm font-semibold">Validación contable</div>
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="px-4 py-2 text-left font-medium">Cuenta</th>
+                <th className="px-4 py-2 text-left font-medium">Movimiento</th>
+                <th className="px-4 py-2 text-left font-medium">Activa</th>
+                <th className="px-4 py-2 text-left font-medium">Siigo</th>
+                <th className="px-4 py-2 text-left font-medium">Resultado</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {validacionAsiento.map((v) => (
+                <tr key={v.code}>
+                  <td className="px-4 py-1.5 font-mono text-xs">{v.code}</td>
+                  <td className="px-4 py-1.5 text-xs">{v.movimiento ? "Sí" : "No"}</td>
+                  <td className="px-4 py-1.5 text-xs">{v.activa ? "Sí" : "No"}</td>
+                  <td className="px-4 py-1.5 text-xs">{v.enSiigo ? "Sí" : "No"}</td>
+                  <td className={`px-4 py-1.5 text-xs ${v.ok ? "text-success" : "text-destructive"}`}>
+                    {v.ok ? "✓" : v.problema}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {lines.length > 0 && (
         <div className="flex flex-wrap gap-3">
           <Button
@@ -1298,7 +1368,7 @@ function Causar() {
           </Button>
           <Button
             onClick={() => guardar("aprobado")}
-            disabled={saving || hayErroresDeCuenta || !!bloqueoEmpresa}
+            disabled={saving || hayErroresDeCuenta || asientoInvalido || !!bloqueoEmpresa}
             title={bloqueoEmpresa ?? undefined}
           >
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Aprobar comprobante

@@ -1,4 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
+import { validarCuenta } from "@/lib/puc-hierarchy";
+import { mensajeSiigoAmigable } from "@/lib/siigo-errors";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "./company-validation";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { normalizeItemType } from "@/lib/item-type";
@@ -193,7 +195,39 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
       rows.length - insertedCount,
       ")",
     );
-    return { imported: insertedCount };
+    const { rebuildPucHierarchy } = await import("./puc-sync.server");
+    const jerarquia = await rebuildPucHierarchy(context.supabase, data.companyId);
+    return { imported: insertedCount, total: jerarquia.total, movimiento: jerarquia.movimiento };
+  });
+
+/** Recalcula la jerarquía del PUC (nivel, padre, hijas, cuentas de movimiento) por empresa. */
+export const pucRebuildHierarchy = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    const { rebuildPucHierarchy } = await import("./puc-sync.server");
+    return rebuildPucHierarchy(context.supabase, data.companyId);
+  });
+
+/** Cuentas del PUC de la empresa con su jerarquía, para la tabla de control de Integraciones. */
+export const pucAccountsOverview = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    const { data: rows, error } = await context.supabase
+      .from("puc_accounts")
+      .select("code, name, level, parent_code, has_children, is_movement, active, siigo_id, siigo_code, synced_at")
+      .eq("company_id", data.companyId)
+      .order("code")
+      .range(0, 4999);
+    if (error) throw new Error(error.message);
+    return rows ?? [];
   });
 
 export type SiigoPurchase = {
@@ -530,7 +564,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     // por la cuenta equivalente que ya fue importada desde esta empresa.
     const { data: companyAccounts, error: accountsErr } = await supabase
       .from("puc_accounts")
-      .select("code, name")
+      .select("code, name, active, has_children, is_movement, siigo_id, siigo_code")
       .eq("company_id", inv.company_id)
       .order("code");
     if (accountsErr) throw new Error(`No fue posible validar el PUC de Siigo: ${accountsErr.message}`);
@@ -601,6 +635,18 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         "[siigo][causacion] cuentas base reemplazadas:",
         replacements.map((line) => ({ id: line.id, account_code: line.account_code })),
       );
+      // Trazabilidad: queda registro de la cuenta sugerida, la utilizada y el motivo.
+      await supabase.from("account_resolutions").insert(
+        replacements.map((line, index) => ({
+          company_id: inv.company_id,
+          invoice_id: inv.id,
+          suggested_code: journal.find((j) => j.id === line.id)?.account_code ?? line.account_code,
+          used_code: line.account_code,
+          reason: `La cuenta ${journal.find((j) => j.id === line.id)?.account_code ?? ""} tiene cuentas auxiliares activas y no permite movimiento.`,
+          siigo_id: companyAccounts?.find((a) => a.code === line.account_code)?.siigo_id ?? null,
+          siigo_code: companyAccounts?.find((a) => a.code === line.account_code)?.siigo_code ?? line.account_code,
+        })),
+      );
       const updates = await Promise.all(
         replacements.map((line) =>
           supabase.from("journal_lines").update({ account_code: line.account_code }).eq("id", line.id),
@@ -608,6 +654,29 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       );
       const updateError = updates.find((result) => result.error)?.error;
       if (updateError) throw new Error(`No fue posible guardar las cuentas equivalentes: ${updateError.message}`);
+    }
+
+    // Validación contable bloqueante: toda cuenta enviada a Siigo debe ser de movimiento,
+    // activa y pertenecer al PUC de esta empresa. Solo se exceptúa 621008 (IVA del costo),
+    // que Siigo maneja como cuenta transaccional aunque no venga en el PUC importado.
+    if ((companyAccounts ?? []).length > 0) {
+      const problemas: string[] = [];
+      for (const line of resolvedJournal) {
+        if (line.account_code === "621008") continue;
+        const check = validarCuenta(companyAccounts ?? [], line.account_code);
+        if (!check.ok && check.problema) problemas.push(check.problema);
+      }
+      if (problemas.length > 0) {
+        const mensajeCuentas =
+          "NO SE PUEDE CAUSAR EN SIIGO.\n" +
+          problemas.join("\n") +
+          "\nAcción: seleccione una cuenta auxiliar activa en la pantalla de causación.";
+        await supabase
+          .from("invoices")
+          .update({ siigo_status: "error", siigo_error: mensajeCuentas })
+          .eq("id", inv.id);
+        throw new Error(mensajeCuentas);
+      }
     }
 
     await supabase
@@ -1497,11 +1566,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       return { ok: true, siigoId, siigoNumber, documentUrl, syncedAt, status: "sincronizada", error: null };
     } catch (e) {
       const raw = e instanceof Error ? e.message : JSON.stringify(e);
-      const cuenta = /"?code"?:\s*"?(\d{4,10})/.exec(raw)?.[1] ?? /(\d{6,10}) cannot be used/.exec(raw)?.[1];
-      const message = raw.includes("account_not_allowed")
-        ? `Siigo no permite registrar movimientos en la cuenta ${cuenta ?? "seleccionada"} (no es cuenta auxiliar de movimiento). ` +
-          "Cambia la cuenta del renglón por una auxiliar del PUC de Siigo y vuelve a causar."
-        : raw;
+      const message = mensajeSiigoAmigable(raw);
       console.error("[siigo][causacion] error:", message);
       const failedTrace = {
         ...siigoAttemptTrace,

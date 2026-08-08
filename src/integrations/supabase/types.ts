@@ -14,6 +14,60 @@ export type Database = {
   }
   public: {
     Tables: {
+      account_resolutions: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string
+          id: string
+          invoice_id: string | null
+          reason: string
+          siigo_code: string | null
+          siigo_id: string | null
+          suggested_code: string
+          used_code: string | null
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string
+          id?: string
+          invoice_id?: string | null
+          reason: string
+          siigo_code?: string | null
+          siigo_id?: string | null
+          suggested_code: string
+          used_code?: string | null
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string
+          id?: string
+          invoice_id?: string | null
+          reason?: string
+          siigo_code?: string | null
+          siigo_id?: string | null
+          suggested_code?: string
+          used_code?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "account_resolutions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "account_resolutions_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       accounting_rules: {
         Row: {
           account_code: string
@@ -782,30 +836,51 @@ export type Database = {
           code: string
           company_id: string
           created_at: string
+          has_children: boolean
           id: string
+          is_movement: boolean
+          level: string
           name: string
           nature: string
+          parent_code: string | null
+          siigo_code: string | null
+          siigo_id: string | null
           source: string
+          synced_at: string | null
         }
         Insert: {
           active?: boolean
           code: string
           company_id: string
           created_at?: string
+          has_children?: boolean
           id?: string
+          is_movement?: boolean
+          level?: string
           name: string
           nature?: string
+          parent_code?: string | null
+          siigo_code?: string | null
+          siigo_id?: string | null
           source?: string
+          synced_at?: string | null
         }
         Update: {
           active?: boolean
           code?: string
           company_id?: string
           created_at?: string
+          has_children?: boolean
           id?: string
+          is_movement?: boolean
+          level?: string
           name?: string
           nature?: string
+          parent_code?: string | null
+          siigo_code?: string | null
+          siigo_id?: string | null
           source?: string
+          synced_at?: string | null
         }
         Relationships: [
           {

@@ -1,5 +1,6 @@
 // Motor de aprendizaje contable. Siempre por empresa: las reglas nunca se comparten.
 import { suggestAccount, type ProviderConfig, type Rule } from "@/lib/accounting";
+import { auxiliaresDe, type PucAccount } from "@/lib/puc-hierarchy";
 
 export { ITEM_TYPES, normalizeItemType, isValidItemType } from "@/lib/item-type";
 export type { ItemType } from "@/lib/item-type";
@@ -71,12 +72,19 @@ export function suggestSmart(params: {
   learning: LearningRule[];
   history: HistoryEvent[];
   rules: Rule[];
-  puc: { code: string; name: string }[];
+  puc: PucAccount[];
   provider?: ProviderConfig | null;
 }): Suggestion {
   const { description, providerNit, learning, history, rules, puc, provider } = params;
   const nit = providerNit ? norm(providerNit) : null;
-  const actives = learning.filter((r) => r.active);
+  // Una cuenta aprendida solo se usa si sigue siendo cuenta de movimiento válida de la empresa.
+  const esMovimiento = (code: string) => {
+    if (puc.length === 0) return true;
+    const cuenta = puc.find((p) => p.code === code);
+    if (!cuenta) return false;
+    return cuenta.active !== false && !cuenta.has_children && cuenta.is_movement !== false;
+  };
+  const actives = learning.filter((r) => r.active && esMovimiento(r.account_code));
   const pucName = (code: string) => puc.find((p) => p.code === code)?.name ?? null;
 
   // 1) regla aprendida: mismo proveedor + concepto parecido
@@ -126,7 +134,7 @@ export function suggestSmart(params: {
 
   // 3) historial del proveedor
   if (nit) {
-    const prev = history.filter((h) => norm(h.provider_nit ?? "") === nit);
+    const prev = history.filter((h) => norm(h.provider_nit ?? "") === nit && esMovimiento(h.account_code));
     const top = topAccount(prev);
     if (top)
       return {
@@ -137,7 +145,7 @@ export function suggestSmart(params: {
   }
 
   // 4) historial de conceptos similares
-  const similares = history.filter((h) => similar(description, h.concept ?? "") >= 0.6);
+  const similares = history.filter((h) => similar(description, h.concept ?? "") >= 0.6 && esMovimiento(h.account_code));
   const topSim = topAccount(similares);
   if (topSim)
     return {
@@ -148,6 +156,20 @@ export function suggestSmart(params: {
 
   // 5) reglas contables del usuario + 7) reglas generales / cuenta del tercero
   const base = suggestAccount(description, rules, provider);
+  if (!esMovimiento(base.code)) {
+    const hijas = auxiliaresDe(puc, base.code);
+    return {
+      code: hijas.length === 1 ? hijas[0]!.code : "",
+      name: hijas.length === 1 ? hijas[0]!.name : null,
+      reason:
+        hijas.length > 0
+          ? `La cuenta sugerida ${base.code} tiene cuentas auxiliares. Seleccione la cuenta de movimiento: ${hijas
+              .slice(0, 5)
+              .map((h) => `${h.code} - ${h.name}`)
+              .join(", ")}.`
+          : `La cuenta sugerida ${base.code} no es una cuenta de movimiento válida en Siigo. Seleccione una cuenta auxiliar activa.`,
+    };
+  }
   const existsInPuc = puc.some((p) => p.code === base.code);
   return {
     code: base.code,
