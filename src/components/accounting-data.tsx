@@ -729,7 +729,13 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
       if (valid.length === 0) throw new Error("No se encontraron centros de costo (columnas esperadas: Código, Nombre).");
       const unicos = Array.from(new Map(valid.map((r) => [r.code, r])).values());
       if (!window.confirm(`Se encontraron ${fmt(sheet.length)} centros de costo. Se procesarán todos en lotes de 500 sin eliminar información existente. ¿Continuar?`)) return;
-      const existing = new Map((rows ?? []).map((row) => [String(row['code']), { ...row, rowNumber: 0 }]));
+      const existing = new Map<string, (typeof unicos)[number]>((rows ?? []).map((row) => [String(row['code']), {
+        rowNumber: 0,
+        company_id: companyId,
+        code: String(row['code']),
+        name: String(row['name']),
+        source: String(row['source'] ?? "excel"),
+      }]));
       const { data: auth } = await supabase.auth.getUser();
       const result = await runReliableImport<(typeof unicos)[number]>({
         module: "Centros de costo", fileName: file.name, user: auth.user?.email ?? null, found: sheet.length,
@@ -934,9 +940,19 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
       if (valid.length === 0) throw new Error("No se encontraron impuestos (columnas esperadas: Tipo, Nombre, Tarifa).");
       const unicos = Array.from(new Map(valid.map((r) => [`${r.kind}|${r.name}`, r])).values());
       if (!window.confirm(`Se encontraron ${fmt(sheet.length)} impuestos o retenciones. Se procesarán todos en lotes de 500 sin eliminar información existente. ¿Continuar?`)) return;
-      const existing = new Map((rows ?? []).map((row) => [`${String(row['kind'])}|${String(row['name'])}`, { ...row, rowNumber: 0 }]));
+      const existing = new Map<string, (typeof unicos)[number]>((rows ?? []).map((row) => [`${String(row['kind'])}|${String(row['name'])}`, {
+        rowNumber: 0,
+        company_id: companyId,
+        kind: String(row['kind']),
+        name: String(row['name']),
+        rate: Number(row['rate'] ?? 0),
+        min_base: Number(row['min_base'] ?? 0),
+        account_code: row['account_code'] ? String(row['account_code']) : null,
+        active: Boolean(row['active']),
+        source: String(row['source'] ?? "excel") as Source,
+      }]));
       const { data: auth } = await supabase.auth.getUser();
-      const result = await runReliableImport({
+      const result = await runReliableImport<(typeof unicos)[number]>({
         module: "Retenciones", fileName: file.name, user: auth.user?.email ?? null, found: sheet.length,
         rows: unicos, invalidIssues, duplicateCount: valid.length - unicos.length,
         keyOf: (row) => `${row.kind}|${row.name}`, rowNumberOf: (row) => row.rowNumber, existingByKey: existing,
