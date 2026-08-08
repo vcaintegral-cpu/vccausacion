@@ -74,6 +74,21 @@ const emptyHeader = (): Header => ({
   subtotal: 0, discount: 0, iva: 0, impoconsumo: 0, total: 0,
 });
 
+/** Plazo de crédito según los días entre la fecha de la factura y su vencimiento. */
+const CREDIT_TERMS = ["Crédito", "Crédito 15 días", "Crédito 30 días", "Crédito 45 días"] as const;
+
+function creditTermFromDates(issue?: string | null, due?: string | null): string {
+  if (!issue || !due) return "Crédito";
+  const a = new Date(issue);
+  const b = new Date(due);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return "Crédito";
+  const dias = Math.round((b.getTime() - a.getTime()) / 86_400_000);
+  if (dias <= 7) return "Crédito";
+  if (dias <= 22) return "Crédito 15 días";
+  if (dias <= 37) return "Crédito 30 días";
+  return "Crédito 45 días";
+}
+
 function Causar() {
   const navigate = useNavigate();
   const { id: editId } = Route.useSearch();
