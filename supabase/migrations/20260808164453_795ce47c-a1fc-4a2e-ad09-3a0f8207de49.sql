@@ -1,0 +1,16 @@
+ALTER TABLE public.invoice_lines
+  ADD COLUMN IF NOT EXISTS iva_tax_id uuid,
+  ADD COLUMN IF NOT EXISTS iva_tax_name text,
+  ADD COLUMN IF NOT EXISTS iva_tax_rate numeric,
+  ADD COLUMN IF NOT EXISTS iva_account_code text,
+  ADD COLUMN IF NOT EXISTS iva_operational_account text,
+  ADD COLUMN IF NOT EXISTS iva_siigo_id text,
+  ADD COLUMN IF NOT EXISTS iva_siigo_name text,
+  ADD COLUMN IF NOT EXISTS ret_tax_id uuid,
+  ADD COLUMN IF NOT EXISTS ret_tax_kind text,
+  ADD COLUMN IF NOT EXISTS ret_tax_name text,
+  ADD COLUMN IF NOT EXISTS ret_tax_rate numeric,
+  ADD COLUMN IF NOT EXISTS ret_account_code text,
+  ADD COLUMN IF NOT EXISTS ret_operational_account text,
+  ADD COLUMN IF NOT EXISTS ret_siigo_id text,
+  ADD COLUMN IF NOT EXISTS ret_siigo_name text;

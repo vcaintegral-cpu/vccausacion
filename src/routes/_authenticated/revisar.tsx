@@ -10,6 +10,7 @@ import { fetchCompanyPuc } from "@/lib/puc-data";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 import { useActiveCompany } from "@/lib/active-company";
 import { buildJournal, totals, type JournalLine, type Retenciones } from "@/lib/accounting";
+import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
 import { type LearningRule } from "@/lib/learning";
 import { ITEM_TYPES, isValidItemType, normalizeItemType } from "@/lib/item-type";
 import { cop, fecha } from "@/lib/format";
@@ -74,6 +75,8 @@ type LineRow = {
   account_name: string | null;
   item_type: string;
   position: number;
+  iva_tax_id?: string | null;
+  ret_tax_id?: string | null;
 };
 
 function Revisar() {
@@ -99,12 +102,13 @@ function Revisar() {
     queryKey: ["revisar", id],
     enabled: !!id,
     queryFn: async () => {
-      const [inv, ln, centers, accounts, learning] = await Promise.all([
+      const [inv, ln, centers, accounts, learning, taxes] = await Promise.all([
         supabase.from("invoices").select("*").eq("id", id).single(),
         supabase.from("invoice_lines").select("*").eq("invoice_id", id).order("position"),
         supabase.from("cost_centers").select("code, name").eq("company_id", companyId ?? "").order("code"),
         fetchCompanyPuc(companyId ?? ""),
         supabase.from("learning_rules").select("*").eq("company_id", companyId ?? ""),
+        supabase.from("tax_rates").select("*").eq("company_id", companyId ?? "").order("name"),
       ]);
       if (inv.error) throw inv.error;
       const company = await supabase.from("companies").select("id, name, nit").eq("id", companyId ?? "").maybeSingle();
@@ -115,6 +119,7 @@ function Revisar() {
         centers: centers.data ?? [],
         accounts,
         learning: (learning.data ?? []) as unknown as LearningRule[],
+        taxes: (taxes.data ?? []) as unknown as TaxRecord[],
       };
     },
   });
@@ -176,20 +181,50 @@ function Revisar() {
     [lines],
   );
 
-  const retenciones: Retenciones = useMemo(
-    () => ({
-      retefuente: Number(header?.retefuente ?? 0),
-      reteiva: Number(header?.reteiva ?? 0),
-      reteica: Number(header?.reteica ?? 0),
-      autorretencion: 0,
-      detalle: [
-        { kind: "retefuente", name: "Retefuente", rate: 0, base, amount: Number(header?.retefuente ?? 0), account_code: null },
-        { kind: "reteiva", name: "ReteIVA", rate: 0, base, amount: Number(header?.reteiva ?? 0), account_code: null },
-        { kind: "reteica", name: "ReteICA", rate: 0, base, amount: Number(header?.reteica ?? 0), account_code: null },
-      ].filter((d) => d.amount > 0),
-    }),
-    [header?.retefuente, header?.reteiva, header?.reteica, base],
+  const impuestos = (data?.taxes ?? []) as TaxRecord[];
+  const impuestosIva = impuestos.filter((t) => String(t.kind) === "iva" || String(t.kind) === "impoconsumo");
+  const impuestosRet = impuestos.filter((t) => String(t.kind).startsWith("rete"));
+  const puc = (data?.accounts ?? []) as PucAccount[];
+
+  // Cada retención usa la cuenta del registro exacto seleccionado en el renglón.
+  const retenciones: Retenciones = useMemo(() => {
+    const r: Retenciones = { retefuente: 0, reteiva: 0, reteica: 0, autorretencion: 0, detalle: [] };
+    lines.forEach((l) => {
+      const amount = Number(l.retention || 0);
+      if (!amount) return;
+      const tx = findTaxById(impuestosRet, l.ret_tax_id);
+      const kind = String(tx?.kind ?? "retefuente");
+      const key = kind === "reteiva" ? "reteiva" : kind === "reteica" ? "reteica" : "retefuente";
+      r[key] += amount;
+      const cuenta = tx ? resolveTaxAccount(tx, puc) : null;
+      r.detalle.push({
+        kind: key,
+        name: tx?.name ?? "Retención sin impuesto seleccionado",
+        rate: Number(tx?.rate ?? 0),
+        base: Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
+        amount,
+        account_code: cuenta?.error ? "" : cuenta?.code ?? "",
+      });
+    });
+    return r;
+  }, [lines, impuestosRet, puc]);
+
+  const ivaGroups = useMemo(
+    () => buildIvaGroups(lines.map((l) => ({ tax: findTaxById(impuestosIva, l.iva_tax_id), amount: Number(l.iva || 0) })), puc),
+    [lines, impuestosIva, puc],
   );
+
+  const erroresImpuestos = useMemo(() => {
+    const out = [...ivaGroups.errors];
+    lines.forEach((l, i) => {
+      if (!Number(l.retention || 0)) return;
+      const tx = findTaxById(impuestosRet, l.ret_tax_id);
+      if (!tx) { out.push(`Renglón ${i + 1}: hay retención sin impuesto seleccionado.`); return; }
+      const r = resolveTaxAccount(tx, puc);
+      if (r.error && !out.includes(r.error)) out.push(r.error);
+    });
+    return out;
+  }, [ivaGroups.errors, lines, impuestosRet, puc]);
 
   const journal: JournalLine[] = useMemo(
     () =>
@@ -210,8 +245,9 @@ function Revisar() {
         impoconsumo: Number(header?.impoconsumo ?? 0),
         retenciones,
         costCenter: header?.cost_center ?? null,
+        ivaDetalle: ivaGroups.groups,
       }),
-    [lines, header?.iva, header?.impoconsumo, header?.cost_center, retenciones],
+    [lines, header?.iva, header?.impoconsumo, header?.cost_center, retenciones, ivaGroups],
   );
   const operationalJournal = useMemo(() => {
     const puc = (data?.accounts ?? []) as PucAccount[];
@@ -253,11 +289,12 @@ function Revisar() {
     });
     if (!header.cost_center) e.push("Falta el centro de costo.");
     if (Number(header.iva) < 0) e.push("El IVA no puede ser negativo.");
+    e.push(...erroresImpuestos);
     if (retenciones.retefuente < 0 || retenciones.reteiva < 0 || retenciones.reteica < 0) e.push("Las retenciones no pueden ser negativas.");
     if (Math.abs(t.diferencia) > 1) e.push(`El comprobante está descuadrado por ${cop(t.diferencia)}.`);
     if (base <= 0) e.push("La base gravable debe ser mayor a cero.");
     return e;
-  }, [header, lines, data?.accounts, data?.company, cuentasVerificadas, retenciones, t.diferencia, base]);
+  }, [header, lines, data?.accounts, data?.company, cuentasVerificadas, retenciones, t.diferencia, base, erroresImpuestos]);
 
   async function guardarCambios() {
     if (!header) return;
@@ -268,9 +305,9 @@ function Revisar() {
         payment_form: header.payment_form,
         notes: header.notes,
         iva: Number(header.iva || 0),
-        retefuente: Number(header.retefuente || 0),
-        reteiva: Number(header.reteiva || 0),
-        reteica: Number(header.reteica || 0),
+        retefuente: retenciones.retefuente,
+        reteiva: retenciones.reteiva,
+        reteica: retenciones.reteica,
         subtotal: base,
         total: base + Number(header.iva || 0) + Number(header.impoconsumo || 0),
       })
@@ -280,13 +317,34 @@ function Revisar() {
       lines.map((l) =>
         supabase
           .from("invoice_lines")
-          .update({
+          .update((() => {
+            const ivaTax = findTaxById(impuestosIva, l.iva_tax_id);
+            const retTax = findTaxById(impuestosRet, l.ret_tax_id);
+            const ivaTrace = ivaTax ? taxTrace(ivaTax, resolveTaxAccount(ivaTax, puc).code || null) : null;
+            const retTrace = retTax ? taxTrace(retTax, resolveTaxAccount(retTax, puc).code || null) : null;
+            return {
             account_code: l.account_code,
             account_name: l.account_name,
             item_type: l.item_type,
             iva: Number(l.iva || 0),
             retention: Number(l.retention || 0),
-          })
+            iva_tax_id: ivaTrace?.tax_id ?? null,
+            iva_tax_name: ivaTrace?.tax_name ?? null,
+            iva_tax_rate: ivaTrace?.tax_rate ?? null,
+            iva_account_code: ivaTrace?.account_code ?? null,
+            iva_operational_account: ivaTrace?.operational_account ?? null,
+            iva_siigo_id: ivaTrace?.siigo_id ?? null,
+            iva_siigo_name: ivaTrace?.siigo_name ?? null,
+            ret_tax_id: retTrace?.tax_id ?? null,
+            ret_tax_kind: retTrace?.tax_type ?? null,
+            ret_tax_name: retTrace?.tax_name ?? null,
+            ret_tax_rate: retTrace?.tax_rate ?? null,
+            ret_account_code: retTrace?.account_code ?? null,
+            ret_operational_account: retTrace?.operational_account ?? null,
+            ret_siigo_id: retTrace?.siigo_id ?? null,
+            ret_siigo_name: retTrace?.siigo_name ?? null,
+            };
+          })())
           .eq("id", l.id),
       ),
     );
@@ -543,9 +601,46 @@ function Revisar() {
                   </td>
                   <td className="px-3 py-1.5 w-28">
                     <Input type="number" value={l.iva} onChange={(e) => setLine(i, { iva: Number(e.target.value) })} />
+                    <select
+                      className="mt-1 h-8 w-full rounded-md border border-input bg-background px-1 text-xs"
+                      value={l.iva_tax_id ?? ""}
+                      onChange={(e) => {
+                        const id = e.target.value || null;
+                        const tx = findTaxById(impuestosIva, id);
+                        const baseLinea = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+                        setLine(i, { iva_tax_id: id, iva: tx ? Math.round((baseLinea * Number(tx.rate)) / 100) : 0 });
+                      }}
+                    >
+                      <option value="">Sin impuesto</option>
+                      {impuestosIva.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} ({t.rate}%) · {t.account_code ?? "sin cuenta"}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td className="px-3 py-1.5 w-28">
                     <Input type="number" value={l.retention} onChange={(e) => setLine(i, { retention: Number(e.target.value) })} />
+                    <select
+                      className="mt-1 h-8 w-full rounded-md border border-input bg-background px-1 text-xs"
+                      value={l.ret_tax_id ?? ""}
+                      onChange={(e) => {
+                        const id = e.target.value || null;
+                        const tx = findTaxById(impuestosRet, id);
+                        const baseLinea =
+                          String(tx?.kind) === "reteiva"
+                            ? Number(l.iva || 0)
+                            : Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+                        setLine(i, { ret_tax_id: id, retention: tx ? Math.round((baseLinea * Number(tx.rate)) / 100) : 0 });
+                      }}
+                    >
+                      <option value="">Sin retención</option>
+                      {impuestosRet.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} ({t.rate}%) · {t.account_code ?? "sin cuenta"}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">
                     {cop(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0))}

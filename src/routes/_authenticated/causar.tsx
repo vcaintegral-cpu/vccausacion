@@ -11,6 +11,7 @@ import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
+import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
 import { AccountCombobox } from "@/components/account-combobox";
 import { CUENTA_PADRE_MSG, resolveOperationalAccount, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
 import { fetchCompanyPuc } from "@/lib/puc-data";
@@ -217,27 +218,12 @@ function Causar() {
       item_type: normalizeItemType(l["item_type"] as string | null),
     }));
     setLines(cargadas);
-    // Reconstruye la tarifa elegida por renglón a partir de los valores guardados.
-    const impuestosGuardados = config.taxes ?? [];
+    // El impuesto elegido se recupera por su identificador guardado, nunca por tarifa.
     const seleccion: Record<number, { iva?: string | undefined; ret?: string | undefined }> = {};
-    cargadas.forEach((l, i) => {
-      const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
-      const ivaTax = Number(l.iva || 0)
-        ? impuestosGuardados.find(
-            (t) =>
-              (String(t.kind) === "iva" || String(t.kind) === "impoconsumo") &&
-              Math.abs(Math.round((base * Number(t.rate)) / 100) - Number(l.iva)) <= 1,
-          )
-        : undefined;
-      const retTax = Number(l.retention || 0)
-        ? impuestosGuardados.find((t) => {
-            if (!String(t.kind).startsWith("rete")) return false;
-            const b = String(t.kind) === "reteiva" ? Number(l.iva || 0) : base;
-            return Math.abs(Math.round((b * Number(t.rate)) / 100) - Number(l.retention)) <= 1;
-          })
-        : undefined;
-      if (ivaTax || retTax)
-        seleccion[i] = { iva: ivaTax ? String(ivaTax.id) : undefined, ret: retTax ? String(retTax.id) : undefined };
+    (borrador.lines as Record<string, any>[]).forEach((l, i) => {
+      const ivaId = l["iva_tax_id"] ? String(l["iva_tax_id"]) : undefined;
+      const retId = l["ret_tax_id"] ? String(l["ret_tax_id"]) : undefined;
+      if (ivaId || retId) seleccion[i] = { iva: ivaId, ret: retId };
     });
     setLineTax(seleccion);
   }, [borrador, config, editingId]);
@@ -471,6 +457,33 @@ function Causar() {
     });
     return r;
   }, [lines, impuestosRet, lineTax]);
+
+  // IVA: la cuenta sale del registro exacto del impuesto elegido en cada renglón.
+  const ivaGroups = useMemo(
+    () =>
+      buildIvaGroups(
+        lines.map((l, i) => ({
+          tax: (findTaxById(impuestosIva as unknown as TaxRecord[], lineTax[i]?.iva) as TaxRecord | null),
+          amount: Number(l.iva || 0),
+        })),
+        (config?.accounts ?? []) as PucAccount[],
+      ),
+    [lines, impuestosIva, lineTax, config?.accounts],
+  );
+
+  // Errores de configuración de impuestos (IVA y retenciones) del renglón.
+  const erroresImpuestos = useMemo(() => {
+    const puc = (config?.accounts ?? []) as PucAccount[];
+    const out = [...ivaGroups.errors];
+    lines.forEach((l, i) => {
+      if (!Number(l.retention || 0)) return;
+      const tx = findTaxById(impuestosRet as unknown as TaxRecord[], lineTax[i]?.ret) as TaxRecord | null;
+      if (!tx) { out.push(`Renglón ${i + 1}: hay retención sin impuesto seleccionado.`); return; }
+      const r = resolveTaxAccount(tx, puc);
+      if (r.error && !out.includes(r.error)) out.push(r.error);
+    });
+    return out;
+  }, [ivaGroups.errors, lines, impuestosRet, lineTax, config?.accounts]);
   const journal = useMemo(
     () =>
       buildJournal({
@@ -479,8 +492,9 @@ function Causar() {
         impoconsumo: Number(header.impoconsumo || 0),
         retenciones,
         costCenter: header.cost_center,
+        ivaDetalle: ivaGroups.groups,
       }),
-    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones],
+    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaGroups],
   );
   const operationalJournal = useMemo(() => {
     const puc = (config?.accounts ?? []) as PucAccount[];
@@ -693,6 +707,7 @@ function Causar() {
       toast.error(Object.values(lineErrors)[0] ?? "Hay renglones sin cuenta contable.");
       return;
     }
+    if (erroresImpuestos.length > 0) { toast.error(erroresImpuestos[0]!); return; }
     if (Math.abs(t.diferencia) > 1) { toast.error("El comprobante está descuadrado."); return; }
     setSaving(true);
     try {
@@ -793,7 +808,13 @@ function Causar() {
 
       await Promise.all([
         supabase.from("invoice_lines").insert(
-          lines.map((l, i) => ({
+          lines.map((l, i) => {
+            const puc = (config?.accounts ?? []) as PucAccount[];
+            const ivaTax = findTaxById(impuestosIva as unknown as TaxRecord[], lineTax[i]?.iva) as TaxRecord | null;
+            const retTax = findTaxById(impuestosRet as unknown as TaxRecord[], lineTax[i]?.ret) as TaxRecord | null;
+            const ivaTrace = ivaTax ? taxTrace(ivaTax, resolveTaxAccount(ivaTax, puc).code || null) : null;
+            const retTrace = retTax ? taxTrace(retTax, resolveTaxAccount(retTax, puc).code || null) : null;
+            return {
             invoice_id: inv.id,
             company_id: companyId,
             code: l.code ?? null,
@@ -809,7 +830,23 @@ function Causar() {
             account_name: l.account_name ?? null,
             item_type: normalizeItemType(l.item_type),
             position: i,
-          })),
+            iva_tax_id: ivaTrace?.tax_id ?? null,
+            iva_tax_name: ivaTrace?.tax_name ?? null,
+            iva_tax_rate: ivaTrace?.tax_rate ?? null,
+            iva_account_code: ivaTrace?.account_code ?? null,
+            iva_operational_account: ivaTrace?.operational_account ?? null,
+            iva_siigo_id: ivaTrace?.siigo_id ?? null,
+            iva_siigo_name: ivaTrace?.siigo_name ?? null,
+            ret_tax_id: retTrace?.tax_id ?? null,
+            ret_tax_kind: retTrace?.tax_type ?? null,
+            ret_tax_name: retTrace?.tax_name ?? null,
+            ret_tax_rate: retTrace?.tax_rate ?? null,
+            ret_account_code: retTrace?.account_code ?? null,
+            ret_operational_account: retTrace?.operational_account ?? null,
+            ret_siigo_id: retTrace?.siigo_id ?? null,
+            ret_siigo_name: retTrace?.siigo_name ?? null,
+            };
+          }),
         ),
         supabase.from("journal_lines").insert(
           operationalJournal.map((j, i) => ({
@@ -1363,6 +1400,13 @@ function Causar() {
       {lines.length > 0 && journal.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-border bg-card">
           <div className="border-b border-border px-5 py-3 text-sm font-semibold">Validación contable</div>
+          {erroresImpuestos.length > 0 && (
+            <ul className="list-disc space-y-1 border-b border-border bg-destructive/5 px-8 py-3 text-xs text-destructive">
+              {erroresImpuestos.map((e, i) => (
+                <li key={i}>{e}</li>
+              ))}
+            </ul>
+          )}
           <table className="w-full text-sm">
             <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
               <tr>

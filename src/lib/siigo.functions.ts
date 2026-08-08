@@ -718,6 +718,34 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         accounting_account?: { code?: string | number } | string | number;
         account_code?: string | number;
       };
+      // FUENTE OFICIAL: el impuesto exacto (por ID) elegido en cada renglón de la factura.
+      const { data: lineasImpuesto } = await supabase
+        .from("invoice_lines")
+        .select(
+          "position, iva, retention, iva_tax_id, iva_siigo_id, iva_siigo_name, iva_tax_rate, iva_operational_account, ret_tax_id, ret_siigo_id, ret_siigo_name, ret_tax_kind, ret_tax_name, ret_tax_rate, ret_operational_account",
+        )
+        .eq("invoice_id", data.invoiceId)
+        .order("position");
+      const idsImpuestos = Array.from(
+        new Set(
+          (lineasImpuesto ?? [])
+            .flatMap((l) => [l.iva_tax_id, l.ret_tax_id])
+            .filter((v): v is string => Boolean(v)),
+        ),
+      );
+      const { data: impuestosSeleccionados } = idsImpuestos.length
+        ? await supabase
+            .from("tax_rates")
+            .select("id, kind, name, rate, account_code, siigo_id, siigo_name, active")
+            .in("id", idsImpuestos)
+        : { data: [] as { id: string; kind: string; name: string; rate: number; account_code: string | null; siigo_id: string | null; siigo_name: string | null; active: boolean }[] };
+      const impuestoPorId = new Map((impuestosSeleccionados ?? []).map((t) => [t.id, t]));
+      const siigoIdDelImpuesto = (taxId: string | null | undefined, guardado?: string | null) => {
+        if (guardado) return guardado;
+        const t = taxId ? impuestoPorId.get(taxId) : undefined;
+        return t?.siigo_id ?? null;
+      };
+
       const ivaLineIndex = resolvedJournal.findIndex((line) => {
         const name = String(line.account_name ?? "").toLowerCase();
         return Number(line.debit ?? 0) > 0 && (name.includes("iva") || line.account_code.startsWith("2408") || line.account_code.startsWith("621008"));
@@ -725,7 +753,31 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       let ivaTaxId: number | string | null = null;
       let ivaTaxRate = 0;
       let ivaTaxName: string | null = null;
-      if (Number(inv.iva ?? 0) > 0 && ivaLineIndex >= 0) {
+      // Cada renglón envía el ID de Siigo del impuesto exacto que se le seleccionó.
+      const ivaSiigoPorPosicion = new Map<number, number | string>();
+      for (const l of lineasImpuesto ?? []) {
+        if (!(Number(l.iva ?? 0) > 0) || !l.iva_tax_id) continue;
+        const registro = impuestoPorId.get(l.iva_tax_id);
+        const siigoId = siigoIdDelImpuesto(l.iva_tax_id, l.iva_siigo_id);
+        if (!siigoId) {
+          throw new Error(
+            `El impuesto de IVA "${l.iva_siigo_name ?? registro?.name ?? l.iva_tax_id}" no tiene su identificador de Siigo. Sincroniza los impuestos desde Integraciones.`,
+          );
+        }
+        ivaSiigoPorPosicion.set(Number(l.position ?? 0), siigoId);
+        if (ivaTaxId == null) {
+          ivaTaxId = siigoId;
+          ivaTaxRate = Number(l.iva_tax_rate ?? registro?.rate ?? 0);
+          ivaTaxName = l.iva_siigo_name ?? registro?.name ?? null;
+          console.log("[siigo][iva] impuesto seleccionado por ID:", {
+            tax_id: l.iva_tax_id,
+            cuenta: l.iva_operational_account,
+            tarifa: ivaTaxRate,
+            siigo_id: siigoId,
+          });
+        }
+      }
+      if (ivaTaxId == null && Number(inv.iva ?? 0) > 0 && ivaLineIndex >= 0) {
         const ivaAccountLine = resolvedJournal[ivaLineIndex]?.account_code ?? "";
         const rateFactura = Number(inv.total ?? 0) > Number(inv.iva ?? 0)
           ? Math.round((Number(inv.iva) / (Number(inv.total) - Number(inv.iva))) * 10000) / 100
@@ -928,7 +980,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               quantity: Number(l.quantity ?? 1) || 1,
               price: Number(l.unit_value ?? 0),
               discount: Number(l.discount ?? 0),
-              tax_ids: Number(l.iva ?? 0) > 0 && ivaTaxId != null ? [ivaTaxId] : [],
+              tax_ids:
+                Number(l.iva ?? 0) > 0
+                  ? (() => {
+                      const propio = ivaSiigoPorPosicion.get(Number(l.position ?? i));
+                      return propio != null ? [propio] : ivaTaxId != null ? [ivaTaxId] : [];
+                    })()
+                  : [],
               // El tipo de ítem elegido en la revisión se conserva sin cambios.
               item_type: tipo,
             };
@@ -1046,7 +1104,45 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         if (id.length >= 6 && /^23/.test(id)) return false;
         return true;
       };
-      const retencionesAEnviar = retencionesPorTipo.filter((r) => r.enviarEnRetentions);
+      // Retenciones elegidas por ID en los renglones: se usa ese registro exacto.
+      const retencionesPorTaxId = new Map<
+        string,
+        { siigoId: string; nombre: string; kind: string; cuenta: string; tarifa: number; valor: number }
+      >();
+      for (const l of lineasImpuesto ?? []) {
+        if (!(Number(l.retention ?? 0) > 0) || !l.ret_tax_id) continue;
+        const registro = impuestoPorId.get(l.ret_tax_id);
+        const siigoId = siigoIdDelImpuesto(l.ret_tax_id, l.ret_siigo_id);
+        const nombre = l.ret_siigo_name ?? l.ret_tax_name ?? registro?.name ?? "Retención";
+        if (!siigoId) {
+          throw new Error(
+            `La retención "${nombre}" no tiene su identificador de Siigo. Sincroniza los impuestos desde Integraciones.`,
+          );
+        }
+        const prev = retencionesPorTaxId.get(l.ret_tax_id);
+        retencionesPorTaxId.set(l.ret_tax_id, {
+          siigoId,
+          nombre,
+          kind: String(l.ret_tax_kind ?? registro?.kind ?? "retefuente"),
+          cuenta: String(l.ret_operational_account ?? registro?.account_code ?? ""),
+          tarifa: Number(l.ret_tax_rate ?? registro?.rate ?? 0),
+          valor: (prev?.valor ?? 0) + Number(l.retention ?? 0),
+        });
+      }
+      const retencionesSeleccionadas = [...retencionesPorTaxId.values()];
+      for (const r of retencionesSeleccionadas) {
+        retencionesSiigo.push({ id: r.siigoId, value: r.valor, tipo: r.nombre, kind: r.kind });
+        retencionesTrace.push({
+          tipo: r.nombre,
+          cuenta: r.cuenta,
+          tarifa: r.tarifa,
+          valor: r.valor,
+          siigo_id: r.siigoId,
+          nombre: r.nombre,
+        });
+      }
+      const retencionesAEnviar =
+        retencionesSeleccionadas.length > 0 ? [] : retencionesPorTipo.filter((r) => r.enviarEnRetentions);
       if (retencionesAEnviar.length > 0) {
         // Reglas tributarias configuradas por empresa: la tarifa oficial sale de aquí,
         // nunca se infiere desde el valor monetario redondeado de la retención.

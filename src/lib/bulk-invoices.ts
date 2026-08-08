@@ -157,6 +157,9 @@ export async function processInvoiceFile(params: {
     costCenter: header.cost_center,
   });
   const operationalJournal = journal.map((line) => {
+    // Renglones sin cuenta (por ejemplo el IVA aún sin impuesto seleccionado) se guardan
+    // tal cual: el borrador exige elegir el impuesto exacto antes de causar.
+    if (!line.account_code) return line;
     const resolution = resolveOperationalAccount(config.accounts, line.account_code);
     if (!resolution.valid || !resolution.operationalAccount) {
       throw new Error(resolution.message ?? `La cuenta ${line.account_code} no es operativa en Siigo.`);
