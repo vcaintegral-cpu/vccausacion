@@ -197,7 +197,8 @@ export async function processInvoiceFile(params: {
       buyer_nit: header.buyer_nit,
       buyer_name: header.buyer_name,
       cufe: header.cufe,
-      payment_form: header.payment_form,
+      // Todas las causaciones quedan a crédito, sin importar lo que diga la factura.
+      payment_form: "Crédito",
       payment_method: header.payment_method,
       currency: header.currency || "COP",
       cost_center: header.cost_center,
