@@ -876,20 +876,26 @@ function Causar() {
       <div className="grid gap-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2 xl:grid-cols-4">
         {empresaIncorrecta && (
           <div className="sm:col-span-2 xl:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
-            <p className="font-semibold text-destructive">Esta factura no pertenece a la empresa seleccionada.</p>
+            <p className="font-semibold uppercase text-destructive">Esta factura no pertenece a la empresa seleccionada</p>
             <div className="mt-2 grid gap-1 sm:grid-cols-2">
               <p>
-                Empresa seleccionada: <span className="font-medium">{empresaActiva?.name ?? "—"}</span> · NIT:{" "}
+                Empresa activa: <span className="font-medium">{empresaActiva?.name ?? "—"}</span> · NIT:{" "}
                 <span className="font-medium">{empresaActiva?.nit ?? "—"}</span>
               </p>
               <p>
-                Empresa que aparece en la factura: <span className="font-medium">{header.buyer_name || "—"}</span> · NIT:{" "}
+                Comprador de la factura: <span className="font-medium">{header.buyer_name || "—"}</span> · NIT:{" "}
                 <span className="font-medium">{header.buyer_nit || "—"}</span>
               </p>
             </div>
             <p className="mt-2 text-muted-foreground">
-              Verifique que haya seleccionado la empresa correcta antes de continuar. No es posible aprobar ni enviar esta factura a Siigo.
+              Verifique que haya seleccionado la empresa correcta antes de continuar.
             </p>
+            <p className="mt-1 font-medium text-destructive">No es posible guardar, aprobar ni causar esta factura.</p>
+          </div>
+        )}
+        {!empresaIncorrecta && bloqueoEmpresa && (
+          <div className="sm:col-span-2 xl:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
+            <p className="font-medium text-destructive">{bloqueoEmpresa}</p>
           </div>
         )}
         {chequeoEmpresa.status === "ok" && chequeoEmpresa.nameMismatch && (
