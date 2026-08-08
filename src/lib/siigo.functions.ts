@@ -193,7 +193,39 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
       rows.length - insertedCount,
       ")",
     );
-    return { imported: insertedCount };
+    const { rebuildPucHierarchy } = await import("./puc-sync.server");
+    const jerarquia = await rebuildPucHierarchy(context.supabase, data.companyId);
+    return { imported: insertedCount, total: jerarquia.total, movimiento: jerarquia.movimiento };
+  });
+
+/** Recalcula la jerarquía del PUC (nivel, padre, hijas, cuentas de movimiento) por empresa. */
+export const pucRebuildHierarchy = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    const { rebuildPucHierarchy } = await import("./puc-sync.server");
+    return rebuildPucHierarchy(context.supabase, data.companyId);
+  });
+
+/** Cuentas del PUC de la empresa con su jerarquía, para la tabla de control de Integraciones. */
+export const pucAccountsOverview = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    const { data: rows, error } = await context.supabase
+      .from("puc_accounts")
+      .select("code, name, level, parent_code, has_children, is_movement, active, siigo_id, siigo_code, synced_at")
+      .eq("company_id", data.companyId)
+      .order("code")
+      .range(0, 4999);
+    if (error) throw new Error(error.message);
+    return rows ?? [];
   });
 
 export type SiigoPurchase = {
