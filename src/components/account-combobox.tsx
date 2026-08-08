@@ -1,12 +1,14 @@
 import { useMemo, useState } from "react";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { Check, ChevronsUpDown, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
+import { auxiliaresDe, CUENTA_PADRE_MSG, type PucAccount } from "@/lib/puc-hierarchy";
 
-export type PucOption = { code: string; name: string };
+export type PucOption = PucAccount;
 
+/** Solo las cuentas de movimiento son seleccionables; las cuentas padre se muestran bloqueadas. */
 export function AccountCombobox({
   accounts,
   value,
@@ -21,10 +23,34 @@ export function AccountCombobox({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [aviso, setAviso] = useState<{ code: string; hijas: PucOption[] } | null>(null);
   const selected = useMemo(() => accounts.find((a) => a.code === value), [accounts, value]);
 
+  const esMovimiento = (a: PucOption) => a.active !== false && !a.has_children && a.is_movement !== false;
+  const ordenadas = useMemo(() => {
+    const mov = accounts.filter(esMovimiento);
+    const padres = accounts.filter((a) => !esMovimiento(a));
+    return { mov, padres };
+  }, [accounts]);
+
+  const elegir = (a: PucOption) => {
+    if (!esMovimiento(a)) {
+      setAviso({ code: a.code, hijas: auxiliaresDe(accounts, a.code) });
+      return;
+    }
+    onChange(a.code, a.name ?? null);
+    setAviso(null);
+    setOpen(false);
+  };
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) setAviso(null);
+      }}
+    >
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -38,14 +64,38 @@ export function AccountCombobox({
           <ChevronsUpDown className="ml-1 size-3.5 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[360px] p-0" align="start">
-        <Command
-          filter={(itemValue, search) => (itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0)}
-        >
+      <PopoverContent className="w-[380px] p-0" align="start">
+        {aviso ? (
+          <div className="border-b border-border bg-muted/40 p-3">
+            <p className="text-xs text-destructive">{CUENTA_PADRE_MSG}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              La cuenta <span className="font-mono">{aviso.code}</span> tiene cuentas auxiliares. Seleccione la cuenta de
+              movimiento:
+            </p>
+            <div className="mt-2 max-h-40 space-y-1 overflow-auto">
+              {aviso.hijas.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No hay auxiliares activas sincronizadas para esta cuenta.</p>
+              ) : (
+                aviso.hijas.map((h) => (
+                  <button
+                    key={h.code}
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-accent"
+                    onClick={() => elegir(h)}
+                  >
+                    <span className="font-mono">{h.code}</span>
+                    <span className="truncate text-muted-foreground">{h.name}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        ) : null}
+        <Command filter={(itemValue, search) => (itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0)}>
           <CommandInput placeholder={placeholder} />
           <CommandList>
             <CommandEmpty>Sin resultados.</CommandEmpty>
-            <CommandGroup>
+            <CommandGroup heading="Cuentas de movimiento">
               <CommandItem
                 value="__vacio__ ninguna"
                 onSelect={() => {
@@ -55,21 +105,30 @@ export function AccountCombobox({
               >
                 <span className="text-muted-foreground">Sin cuenta</span>
               </CommandItem>
-              {accounts.map((a) => (
-                <CommandItem
-                  key={a.code}
-                  value={`${a.code} ${a.name}`}
-                  onSelect={() => {
-                    onChange(a.code, a.name ?? null);
-                    setOpen(false);
-                  }}
-                >
+              {ordenadas.mov.map((a) => (
+                <CommandItem key={a.code} value={`${a.code} ${a.name}`} onSelect={() => elegir(a)}>
                   <Check className={cn("mr-2 size-3.5", value === a.code ? "opacity-100" : "opacity-0")} />
                   <span className="font-mono">{a.code}</span>
                   <span className="ml-2 truncate text-muted-foreground">{a.name}</span>
                 </CommandItem>
               ))}
             </CommandGroup>
+            {ordenadas.padres.length > 0 ? (
+              <CommandGroup heading="Cuentas padre (solo consulta)">
+                {ordenadas.padres.map((a) => (
+                  <CommandItem
+                    key={a.code}
+                    value={`${a.code} ${a.name}`}
+                    onSelect={() => elegir(a)}
+                    className="opacity-60"
+                  >
+                    <Lock className="mr-2 size-3.5" />
+                    <span className="font-mono">{a.code}</span>
+                    <span className="ml-2 truncate text-muted-foreground">{a.name}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ) : null}
           </CommandList>
         </Command>
       </PopoverContent>
