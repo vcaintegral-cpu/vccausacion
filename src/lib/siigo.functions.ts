@@ -1168,6 +1168,34 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const siigoNumber = res.name ? String(res.name) : res.number != null ? String(res.number) : null;
       const documentUrl = res._links?.self?.href ?? null;
 
+      const trace = {
+        company_id: inv.company_id,
+        factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
+        proveedor: { nit: inv.provider_nit, nombre: inv.provider_name ?? null },
+        renglones: items.map((it) => ({
+          descripcion: it.description,
+          tipo_item: it.item_type,
+          cuenta_puc: it.account_code,
+          codigo: it.type === "Product" ? it.code : null,
+          cantidad: it.quantity,
+          precio: it.price,
+          tax_ids: it.tax_ids,
+        })),
+        iva: { siigo_id: ivaTaxId != null ? String(ivaTaxId) : null, nombre: ivaTaxName, tarifa: ivaTaxRate, valor: iva },
+        retenciones: retencionesTrace,
+        centro_costo: { nombre: inv.cost_center ?? null, siigo_id: costCenterId ?? null },
+        valores: {
+          subtotal,
+          iva,
+          impoconsumo,
+          total: totalFactura,
+          retenciones: retenciones,
+          neto_a_pagar: netoAPagar,
+        },
+        siigo_respuesta: res,
+        enviado_at: syncedAt,
+      };
+
       await supabase
         .from("invoices")
         .update({
@@ -1179,6 +1207,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           siigo_synced_at: syncedAt,
           siigo_synced_by: context.userId,
           siigo_error: null,
+          siigo_trace: trace,
         })
         .eq("id", data.invoiceId);
 
