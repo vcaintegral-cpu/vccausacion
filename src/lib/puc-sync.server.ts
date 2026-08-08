@@ -23,7 +23,11 @@ export async function rebuildPucHierarchy(supabase: Client, companyId: string) {
   }
   if (rows.length === 0) return { total: 0, movimiento: 0 };
 
-  const hierarchy = buildHierarchy(rows.map((r) => ({ code: r.code, name: r.name, active: r.active })));
+  const hierarchy = buildHierarchy(rows.map((r) => ({
+    code: r.code,
+    name: r.name,
+    active: r.siigo_active ?? r.excel_active ?? r.active,
+  })));
   const byCode = new Map(hierarchy.map((h) => [h.code, h]));
   const updates = rows.map((r) => {
     const h = byCode.get(r.code);
@@ -34,7 +38,7 @@ export async function rebuildPucHierarchy(supabase: Client, companyId: string) {
       code: r.code,
       name: r.name,
       nature: r.nature,
-      active: r.active,
+      active: r.siigo_active ?? r.excel_active ?? r.active,
       source: r.source,
       level: h.level,
       parent_code: h.parent_code,

@@ -159,20 +159,37 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
 
     console.log("[siigo][puc] comprobantes revisados:", scanned, "| cuentas únicas encontradas:", found.size);
 
-    const rows = [...found.entries()].map(([code, v]) => ({
-      company_id: data.companyId,
-      code,
-      name: v.name,
-      nature: v.nature,
-      source: "siigo",
-      active: true,
-      is_movement: true,
-      siigo_code: code,
-      synced_at: new Date().toISOString(),
-      siigo_active: true,
-      siigo_is_movement: true,
-      siigo_seen_at: new Date().toISOString(),
-    }));
+    const existing = new Map<string, Record<string, unknown>>();
+    for (let from = 0; ; from += 1000) {
+      const { data: page, error: existingError } = await context.supabase
+        .from("puc_accounts")
+        .select("id,company_id,code,name,nature,active,source,level,parent_code,has_children,is_movement,excel_active,siigo_id,siigo_code,synced_at,siigo_active,siigo_is_movement,siigo_seen_at")
+        .eq("company_id", data.companyId)
+        .order("code")
+        .range(from, from + 999);
+      if (existingError) throw new Error(`No fue posible preservar el PUC actual: ${existingError.message}`);
+      for (const account of page ?? []) existing.set(account.code, account);
+      if ((page ?? []).length < 1000) break;
+    }
+    const now = new Date().toISOString();
+    const rows = [...found.entries()].map(([code, v]) => {
+      const current = existing.get(code);
+      return {
+        ...current,
+        company_id: data.companyId,
+        code,
+        name: current?.name ?? v.name,
+        nature: current?.nature ?? v.nature,
+        source: current?.source ?? "siigo",
+        active: current?.active ?? true,
+        is_movement: current?.is_movement ?? true,
+        siigo_code: code,
+        synced_at: now,
+        siigo_active: true,
+        siigo_is_movement: true,
+        siigo_seen_at: now,
+      };
+    });
     console.log("[siigo][puc] registros válidos para insertar:", rows.length);
     if (rows.length === 0) {
       console.warn("[siigo][puc] no se encontraron cuentas en los comprobantes de Siigo; no se inserta nada.");
