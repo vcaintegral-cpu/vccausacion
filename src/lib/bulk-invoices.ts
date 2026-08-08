@@ -184,6 +184,8 @@ export async function processInvoiceFile(params: {
       provider_city: header.provider_city,
       provider_phone: header.provider_phone,
       provider_email: header.provider_email,
+      buyer_nit: header.buyer_nit,
+      buyer_name: header.buyer_name,
       cufe: header.cufe,
       payment_form: header.payment_form,
       payment_method: header.payment_method,
