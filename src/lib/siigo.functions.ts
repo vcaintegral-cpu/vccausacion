@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { normalizeItemType } from "@/lib/item-type";
 
 export type SiigoStatus = {
   configured: boolean;
@@ -590,7 +591,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               discount: Number(l.discount ?? 0),
               tax_ids: Number(l.iva ?? 0) > 0 && ivaTaxId != null ? [ivaTaxId] : [],
               // El tipo de ítem elegido en la revisión se conserva sin cambios.
-              item_type: (l.item_type ?? "gasto") as string,
+              item_type: normalizeItemType(l.item_type),
               cost_center: inv.cost_center,
             };
           })
@@ -614,7 +615,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       console.log("Centro de costo:", inv.cost_center ?? "—");
       (invoiceLines ?? []).forEach((l, i) => {
         console.log(`Renglón ${i + 1}:`, {
-          tipo_item: l.item_type ?? "gasto",
+          tipo_item: normalizeItemType(l.item_type),
           codigo_producto: l.code ?? null,
           cuenta_causacion: l.account_code,
           cuenta_enviada: cuentaDelRenglon(l.account_code ?? ""),

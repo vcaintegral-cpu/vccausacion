@@ -8,7 +8,8 @@ import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, PackageSearch, Send
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
 import { buildJournal, totals, type JournalLine, type Retenciones } from "@/lib/accounting";
-import { ITEM_TYPES, type LearningRule } from "@/lib/learning";
+import { type LearningRule } from "@/lib/learning";
+import { ITEM_TYPES, isValidItemType, normalizeItemType } from "@/lib/item-type";
 import { cop, fecha } from "@/lib/format";
 import { suggestCostCenter } from "@/lib/cost-center";
 import { siigoCreateProduct, siigoFindProduct, siigoSyncInvoice } from "@/lib/siigo.functions";
@@ -86,6 +87,8 @@ function Revisar() {
   const [inventario, setInventario] = useState<{ index: number; query: string; results: { id: string; code: string; name: string }[] | null; busy: boolean } | null>(null);
   const [centroSugerido, setCentroSugerido] = useState<string | null>(null);
   const [centroTocado, setCentroTocado] = useState(false);
+  // Cuentas confirmadas contra la base (company_id + código) cuando no vienen en el listado local.
+  const [cuentasVerificadas, setCuentasVerificadas] = useState<Record<string, { exists: boolean; name: string | null }>>({});
 
   const { data } = useQuery({
     queryKey: ["revisar", id],
@@ -112,9 +115,39 @@ function Revisar() {
   useEffect(() => {
     if (data) {
       setHeader(data.invoice);
-      setLines(data.lines);
+      // Una sola fuente de verdad: el tipo de ítem se normaliza al cargar y nunca se degrada a gasto.
+      setLines(data.lines.map((l) => ({ ...l, item_type: normalizeItemType(l.item_type) })));
     }
   }, [data]);
+
+  /** Verifica en la base las cuentas de los renglones que no están en el listado cargado. */
+  useEffect(() => {
+    const company = header?.company_id;
+    if (!company) return;
+    const conocidas = new Set((data?.accounts ?? []).map((a) => a.code));
+    const faltantes = [...new Set(lines.map((l) => l.account_code).filter((c): c is string => !!c))].filter(
+      (c) => !conocidas.has(c) && !(c in cuentasVerificadas),
+    );
+    if (faltantes.length === 0) return;
+    let cancelado = false;
+    void supabase
+      .from("puc_accounts")
+      .select("code, name")
+      .eq("company_id", company)
+      .in("code", faltantes)
+      .then(({ data: rows }) => {
+        if (cancelado) return;
+        const encontrado = new Map((rows ?? []).map((r) => [r.code as string, (r.name ?? null) as string | null]));
+        setCuentasVerificadas((prev) => {
+          const next = { ...prev };
+          for (const code of faltantes) {
+            next[code] = encontrado.has(code) ? { exists: true, name: encontrado.get(code) ?? null } : { exists: false, name: null };
+          }
+          return next;
+        });
+      });
+    return () => { cancelado = true; };
+  }, [lines, data?.accounts, header?.company_id, cuentasVerificadas]);
 
   /** Centro de costo sugerido por el historial del proveedor en esta empresa. */
   useEffect(() => {
@@ -183,8 +216,14 @@ function Revisar() {
     const pucCodes = new Set((data?.accounts ?? []).map((a) => a.code));
     lines.forEach((l, i) => {
       if (!l.account_code) e.push(`Renglón ${i + 1}: falta la cuenta contable.`);
-      else if (pucCodes.size > 0 && !pucCodes.has(l.account_code)) e.push(`Renglón ${i + 1}: la cuenta ${l.account_code} no existe en el PUC de la empresa.`);
-      if (!ITEM_TYPES.includes(l.item_type as never)) e.push(`Renglón ${i + 1}: tipo de ítem inválido.`);
+      else {
+        const verificada = cuentasVerificadas[l.account_code];
+        // Solo se marca inexistente cuando la base confirmó que no está (company_id + código).
+        if (!pucCodes.has(l.account_code) && verificada && !verificada.exists) {
+          e.push(`Renglón ${i + 1}: la cuenta ${l.account_code} no existe en el PUC de la empresa.`);
+        }
+      }
+      if (!isValidItemType(l.item_type)) e.push(`Renglón ${i + 1}: tipo de ítem inválido.`);
     });
     if (!header.cost_center) e.push("Falta el centro de costo.");
     if (Number(header.iva) < 0) e.push("El IVA no puede ser negativo.");
@@ -192,7 +231,7 @@ function Revisar() {
     if (Math.abs(t.diferencia) > 1) e.push(`El comprobante está descuadrado por ${cop(t.diferencia)}.`);
     if (base <= 0) e.push("La base gravable debe ser mayor a cero.");
     return e;
-  }, [header, lines, data?.accounts, retenciones, t.diferencia, base]);
+  }, [header, lines, data?.accounts, cuentasVerificadas, retenciones, t.diferencia, base]);
 
   async function guardarCambios() {
     if (!header) return;
@@ -243,6 +282,18 @@ function Revisar() {
 
   async function causar() {
     if (!header) return;
+    // Diagnóstico: la validación usa exactamente las líneas visibles en pantalla.
+    lines.forEach((l, i) =>
+      console.log("VALIDACIÓN DE LÍNEA", {
+        line_index: i,
+        description: l.description,
+        item_type: l.item_type,
+        product_code: l.code,
+        account_code: l.account_code,
+        account_name: l.account_name,
+        cost_center: header.cost_center ?? null,
+      }),
+    );
     if (errores.length > 0) { toast.error("Corrige los errores antes de enviar la factura."); return; }
     setSending(true);
     try {
@@ -263,6 +314,21 @@ function Revisar() {
         }),
       );
       console.log("===============================================");
+      console.log("========== PAYLOAD CONTABLE FINAL ==========");
+      console.log("company_id:", header.company_id, "· proveedor:", header.provider_nit);
+      lines.forEach((l, i) =>
+        console.log(`LINEA ${i + 1}`, {
+          description: l.description,
+          item_type: l.item_type,
+          product_code: l.code,
+          account_code: l.account_code,
+          account_name: l.account_name,
+          cost_center: header.cost_center ?? null,
+          value: Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
+          iva: Number(l.iva || 0),
+        }),
+      );
+      console.log("============================================");
       const res = await sync({ data: { invoiceId: header.id } });
       if (!res.ok) { toast.error(res.error ?? "Siigo rechazó el comprobante."); return; }
       setOk({ number: res.siigoNumber, id: res.siigoId, date: res.syncedAt, url: res.documentUrl });
@@ -415,6 +481,11 @@ function Revisar() {
                       }}
                     >
                       <option value="">Seleccionar…</option>
+                      {l.account_code && !(data?.accounts ?? []).some((a) => a.code === l.account_code) && (
+                        <option value={l.account_code}>
+                          {l.account_code} · {l.account_name ?? cuentasVerificadas[l.account_code]?.name ?? "Cuenta del renglón"}
+                        </option>
+                      )}
                       {(data?.accounts ?? []).map((a) => (
                         <option key={a.code} value={a.code}>
                           {a.code} · {a.name}
@@ -426,10 +497,9 @@ function Revisar() {
                     <div className="flex items-center gap-1">
                       <select
                         className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm capitalize"
-                        value={l.item_type}
+                        value={normalizeItemType(l.item_type)}
                         onChange={(e) => {
-                          setLine(i, { item_type: e.target.value });
-                          if (e.target.value === "inventario") void buscarProducto(i);
+                          setLine(i, { item_type: normalizeItemType(e.target.value) });
                         }}
                       >
                         {ITEM_TYPES.map((it) => (
@@ -438,7 +508,7 @@ function Revisar() {
                           </option>
                         ))}
                       </select>
-                      {l.item_type === "inventario" && (
+                      {normalizeItemType(l.item_type) === "producto" && (
                         <Button variant="ghost" size="icon" title="Buscar en Siigo" onClick={() => buscarProducto(i)}>
                           <PackageSearch className="size-4" />
                         </Button>

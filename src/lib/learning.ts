@@ -1,8 +1,8 @@
 // Motor de aprendizaje contable. Siempre por empresa: las reglas nunca se comparten.
 import { suggestAccount, type ProviderConfig, type Rule } from "@/lib/accounting";
 
-export const ITEM_TYPES = ["gasto", "inventario", "activo", "servicio"] as const;
-export type ItemType = (typeof ITEM_TYPES)[number];
+export { ITEM_TYPES, normalizeItemType, isValidItemType } from "@/lib/item-type";
+export type { ItemType } from "@/lib/item-type";
 
 export type LearningRule = {
   id: string;

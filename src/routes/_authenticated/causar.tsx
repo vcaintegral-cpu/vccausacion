@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { CheckCircle2, FileUp, Layers, Loader2, Save, Sparkles, Trash2, XCircle } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
+import { ITEM_TYPES, normalizeItemType } from "@/lib/item-type";
 import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
@@ -52,7 +53,6 @@ const emptyLine = (): Line => ({
   item_type: "gasto",
 });
 
-const ITEM_TYPES = ["producto", "servicio", "gasto", "activo"] as const;
 
 type Header = Omit<ExtractedInvoice, "lines">;
 
@@ -176,7 +176,7 @@ function Causar() {
       total: Number(l['total'] ?? 0),
       account_code: l['account_code'] ?? "",
       account_name: l['account_name'] ?? "",
-      item_type: l['item_type'] ?? "gasto",
+      item_type: normalizeItemType(l["item_type"] as string | null),
     }));
     setLines(cargadas);
     // Reconstruye la tarifa elegida por renglón a partir de los valores guardados.
@@ -269,7 +269,7 @@ function Causar() {
   const lineErrors = useMemo(() => {
     const out: Record<number, string> = {};
     lines.forEach((l, i) => {
-      const kind = l.item_type ?? "gasto";
+      const kind = normalizeItemType(l.item_type);
       if (kind !== "producto" && kind !== "servicio") return;
       if (l.account_code) return;
       const prod = buscarProducto(l, kind);
@@ -454,7 +454,7 @@ function Causar() {
       account_name: recordar.name,
       cost_center: header.cost_center || null,
       iva: Number(line?.iva ?? 0),
-      item_type: line?.item_type ?? "gasto",
+      item_type: normalizeItemType(line?.item_type),
     });
     setRecordar(null);
     if (error) { toast.error(error.message); return; }
@@ -568,7 +568,7 @@ function Causar() {
             total: Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
             account_code: l.account_code ?? null,
             account_name: l.account_name ?? null,
-            item_type: l.item_type ?? "gasto",
+            item_type: normalizeItemType(l.item_type),
             position: i,
           })),
         ),
@@ -820,7 +820,7 @@ function Causar() {
                   <td className="px-3 py-1.5 w-32">
                     <select
                       className="h-9 w-full rounded-md border border-input bg-background px-1 text-xs"
-                      value={l.item_type ?? "gasto"}
+                      value={normalizeItemType(l.item_type)}
                       onChange={(e) => cambiarTipo(i, e.target.value)}
                     >
                       {ITEM_TYPES.map((k) => (
