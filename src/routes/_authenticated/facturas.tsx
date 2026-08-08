@@ -171,9 +171,11 @@ function Facturas() {
           value={estado}
           onChange={(e) => setEstado(e.target.value as typeof estado)}
         >
-          <option value="aprobado">Aprobadas para causación</option>
+          <option value="todas">Todos</option>
           <option value="borrador">Borradores</option>
-          <option value="todas">Todas</option>
+          <option value="aprobado">Aprobados</option>
+          <option value="sincronizada">Sincronizadas</option>
+          <option value="error">Con error</option>
         </select>
       </div>
 
