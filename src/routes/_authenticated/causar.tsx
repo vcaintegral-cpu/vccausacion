@@ -303,6 +303,21 @@ function Causar() {
   const empresaIncorrecta = chequeoEmpresa.status === "mismatch";
   // Bloqueo total (guardar / aprobar / causar) cuando la factura no se puede atribuir a la empresa activa.
   const bloqueoEmpresa = motivoBloqueoEmpresa(chequeoEmpresa);
+  // Solo se muestra el aviso cuando ya hay una factura cargada; el formulario vacío no debe alertar.
+  const facturaConDatos = useMemo(
+    () =>
+      !!(
+        header.buyer_nit ||
+        header.number ||
+        header.prefix ||
+        header.provider_nit ||
+        header.provider_name ||
+        header.cufe ||
+        lines.length > 0
+      ),
+    [header, lines.length],
+  );
+  const avisoEmpresa = facturaConDatos ? bloqueoEmpresa : null;
 
   /** Cambios de un renglón al cambiar su tipo de ítem, conservando la lógica producto → categoría → cuenta. */
   const parcheDeTipo = useCallback(
@@ -874,7 +889,7 @@ function Causar() {
       </Dialog>
 
       <div className="grid gap-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2 xl:grid-cols-4">
-        {empresaIncorrecta && (
+        {facturaConDatos && empresaIncorrecta && (
           <div className="sm:col-span-2 xl:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
             <p className="font-semibold uppercase text-destructive">Esta factura no pertenece a la empresa seleccionada</p>
             <div className="mt-2 grid gap-1 sm:grid-cols-2">
@@ -893,9 +908,9 @@ function Causar() {
             <p className="mt-1 font-medium text-destructive">No es posible guardar, aprobar ni causar esta factura.</p>
           </div>
         )}
-        {!empresaIncorrecta && bloqueoEmpresa && (
+        {!empresaIncorrecta && avisoEmpresa && (
           <div className="sm:col-span-2 xl:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
-            <p className="font-medium text-destructive">{bloqueoEmpresa}</p>
+            <p className="font-medium text-destructive">{avisoEmpresa}</p>
           </div>
         )}
         {chequeoEmpresa.status === "ok" && chequeoEmpresa.nameMismatch && (
