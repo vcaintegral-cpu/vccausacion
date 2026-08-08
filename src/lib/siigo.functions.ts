@@ -4,7 +4,7 @@ import { mensajeSiigoAmigable } from "@/lib/siigo-errors";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "./company-validation";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { normalizeItemType } from "@/lib/item-type";
-import type { Json } from "@/integrations/supabase/types";
+import type { Database, Json } from "@/integrations/supabase/types";
 
 export type SiigoStatus = {
   configured: boolean;
@@ -159,7 +159,8 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
 
     console.log("[siigo][puc] comprobantes revisados:", scanned, "| cuentas únicas encontradas:", found.size);
 
-    const existing = new Map<string, Record<string, unknown>>();
+    type ExistingPucRow = Database["public"]["Tables"]["puc_accounts"]["Row"];
+    const existing = new Map<string, ExistingPucRow>();
     for (let from = 0; ; from += 1000) {
       const { data: page, error: existingError } = await context.supabase
         .from("puc_accounts")
