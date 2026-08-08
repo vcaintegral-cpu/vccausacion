@@ -492,6 +492,16 @@ function Causar() {
     if (Math.abs(t.diferencia) > 1) { toast.error("El comprobante está descuadrado."); return; }
     setSaving(true);
     try {
+      const existente = await findExistingInvoice(
+        companyId,
+        { cufe: header.cufe, provider_nit: header.provider_nit, prefix: header.prefix, number: header.number },
+        editingId,
+      );
+      if (existente) {
+        setDuplicado(existente);
+        toast.error(mensajeDuplicado(existente));
+        return;
+      }
       const { data: auth } = await supabase.auth.getUser();
       const userId = auth.user?.id;
 
