@@ -273,6 +273,8 @@ export type Database = {
       }
       invoices: {
         Row: {
+          buyer_name: string | null
+          buyer_nit: string | null
           company_id: string
           cost_center: string | null
           created_at: string
@@ -317,6 +319,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          buyer_name?: string | null
+          buyer_nit?: string | null
           company_id: string
           cost_center?: string | null
           created_at?: string
@@ -361,6 +365,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          buyer_name?: string | null
+          buyer_nit?: string | null
           company_id?: string
           cost_center?: string | null
           created_at?: string
