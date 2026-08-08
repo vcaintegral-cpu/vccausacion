@@ -40,6 +40,8 @@ type InvRow = {
   issue_date: string | null;
   provider_nit: string | null;
   provider_name: string | null;
+  buyer_nit: string | null;
+  buyer_name: string | null;
   cost_center: string | null;
   payment_form: string | null;
   notes: string | null;
@@ -102,8 +104,10 @@ function Revisar() {
         supabase.from("learning_rules").select("*").eq("company_id", companyId ?? ""),
       ]);
       if (inv.error) throw inv.error;
+      const company = await supabase.from("companies").select("id, name, nit").eq("id", companyId ?? "").maybeSingle();
       return {
         invoice: inv.data as unknown as InvRow,
+        company: company.data ?? null,
         lines: (ln.data ?? []) as unknown as LineRow[],
         centers: centers.data ?? [],
         accounts: accounts.data ?? [],
