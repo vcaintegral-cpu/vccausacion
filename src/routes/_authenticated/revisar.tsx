@@ -601,9 +601,46 @@ function Revisar() {
                   </td>
                   <td className="px-3 py-1.5 w-28">
                     <Input type="number" value={l.iva} onChange={(e) => setLine(i, { iva: Number(e.target.value) })} />
+                    <select
+                      className="mt-1 h-8 w-full rounded-md border border-input bg-background px-1 text-xs"
+                      value={l.iva_tax_id ?? ""}
+                      onChange={(e) => {
+                        const id = e.target.value || null;
+                        const tx = findTaxById(impuestosIva, id);
+                        const baseLinea = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+                        setLine(i, { iva_tax_id: id, iva: tx ? Math.round((baseLinea * Number(tx.rate)) / 100) : 0 });
+                      }}
+                    >
+                      <option value="">Sin impuesto</option>
+                      {impuestosIva.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} ({t.rate}%) · {t.account_code ?? "sin cuenta"}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td className="px-3 py-1.5 w-28">
                     <Input type="number" value={l.retention} onChange={(e) => setLine(i, { retention: Number(e.target.value) })} />
+                    <select
+                      className="mt-1 h-8 w-full rounded-md border border-input bg-background px-1 text-xs"
+                      value={l.ret_tax_id ?? ""}
+                      onChange={(e) => {
+                        const id = e.target.value || null;
+                        const tx = findTaxById(impuestosRet, id);
+                        const baseLinea =
+                          String(tx?.kind) === "reteiva"
+                            ? Number(l.iva || 0)
+                            : Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+                        setLine(i, { ret_tax_id: id, retention: tx ? Math.round((baseLinea * Number(tx.rate)) / 100) : 0 });
+                      }}
+                    >
+                      <option value="">Sin retención</option>
+                      {impuestosRet.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} ({t.rate}%) · {t.account_code ?? "sin cuenta"}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">
                     {cop(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0))}
