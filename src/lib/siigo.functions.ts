@@ -657,6 +657,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           candidatasLocales[0];
         if (localElegida?.siigo_id) {
           ivaTaxId = localElegida.siigo_id;
+          ivaTaxRate = Number(localElegida.rate ?? rateFactura);
+          ivaTaxName = localElegida.siigo_name ?? localElegida.name ?? null;
           console.log("[siigo][iva] impuesto local:", {
             cuenta: ivaAccountLine,
             porcentaje: rateFactura,
