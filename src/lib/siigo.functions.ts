@@ -1370,9 +1370,10 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       console.log("[siigo][causacion] Respuesta completa de Siigo:", JSON.stringify(res, null, 2));
       // Verificación posterior obligatoria: se consulta el documento creado en Siigo.
       let verificacion: unknown = null;
-      if (res.id) {
-        try {
-          verificacion = await siigoGet<unknown>(`/v1/purchases/${res.id}`);
+      if (!res.id) {
+        throw new Error("Siigo respondió sin el ID de la factura de compra creada.");
+      }
+      verificacion = await siigoGet<unknown>(`/v1/purchases/${res.id}`);
           const doc = verificacion as {
             total?: number;
             balance?: number;
@@ -1394,32 +1395,26 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             neto_local: netoAPagar,
             retenciones_local: retenciones,
           });
-          if (retencionesSiigo.length > 0 && retSiigo <= 0) {
-            console.error("[siigo][verificacion] ⚠ La retención NO quedó aplicada en el documento creado.");
-          }
           if (Math.abs(r2(pagoSiigo - totalFactura)) > 0.009) {
             throw new Error("El payment devuelto por Siigo no coincide con el total bruto de la compra.");
           }
           if (retencionesSiigo.length > 0 && retSiigo <= 0) {
             throw new Error("Siigo creó la compra pero no registró la retención enviada.");
           }
-        } catch (errVer) {
-          console.warn("[siigo][verificacion] No fue posible consultar el documento creado:", errVer);
-        }
-      }
       // Verificación posterior: la retención debe quedar realmente aplicada en Siigo.
-      const retencionesRespuesta = Array.isArray(res.retentions) ? res.retentions : [];
+      const verificacionDoc = verificacion as {
+        retentions?: Array<{ id?: number | string; value?: number }>;
+        items?: Array<{ taxes?: Array<{ id?: number | string; value?: number }> }>;
+      };
+      const retencionesRespuesta = Array.isArray(verificacionDoc.retentions) ? verificacionDoc.retentions : [];
       // Las retenciones deben aparecer en el arreglo de retenciones del documento.
-      const itemsRespuesta = Array.isArray((res as { items?: unknown }).items)
-        ? ((res as { items?: Array<{ taxes?: Array<{ id?: number | string; value?: number }> }> }).items ?? [])
+      const itemsRespuesta = Array.isArray(verificacionDoc.items)
+        ? (verificacionDoc.items ?? [])
         : [];
       const retencionesAplicadasEnRenglon: Array<{ id?: number | string; value?: number }> = [];
       const aplicadas = retencionesRespuesta.length + retencionesAplicadasEnRenglon.length;
       if (retencionesSiigo.length > 0 && aplicadas === 0) {
-        console.error(
-          "[siigo][causacion] ⚠ Siigo creó el documento sin retenciones aplicadas:",
-          JSON.stringify(res, null, 2),
-        );
+        throw new Error("Siigo creó la compra pero la verificación no encontró la retención aplicada.");
       }
 
       const syncedAt = new Date().toISOString();
