@@ -19,11 +19,22 @@ const HEADER_HINTS = [
 /** Lee la primera hoja de un Excel/CSV y devuelve filas con encabezados normalizados.
  *  Detecta automáticamente la fila de encabezados (ignora títulos/filas vacías arriba). */
 export async function readSheet(file: File): Promise<SheetRow[]> {
+  return (await readSheetIndexed(file)).map((r) => r.row);
+}
+
+/** Igual que readSheet, pero conserva el número de fila real del Excel (1-based). */
+export async function readSheetIndexed(file: File): Promise<{ row: SheetRow; rowNumber: number }[]> {
   const buffer = await file.arrayBuffer();
   const wb = XLSX.read(buffer, { type: "array" });
   const first = wb.SheetNames[0];
   if (!first) return [];
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[first]!, { header: 1, defval: "", blankrows: false });
+  // raw: false => los códigos contables llegan como texto formateado (conserva ceros a la izquierda).
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[first]!, {
+    header: 1,
+    defval: "",
+    blankrows: false,
+    raw: false,
+  });
   if (matrix.length === 0) return [];
 
   // Busca en las primeras 15 filas la que contenga más encabezados reconocibles.
@@ -41,7 +52,7 @@ export async function readSheet(file: File): Promise<SheetRow[]> {
   }
 
   const headers = (matrix[headerIdx] ?? []).map((c, i) => normKey(String(c ?? "")) || `col ${i + 1}`);
-  const rows: SheetRow[] = [];
+  const rows: { row: SheetRow; rowNumber: number }[] = [];
   for (let i = headerIdx + 1; i < matrix.length; i++) {
     const cells = matrix[i] ?? [];
     const out: SheetRow = {};
@@ -51,7 +62,7 @@ export async function readSheet(file: File): Promise<SheetRow[]> {
       if (v) any = true;
       if (!out[h]) out[h] = v;
     });
-    if (any) rows.push(out);
+    if (any) rows.push({ row: out, rowNumber: i + 1 });
   }
   return rows;
 }
