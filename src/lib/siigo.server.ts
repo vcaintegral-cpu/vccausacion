@@ -210,8 +210,8 @@ async function siigoRequest<T>(method: "GET" | "POST", path: string, payload?: u
       );
       console.log("SUMA PAYMENTS", paymentsTotal);
       const totalFactura = Number(purchasePayload["total"] || 0);
-      // No corregir payments contra el total bruto: cuando hay retenciones,
-      // Siigo espera allí el saldo neto que queda por pagar al proveedor.
+      // Diagnóstico únicamente: el payload ya debe llegar conciliado. Siigo exige
+      // que payments coincida con el total bruto y procesa retentions por separado.
       console.log("SIIGO FINAL PAYLOAD", JSON.stringify(payload, null, 2));
       console.log("========== SIIGO REQUEST ==========");
       console.log(JSON.stringify(payload, null, 2));
@@ -469,7 +469,7 @@ export function buildSiigoPurchasePayload(params: {
   paymentId: number | null;
   /** Total bruto de la compra (base + impuestos, antes de retenciones). */
   purchaseTotal: number;
-  /** Saldo neto por pagar al proveedor (total bruto - retenciones). */
+  /** Valor exigido por Siigo para conciliar payments con el total bruto. */
   paymentValue: number;
   paymentDueDate: string | null;
   /** Retenciones aplicadas al documento (ids de Siigo). */

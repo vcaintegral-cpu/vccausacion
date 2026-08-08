@@ -776,8 +776,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const ivaLineas = (invoiceLines ?? []).reduce((acc, l) => acc + Number(l.iva ?? 0), 0);
       const subtotal = r2(Number(inv.subtotal ?? 0) > 0 ? Number(inv.subtotal) : subtotalItems);
       const iva = r2(Number(inv.iva ?? 0) > 0 ? Number(inv.iva) : ivaLineas);
-      // El total de la compra permanece bruto. Las retenciones disminuyen únicamente
-      // el saldo asociado a la forma de pago/deuda del proveedor.
+      // El total de la compra permanece bruto. Siigo exige que payments concilie
+      // contra ese total y contabiliza las retenciones enviadas por separado.
       const impoconsumo = r2(
         (invoiceLines ?? []).reduce(
           (acc, l) => acc + Number((l as unknown as { impoconsumo?: number }).impoconsumo ?? 0),
@@ -860,15 +860,15 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const esCredito = /cr[eé]d/i.test(String(inv.payment_form ?? ""));
       const fechaDoc = inv.issue_date ?? new Date().toISOString().slice(0, 10);
       const dueDate = esCredito ? (inv.due_date ?? fechaDoc) : fechaDoc;
-      const payments = [{ id: paymentId, value: netoAPagar, due_date: dueDate }];
+      const payments = [{ id: paymentId, value: totalFactura, due_date: dueDate }];
       const sumaPagos = r2(payments.reduce((acc, p) => acc + p.value, 0));
-      const diferencia = r2(totalFactura - retenciones - sumaPagos);
+      const diferencia = r2(totalFactura - sumaPagos);
       if (Math.abs(diferencia) > 0.009) {
-        console.log("[siigo][causacion] ⚠ Payments no coincide con el neto por pagar");
+        console.log("[siigo][causacion] ⚠ Payments no coincide con el total de la compra");
         console.log("[siigo][causacion] Suma de payments:", sumaPagos);
-        console.log("[siigo][causacion] Neto por pagar:", netoAPagar);
+        console.log("[siigo][causacion] Total de la compra:", totalFactura);
         throw new Error(
-          `La suma de los pagos (${sumaPagos}) no coincide con el neto por pagar (${netoAPagar}). Corrige los valores antes de enviar a Siigo.`,
+          `La suma de los pagos (${sumaPagos}) no coincide con el total de la compra (${totalFactura}). Corrige los valores antes de enviar a Siigo.`,
         );
       }
 
@@ -897,7 +897,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         items,
         paymentId,
         purchaseTotal: totalFactura,
-        paymentValue: netoAPagar,
+        paymentValue: totalFactura,
         paymentDueDate: dueDate,
         retentionIds,
       });
