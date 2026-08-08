@@ -1544,11 +1544,12 @@ export const siigoPurchaseCatalogDiagnostics = createServerFn({ method: "POST" }
   .middleware([requireSupabaseAuth])
   .handler(async () => {
     const { siigoGet } = await import("./siigo.server");
-    const [taxes, paymentTypes] = await Promise.all([
+    const [taxes, paymentTypes, purchases] = await Promise.all([
       siigoGet<Json>("/v1/taxes"),
       siigoGet<Json>("/v1/payment-types?document_type=FC"),
+      siigoGet<Json>("/v1/purchases?page=1&page_size=100"),
     ]);
-    return { taxes, paymentTypes };
+    return { taxes, paymentTypes, purchases };
   });
 
 /** Crea un producto en Siigo. Solo se ejecuta con autorización explícita del usuario. */
