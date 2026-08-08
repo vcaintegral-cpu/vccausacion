@@ -373,6 +373,10 @@ export type SiigoPurchaseItem = {
   price: number;
   discount?: number;
   tax_ids?: Array<number | string>;
+  /** Tipo de ítem definido en la causación (producto | servicio | gasto | activo). Nunca se modifica. */
+  item_type?: string;
+  /** Centro de costo del renglón, si difiere del documento. */
+  cost_center?: string | null;
 };
 
 /** Tipo de documento de Factura de Compra (FC) configurado en Siigo. */
@@ -468,6 +472,9 @@ export function buildSiigoPurchasePayload(params: {
       };
       if (item.discount && item.discount > 0) line["discount"] = item.discount;
       if (item.tax_ids && item.tax_ids.length > 0) line["taxes"] = item.tax_ids.map((id) => ({ id }));
+      // El centro de costo del renglón se respeta tal cual viene de la causación.
+      const centro = item.cost_center ?? params.costCenter ?? null;
+      if (centro && /^\d+$/.test(String(centro))) line["cost_center"] = Number(centro);
       return line;
     }),
     payments: [
