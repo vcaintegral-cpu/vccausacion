@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { validarCuenta } from "@/lib/puc-hierarchy";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "./company-validation";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { normalizeItemType } from "@/lib/item-type";
@@ -643,7 +644,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           reason: `La cuenta ${journal.find((j) => j.id === line.id)?.account_code ?? ""} tiene cuentas auxiliares activas y no permite movimiento.`,
           siigo_id: companyAccounts?.find((a) => a.code === line.account_code)?.siigo_id ?? null,
           siigo_code: companyAccounts?.find((a) => a.code === line.account_code)?.siigo_code ?? line.account_code,
-        })).map((r, i) => ({ ...r, position: undefined as never, ...(i >= 0 ? {} : {}) })).map(({ position: _p, ...r }) => r),
+        })),
       );
       const updates = await Promise.all(
         replacements.map((line) =>
