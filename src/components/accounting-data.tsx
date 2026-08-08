@@ -14,6 +14,8 @@ import {
 import { downloadSheet, num, pick, readSheet, readSheetIndexed } from "@/lib/spreadsheet";
 import { compareCodes, parsePucSheet, type PucRowError } from "@/lib/puc-import";
 import { analyzeHistory, isSiigoAuxiliary, type HistoryAnalysis } from "@/lib/history-import";
+import { fetchAllKeys, runReliableImport, sameImportValues, type ImportDetail, type ImportIssue } from "@/lib/import-system";
+import { ImportDetailPanel } from "@/components/import-detail";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -209,6 +211,8 @@ function useTable(table: "puc_accounts" | "cost_centers" | "tax_rates", companyI
 export function ProvidersToolbar({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
+  const [progreso, setProgreso] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ImportDetail | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ["providers"] });
 
   async function sincronizar() {
@@ -228,8 +232,8 @@ export function ProvidersToolbar({ companyId }: { companyId: string }) {
     setBusy("excel");
     try {
       const sheet = await readSheet(file);
-      const parsed = sheet
-        .map((r) => ({
+      const parsed = sheet.map((r, index) => ({
+          rowNumber: index + 2,
           company_id: companyId,
           nit: pick(r, "nit", "identificacion", "documento", "cedula", "id").replace(/[\s.]/g, ""),
           name: pick(r, "razon social", "nombre", "tercero", "proveedor", "name") || "Sin nombre",
@@ -239,25 +243,49 @@ export function ProvidersToolbar({ companyId }: { companyId: string }) {
           email: pick(r, "correo", "email") || null,
           default_expense_account: pick(r, "cuenta gasto", "cuenta", "default_expense_account") || null,
           default_payable_account: pick(r, "cuenta por pagar", "default_payable_account") || null,
-        }))
-        .filter((r) => r.nit);
-      if (parsed.length === 0) throw new Error("No se encontraron terceros (columnas esperadas: NIT, Razón social).");
-      const unicos = Array.from(new Map(parsed.map((r) => [r.nit, r])).values());
-      if (!window.confirm(`Se reemplazarán los terceros actuales por ${unicos.length} del archivo. ¿Continuar?`)) return;
-      const { error: delErr } = await supabase.from("providers").delete().eq("company_id", companyId);
-      if (delErr) throw new Error(`No fue posible reemplazar los terceros actuales: ${delErr.message}`);
-      for (let i = 0; i < unicos.length; i += 500) {
-        const { error } = await supabase
-          .from("providers")
-          .upsert(unicos.slice(i, i + 500), { onConflict: "company_id,nit", ignoreDuplicates: false });
-        if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}`);
+        }));
+      const invalidIssues: ImportIssue[] = parsed.filter((r) => !r.nit).map((r) => ({ row: r.rowNumber, key: "", message: "NIT vacío; registro rechazado." }));
+      const valid = parsed.filter((r) => r.nit);
+      if (valid.length === 0) throw new Error("No se encontraron terceros (columnas esperadas: NIT, Razón social).");
+      const uniqueMap = new Map(valid.map((r) => [r.nit, r]));
+      const unicos = [...uniqueMap.values()];
+      const duplicates = valid.length - unicos.length;
+      if (!window.confirm(`Se encontraron ${fmt(sheet.length)} terceros en el archivo. Se procesarán ${fmt(unicos.length)} válidos en lotes de 500 sin eliminar información existente. ¿Continuar?`)) return;
+      const existing = new Map<string, (typeof unicos)[number]>();
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase.from("providers").select("*").eq("company_id", companyId).order("nit").range(from, from + PAGE - 1);
+        if (error) throw error;
+        (data ?? []).forEach((row) => existing.set(row.nit, { ...row, rowNumber: 0 } as (typeof unicos)[number]));
+        if ((data ?? []).length < PAGE) break;
       }
-      toast.success(`Terceros reemplazados: ${unicos.length} cargado(s) desde Excel.`);
+      const { data: auth } = await supabase.auth.getUser();
+      const result = await runReliableImport<(typeof unicos)[number]>({
+        module: "Terceros", fileName: file.name, user: auth.user?.email ?? null, found: sheet.length, rows: unicos,
+        invalidIssues, duplicateCount: duplicates, keyOf: (row) => row.nit, rowNumberOf: (row) => row.rowNumber,
+        existingByKey: existing,
+        equals: sameImportValues(["name", "address", "city", "phone", "email", "default_expense_account", "default_payable_account"]),
+        saveBatch: async (rows) => {
+          const payload = rows.map(({ rowNumber: _rowNumber, ...row }) => row);
+          const { error } = await supabase.from("providers").upsert(payload, { onConflict: "company_id,nit", ignoreDuplicates: false });
+          return { error };
+        },
+        verifyKeys: () => fetchAllKeys(async (from, to) => {
+          const { data, error } = await supabase.from("providers").select("nit").eq("company_id", companyId).order("nit").range(from, to);
+          if (error) return { keys: [], error: error.message };
+          return { keys: (data ?? []).map((row) => row.nit) };
+        }),
+        onProgress: (p) => setProgreso(`Importando terceros… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)} - ${fmt(p.to)} de ${fmt(p.total)}`),
+      });
+      setDetail(result);
+      if (result.status === "COMPLETADA") toast.success("IMPORTACIÓN COMPLETADA");
+      else if (result.status === "COMPLETADA CON ERRORES") toast.warning("Importación completada con errores. Revisa el detalle.");
+      else toast.error(`Importación incompleta: se encontraron ${fmt(result.found)} registros y se verificaron ${fmt(result.saved)}.`);
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
     } finally {
       setBusy(null);
+      setProgreso(null);
     }
   }
 
@@ -281,6 +309,7 @@ export function ProvidersToolbar({ companyId }: { companyId: string }) {
   }
 
   return (
+    <div className="space-y-3">
     <Toolbar>
       <Button onClick={sincronizar} disabled={busy !== null}>
         <RefreshCw className={`size-4 ${busy === "siigo" ? "animate-spin" : ""}`} /> Sincronizar desde Siigo
@@ -290,6 +319,9 @@ export function ProvidersToolbar({ companyId }: { companyId: string }) {
         <Download className="size-4" /> Exportar Excel
       </Button>
     </Toolbar>
+    {progreso ? <p className="rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p> : null}
+    <ImportDetailPanel detail={detail} />
+    </div>
   );
 }
 
@@ -302,6 +334,7 @@ export function PucPanel({ companyId }: { companyId: string }) {
   const [form, setForm] = useState({ code: "", name: "", nature: "debito" });
   const [edit, setEdit] = useState<Record<string, { code: string; name: string; nature: string }>>({});
   const [resumen, setResumen] = useState<PucImportSummary | null>(null);
+  const [detail, setDetail] = useState<ImportDetail | null>(null);
   const [progreso, setProgreso] = useState<string | null>(null);
   const [buscar, setBuscar] = useState("");
   const [pagina, setPagina] = useState(1);
@@ -369,59 +402,47 @@ export function PucPanel({ companyId }: { companyId: string }) {
           `Registros con errores: ${fmt(parsed.errors.length)}\n` +
           `Primera cuenta: ${parsed.firstCode ?? "-"} · Última cuenta: ${parsed.lastCode ?? "-"}\n\n` +
           `Columnas detectadas: ${parsed.columns.join(", ")}\n\n` +
-          `El PUC actual se REEMPLAZARÁ por completo con las cuentas de este archivo. ¿Continuar?`,
+          `Las cuentas existentes se actualizarán cuando corresponda y las demás se conservarán. ¿Continuar?`,
       );
       if (!ok) return;
 
-      // Cuentas ya existentes: para diferenciar nuevas de actualizadas.
-      const existentes = new Set<string>();
+      const existentes = new Map<string, (typeof parsed.valid)[number]>();
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await supabase
           .from("puc_accounts")
-          .select("code")
+          .select("company_id,code,name,nature,active,source")
           .eq("company_id", companyId)
           .order("code")
           .range(from, from + PAGE - 1);
         if (error) throw new Error(`No fue posible leer el PUC actual: ${error.message}`);
-        (data ?? []).forEach((r) => existentes.add(String(r.code)));
+        (data ?? []).forEach((r) => existentes.set(String(r.code), r as (typeof parsed.valid)[number]));
         if ((data ?? []).length < PAGE) break;
       }
-      const nuevas = parsed.valid.filter((r) => !existentes.has(r.code)).length;
-      const actualizadas = parsed.valid.length - nuevas;
-
-      // Reemplazo total: se borra el PUC anterior de la empresa antes de cargar el nuevo.
-      setProgreso("Eliminando el PUC anterior…");
-      const { error: delPucErr } = await supabase.from("puc_accounts").delete().eq("company_id", companyId);
-      if (delPucErr) throw new Error(`No fue posible reemplazar el PUC actual: ${delPucErr.message}`);
-
-      // Importación por lotes: espera cada lote y reporta el que falle.
-      const LOTE = 500;
-      const totalLotes = Math.ceil(parsed.valid.length / LOTE);
-      const fallos: string[] = [];
-      let guardadosIntento = 0;
-      for (let i = 0; i < totalLotes; i++) {
-        const lote = parsed.valid.slice(i * LOTE, (i + 1) * LOTE);
-        setProgreso(`Importando lote ${i + 1} de ${totalLotes}…`);
-        const { error } = await supabase
-          .from("puc_accounts")
-          .upsert(lote, { onConflict: "company_id,code", ignoreDuplicates: false });
-        if (error) {
-          fallos.push(
-            `Lote ${i + 1} de ${totalLotes} presentó un error: ${error.message}` +
-              (error.details ? ` — ${error.details}` : "") +
-              (error.hint ? ` (${error.hint})` : ""),
-          );
-        } else {
-          guardadosIntento += lote.length;
-        }
-      }
-
-      // Validación posterior obligatoria: contar en la base de datos.
+      const { data: auth } = await supabase.auth.getUser();
+      const importResult = await runReliableImport<(typeof parsed.valid)[number]>({
+        module: "PUC", fileName: file.name, user: auth.user?.email ?? null, found: parsed.rowsRead,
+        rows: parsed.valid,
+        invalidIssues: parsed.errors.map((error) => ({ row: error.rowNumber, key: error.code, message: `${error.problema} ${error.accion}` })),
+        duplicateCount: parsed.duplicates, keyOf: (row) => row.code, existingByKey: existentes,
+        equals: sameImportValues(["name", "nature", "active"]),
+        saveBatch: async (batch) => {
+          const { error } = await supabase.from("puc_accounts").upsert(batch, { onConflict: "company_id,code", ignoreDuplicates: false });
+          return { error };
+        },
+        verifyKeys: () => fetchAllKeys(async (from, to) => {
+          const { data, error } = await supabase.from("puc_accounts").select("code").eq("company_id", companyId).order("code").range(from, to);
+          if (error) return { keys: [], error: error.message };
+          return { keys: (data ?? []).map((row) => row.code) };
+        }),
+        onProgress: (p) => setProgreso(`Importando PUC… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)}–${fmt(p.to)} de ${fmt(p.total)}`),
+      });
+      setDetail(importResult);
       setProgreso("Verificando cuentas guardadas…");
       const verif = await verificarPuc(companyId);
 
       // Reconstruye la jerarquía con TODAS las cuentas ya cargadas.
       setProgreso("Construyendo jerarquía de cuentas…");
+      const fallos = importResult.issues.filter((issue) => issue.batch).map((issue) => issue.message);
       let movimiento: number | null = null;
       try {
         const jer = await pucRebuildHierarchy({ data: { companyId } });
@@ -432,15 +453,15 @@ export function PucPanel({ companyId }: { companyId: string }) {
 
       const guardadasDelArchivo = parsed.valid.filter((r) => verif.codes.has(r.code)).length;
       const faltantes = parsed.valid.filter((r) => !verif.codes.has(r.code)).map((r) => r.code);
-      const completo = fallos.length === 0 && faltantes.length === 0;
+      const completo = importResult.status === "COMPLETADA";
 
       setResumen({
         archivo: file.name,
         encontrados: parsed.rowsRead,
         validos: parsed.valid.length,
         importados: guardadasDelArchivo,
-        nuevas,
-        actualizadas,
+        nuevas: importResult.newRows,
+        actualizadas: importResult.updated,
         duplicados: parsed.duplicates,
         errores: parsed.errors,
         fallos,
@@ -452,11 +473,12 @@ export function PucPanel({ companyId }: { companyId: string }) {
         faltantes,
         movimiento,
         completo,
-        intentados: guardadosIntento,
+        intentados: importResult.valid,
       });
 
-      if (completo) toast.success("PUC importado correctamente.");
-      else toast.error("El PUC no se importó completamente. Revisa el resumen de importación.");
+      if (importResult.status === "COMPLETADA") toast.success("IMPORTACIÓN COMPLETADA");
+      else if (importResult.status === "COMPLETADA CON ERRORES") toast.warning("Importación completada con errores. Revisa el detalle.");
+      else toast.error("El PUC no se importó completamente. Revisa el detalle.");
 
       await refresh();
       await qc.invalidateQueries({ queryKey: ["puc_accounts", companyId, "count"] });
@@ -566,6 +588,7 @@ export function PucPanel({ companyId }: { companyId: string }) {
       {progreso ? (
         <p className="rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p>
       ) : null}
+      <ImportDetailPanel detail={detail} />
 
       {resumen ? <ImportSummary resumen={resumen} onClose={() => setResumen(null)} onErrores={descargarErrores} /> : null}
 
@@ -669,6 +692,8 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
   const { data: rows } = useTable("cost_centers", companyId, "code");
   const [busy, setBusy] = useState<string | null>(null);
   const [form, setForm] = useState({ code: "", name: "" });
+  const [progreso, setProgreso] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ImportDetail | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ["cost_centers"] });
 
   async function sincronizar() {
@@ -688,31 +713,52 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
     setBusy("excel");
     try {
       const sheet = await readSheet(file);
-      const parsed = sheet
-        .map((r) => ({
+      const parsed = sheet.map((r, index) => ({
+          rowNumber: index + 2,
           company_id: companyId,
           code: pick(r, "codigo", "centro de costo", "code").replace(/\s+/g, ""),
           name: pick(r, "nombre", "descripcion", "name") || "Sin nombre",
           source: "excel" satisfies Source,
-        }))
-        .filter((r) => r.code);
-      if (parsed.length === 0) throw new Error("No se encontraron centros de costo (columnas esperadas: Código, Nombre).");
-      const unicos = Array.from(new Map(parsed.map((r) => [r.code, r])).values());
-      if (!window.confirm(`Se reemplazarán los centros de costo actuales por ${unicos.length} del archivo. ¿Continuar?`)) return;
-      const { error: delErr } = await supabase.from("cost_centers").delete().eq("company_id", companyId);
-      if (delErr) throw new Error(`No fue posible reemplazar los centros actuales: ${delErr.message}`);
-      for (let i = 0; i < unicos.length; i += 500) {
-        const { error } = await supabase
-          .from("cost_centers")
-          .upsert(unicos.slice(i, i + 500), { onConflict: "company_id,code", ignoreDuplicates: false });
-        if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}${error.hint ? ` (${error.hint})` : ""}`);
-      }
-      toast.success(`Centros de costo reemplazados: ${unicos.length} cargado(s) desde Excel.`);
+        }));
+      const invalidIssues: ImportIssue[] = parsed.filter((r) => !r.code).map((r) => ({ row: r.rowNumber, key: "", message: "Código vacío; registro rechazado." }));
+      const valid = parsed.filter((r) => r.code);
+      if (valid.length === 0) throw new Error("No se encontraron centros de costo (columnas esperadas: Código, Nombre).");
+      const unicos = Array.from(new Map(valid.map((r) => [r.code, r])).values());
+      if (!window.confirm(`Se encontraron ${fmt(sheet.length)} centros de costo. Se procesarán todos en lotes de 500 sin eliminar información existente. ¿Continuar?`)) return;
+      const existing = new Map<string, (typeof unicos)[number]>((rows ?? []).map((row) => [String(row['code']), {
+        rowNumber: 0,
+        company_id: companyId,
+        code: String(row['code']),
+        name: String(row['name']),
+        source: String(row['source'] ?? "excel"),
+      }]));
+      const { data: auth } = await supabase.auth.getUser();
+      const result = await runReliableImport<(typeof unicos)[number]>({
+        module: "Centros de costo", fileName: file.name, user: auth.user?.email ?? null, found: sheet.length,
+        rows: unicos, invalidIssues, duplicateCount: valid.length - unicos.length, keyOf: (row) => row.code,
+        rowNumberOf: (row) => row.rowNumber, existingByKey: existing,
+        saveBatch: async (batch) => {
+          const payload = batch.map(({ rowNumber: _rowNumber, ...row }) => row);
+          const { error } = await supabase.from("cost_centers").upsert(payload, { onConflict: "company_id,code", ignoreDuplicates: false });
+          return { error };
+        },
+        verifyKeys: () => fetchAllKeys(async (from, to) => {
+          const { data, error } = await supabase.from("cost_centers").select("code").eq("company_id", companyId).order("code").range(from, to);
+          if (error) return { keys: [], error: error.message };
+          return { keys: (data ?? []).map((row) => row.code) };
+        }),
+        onProgress: (p) => setProgreso(`Importando centros de costo… Lote ${p.batch} de ${p.batches} · Registros ${p.from}–${p.to} de ${p.total}`),
+      });
+      setDetail(result);
+      if (result.status === "COMPLETADA") toast.success("IMPORTACIÓN COMPLETADA");
+      else if (result.status === "COMPLETADA CON ERRORES") toast.warning("Importación completada con errores. Revisa el detalle.");
+      else toast.error("La importación quedó incompleta. Revisa el detalle.");
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
     } finally {
       setBusy(null);
+      setProgreso(null);
     }
   }
 
@@ -736,6 +782,8 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
         </Button>
         <FileButton label="Importar Excel" onFile={importar} busy={busy !== null} />
       </Toolbar>
+      {progreso ? <p className="rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p> : null}
+      <ImportDetailPanel detail={detail} />
 
       <form onSubmit={crear} className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-4">
         <div className="w-40 space-y-1.5">
@@ -841,6 +889,8 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
   const { data: cuentas } = useTable("puc_accounts", companyId, "code");
   const [busy, setBusy] = useState<string | null>(null);
   const [form, setForm] = useState({ kind: "iva", name: "", rate: "", min_base: "", account_code: "" });
+  const [progreso, setProgreso] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ImportDetail | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ["tax_rates"] });
 
   async function guardarCuenta(id: string, code: string) {
@@ -870,8 +920,8 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
     setBusy("excel");
     try {
       const sheet = await readSheet(file);
-      const parsed = sheet
-        .map((r) => ({
+      const parsed = sheet.map((r, index) => ({
+          rowNumber: index + 2,
           company_id: companyId,
           kind: (pick(r, "tipo", "clase", "kind") || "iva").toLowerCase(),
           name: pick(r, "nombre", "impuesto", "name"),
@@ -880,25 +930,50 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
           account_code: pick(r, "cuenta", "codigo cuenta", "account") || null,
           active: true,
           source: "excel" satisfies Source,
-        }))
-        .filter((r) => r.name);
-      if (parsed.length === 0) throw new Error("No se encontraron impuestos (columnas esperadas: Tipo, Nombre, Tarifa).");
-      const unicos = Array.from(new Map(parsed.map((r) => [`${r.kind}|${r.name}`, r])).values());
-      if (!window.confirm(`Se reemplazarán los impuestos actuales por ${unicos.length} del archivo. ¿Continuar?`)) return;
-      const { error: delErr } = await supabase.from("tax_rates").delete().eq("company_id", companyId);
-      if (delErr) throw new Error(`No fue posible reemplazar los impuestos actuales: ${delErr.message}`);
-      for (let i = 0; i < unicos.length; i += 500) {
-        const { error } = await supabase
-          .from("tax_rates")
-          .upsert(unicos.slice(i, i + 500), { onConflict: "company_id,kind,name", ignoreDuplicates: false });
-        if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}${error.hint ? ` (${error.hint})` : ""}`);
-      }
-      toast.success(`Impuestos reemplazados: ${unicos.length} cargado(s) desde Excel.`);
+        }));
+      const invalidIssues: ImportIssue[] = parsed.filter((r) => !r.name).map((r) => ({ row: r.rowNumber, key: "", message: "Nombre vacío; registro rechazado." }));
+      const valid = parsed.filter((r) => r.name);
+      if (valid.length === 0) throw new Error("No se encontraron impuestos (columnas esperadas: Tipo, Nombre, Tarifa).");
+      const unicos = Array.from(new Map(valid.map((r) => [`${r.kind}|${r.name}`, r])).values());
+      if (!window.confirm(`Se encontraron ${fmt(sheet.length)} impuestos o retenciones. Se procesarán todos en lotes de 500 sin eliminar información existente. ¿Continuar?`)) return;
+      const existing = new Map<string, (typeof unicos)[number]>((rows ?? []).map((row) => [`${String(row['kind'])}|${String(row['name'])}`, {
+        rowNumber: 0,
+        company_id: companyId,
+        kind: String(row['kind']),
+        name: String(row['name']),
+        rate: Number(row['rate'] ?? 0),
+        min_base: Number(row['min_base'] ?? 0),
+        account_code: row['account_code'] ? String(row['account_code']) : null,
+        active: Boolean(row['active']),
+        source: String(row['source'] ?? "excel") as Source,
+      }]));
+      const { data: auth } = await supabase.auth.getUser();
+      const result = await runReliableImport<(typeof unicos)[number]>({
+        module: "Retenciones", fileName: file.name, user: auth.user?.email ?? null, found: sheet.length,
+        rows: unicos, invalidIssues, duplicateCount: valid.length - unicos.length,
+        keyOf: (row) => `${row.kind}|${row.name}`, rowNumberOf: (row) => row.rowNumber, existingByKey: existing,
+        saveBatch: async (batch) => {
+          const payload = batch.map(({ rowNumber: _rowNumber, ...row }) => row);
+          const { error } = await supabase.from("tax_rates").upsert(payload, { onConflict: "company_id,kind,name", ignoreDuplicates: false });
+          return { error };
+        },
+        verifyKeys: () => fetchAllKeys(async (from, to) => {
+          const { data, error } = await supabase.from("tax_rates").select("kind,name").eq("company_id", companyId).order("kind").order("name").range(from, to);
+          if (error) return { keys: [], error: error.message };
+          return { keys: (data ?? []).map((row) => `${row.kind}|${row.name}`) };
+        }),
+        onProgress: (p) => setProgreso(`Importando retenciones… Lote ${p.batch} de ${p.batches} · Registros ${p.from}–${p.to} de ${p.total}`),
+      });
+      setDetail(result);
+      if (result.status === "COMPLETADA") toast.success("IMPORTACIÓN COMPLETADA");
+      else if (result.status === "COMPLETADA CON ERRORES") toast.warning("Importación completada con errores. Revisa el detalle.");
+      else toast.error("La importación quedó incompleta. Revisa el detalle.");
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
     } finally {
       setBusy(null);
+      setProgreso(null);
     }
   }
 
@@ -932,6 +1007,8 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
         </Button>
         <FileButton label="Importar Excel" onFile={importar} busy={busy !== null} />
       </Toolbar>
+      {progreso ? <p className="rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p> : null}
+      <ImportDetailPanel detail={detail} />
 
       <form onSubmit={crear} className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-4">
         <div className="w-32 space-y-1.5"><Label className="text-xs">Tipo</Label><Input value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} /></div>
@@ -983,6 +1060,8 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [analysis, setAnalysis] = useState<HistoryAnalysis | null>(null);
+  const [progreso, setProgreso] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ImportDetail | null>(null);
 
   const { data: learned } = useQuery({
     queryKey: ["learning_rules", companyId, "excel"],
@@ -1018,9 +1097,6 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
       if (result.rules.length === 0) {
         throw new Error("No se detectaron movimientos contables. Verifica que el archivo tenga columnas de cuenta, tercero y concepto.");
       }
-      // Reemplaza solo el conocimiento generado desde Excel; las reglas manuales se conservan.
-      const { error: delErr } = await supabase.from("learning_rules").delete().eq("company_id", companyId).eq("source", "excel");
-      if (delErr) throw new Error(delErr.message);
       const payload = result.rules.map((r) => ({
         company_id: companyId,
         provider_nit: r.provider_nit,
@@ -1038,19 +1114,52 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
         active: true,
         source: "excel",
       }));
-      for (let i = 0; i < payload.length; i += 500) {
-        const { error } = await supabase.from("learning_rules").insert(payload.slice(i, i + 500));
-        if (error) throw new Error(error.message);
-      }
+      const keyOf = (r: (typeof payload)[number]) => `${r.provider_nit ?? "-"}|${(r.concept ?? "").toLowerCase()}|${r.account_code}`;
+      const existingKeys = await fetchAllKeys(async (from, to) => {
+        const { data, error } = await supabase.from("learning_rules").select("provider_nit,concept,account_code").eq("company_id", companyId).eq("source", "excel").range(from, to);
+        if (error) return { keys: [], error: error.message };
+        return { keys: (data ?? []).map((r) => `${r.provider_nit ?? "-"}|${(r.concept ?? "").toLowerCase()}|${r.account_code}`) };
+      });
+      const existing = new Map(payload.filter((r) => existingKeys.has(keyOf(r))).map((r) => [keyOf(r), r]));
+      const { data: auth } = await supabase.auth.getUser();
+      const importResult = await runReliableImport({
+        module: "Historial contable", fileName: file.name, user: auth.user?.email ?? null,
+        found: result.rowsRead, rows: payload, duplicateCount: 0, keyOf, existingByKey: existing,
+        saveBatch: async (rows) => {
+          // Sin restricción única compuesta, se actualizan coincidencias y se insertan únicamente reglas nuevas.
+          let firstError: { message: string; details?: string | null; hint?: string | null } | null = null;
+          for (const row of rows) {
+            const { data: current, error: readError } = await supabase.from("learning_rules").select("id").eq("company_id", companyId).eq("source", "excel").eq("account_code", row.account_code).eq("provider_nit", row.provider_nit ?? "").eq("concept", row.concept ?? "").maybeSingle();
+            if (readError) { firstError = readError; continue; }
+            const { error } = current
+              ? await supabase.from("learning_rules").update(row).eq("id", current.id)
+              : await supabase.from("learning_rules").insert(row);
+            if (error && !firstError) firstError = error;
+          }
+          return { error: firstError };
+        },
+        verifyKeys: () => fetchAllKeys(async (from, to) => {
+          const { data, error } = await supabase.from("learning_rules").select("provider_nit,concept,account_code").eq("company_id", companyId).eq("source", "excel").range(from, to);
+          if (error) return { keys: [], error: error.message };
+          return { keys: (data ?? []).map((r) => `${r.provider_nit ?? "-"}|${(r.concept ?? "").toLowerCase()}|${r.account_code}`) };
+        }),
+        onProgress: (p) => setProgreso(`Importando historial contable… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)} - ${fmt(p.to)} de ${fmt(p.total)}`),
+      });
+      // Los movimientos se leen y procesan todos; las filas almacenadas son reglas consolidadas por proveedor/concepto/cuenta.
+      importResult.found = result.rowsRead;
+      importResult.processed = result.rowsRead;
+      importResult.invalid = result.rowsSkipped;
+      setDetail(importResult);
       setAnalysis(result);
-      toast.success(
-        `Historial analizado: ${result.rowsUsed} movimiento(s) procesados, ${result.rowsSkipped} omitido(s), ${result.rules.length} regla(s) aprendida(s).`,
-      );
+      if (importResult.status === "COMPLETADA") toast.success("IMPORTACIÓN COMPLETADA");
+      else if (importResult.status === "COMPLETADA CON ERRORES") toast.warning("Importación completada con errores. Revisa el detalle.");
+      else toast.error("La importación del historial quedó incompleta. Revisa el detalle.");
       await qc.invalidateQueries({ queryKey: ["learning_rules"] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible analizar el historial.");
     } finally {
       setBusy(false);
+      setProgreso(null);
     }
   }
 
@@ -1065,6 +1174,8 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
         <div className="mt-3">
           <FileButton label={busy ? "Analizando…" : "Importar Excel"} onFile={importar} busy={busy} />
         </div>
+        {progreso ? <p className="mt-3 rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p> : null}
+        <div className="mt-3"><ImportDetailPanel detail={detail} /></div>
         {analysis && (
           <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4">
             <p>Filas leídas: <strong>{analysis.rowsRead}</strong></p>
