@@ -451,8 +451,8 @@ export type SiigoPurchaseTotals = {
 /**
  * Única regla monetaria para Facturas de Compra en Siigo.
  *
- * En POST /v1/purchases el total documental y la suma de payments permanecen
- * brutos. Las retenciones se informan aparte en retentions con IDs reales.
+ * Siigo descuenta las retenciones aplicadas como impuestos del renglón al calcular
+ * el total conciliable de la compra. El total documental permanece bruto.
  */
 export function calculateSiigoPurchaseTotals(params: {
   subtotal: number;
@@ -466,7 +466,7 @@ export function calculateSiigoPurchaseTotals(params: {
   const retencionesAplicadas = roundMoney(params.retentions);
   const totalFactura = roundMoney(subtotal + taxes);
   const netoAPagar = roundMoney(totalFactura - retencionesAplicadas);
-  const totalPayments = roundMoney(params.payments ?? totalFactura);
+  const totalPayments = roundMoney(params.payments ?? netoAPagar);
   return {
     subtotal,
     taxes,
@@ -474,7 +474,7 @@ export function calculateSiigoPurchaseTotals(params: {
     retencionesAplicadas,
     netoAPagar,
     totalPayments,
-    diferencia: roundMoney(totalFactura - totalPayments),
+    diferencia: roundMoney(netoAPagar - totalPayments),
   };
 }
 
@@ -512,7 +512,7 @@ export function buildSiigoPurchasePayload(params: {
   paymentId: number | null;
   /** Total bruto de la compra (base + impuestos, antes de retenciones). */
   purchaseTotal: number;
-  /** Total bruto de la compra que Siigo exige conciliar en payments. */
+  /** Total conciliable calculado por Siigo después de impuestos de retención. */
   paymentValue: number;
   paymentDueDate: string | null;
   /** Retenciones aplicadas al documento: ID REAL del impuesto en Siigo + valor. */
@@ -527,11 +527,6 @@ export function buildSiigoPurchasePayload(params: {
   };
   if (params.paymentId == null || !Number.isInteger(params.paymentId) || params.paymentId <= 0) {
     throw new Error("No se puede sincronizar con Siigo porque el medio de pago de compras no es válido.");
-  }
-  if (Math.abs(total - paymentValue) > 0.009) {
-    throw new Error(
-      `No se puede sincronizar con Siigo: payments (${paymentValue}) debe coincidir con el total de la compra (${total}).`,
-    );
   }
   for (const retention of params.retentions ?? []) {
     if (!isSiigoTaxId(retention.id)) {
