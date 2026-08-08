@@ -402,8 +402,14 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }): Promise<SiigoSyncResult> => {
-    const { siigoGet, siigoPost, siigoPurchaseDocumentId, siigoPurchasePaymentTypeId, buildSiigoPurchasePayload } =
-      await import("./siigo.server");
+    const {
+      siigoGet,
+      siigoPost,
+      siigoPurchaseDocumentId,
+      siigoPurchasePaymentTypeId,
+      siigoCostCenterId,
+      buildSiigoPurchasePayload,
+    } = await import("./siigo.server");
     const supabase = context.supabase;
 
     const { data: inv, error: invErr } = await supabase
