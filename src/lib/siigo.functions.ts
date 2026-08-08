@@ -327,6 +327,7 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
     const rows = list
       .map((t) => {
         const account = resolveAccount(t);
+        const syncedAt = new Date().toISOString();
         return {
           company_id: data.companyId,
           kind: String(t.type ?? "IVA").toLowerCase(),
@@ -337,6 +338,8 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
           source: "siigo",
           siigo_id: t.id != null ? String(t.id) : null,
           siigo_name: String(t.name ?? "").trim() || null,
+          siigo_code: t.id != null ? String(t.id) : null,
+          siigo_synced_at: syncedAt,
         };
       })
       .filter((r) => r.name);
@@ -361,7 +364,14 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
       if (!protectedKeys.has(`${r.kind}|${r.name}`) || !r.siigo_id) continue;
       await context.supabase
         .from("tax_rates")
-        .update({ siigo_id: r.siigo_id, siigo_name: r.siigo_name, rate: r.rate, active: r.active })
+        .update({
+          siigo_id: r.siigo_id,
+          siigo_name: r.siigo_name,
+          siigo_code: r.siigo_code,
+          siigo_synced_at: r.siigo_synced_at,
+          rate: r.rate,
+          active: r.active,
+        })
         .eq("company_id", data.companyId)
         .eq("kind", r.kind)
         .eq("name", r.name);
