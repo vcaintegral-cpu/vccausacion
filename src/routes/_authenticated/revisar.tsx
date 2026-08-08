@@ -216,6 +216,9 @@ function Revisar() {
   const errores = useMemo(() => {
     const e: string[] = [];
     if (!header) return e;
+    // Segunda barrera: la factura debe pertenecer a la empresa activa (NIT del comprador).
+    const chequeo = checkInvoiceCompany(data?.company ?? null, header);
+    if (chequeo.status === "mismatch") e.push(mensajeEmpresaIncorrecta(chequeo));
     if (!header.provider_nit) e.push("Falta el NIT del proveedor.");
     if (lines.length === 0) e.push("La factura no tiene renglones.");
     const pucCodes = new Set((data?.accounts ?? []).map((a) => a.code));
