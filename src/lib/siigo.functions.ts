@@ -580,24 +580,74 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // La cuenta definida en la causación manda: si existe en el PUC de la
       // empresa se envía exactamente igual, sin recalcular equivalencias.
       const cuentaDelRenglon = (code: string) => (availableCodes.has(code) ? code : findEquivalent(code) || code);
-      const items = (invoiceLines ?? []).length
-        ? (invoiceLines ?? []).map((l) => {
-            const code = cuentaDelRenglon(l.account_code ?? "");
+
+      // Catálogo local de productos: la cuenta PUC y el código de producto son
+      // campos distintos y nunca se intercambian.
+      const { data: catalogo } = await supabase
+        .from("products")
+        .select("id, code, name, active, category_id, category, account_code, account_name")
+        .eq("company_id", inv.company_id)
+        .range(0, 19999);
+      const porCodigo = new Map((catalogo ?? []).map((p) => [String(p.code ?? "").trim(), p]));
+
+      type Renglon = {
+        type: "Product" | "Account";
+        code: string;
+        account_code: string;
+        description: string;
+        quantity: number;
+        price: number;
+        discount: number;
+        tax_ids: Array<number | string>;
+        item_type: string;
+      };
+
+      const items: Renglon[] = (invoiceLines ?? []).length
+        ? (invoiceLines ?? []).map((l, i) => {
+            const tipo = normalizeItemType(l.item_type);
+            const cuenta = cuentaDelRenglon(l.account_code ?? "");
+            const esProducto = tipo === "producto" || tipo === "servicio";
+            const productCode = String(l.code ?? "").trim();
+            if (esProducto) {
+              if (!productCode) {
+                throw new Error(
+                  `Renglón ${i + 1}: el producto no tiene código válido de Siigo. Sincronice los productos con Siigo antes de causar.`,
+                );
+              }
+              const prod = porCodigo.get(productCode);
+              if (!prod) {
+                throw new Error(
+                  `Renglón ${i + 1}: el producto ${productCode} no existe en los productos sincronizados desde Siigo. Sincronice los productos con Siigo antes de causar.`,
+                );
+              }
+              if (prod.active === false) {
+                throw new Error(`Renglón ${i + 1}: el producto ${productCode} está inactivo en Siigo.`);
+              }
+              if (!cuenta) {
+                throw new Error(`Renglón ${i + 1}: falta la cuenta contable interna del producto ${productCode}.`);
+              }
+            } else if (!cuenta) {
+              throw new Error(`Renglón ${i + 1}: falta la cuenta contable.`);
+            }
             return {
-              account_code: code,
-              description: (l.description ?? l.account_name ?? `Cuenta ${code}`) as string,
+              type: esProducto ? "Product" : "Account",
+              // Producto → código real del producto. Cuenta/gasto/activo → cuenta PUC.
+              code: esProducto ? productCode : cuenta,
+              account_code: cuenta,
+              description: (l.description ?? l.account_name ?? `Cuenta ${cuenta}`) as string,
               quantity: Number(l.quantity ?? 1) || 1,
               price: Number(l.unit_value ?? 0),
               discount: Number(l.discount ?? 0),
               tax_ids: Number(l.iva ?? 0) > 0 && ivaTaxId != null ? [ivaTaxId] : [],
               // El tipo de ítem elegido en la revisión se conserva sin cambios.
-              item_type: normalizeItemType(l.item_type),
-              cost_center: inv.cost_center,
+              item_type: tipo,
             };
           })
         : resolvedJournal
             .filter((l) => Number(l.debit ?? 0) > 0 && !esCuentaFiscal(l.account_code))
-            .map((l) => ({
+            .map((l): Renglon => ({
+              type: "Account",
+              code: l.account_code,
               account_code: l.account_code,
               description: (l.account_name ?? `Cuenta ${l.account_code}`) as string,
               quantity: 1,
@@ -605,25 +655,17 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               discount: 0,
               tax_ids: ivaTaxId != null ? [ivaTaxId] : [],
               item_type: "gasto",
-              cost_center: l.cost_center ?? inv.cost_center,
             }));
 
       if (items.length === 0) throw new Error("La factura no tiene renglones de gasto/costo para enviar a Siigo.");
 
-      console.log("========== CAUSACIÓN ANTES DE ENVIAR ==========");
-      console.log("Proveedor:", inv.provider_name, "· NIT:", inv.provider_nit);
-      console.log("Centro de costo:", inv.cost_center ?? "—");
-      (invoiceLines ?? []).forEach((l, i) => {
-        console.log(`Renglón ${i + 1}:`, {
-          tipo_item: normalizeItemType(l.item_type),
-          codigo_producto: l.code ?? null,
-          cuenta_causacion: l.account_code,
-          cuenta_enviada: cuentaDelRenglon(l.account_code ?? ""),
-          conservada: cuentaDelRenglon(l.account_code ?? "") === l.account_code,
-          centro_costo: inv.cost_center ?? null,
-        });
-      });
-      console.log("===============================================");
+      // Centro de costo: se envía el ID real de Siigo, nunca el nombre ni el código interno.
+      const costCenterId = await siigoCostCenterId(inv.cost_center);
+      if (inv.cost_center && costCenterId == null) {
+        throw new Error(
+          `El centro de costo "${inv.cost_center}" no existe o no está activo en Siigo. Verifícalo antes de causar.`,
+        );
+      }
 
       const paymentId = await siigoPurchasePaymentTypeId(inv.payment_form);
       const retenciones =
@@ -680,12 +722,31 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         invoicePrefix: inv.prefix,
         invoiceNumber: inv.number,
         observations: `Factura ${[inv.prefix, inv.number].filter(Boolean).join("-")} · ${inv.provider_name ?? ""} ${inv.notes ?? ""}`.trim(),
-        costCenter: inv.cost_center,
+        costCenterId,
         items,
         paymentId,
         paymentValue: totalFactura,
         paymentDueDate: dueDate,
       });
+      console.log("========== CAUSACIÓN ANTES DE ENVIAR ==========");
+      items.forEach((it, i) => {
+        const prod = it.type === "Product" ? porCodigo.get(it.code) : undefined;
+        console.log(`Renglón ${i + 1}:`, {
+          product_name: prod?.name ?? it.description,
+          product_code: it.type === "Product" ? it.code : null,
+          item_type: it.type,
+          account_code: it.account_code,
+          category: prod?.category ?? null,
+          siigo_cost_center_id: costCenterId,
+          siigo_payment_id: paymentId,
+          quantity: it.quantity,
+          price: it.price,
+          subtotal,
+          iva,
+          total: totalFactura,
+        });
+      });
+      console.log("===============================================");
       console.log("========== PAYLOAD SIIGO ==========");
       console.log(JSON.stringify(payload, null, 2));
       console.log("===================================");
