@@ -219,14 +219,6 @@ function Integraciones() {
             {provs.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
             Importar terceros
           </Button>
-          <Button onClick={() => puc.mutate()} disabled={!connected || !companyId || puc.isPending}>
-            {puc.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-            Sincronizar cuentas contables desde Siigo
-          </Button>
-          <Button onClick={() => impuestos.mutate()} disabled={!connected || !companyId || impuestos.isPending}>
-            {impuestos.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-            Sincronizar impuestos desde Siigo
-          </Button>
           <Button variant="secondary" onClick={() => compras.mutate()} disabled={!connected || compras.isPending}>
             {compras.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
             Ver facturas de compra
