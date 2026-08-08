@@ -1070,9 +1070,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
                 ));
           if (tax?.id == null || !esIdSiigoValido(tax.id, accountCode)) {
             throw new Error(
-              `Retención configurada pero no sincronizada con Siigo (${retention.label}` +
-                (configuredRate > 0 ? ` ${configuredRate}%` : "") +
-                `, cuenta ${accountCode}). Sincronice los impuestos desde Integraciones antes de causar.`,
+              `No se encontró un impuesto de ${retention.label} válido en Siigo para esta tarifa` +
+                (configuredRate > 0 ? ` (${configuredRate}%)` : "") +
+                `. Sincroniza los impuestos de esta empresa desde Integraciones.`,
             );
           }
           console.log("[siigo][retencion] ID desde /v1/taxes:", {
@@ -1144,7 +1144,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         const sinId = retencionesTrace.filter((r) => !r.siigo_id);
         if (sinId.length > 0 || retencionesSiigo.length === 0) {
           throw new Error(
-            "Retención configurada pero no sincronizada con Siigo. Sincronice los impuestos desde Integraciones antes de causar.",
+            "No se encontró un impuesto de Retefuente válido en Siigo para esta tarifa. Sincroniza los impuestos de esta empresa desde Integraciones.",
           );
         }
       }
@@ -1222,6 +1222,33 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       console.log("[siigo][causacion] Payments enviados:", JSON.stringify(payments, null, 2));
 
       const providerNit = String(inv.provider_nit);
+      // HALLAZGO VERIFICADO CONTRA LA API: /v1/purchases NO acepta la Retefuente en
+      // retentions[] (responde invalid_array en retentions[0].id, incluso con el ID real
+      // y activo). La Retefuente debe viajar como impuesto de RENGLÓN (items[].taxes[])
+      // con su ID real de Siigo; ReteIVA/ReteICA sí van en retentions[] a nivel documento.
+      const retencionesEnItem = retencionesSiigo.filter((r) => r.kind === "retefuente");
+      const retencionesEnDocumento = retencionesSiigo.filter((r) => r.kind !== "retefuente");
+      const itemsConRetencion =
+        retencionesEnItem.length > 0
+          ? items.map((it) => ({
+              ...it,
+              tax_ids: [
+                ...it.tax_ids,
+                ...retencionesEnItem
+                  .map((r) => r.id)
+                  .filter((id) => !it.tax_ids.some((t) => String(t) === String(id))),
+              ],
+            }))
+          : items;
+      const totalRetencionesItem = r2(retencionesEnItem.reduce((acc, r) => acc + r.value, 0));
+      // Siigo calcula el total del documento ya neto de las retenciones de renglón.
+      const totalDocumentoSiigo = r2(totalFactura - totalRetencionesItem);
+      for (const r of retencionesEnItem) {
+        console.log("SIIGO TAX ID RETEFUENTE:", r.id);
+        console.log("CUENTA CONTABLE RETEFUENTE:", retencionesTrace.find((t) => t.tipo === r.tipo)?.cuenta ?? null);
+        console.log("VALOR RETEFUENTE:", r.value);
+      }
+      console.log("PAYMENT:", netoAPagar);
       const construirPayload = (totalDocumento: number) =>
         buildSiigoPurchasePayload({
         documentId,
@@ -1233,14 +1260,14 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           inv.provider_name ?? ""
         } ${inv.notes ?? ""}`.trim(),
         costCenterId,
-        items,
+        items: itemsConRetencion,
         paymentId,
         purchaseTotal: totalDocumento,
         paymentValue: netoAPagar,
         paymentDueDate: dueDate,
-        retentions: retencionesSiigo.map((r) => ({ id: r.id, value: r.value })),
+        retentions: retencionesEnDocumento.map((r) => ({ id: r.id, value: r.value })),
         });
-      const payload = construirPayload(totalFactura);
+      const payload = construirPayload(totalDocumentoSiigo);
       console.log("========== CAUSACIÓN ANTES DE ENVIAR ==========");
       items.forEach((it, i) => {
         const prod = it.type === "Product" ? porCodigo.get(it.code) : undefined;
@@ -1293,7 +1320,15 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       console.log("[siigo][causacion] Respuesta completa de Siigo:", JSON.stringify(res, null, 2));
       // Verificación posterior: la retención debe quedar realmente aplicada en Siigo.
       const retencionesRespuesta = Array.isArray(res.retentions) ? res.retentions : [];
-      if (retencionesSiigo.length > 0 && retencionesRespuesta.length === 0) {
+      // La Retefuente viaja como impuesto de renglón: se confirma dentro de items[].taxes.
+      const itemsRespuesta = Array.isArray((res as { items?: unknown }).items)
+        ? ((res as { items?: Array<{ taxes?: Array<{ id?: number | string; value?: number }> }> }).items ?? [])
+        : [];
+      const retencionesAplicadasEnRenglon = itemsRespuesta.flatMap((it) =>
+        (it.taxes ?? []).filter((t) => retencionesEnItem.some((r) => String(r.id) === String(t.id))),
+      );
+      const aplicadas = retencionesRespuesta.length + retencionesAplicadasEnRenglon.length;
+      if (retencionesSiigo.length > 0 && aplicadas === 0) {
         console.error(
           "[siigo][causacion] ⚠ Siigo creó el documento sin retenciones aplicadas:",
           JSON.stringify(res, null, 2),
@@ -1316,7 +1351,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           codigo: it.type === "Product" ? it.code : null,
           cantidad: it.quantity,
           precio: it.price,
-          tax_ids: it.tax_ids,
+          tax_ids: itemsConRetencion.find((x) => x.code === it.code)?.tax_ids ?? it.tax_ids,
         })),
         iva: { siigo_id: ivaTaxId != null ? String(ivaTaxId) : null, nombre: ivaTaxName, tarifa: ivaTaxRate, valor: iva },
         retenciones: retencionesTrace,
@@ -1333,7 +1368,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         siigo_respuesta: res,
         siigo_documento_id: siigoId,
         siigo_documento_numero: siigoNumber,
-        retenciones_aplicadas_en_siigo: retencionesRespuesta,
+        retenciones_aplicadas_en_siigo: [...retencionesRespuesta, ...retencionesAplicadasEnRenglon],
         enviado_at: syncedAt,
       } as unknown as Json;
 
