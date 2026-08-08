@@ -1228,7 +1228,11 @@ function Causar() {
           <Button onClick={() => guardar("borrador")} disabled={saving} variant="outline">
             <Save className="size-4" /> Guardar borrador
           </Button>
-          <Button onClick={() => guardar("aprobado")} disabled={saving || hayErroresDeCuenta}>
+          <Button
+            onClick={() => guardar("aprobado")}
+            disabled={saving || hayErroresDeCuenta || empresaIncorrecta}
+            title={empresaIncorrecta ? "Esta factura no pertenece a la empresa seleccionada." : undefined}
+          >
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Aprobar comprobante
           </Button>
         </div>
