@@ -446,27 +446,6 @@ export const siigoSyncedTaxes = createServerFn({ method: "POST" })
     }));
   });
 
-const _siigoListPurchasesLegacy = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .handler(async (): Promise<SiigoPurchase[]> => {
-    const { siigoGet } = await import("./siigo.server");
-    type P = {
-      id?: string;
-      name?: string;
-      number?: number | string;
-      date?: string;
-      total?: number;
-      supplier?: { identification?: string; branch_office?: number };
-    };
-    const res = await siigoGet<{ results?: P[] }>("/v1/purchases?page_size=25");
-    return (res.results ?? []).map((p) => ({
-      id: String(p.id ?? p.number ?? crypto.randomUUID()),
-      number: String(p.name ?? p.number ?? "—"),
-      date: p.date ?? "",
-      supplier: p.supplier?.identification ?? "—",
-      total: Number(p.total ?? 0),
-    }));
-  });
 
 export type SiigoSyncResult = {
   ok: boolean;
