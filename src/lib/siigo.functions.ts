@@ -472,6 +472,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       siigoPurchaseDocumentId,
       siigoPurchasePaymentTypeId,
       siigoCostCenterId,
+      calculateSiigoPurchaseTotals,
       buildSiigoPurchasePayload,
     } = await import("./siigo.server");
     const supabase = context.supabase;
@@ -614,6 +615,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       .update({ siigo_status: "sincronizando", siigo_last_attempt_at: new Date().toISOString() })
       .eq("id", data.invoiceId);
 
+    let siigoAttemptTrace: Record<string, unknown> = {
+      invoice_id: data.invoiceId,
+      company_id: inv.company_id,
+      iniciado_at: new Date().toISOString(),
+      resultado: "preparando",
+    };
     try {
       const documentId = await siigoPurchaseDocumentId();
       type SiigoTax = {
@@ -909,8 +916,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           0,
         ),
       );
-      const totalFactura = r2(Math.max(subtotal + iva + impoconsumo, 0));
-      const netoAPagar = r2(Math.max(totalFactura - retenciones, 0));
+      const totalesSiigo = calculateSiigoPurchaseTotals({
+        subtotal,
+        taxes: iva + impoconsumo,
+        retentions: retenciones,
+      });
+      const totalFactura = totalesSiigo.totalFactura;
+      const netoAPagar = totalesSiigo.netoAPagar;
 
       if (totalFactura <= 0) {
         throw new Error(
@@ -1200,7 +1212,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const sumaRetencionesEnviadas = r2(retencionesSiigo.reduce((acc, r) => acc + r.value, 0));
       const payments = [{ id: paymentId, value: netoAPagar, due_date: dueDate }];
       const sumaPagos = r2(payments.reduce((acc, p) => acc + p.value, 0));
-      const diferencia = r2(totalFactura - sumaRetencionesEnviadas - sumaPagos);
+      const totalesValidados = calculateSiigoPurchaseTotals({
+        subtotal,
+        taxes: iva + impoconsumo,
+        retentions: sumaRetencionesEnviadas,
+        payments: sumaPagos,
+      });
+      const diferencia = totalesValidados.diferencia;
       if (Math.abs(diferencia) > 0.009) {
         console.log("[siigo][causacion] ⚠ Payments no coincide con el neto a pagar");
         console.log("[siigo][causacion] Suma de payments:", sumaPagos, "Neto:", netoAPagar);
@@ -1245,7 +1263,11 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // restando retenciones. Siigo, para retenciones de renglón, concilia los
       // payments contra el neto (total − retenciones de renglón).
       const totalDocumentoSiigo = totalFactura;
-      const netoConciliacionSiigo = r2(totalFactura - totalRetencionesItem);
+      const netoConciliacionSiigo = calculateSiigoPurchaseTotals({
+        subtotal,
+        taxes: iva + impoconsumo,
+        retentions: totalRetencionesItem,
+      }).netoAPagar;
 
       // Validaciones obligatorias previas al POST.
       const totalEsperado = r2(subtotal + iva + impoconsumo);
@@ -1297,6 +1319,30 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         retentions: retencionesEnDocumento.map((r) => ({ id: r.id, value: r.value })),
         });
       const payload = construirPayload(totalDocumentoSiigo);
+      siigoAttemptTrace = {
+        ...siigoAttemptTrace,
+        resultado: "listo_para_enviar",
+        impuesto_siigo: retencionesTrace.map((r) => ({
+          id: r.siigo_id,
+          nombre: r.nombre,
+          porcentaje: r.tarifa,
+          cuenta_contable_local: r.cuenta,
+          valor: r.valor,
+        })),
+        medio_pago_siigo: { id: paymentId, valor: netoAPagar },
+        valores: {
+          subtotal,
+          iva,
+          impoconsumo,
+          total_factura: totalFactura,
+          retenciones,
+          neto_a_pagar: netoAPagar,
+          total_payments: sumaPagos,
+          diferencia,
+        },
+        payload,
+        intento_at: new Date().toISOString(),
+      };
       console.log(
         "[siigo][causacion] purchase total:",
         totalFactura,
@@ -1343,6 +1389,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const payloadEnviado: unknown = payload;
       // NO se reintenta alterando el total de la compra: el total siempre es Subtotal + IVA.
       const res: SiigoPurchaseResponse = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payload);
+      siigoAttemptTrace = { ...siigoAttemptTrace, resultado: "aceptado", response: res };
       console.log("[siigo][causacion] Respuesta completa de Siigo:", JSON.stringify(res, null, 2));
       // Verificación posterior obligatoria: se consulta el documento creado en Siigo.
       let verificacion: unknown = null;
@@ -1440,6 +1487,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         siigo_documento_numero: siigoNumber,
         retenciones_aplicadas_en_siigo: [...retencionesRespuesta, ...retencionesAplicadasEnRenglon],
         enviado_at: syncedAt,
+        resultado: "sincronizada",
       } as unknown as Json;
 
       await supabase
@@ -1466,15 +1514,17 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           "Cambia la cuenta del renglón por una auxiliar del PUC de Siigo y vuelve a causar."
         : raw;
       console.error("[siigo][causacion] error:", message);
+      const failedTrace = {
+        ...siigoAttemptTrace,
+        resultado: "rechazado",
+        error: message,
+        error_raw: raw,
+        fallo_at: new Date().toISOString(),
+      } as unknown as Json;
       await supabase
         .from("invoices")
         .update({
-          siigo_trace: {
-            error: message,
-            error_raw: raw,
-            fallo_at: new Date().toISOString(),
-            invoice_id: data.invoiceId,
-          } as unknown as Json,
+          siigo_trace: failedTrace,
         })
         .eq("id", data.invoiceId);
       await supabase
