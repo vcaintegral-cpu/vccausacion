@@ -480,6 +480,11 @@ function Revisar() {
           <dl className="mt-3 space-y-1.5 text-sm">
             <Row k="Proveedor" v={`${header.provider_name ?? "—"} (${header.provider_nit ?? "—"})`} />
             <Row k="Centro de costo" v={header.cost_center || "—"} />
+            <Row
+              k="Tipos de ítem"
+              v={[...new Set(lines.map((l) => l.item_type))].join(", ").toUpperCase() || "—"}
+            />
+            <Row k="Cuentas" v={[...new Set(lines.map((l) => l.account_code ?? "—"))].join(", ")} />
             <Row k="Subtotal" v={cop(base)} />
             <Row k="IVA" v={cop(Number(header.iva))} />
             <Row k="Retenciones" v={cop(retenciones.retefuente + retenciones.reteiva + retenciones.reteica)} />
