@@ -117,6 +117,14 @@ function Causar() {
   const [centroSugerido, setCentroSugerido] = useState<string | null>(null);
   const [centroTocado, setCentroTocado] = useState(false);
   const [duplicado, setDuplicado] = useState<DuplicateInvoice | null>(null);
+  const [plazoTocado, setPlazoTocado] = useState(false);
+
+  // El plazo de crédito se recalcula con la fecha de vencimiento, salvo edición manual.
+  useEffect(() => {
+    if (plazoTocado) return;
+    const term = creditTermFromDates(header.issue_date, header.due_date);
+    if (term !== header.payment_form) setHeader((h) => ({ ...h, payment_form: term }));
+  }, [header.issue_date, header.due_date, header.payment_form, plazoTocado]);
 
   const { data: config } = useQuery({
     queryKey: ["config", companyId],
