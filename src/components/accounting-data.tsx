@@ -14,6 +14,8 @@ import {
 import { downloadSheet, num, pick, readSheet, readSheetIndexed } from "@/lib/spreadsheet";
 import { compareCodes, parsePucSheet, type PucRowError } from "@/lib/puc-import";
 import { analyzeHistory, isSiigoAuxiliary, type HistoryAnalysis } from "@/lib/history-import";
+import { fetchAllKeys, runReliableImport, sameImportValues, type ImportDetail, type ImportIssue } from "@/lib/import-system";
+import { ImportDetailPanel } from "@/components/import-detail";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -209,6 +211,8 @@ function useTable(table: "puc_accounts" | "cost_centers" | "tax_rates", companyI
 export function ProvidersToolbar({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
+  const [progreso, setProgreso] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ImportDetail | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ["providers"] });
 
   async function sincronizar() {
@@ -228,8 +232,8 @@ export function ProvidersToolbar({ companyId }: { companyId: string }) {
     setBusy("excel");
     try {
       const sheet = await readSheet(file);
-      const parsed = sheet
-        .map((r) => ({
+      const parsed = sheet.map((r, index) => ({
+          rowNumber: index + 2,
           company_id: companyId,
           nit: pick(r, "nit", "identificacion", "documento", "cedula", "id").replace(/[\s.]/g, ""),
           name: pick(r, "razon social", "nombre", "tercero", "proveedor", "name") || "Sin nombre",
@@ -239,25 +243,48 @@ export function ProvidersToolbar({ companyId }: { companyId: string }) {
           email: pick(r, "correo", "email") || null,
           default_expense_account: pick(r, "cuenta gasto", "cuenta", "default_expense_account") || null,
           default_payable_account: pick(r, "cuenta por pagar", "default_payable_account") || null,
-        }))
-        .filter((r) => r.nit);
-      if (parsed.length === 0) throw new Error("No se encontraron terceros (columnas esperadas: NIT, Razón social).");
-      const unicos = Array.from(new Map(parsed.map((r) => [r.nit, r])).values());
-      if (!window.confirm(`Se reemplazarán los terceros actuales por ${unicos.length} del archivo. ¿Continuar?`)) return;
-      const { error: delErr } = await supabase.from("providers").delete().eq("company_id", companyId);
-      if (delErr) throw new Error(`No fue posible reemplazar los terceros actuales: ${delErr.message}`);
-      for (let i = 0; i < unicos.length; i += 500) {
-        const { error } = await supabase
-          .from("providers")
-          .upsert(unicos.slice(i, i + 500), { onConflict: "company_id,nit", ignoreDuplicates: false });
-        if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}`);
+        }));
+      const invalidIssues: ImportIssue[] = parsed.filter((r) => !r.nit).map((r) => ({ row: r.rowNumber, key: "", message: "NIT vacío; registro rechazado." }));
+      const valid = parsed.filter((r) => r.nit);
+      if (valid.length === 0) throw new Error("No se encontraron terceros (columnas esperadas: NIT, Razón social).");
+      const uniqueMap = new Map(valid.map((r) => [r.nit, r]));
+      const unicos = [...uniqueMap.values()];
+      const duplicates = valid.length - unicos.length;
+      if (!window.confirm(`Se encontraron ${fmt(sheet.length)} terceros en el archivo. Se procesarán ${fmt(unicos.length)} válidos en lotes de 500 sin eliminar información existente. ¿Continuar?`)) return;
+      const existing = new Map<string, (typeof unicos)[number]>();
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase.from("providers").select("*").eq("company_id", companyId).order("nit").range(from, from + PAGE - 1);
+        if (error) throw error;
+        (data ?? []).forEach((row) => existing.set(row.nit, row as (typeof unicos)[number]));
+        if ((data ?? []).length < PAGE) break;
       }
-      toast.success(`Terceros reemplazados: ${unicos.length} cargado(s) desde Excel.`);
+      const { data: auth } = await supabase.auth.getUser();
+      const result = await runReliableImport({
+        module: "Terceros", fileName: file.name, user: auth.user?.email, found: sheet.length, rows: unicos,
+        invalidIssues, duplicateCount: duplicates, keyOf: (row) => row.nit, rowNumberOf: (row) => row.rowNumber,
+        existingByKey: existing,
+        equals: sameImportValues(["name", "address", "city", "phone", "email", "default_expense_account", "default_payable_account"]),
+        saveBatch: async (rows) => {
+          const payload = rows.map(({ rowNumber: _rowNumber, ...row }) => row;
+          const { error } = await supabase.from("providers").upsert(payload, { onConflict: "company_id,nit", ignoreDuplicates: false });
+          return { error };
+        },
+        verifyKeys: () => fetchAllKeys(async (from, to) => {
+          const { data, error } = await supabase.from("providers").select("nit").eq("company_id", companyId).order("nit").range(from, to);
+          return { keys: (data ?? []).map((row) => row.nit), error: error?.message };
+        }),
+        onProgress: (p) => setProgreso(`Importando terceros… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)} - ${fmt(p.to)} de ${fmt(p.total)}`),
+      });
+      setDetail(result);
+      if (result.status === "COMPLETADA") toast.success("IMPORTACIÓN COMPLETADA");
+      else if (result.status === "COMPLETADA CON ERRORES") toast.warning("Importación completada con errores. Revisa el detalle.");
+      else toast.error(`Importación incompleta: se encontraron ${fmt(result.found)} registros y se verificaron ${fmt(result.saved)}.`);
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
     } finally {
       setBusy(null);
+      setProgreso(null);
     }
   }
 
@@ -281,6 +308,7 @@ export function ProvidersToolbar({ companyId }: { companyId: string }) {
   }
 
   return (
+    <div className="space-y-3">
     <Toolbar>
       <Button onClick={sincronizar} disabled={busy !== null}>
         <RefreshCw className={`size-4 ${busy === "siigo" ? "animate-spin" : ""}`} /> Sincronizar desde Siigo
@@ -290,6 +318,9 @@ export function ProvidersToolbar({ companyId }: { companyId: string }) {
         <Download className="size-4" /> Exportar Excel
       </Button>
     </Toolbar>
+    {progreso ? <p className="rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p> : null}
+    <ImportDetailPanel detail={detail} />
+    </div>
   );
 }
 
