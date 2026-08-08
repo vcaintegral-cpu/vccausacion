@@ -1241,8 +1241,37 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             }))
           : items;
       const totalRetencionesItem = r2(retencionesEnItem.reduce((acc, r) => acc + r.value, 0));
-      // Siigo calcula el total del documento ya neto de las retenciones de renglón.
-      const totalDocumentoSiigo = r2(totalFactura - totalRetencionesItem);
+      // El TOTAL DE LA COMPRA es siempre SUBTOTAL + IVA (bruto). NO se recalcula
+      // restando retenciones. Siigo, para retenciones de renglón, concilia los
+      // payments contra el neto (total − retenciones de renglón).
+      const totalDocumentoSiigo = totalFactura;
+      const netoConciliacionSiigo = r2(totalFactura - totalRetencionesItem);
+
+      // Validaciones obligatorias previas al POST.
+      const totalEsperado = r2(subtotal + iva + impoconsumo);
+      if (Math.abs(r2(totalFactura - totalEsperado)) > 0.009) {
+        throw new Error(
+          `El total de la factura (${totalFactura}) no corresponde a Subtotal + IVA (${totalEsperado}).`,
+        );
+      }
+      if (Math.abs(r2(netoAPagar - (totalFactura - retenciones))) > 0.009) {
+        throw new Error(
+          `El neto a pagar (${netoAPagar}) no corresponde a Total factura − Retenciones (${r2(totalFactura - retenciones)}).`,
+        );
+      }
+      const totalDebitos = r2(resolvedJournal.reduce((acc, l) => acc + Number(l.debit ?? 0), 0));
+      const totalCreditos = r2(resolvedJournal.reduce((acc, l) => acc + Number(l.credit ?? 0), 0));
+      if (Math.abs(r2(totalDebitos - totalCreditos)) > 0.009) {
+        throw new Error(
+          `El asiento contable no está cuadrado: débitos ${totalDebitos} vs créditos ${totalCreditos}.`,
+        );
+      }
+      console.log("[siigo][validacion] Subtotal:", subtotal);
+      console.log("[siigo][validacion] IVA:", iva);
+      console.log("[siigo][validacion] Total factura:", totalFactura);
+      console.log("[siigo][validacion] Retenciones:", retenciones);
+      console.log("[siigo][validacion] Neto proveedor:", netoAPagar);
+      console.log("[siigo][validacion] Débitos:", totalDebitos, "Créditos:", totalCreditos);
       for (const r of retencionesEnItem) {
         console.log("SIIGO TAX ID RETEFUENTE:", r.id);
         console.log("CUENTA CONTABLE RETEFUENTE:", retencionesTrace.find((t) => t.tipo === r.tipo)?.cuenta ?? null);
@@ -1268,6 +1297,16 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         retentions: retencionesEnDocumento.map((r) => ({ id: r.id, value: r.value })),
         });
       const payload = construirPayload(totalDocumentoSiigo);
+      console.log(
+        "[siigo][causacion] purchase total:",
+        totalFactura,
+        "| retention value:",
+        totalRetencionesItem,
+        "| payment value:",
+        netoAPagar,
+        "| conciliación esperada por Siigo:",
+        netoConciliacionSiigo,
+      );
       console.log("========== CAUSACIÓN ANTES DE ENVIAR ==========");
       items.forEach((it, i) => {
         const prod = it.type === "Product" ? porCodigo.get(it.code) : undefined;
@@ -1301,23 +1340,53 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         metadata?: { created?: string };
         _links?: { self?: { href?: string } };
       };
-      let payloadEnviado: unknown = payload;
-      let res: SiigoPurchaseResponse;
-      try {
-        res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payload);
-      } catch (err) {
-        const detalle = err instanceof Error ? err.message : String(err);
-        // Algunas configuraciones de Siigo exigen que "total" ya venga neto de retenciones.
-        const conciliacion = /total|payment/i.test(detalle) && retencionesSiigo.length > 0;
-        if (!conciliacion) throw err;
-        console.warn("[siigo][causacion] Reintento con total neto por rechazo de conciliación:", detalle);
-        const payloadNeto = construirPayload(netoAPagar);
-        payloadEnviado = payloadNeto;
-        console.log("========== PAYLOAD SIIGO (reintento neto) ==========");
-        console.log(JSON.stringify(payloadNeto, null, 2));
-        res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadNeto);
-      }
+      const payloadEnviado: unknown = payload;
+      // NO se reintenta alterando el total de la compra: el total siempre es Subtotal + IVA.
+      const res: SiigoPurchaseResponse = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payload);
       console.log("[siigo][causacion] Respuesta completa de Siigo:", JSON.stringify(res, null, 2));
+      // Verificación posterior obligatoria: se consulta el documento creado en Siigo.
+      let verificacion: unknown = null;
+      if (res.id) {
+        try {
+          verificacion = await siigoGet<unknown>(`/v1/purchases/${res.id}`);
+          const doc = verificacion as {
+            total?: number;
+            balance?: number;
+            payments?: Array<{ value?: number }>;
+            retentions?: Array<{ id?: number | string; value?: number }>;
+            items?: Array<{ taxes?: Array<{ id?: number | string; type?: string; value?: number }> }>;
+          };
+          const pagoSiigo = r2((doc.payments ?? []).reduce((acc, p) => acc + Number(p.value ?? 0), 0));
+          const retSiigo = r2(
+            (doc.retentions ?? []).reduce((acc, x) => acc + Number(x.value ?? 0), 0) +
+              (doc.items ?? []).reduce(
+                (acc, it) =>
+                  acc +
+                  (it.taxes ?? [])
+                    .filter((t) => retencionesEnItem.some((r) => String(r.id) === String(t.id)))
+                    .reduce((s, t) => s + Number(t.value ?? 0), 0),
+                0,
+              ),
+          );
+          console.log("[siigo][verificacion] GET /v1/purchases/" + res.id, {
+            total_siigo: doc.total,
+            saldo_siigo: doc.balance,
+            payment_siigo: pagoSiigo,
+            retencion_aplicada_siigo: retSiigo,
+            total_factura_local: totalFactura,
+            neto_local: netoAPagar,
+            retenciones_local: retenciones,
+          });
+          if (retencionesSiigo.length > 0 && retSiigo <= 0) {
+            console.error("[siigo][verificacion] ⚠ La retención NO quedó aplicada en el documento creado.");
+          }
+          if (Math.abs(r2(pagoSiigo - netoAPagar)) > 0.009) {
+            console.error("[siigo][verificacion] ⚠ El payment en Siigo difiere del neto a pagar local.");
+          }
+        } catch (errVer) {
+          console.warn("[siigo][verificacion] No fue posible consultar el documento creado:", errVer);
+        }
+      }
       // Verificación posterior: la retención debe quedar realmente aplicada en Siigo.
       const retencionesRespuesta = Array.isArray(res.retentions) ? res.retentions : [];
       // La Retefuente viaja como impuesto de renglón: se confirma dentro de items[].taxes.
@@ -1366,6 +1435,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         },
         siigo_request: payloadEnviado,
         siigo_respuesta: res,
+        siigo_verificacion: verificacion,
         siigo_documento_id: siigoId,
         siigo_documento_numero: siigoNumber,
         retenciones_aplicadas_en_siigo: [...retencionesRespuesta, ...retencionesAplicadasEnRenglon],
