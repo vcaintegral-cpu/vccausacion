@@ -1070,9 +1070,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
                 ));
           if (tax?.id == null || !esIdSiigoValido(tax.id, accountCode)) {
             throw new Error(
-              `Retención configurada pero no sincronizada con Siigo (${retention.label}` +
-                (configuredRate > 0 ? ` ${configuredRate}%` : "") +
-                `, cuenta ${accountCode}). Sincronice los impuestos desde Integraciones antes de causar.`,
+              `No se encontró un impuesto de ${retention.label} válido en Siigo para esta tarifa` +
+                (configuredRate > 0 ? ` (${configuredRate}%)` : "") +
+                `. Sincroniza los impuestos de esta empresa desde Integraciones.`,
             );
           }
           console.log("[siigo][retencion] ID desde /v1/taxes:", {
@@ -1144,7 +1144,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         const sinId = retencionesTrace.filter((r) => !r.siigo_id);
         if (sinId.length > 0 || retencionesSiigo.length === 0) {
           throw new Error(
-            "Retención configurada pero no sincronizada con Siigo. Sincronice los impuestos desde Integraciones antes de causar.",
+            "No se encontró un impuesto de Retefuente válido en Siigo para esta tarifa. Sincroniza los impuestos de esta empresa desde Integraciones.",
           );
         }
       }
