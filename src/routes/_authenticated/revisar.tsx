@@ -289,11 +289,12 @@ function Revisar() {
     });
     if (!header.cost_center) e.push("Falta el centro de costo.");
     if (Number(header.iva) < 0) e.push("El IVA no puede ser negativo.");
+    e.push(...erroresImpuestos);
     if (retenciones.retefuente < 0 || retenciones.reteiva < 0 || retenciones.reteica < 0) e.push("Las retenciones no pueden ser negativas.");
     if (Math.abs(t.diferencia) > 1) e.push(`El comprobante está descuadrado por ${cop(t.diferencia)}.`);
     if (base <= 0) e.push("La base gravable debe ser mayor a cero.");
     return e;
-  }, [header, lines, data?.accounts, data?.company, cuentasVerificadas, retenciones, t.diferencia, base]);
+  }, [header, lines, data?.accounts, data?.company, cuentasVerificadas, retenciones, t.diferencia, base, erroresImpuestos]);
 
   async function guardarCambios() {
     if (!header) return;
@@ -304,9 +305,9 @@ function Revisar() {
         payment_form: header.payment_form,
         notes: header.notes,
         iva: Number(header.iva || 0),
-        retefuente: Number(header.retefuente || 0),
-        reteiva: Number(header.reteiva || 0),
-        reteica: Number(header.reteica || 0),
+        retefuente: retenciones.retefuente,
+        reteiva: retenciones.reteiva,
+        reteica: retenciones.reteica,
         subtotal: base,
         total: base + Number(header.iva || 0) + Number(header.impoconsumo || 0),
       })
@@ -316,13 +317,34 @@ function Revisar() {
       lines.map((l) =>
         supabase
           .from("invoice_lines")
-          .update({
+          .update((() => {
+            const ivaTax = findTaxById(impuestosIva, l.iva_tax_id);
+            const retTax = findTaxById(impuestosRet, l.ret_tax_id);
+            const ivaTrace = ivaTax ? taxTrace(ivaTax, resolveTaxAccount(ivaTax, puc).code || null) : null;
+            const retTrace = retTax ? taxTrace(retTax, resolveTaxAccount(retTax, puc).code || null) : null;
+            return {
             account_code: l.account_code,
             account_name: l.account_name,
             item_type: l.item_type,
             iva: Number(l.iva || 0),
             retention: Number(l.retention || 0),
-          })
+            iva_tax_id: ivaTrace?.tax_id ?? null,
+            iva_tax_name: ivaTrace?.tax_name ?? null,
+            iva_tax_rate: ivaTrace?.tax_rate ?? null,
+            iva_account_code: ivaTrace?.account_code ?? null,
+            iva_operational_account: ivaTrace?.operational_account ?? null,
+            iva_siigo_id: ivaTrace?.siigo_id ?? null,
+            iva_siigo_name: ivaTrace?.siigo_name ?? null,
+            ret_tax_id: retTrace?.tax_id ?? null,
+            ret_tax_kind: retTrace?.tax_type ?? null,
+            ret_tax_name: retTrace?.tax_name ?? null,
+            ret_tax_rate: retTrace?.tax_rate ?? null,
+            ret_account_code: retTrace?.account_code ?? null,
+            ret_operational_account: retTrace?.operational_account ?? null,
+            ret_siigo_id: retTrace?.siigo_id ?? null,
+            ret_siigo_name: retTrace?.siigo_name ?? null,
+            };
+          })())
           .eq("id", l.id),
       ),
     );
