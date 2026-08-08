@@ -692,10 +692,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         if (ivaTaxId == null) {
           if (!tax?.id) {
             throw new Error(
-              `IVA ${invoiceRate}% no encontrado o inactivo en Siigo. Sincronice los impuestos desde Integraciones antes de causar.`,
+              `No se encontró en Siigo el impuesto correspondiente para esta empresa y tarifa (IVA ${invoiceRate}%). Sincronice nuevamente los impuestos desde Integraciones.`,
             );
           }
           ivaTaxId = tax.id;
+          ivaTaxRate = invoiceRate;
+          ivaTaxName = tax.name ?? null;
           console.log("[siigo][iva] impuesto tomado de /v1/taxes:", {
             cuenta: ivaAccount,
             porcentaje: invoiceRate,
@@ -703,6 +705,18 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             nombre: tax.name,
             activo: tax.active !== false,
           });
+          // Se vincula el ID real a la configuración de impuestos de ESTA empresa.
+          await supabase
+            .from("tax_rates")
+            .update({
+              siigo_id: String(tax.id),
+              siigo_name: tax.name ?? null,
+              siigo_code: String(tax.id),
+              siigo_synced_at: new Date().toISOString(),
+            })
+            .eq("company_id", inv.company_id)
+            .eq("kind", "iva")
+            .eq("rate", invoiceRate);
         }
       }
       if (!inv.provider_nit) throw new Error("La factura no tiene NIT de proveedor; Siigo lo exige para la factura de compra.");
