@@ -16,6 +16,7 @@ import { ProductCombobox, type ProductOption } from "@/components/product-combob
 import { BulkApply } from "@/components/bulk-apply";
 import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
 import { suggestCostCenter } from "@/lib/cost-center";
+import { checkInvoiceCompany, mensajeEmpresaIncorrecta } from "@/lib/company-validation";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { expandInvoiceFiles, processInvoiceFile } from "@/lib/bulk-invoices";
@@ -68,6 +69,7 @@ const emptyHeader = (): Header => ({
   prefix: "", number: "", issue_date: "", due_date: "",
   provider_nit: "", provider_name: "", provider_address: "", provider_city: "",
   provider_phone: "", provider_email: "", cufe: "", payment_form: "", payment_method: "",
+  buyer_nit: "", buyer_name: "",
   currency: "COP", cost_center: "", notes: "",
   subtotal: 0, discount: 0, iva: 0, impoconsumo: 0, total: 0,
 });
@@ -161,6 +163,8 @@ function Causar() {
       provider_city: inv['provider_city'] ?? "",
       provider_phone: inv['provider_phone'] ?? "",
       provider_email: inv['provider_email'] ?? "",
+      buyer_nit: inv['buyer_nit'] ?? "",
+      buyer_name: inv['buyer_name'] ?? "",
       cufe: inv['cufe'] ?? "",
       payment_form: inv['payment_form'] ?? "",
       payment_method: inv['payment_method'] ?? "",
@@ -289,6 +293,14 @@ function Causar() {
     return out;
   }, [lines, buscarProducto, resolverCuentaItem]);
   const hayErroresDeCuenta = Object.keys(lineErrors).length > 0;
+
+  // Validación determinística: el NIT del comprador de la factura debe ser el de la empresa activa.
+  const empresaActiva = useMemo(() => (companies ?? []).find((c) => c.id === companyId) ?? null, [companies, companyId]);
+  const chequeoEmpresa = useMemo(
+    () => checkInvoiceCompany(empresaActiva, { buyer_nit: header.buyer_nit, buyer_name: header.buyer_name }),
+    [empresaActiva, header.buyer_nit, header.buyer_name],
+  );
+  const empresaIncorrecta = chequeoEmpresa.status === "mismatch";
 
   /** Cambios de un renglón al cambiar su tipo de ítem, conservando la lógica producto → categoría → cuenta. */
   const parcheDeTipo = useCallback(
@@ -553,6 +565,10 @@ function Causar() {
   async function guardar(status: "borrador" | "aprobado") {
     if (!companyId) return;
     if (lines.length === 0) { toast.error("Agrega al menos un renglón."); return; }
+    if (status === "aprobado" && chequeoEmpresa.status === "mismatch") {
+      toast.error(mensajeEmpresaIncorrecta(chequeoEmpresa));
+      return;
+    }
     if (status === "aprobado" && hayErroresDeCuenta) {
       toast.error(Object.values(lineErrors)[0] ?? "Hay renglones sin cuenta contable.");
       return;
@@ -607,6 +623,8 @@ function Causar() {
           provider_city: header.provider_city,
           provider_phone: header.provider_phone,
           provider_email: header.provider_email,
+          buyer_nit: header.buyer_nit || null,
+          buyer_name: header.buyer_name || null,
           cufe: header.cufe,
           payment_form: header.payment_form,
           payment_method: header.payment_method,
@@ -625,6 +643,10 @@ function Causar() {
           dian_status: header.cufe ? "con CUFE" : "sin CUFE",
           // Al aprobar tras corregir, se limpia el error previo y queda pendiente de envío.
           ...(status === "aprobado" ? { siigo_status: "pendiente", siigo_error: null } : {}),
+          // La factura de otra empresa no se elimina: queda registrada con el motivo del rechazo.
+          ...(chequeoEmpresa.status === "mismatch"
+            ? { siigo_status: "error", siigo_error: `RECHAZADA — EMPRESA INCORRECTA. ${mensajeEmpresaIncorrecta(chequeoEmpresa)}` }
+            : {}),
         file_path: filePath ?? existingFile.path,
         file_name: file?.name ?? existingFile.name,
       };
@@ -853,6 +875,29 @@ function Causar() {
       </Dialog>
 
       <div className="grid gap-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2 xl:grid-cols-4">
+        {empresaIncorrecta && (
+          <div className="sm:col-span-2 xl:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
+            <p className="font-semibold text-destructive">Esta factura no pertenece a la empresa seleccionada.</p>
+            <div className="mt-2 grid gap-1 sm:grid-cols-2">
+              <p>
+                Empresa seleccionada: <span className="font-medium">{empresaActiva?.name ?? "—"}</span> · NIT:{" "}
+                <span className="font-medium">{empresaActiva?.nit ?? "—"}</span>
+              </p>
+              <p>
+                Empresa que aparece en la factura: <span className="font-medium">{header.buyer_name || "—"}</span> · NIT:{" "}
+                <span className="font-medium">{header.buyer_nit || "—"}</span>
+              </p>
+            </div>
+            <p className="mt-2 text-muted-foreground">
+              Verifique que haya seleccionado la empresa correcta antes de continuar. No es posible aprobar ni enviar esta factura a Siigo.
+            </p>
+          </div>
+        )}
+        {chequeoEmpresa.status === "ok" && chequeoEmpresa.nameMismatch && (
+          <div className="sm:col-span-2 xl:col-span-4 rounded-md border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
+            El NIT del comprador coincide, pero la razón social de la factura ({header.buyer_name}) difiere de la empresa activa ({empresaActiva?.name}).
+          </div>
+        )}
         {field("Prefijo", "prefix")}
         {field("Número", "number")}
         {field("Fecha", "issue_date", "date")}
@@ -860,6 +905,8 @@ function Causar() {
         {field("NIT proveedor", "provider_nit")}
         {field("Proveedor", "provider_name")}
         {field("Ciudad", "provider_city")}
+        {field("NIT comprador", "buyer_nit")}
+        {field("Comprador", "buyer_name")}
         {field("CUFE", "cufe")}
         {field("IVA total", "iva", "number")}
         {field("Impoconsumo", "impoconsumo", "number")}
@@ -1181,7 +1228,11 @@ function Causar() {
           <Button onClick={() => guardar("borrador")} disabled={saving} variant="outline">
             <Save className="size-4" /> Guardar borrador
           </Button>
-          <Button onClick={() => guardar("aprobado")} disabled={saving || hayErroresDeCuenta}>
+          <Button
+            onClick={() => guardar("aprobado")}
+            disabled={saving || hayErroresDeCuenta || empresaIncorrecta}
+            title={empresaIncorrecta ? "Esta factura no pertenece a la empresa seleccionada." : undefined}
+          >
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Aprobar comprobante
           </Button>
         </div>

@@ -12,6 +12,7 @@ import { type LearningRule } from "@/lib/learning";
 import { ITEM_TYPES, isValidItemType, normalizeItemType } from "@/lib/item-type";
 import { cop, fecha } from "@/lib/format";
 import { suggestCostCenter } from "@/lib/cost-center";
+import { checkInvoiceCompany, mensajeEmpresaIncorrecta } from "@/lib/company-validation";
 import { siigoCreateProduct, siigoFindProduct, siigoSyncInvoice } from "@/lib/siigo.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +41,8 @@ type InvRow = {
   issue_date: string | null;
   provider_nit: string | null;
   provider_name: string | null;
+  buyer_nit: string | null;
+  buyer_name: string | null;
   cost_center: string | null;
   payment_form: string | null;
   notes: string | null;
@@ -102,8 +105,10 @@ function Revisar() {
         supabase.from("learning_rules").select("*").eq("company_id", companyId ?? ""),
       ]);
       if (inv.error) throw inv.error;
+      const company = await supabase.from("companies").select("id, name, nit").eq("id", companyId ?? "").maybeSingle();
       return {
         invoice: inv.data as unknown as InvRow,
+        company: company.data ?? null,
         lines: (ln.data ?? []) as unknown as LineRow[],
         centers: centers.data ?? [],
         accounts: accounts.data ?? [],
@@ -211,6 +216,9 @@ function Revisar() {
   const errores = useMemo(() => {
     const e: string[] = [];
     if (!header) return e;
+    // Segunda barrera: la factura debe pertenecer a la empresa activa (NIT del comprador).
+    const chequeo = checkInvoiceCompany(data?.company ?? null, header);
+    if (chequeo.status === "mismatch") e.push(mensajeEmpresaIncorrecta(chequeo));
     if (!header.provider_nit) e.push("Falta el NIT del proveedor.");
     if (lines.length === 0) e.push("La factura no tiene renglones.");
     const pucCodes = new Set((data?.accounts ?? []).map((a) => a.code));
@@ -235,7 +243,7 @@ function Revisar() {
     if (Math.abs(t.diferencia) > 1) e.push(`El comprobante está descuadrado por ${cop(t.diferencia)}.`);
     if (base <= 0) e.push("La base gravable debe ser mayor a cero.");
     return e;
-  }, [header, lines, data?.accounts, cuentasVerificadas, retenciones, t.diferencia, base]);
+  }, [header, lines, data?.accounts, data?.company, cuentasVerificadas, retenciones, t.diferencia, base]);
 
   async function guardarCambios() {
     if (!header) return;

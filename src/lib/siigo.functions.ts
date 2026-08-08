@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { checkInvoiceCompany, mensajeEmpresaIncorrecta } from "./company-validation";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { normalizeItemType } from "@/lib/item-type";
 
@@ -415,11 +416,28 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
       .select(
-        "id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, notes, total, iva, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at",
+        "id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, buyer_nit, buyer_name, notes, total, iva, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at",
       )
       .eq("id", data.invoiceId)
       .single();
     if (invErr || !inv) throw new Error(invErr?.message ?? "Factura no encontrada.");
+
+    // Barrera de seguridad: la factura solo puede causarse en la empresa cuyo NIT coincide
+    // con el NIT del comprador/adquiriente de la factura.
+    const { data: empresa } = await supabase
+      .from("companies")
+      .select("id, name, nit")
+      .eq("id", inv.company_id)
+      .maybeSingle();
+    const chequeoEmpresa = checkInvoiceCompany(empresa, inv);
+    if (chequeoEmpresa.status === "mismatch") {
+      const mensaje = mensajeEmpresaIncorrecta(chequeoEmpresa);
+      await supabase
+        .from("invoices")
+        .update({ siigo_status: "error", siigo_error: `RECHAZADA — EMPRESA INCORRECTA. ${mensaje}` })
+        .eq("id", inv.id);
+      throw new Error(mensaje);
+    }
 
     // Protección contra doble envío: si ya está sincronizada no se vuelve a crear en Siigo.
     if (inv.siigo_status === "sincronizada" || inv.status === "sincronizada") {

@@ -25,6 +25,8 @@ export type ExtractedInvoice = {
   provider_city: string | null;
   provider_phone: string | null;
   provider_email: string | null;
+  buyer_nit: string | null;
+  buyer_name: string | null;
   cufe: string | null;
   payment_form: string | null;
   payment_method: string | null;
