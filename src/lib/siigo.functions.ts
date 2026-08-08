@@ -1064,9 +1064,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
                 ));
           if (tax?.id == null || !esIdSiigoValido(tax.id, accountCode)) {
             throw new Error(
-              `No se encontró un ID de impuesto válido en Siigo para esta retención (${retention.label}` +
+              `Retención configurada pero no sincronizada con Siigo (${retention.label}` +
                 (configuredRate > 0 ? ` ${configuredRate}%` : "") +
-                `, cuenta ${accountCode}). Verifique la configuración de impuestos de la empresa.`,
+                `, cuenta ${accountCode}). Sincronice los impuestos desde Integraciones antes de causar.`,
             );
           }
           console.log("[siigo][retencion] ID desde /v1/taxes:", {
