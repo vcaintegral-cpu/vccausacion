@@ -68,7 +68,7 @@ type Header = Omit<ExtractedInvoice, "lines">;
 const emptyHeader = (): Header => ({
   prefix: "", number: "", issue_date: "", due_date: "",
   provider_nit: "", provider_name: "", provider_address: "", provider_city: "",
-  provider_phone: "", provider_email: "", cufe: "", payment_form: "", payment_method: "",
+  provider_phone: "", provider_email: "", cufe: "", payment_form: "Crédito", payment_method: "",
   buyer_nit: "", buyer_name: "",
   currency: "COP", cost_center: "", notes: "",
   subtotal: 0, discount: 0, iva: 0, impoconsumo: 0, total: 0,
@@ -166,7 +166,7 @@ function Causar() {
       buyer_nit: inv['buyer_nit'] ?? "",
       buyer_name: inv['buyer_name'] ?? "",
       cufe: inv['cufe'] ?? "",
-      payment_form: inv['payment_form'] ?? "",
+      payment_form: (inv['payment_form'] as string | null) || "Crédito",
       payment_method: inv['payment_method'] ?? "",
       currency: inv['currency'] ?? "COP",
       cost_center: inv['cost_center'] ?? "",
@@ -930,7 +930,17 @@ function Causar() {
         {field("CUFE", "cufe")}
         {field("IVA total", "iva", "number")}
         {field("Impoconsumo", "impoconsumo", "number")}
-        {field("Forma de pago", "payment_form")}
+        <div className="space-y-1.5">
+          <Label className="text-xs">Forma de pago</Label>
+          <select
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            value={String(header.payment_form ?? "") || "Crédito"}
+            onChange={(e) => setHeader({ ...header, payment_form: e.target.value })}
+          >
+            <option value="Crédito">Crédito</option>
+            <option value="Contado">Contado</option>
+          </select>
+        </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Centro de costo</Label>
           <select
