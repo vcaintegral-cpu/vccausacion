@@ -479,20 +479,36 @@ function Causar() {
   );
   const t = totals(journal);
 
-  /** Validación contable del asiento: toda cuenta debe ser de movimiento, activa y estar en el PUC de la empresa. */
+  /** Validación contable del asiento: nivel, movimiento, auxiliares y cuenta operativa por cuenta. */
   const validacionAsiento = useMemo(() => {
     const puc = (config?.accounts ?? []) as PucAccount[];
     const codes = [...new Set(journal.map((j) => j.account_code).filter(Boolean))];
     return codes.map((code) => {
-      const cuenta = puc.find((a) => a.code === code) ?? null;
-      const check = puc.length > 0 ? validarCuenta(puc, code) : { ok: true, problema: null, cuenta };
+      if (puc.length === 0)
+        return {
+          code,
+          nivel: "—",
+          movimiento: true,
+          activa: true,
+          enSiigo: true,
+          auxiliares: 0,
+          operativa: code,
+          resultado: "VÁLIDA" as const,
+          ok: true,
+          problema: "",
+        };
+      const e = evaluarCuenta(puc, code);
       return {
         code,
-        movimiento: cuenta ? cuenta.is_movement !== false && !cuenta.has_children : true,
-        activa: cuenta ? cuenta.active !== false : true,
-        enSiigo: !!cuenta,
-        ok: check.ok,
-        problema: check.problema ?? "",
+        nivel: e.nivel ?? "—",
+        movimiento: e.permiteMovimiento,
+        activa: e.activa,
+        enSiigo: e.enSiigo,
+        auxiliares: e.auxiliares.length,
+        operativa: e.cuentaOperativa ?? "—",
+        resultado: e.resultado,
+        ok: e.resultado === "VÁLIDA",
+        problema: e.mensaje ?? "",
       };
     });
   }, [journal, config?.accounts]);
