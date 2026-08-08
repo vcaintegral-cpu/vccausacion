@@ -890,14 +890,116 @@ function Causar() {
           <table className="w-full min-w-[900px] text-sm">
             <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">Descripción</th>
-                <th className="px-3 py-2 font-medium">Tipo</th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    Descripción
+                    <BulkApply title="Producto / descripción" className="w-96 space-y-2 p-3">
+                      {(close) => (
+                        <>
+                          <ProductCombobox
+                            products={((config?.products ?? []) as ProductOption[]).filter(
+                              (p) => !!(p.code ?? "").trim() && !!(p.name ?? "").trim(),
+                            )}
+                            value=""
+                            onSelect={(p) => { aplicarProductoTodos(p); close(); }}
+                          />
+                          <p className="text-xs normal-case tracking-normal text-muted-foreground">
+                            Se aplica el producto y su cuenta contable automática a todos los renglones.
+                          </p>
+                        </>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    Tipo
+                    <BulkApply title="Tipo de ítem" className="w-64 space-y-2 p-3">
+                      {(close) => (
+                        <div className="grid gap-1">
+                          {(["producto", "servicio", "gasto"] as const).map((k) => (
+                            <Button
+                              key={k}
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="justify-start text-xs normal-case tracking-normal"
+                              onClick={() => { aplicarTipoTodos(k); close(); }}
+                            >
+                              {k}
+                            </Button>
+                          ))}
+                        </div>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
                 <th className="px-3 py-2 font-medium">Cant.</th>
                 <th className="px-3 py-2 font-medium">Vr. unitario</th>
                 <th className="px-3 py-2 font-medium">Descuento</th>
-                <th className="px-3 py-2 font-medium">Cuenta PUC</th>
-                <th className="px-3 py-2 font-medium">IVA</th>
-                <th className="px-3 py-2 font-medium">Retención</th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    Cuenta PUC
+                    <BulkApply title="Cuenta PUC" className="w-96 space-y-2 p-3">
+                      {(close) => (
+                        <>
+                          <AccountCombobox
+                            accounts={config?.accounts ?? []}
+                            value=""
+                            onChange={(code, name) => { aplicarCuentaTodos(code, name); close(); }}
+                          />
+                          <p className="text-xs normal-case tracking-normal text-muted-foreground">
+                            Asignación manual: no reemplaza la lógica automática producto → categoría → cuenta.
+                          </p>
+                        </>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    IVA
+                    <BulkApply title="IVA" className="w-72 space-y-2 p-3">
+                      {(close) => (
+                        <select
+                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs normal-case tracking-normal"
+                          defaultValue=""
+                          onChange={(e) => { aplicarIvaTodos(e.target.value); close(); }}
+                        >
+                          <option value="" disabled>Selecciona un impuesto…</option>
+                          <option value="">Sin impuesto</option>
+                          {impuestosIva.map((t) => (
+                            <option key={String(t.id)} value={String(t.id)}>
+                              {t.name} {Number(t.rate)}%
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    Retención
+                    <BulkApply title="Retención" className="w-72 space-y-2 p-3">
+                      {(close) => (
+                        <select
+                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs normal-case tracking-normal"
+                          defaultValue=""
+                          onChange={(e) => { aplicarRetencionTodos(e.target.value); close(); }}
+                        >
+                          <option value="" disabled>Selecciona una retención…</option>
+                          <option value="">Sin retención</option>
+                          {impuestosRet.map((t) => (
+                            <option key={String(t.id)} value={String(t.id)}>
+                              {t.name} {Number(t.rate)}%
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
                 <th className="px-3 py-2 text-right font-medium">Valor</th>
                 <th className="px-3 py-2" />
               </tr>
