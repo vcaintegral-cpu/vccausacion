@@ -59,3 +59,16 @@ export function checkInvoiceCompany(company: CompanyRef | null | undefined, invo
 export function mensajeEmpresaIncorrecta(check: Extract<CompanyCheck, { status: "mismatch" }>): string {
   return `Factura no pertenece a la empresa seleccionada. El NIT del comprador en la factura (${check.buyerNit}) no coincide con el NIT de la empresa activa (${check.companyNit}). No es posible aprobar ni enviar esta factura a Siigo.`;
 }
+
+/**
+ * Motivo bloqueante para guardar, aprobar o causar. Devuelve null cuando la factura
+ * pertenece a la empresa activa. Se usa en causación, revisión, carga masiva y servidor.
+ */
+export function motivoBloqueoEmpresa(check: CompanyCheck): string | null {
+  if (check.status === "mismatch") return mensajeEmpresaIncorrecta(check);
+  if (check.status === "sin-datos")
+    return "No fue posible verificar el NIT del comprador de la factura. Verifique la factura manualmente antes de continuar. No es posible guardar, aprobar ni causar esta factura.";
+  if (check.status === "sin-nit-empresa")
+    return "La empresa activa no tiene NIT configurado. Registre el NIT de la empresa antes de guardar o causar facturas.";
+  return null;
+}
