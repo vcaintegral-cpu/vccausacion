@@ -255,7 +255,7 @@ function Causar() {
    */
   useEffect(() => {
     const nit = header.provider_nit;
-    if (!companyId || !nit) { setCentroSugerido(null); return; }
+    if (!companyId) { setCentroSugerido(null); return; }
     let cancelado = false;
     void suggestCostCenter({ companyId, providerNit: nit }).then((s) => {
       if (cancelado || !s) return;
