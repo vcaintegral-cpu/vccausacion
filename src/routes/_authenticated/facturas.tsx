@@ -124,7 +124,12 @@ function Facturas() {
   }
 
   async function aprobar(inv: Inv) {
-    const { error } = await supabase.from("invoices").update({ status: "aprobado" }).eq("id", inv.id);
+    // Al aprobar (o re-aprobar tras corregir un error) queda pendiente de envío a Siigo.
+    const { error } = await supabase
+      .from("invoices")
+      .update({ status: "aprobado", siigo_status: "pendiente", siigo_error: null })
+      .eq("id", inv.id)
+      .neq("siigo_status", "sincronizada");
     if (error) { toast.error(error.message); return; }
     toast.success("Comprobante aprobado.");
     await queryClient.invalidateQueries({ queryKey: ["invoices", companyId] });
