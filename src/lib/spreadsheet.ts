@@ -68,6 +68,28 @@ export async function readSheetIndexed(file: File): Promise<{ row: SheetRow; row
 }
 
 /** Devuelve el primer valor no vacío entre varios encabezados posibles. */
+export type SheetMatrix = {
+  /** Valores tal como se ven en Excel (texto formateado, sin transformar). */
+  text: string[][];
+  /** Valores crudos de la celda (números sin redondear, fechas, etc.). */
+  raw: unknown[][];
+};
+
+/** Lee la primera hoja SIN normalizar nada: matriz completa de celdas, texto y valor crudo. */
+export async function readSheetMatrix(file: File): Promise<SheetMatrix> {
+  const buffer = await file.arrayBuffer();
+  const wb = XLSX.read(buffer, { type: "array", cellDates: false });
+  const first = wb.SheetNames[0];
+  if (!first) return { text: [], raw: [] };
+  const sheet = wb.Sheets[first]!;
+  const text = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: "", blankrows: true, raw: false });
+  const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "", blankrows: true, raw: true });
+  return {
+    text: text.map((row) => row.map((cell) => (cell == null ? "" : String(cell)))),
+    raw,
+  };
+}
+
 export function pick(row: SheetRow, ...names: string[]): string {
   for (const n of names) {
     const key = normKey(n);
