@@ -10,6 +10,7 @@ import { useActiveCompany } from "@/lib/active-company";
 import { buildJournal, totals, type JournalLine, type Retenciones } from "@/lib/accounting";
 import { ITEM_TYPES, type LearningRule } from "@/lib/learning";
 import { cop, fecha } from "@/lib/format";
+import { suggestCostCenter } from "@/lib/cost-center";
 import { siigoCreateProduct, siigoFindProduct, siigoSyncInvoice } from "@/lib/siigo.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -246,6 +247,22 @@ function Revisar() {
     setSending(true);
     try {
       await guardarCambios();
+      // Diagnóstico: lo que se ve en pantalla es exactamente lo que se envía.
+      console.log("========== CAUSACIÓN ANTES DE ENVIAR ==========");
+      console.log("Proveedor:", header.provider_name, "· NIT:", header.provider_nit);
+      console.log("Centro de costo:", header.cost_center || "—");
+      lines.forEach((l, i) =>
+        console.log(`Renglón ${i + 1}:`, {
+          tipo_item: l.item_type,
+          producto: l.code ?? null,
+          descripcion: l.description,
+          cuenta: l.account_code,
+          iva: l.iva,
+          retencion: l.retention,
+          centro_costo: header.cost_center ?? null,
+        }),
+      );
+      console.log("===============================================");
       const res = await sync({ data: { invoiceId: header.id } });
       if (!res.ok) { toast.error(res.error ?? "Siigo rechazó el comprobante."); return; }
       setOk({ number: res.siigoNumber, id: res.siigoId, date: res.syncedAt, url: res.documentUrl });
