@@ -1062,21 +1062,45 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
   const [analysis, setAnalysis] = useState<HistoryAnalysis | null>(null);
   const [progreso, setProgreso] = useState<string | null>(null);
   const [detail, setDetail] = useState<ImportDetail | null>(null);
+  const [buscar, setBuscar] = useState("");
+  const [pagina, setPagina] = useState(1);
+  const porPagina = 100;
 
   const { data: learned } = useQuery({
     queryKey: ["learning_rules", companyId, "excel"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("learning_rules")
-        .select("*")
-        .eq("company_id", companyId)
-        .eq("source", "excel")
-        .order("times_used", { ascending: false })
-        .limit(200);
-      if (error) throw error;
-      return data;
+      // Se pagina la lectura: PostgREST devuelve máximo 1000 filas por consulta.
+      const out: Record<string, unknown>[] = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from("learning_rules")
+          .select("*")
+          .eq("company_id", companyId)
+          .eq("source", "excel")
+          .order("times_used", { ascending: false })
+          .range(from, from + PAGE - 1);
+        if (error) throw error;
+        const chunk = (data ?? []) as Record<string, unknown>[];
+        out.push(...chunk);
+        if (chunk.length < PAGE) break;
+      }
+      return out;
     },
   });
+
+  const filtradas = useMemo(() => {
+    const q = buscar.trim().toLowerCase();
+    const all = (learned ?? []) as Record<string, unknown>[];
+    if (!q) return all;
+    return all.filter((r) =>
+      ["provider_nit", "provider_name", "concept", "account_code", "account_name", "cost_center", "retentions"].some((k) =>
+        String(r[k] ?? "").toLowerCase().includes(q),
+      ),
+    );
+  }, [learned, buscar]);
+  const totalPaginas = Math.max(1, Math.ceil(filtradas.length / porPagina));
+  const paginaActual = Math.min(pagina, totalPaginas);
+  const visibles = filtradas.slice((paginaActual - 1) * porPagina, paginaActual * porPagina);
 
   async function importar(file: File) {
     setBusy(true);
@@ -1186,6 +1210,22 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
         )}
       </div>
 
+      <div className="flex flex-wrap items-center gap-3">
+        <Input
+          value={buscar}
+          onChange={(e) => { setBuscar(e.target.value); setPagina(1); }}
+          placeholder="Buscar por NIT, tercero, concepto o cuenta…"
+          className="w-72"
+        />
+        <span className="text-xs text-muted-foreground">
+          Mostrando {fmt(visibles.length)} de {fmt(filtradas.length)} regla(s) · Página {paginaActual} de {totalPaginas}
+        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled={paginaActual <= 1} onClick={() => setPagina(paginaActual - 1)}>Anterior</Button>
+          <Button variant="outline" size="sm" disabled={paginaActual >= totalPaginas} onClick={() => setPagina(paginaActual + 1)}>Siguiente</Button>
+        </div>
+      </div>
+
       <div className="overflow-x-auto rounded-lg border border-border bg-card">
         <table className="w-full text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -1197,19 +1237,19 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {(learned ?? []).map((r) => (
-              <tr key={r.id}>
-                <td className="px-4 py-2">{r.provider_nit ?? "—"}</td>
-                <td className="px-4 py-2">{r.provider_name ?? "—"}</td>
-                <td className="px-4 py-2 max-w-[18rem] truncate">{r.concept ?? "—"}</td>
-                <td className="px-4 py-2">{r.account_code}</td>
-                <td className="px-4 py-2">{r.cost_center ?? "—"}</td>
-                <td className="px-4 py-2">{r.retentions ?? "—"}</td>
-                <td className="px-4 py-2">{r.times_used}</td>
+            {visibles.map((r) => (
+              <tr key={String(r['id'])}>
+                <td className="px-4 py-2">{String(r['provider_nit'] ?? "—")}</td>
+                <td className="px-4 py-2">{String(r['provider_name'] ?? "—")}</td>
+                <td className="px-4 py-2 max-w-[18rem] truncate">{String(r['concept'] ?? "—")}</td>
+                <td className="px-4 py-2">{String(r['account_code'] ?? "—")}</td>
+                <td className="px-4 py-2">{String(r['cost_center'] ?? "—")}</td>
+                <td className="px-4 py-2">{String(r['retentions'] ?? "—")}</td>
+                <td className="px-4 py-2">{String(r['times_used'] ?? 0)}</td>
               </tr>
             ))}
-            {(learned ?? []).length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">Aún no hay conocimiento importado desde Excel.</td></tr>
+            {visibles.length === 0 && (
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">{buscar ? "Sin resultados para la búsqueda." : "Aún no hay conocimiento importado desde Excel."}</td></tr>
             )}
           </tbody>
         </table>
