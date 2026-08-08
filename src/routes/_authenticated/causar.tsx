@@ -166,7 +166,7 @@ function Causar() {
       buyer_nit: inv['buyer_nit'] ?? "",
       buyer_name: inv['buyer_name'] ?? "",
       cufe: inv['cufe'] ?? "",
-      payment_form: (inv['payment_form'] as string | null) || "Crédito",
+      payment_form: "Crédito",
       payment_method: inv['payment_method'] ?? "",
       currency: inv['currency'] ?? "COP",
       cost_center: inv['cost_center'] ?? "",
@@ -467,7 +467,8 @@ function Causar() {
           return;
         }
       }
-      setHeader({ ...emptyHeader(), ...rest });
+      // La forma de pago siempre es crédito, aunque la factura diga contado.
+      setHeader({ ...emptyHeader(), ...rest, payment_form: "Crédito" });
       let provider = null;
       if (rest.provider_nit && companyId) {
         const { data: p } = await supabase
