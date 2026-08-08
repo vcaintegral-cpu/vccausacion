@@ -12,7 +12,7 @@ import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { AccountCombobox } from "@/components/account-combobox";
-import { validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
+import { CUENTA_PADRE_MSG, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { BulkApply } from "@/components/bulk-apply";
 import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
@@ -620,6 +620,16 @@ function Causar() {
 
   async function guardarAprendizaje() {
     if (!recordar || !companyId) return;
+    // El aprendizaje nunca memoriza una cuenta que no permita movimiento en Siigo.
+    const puc = (config?.accounts ?? []) as PucAccount[];
+    if (puc.length > 0) {
+      const check = validarCuenta(puc, recordar.code);
+      if (!check.ok) {
+        setRecordar(null);
+        toast.error(check.problema ?? CUENTA_PADRE_MSG);
+        return;
+      }
+    }
     const line = lines[recordar.index];
     const { error } = await supabase.from("learning_rules").insert({
       company_id: companyId,
