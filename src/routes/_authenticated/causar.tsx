@@ -880,17 +880,23 @@ function Causar() {
             position: i,
           })),
         ),
-        ...lines
-          .filter((l) => l.account_code)
-          .map((l) =>
-            supabase.from("learning_events").insert({
-              company_id: companyId,
-              provider_nit: header.provider_nit,
-              concept: l.description,
-              account_code: resolveOperationalAccount((config?.accounts ?? []) as PucAccount[], l.account_code).operationalAccount ?? l.account_code!,
-            }),
-          ),
       ]);
+
+      // El aprendizaje solo se registra cuando la causación queda aprobada.
+      if (status === "aprobado") {
+        await registrarAprendizaje({
+          companyId,
+          invoiceId: inv.id,
+          userId,
+          providerNit: header.provider_nit,
+          providerName: header.provider_name,
+          costCenter: header.cost_center,
+          lines,
+          decisions: decisiones,
+          puc: (config?.accounts ?? []) as PucAccount[],
+          autoLearning,
+        });
+      }
 
       toast.success(status === "aprobado" ? "Comprobante aprobado." : "Comprobante guardado en borrador.");
       navigate({ to: "/facturas" });
