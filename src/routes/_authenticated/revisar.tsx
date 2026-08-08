@@ -88,7 +88,7 @@ function Revisar() {
   const [centroSugerido, setCentroSugerido] = useState<string | null>(null);
   const [centroTocado, setCentroTocado] = useState(false);
   // Cuentas confirmadas contra la base (company_id + código) cuando no vienen en el listado local.
-  const [cuentasVerificadas, setCuentasVerificadas] = useState<Record<string, string | null>>({});
+  const [cuentasVerificadas, setCuentasVerificadas] = useState<Record<string, { exists: boolean; name: string | null }>>({});
 
   const { data } = useQuery({
     queryKey: ["revisar", id],
