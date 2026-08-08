@@ -12,6 +12,7 @@ import { type LearningRule } from "@/lib/learning";
 import { ITEM_TYPES, isValidItemType, normalizeItemType } from "@/lib/item-type";
 import { cop, fecha } from "@/lib/format";
 import { suggestCostCenter } from "@/lib/cost-center";
+import { checkInvoiceCompany, mensajeEmpresaIncorrecta } from "@/lib/company-validation";
 import { siigoCreateProduct, siigoFindProduct, siigoSyncInvoice } from "@/lib/siigo.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
