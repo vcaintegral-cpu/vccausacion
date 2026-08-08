@@ -24,7 +24,8 @@ type Props = {
  */
 export function InvoicePdfViewer({ factura, onOpenChange }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const docRef = useRef<{ numPages: number; getPage: (n: number) => Promise<any>; destroy: () => Promise<void> } | null>(null);
+  const docRef = useRef<{ numPages: number; getPage: (n: number) => Promise<any> } | null>(null);
+  const taskRef = useRef<{ destroy: () => Promise<void> } | null>(null);
   const bytesRef = useRef<Uint8Array | null>(null);
   const [pagina, setPagina] = useState(1);
   const [paginas, setPaginas] = useState(0);
@@ -56,9 +57,11 @@ export function InvoicePdfViewer({ factura, onOpenChange }: Props) {
         const pdfjs = await import("pdfjs-dist");
         const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
         pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
-        const pdf = await pdfjs.getDocument({ data: bytes.slice() }).promise;
+        const task = pdfjs.getDocument({ data: bytes.slice() });
+        taskRef.current = task;
+        const pdf = await task.promise;
         if (cancelado) {
-          await pdf.destroy();
+          await task.destroy();
           return;
         }
         docRef.current = pdf as never;
@@ -73,9 +76,10 @@ export function InvoicePdfViewer({ factura, onOpenChange }: Props) {
 
     return () => {
       cancelado = true;
-      const pdf = docRef.current;
+      const task = taskRef.current;
       docRef.current = null;
-      void pdf?.destroy();
+      taskRef.current = null;
+      void task?.destroy();
     };
   }, [abierto, path, intento, factura]);
 
