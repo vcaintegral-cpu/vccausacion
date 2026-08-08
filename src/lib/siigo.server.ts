@@ -366,8 +366,12 @@ export function buildSiigoJournalPayload(params: {
 // ---------------------------------------------------------------------------
 
 export type SiigoPurchaseItem = {
-  /** Cuenta contable seleccionada por la IA / el usuario. */
-  account_code: string;
+  /** Naturaleza del renglón en Siigo: producto/servicio del catálogo o cuenta contable. */
+  type: "Product" | "Account";
+  /** Código que Siigo recibe: código real del producto (Product) o cuenta PUC (Account). */
+  code: string;
+  /** Cuenta contable interna (solo para el asiento y los logs; nunca se envía como code). */
+  account_code?: string | null;
   description: string;
   quantity: number;
   price: number;
@@ -375,8 +379,8 @@ export type SiigoPurchaseItem = {
   tax_ids?: Array<number | string>;
   /** Tipo de ítem definido en la causación (producto | servicio | gasto | activo). Nunca se modifica. */
   item_type?: string;
-  /** Centro de costo del renglón, si difiere del documento. */
-  cost_center?: string | null;
+  /** ID de centro de costo de Siigo para el renglón, si difiere del documento. */
+  cost_center_id?: number | null;
 };
 
 /** Tipo de documento de Factura de Compra (FC) configurado en Siigo. */
@@ -432,6 +436,26 @@ export async function siigoPurchasePaymentTypeId(preferido?: string | null): Pro
   }
 }
 
+/** Centro de costo de Siigo: devuelve el ID real a partir del código o nombre interno. */
+export async function siigoCostCenterId(value: string | null | undefined): Promise<number | null> {
+  const clean = (value ?? "").toString().trim();
+  if (!clean) return null;
+  type CC = { id?: number; code?: string | number; name?: string; active?: boolean };
+  const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  try {
+    const res = await siigoGet<CC[] | { results?: CC[] }>("/v1/cost-centers");
+    const list = (Array.isArray(res) ? res : (res?.results ?? [])).filter((c) => c.id != null && c.active !== false);
+    const match =
+      list.find((c) => String(c.id) === clean) ??
+      list.find((c) => String(c.code ?? "").trim() === clean) ??
+      list.find((c) => norm(String(c.name ?? "")) === norm(clean));
+    return match?.id ?? null;
+  } catch (e) {
+    console.warn("[siigo] no fue posible consultar los centros de costo:", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
 export function buildSiigoPurchasePayload(params: {
   documentId: number;
   date: string;
@@ -440,7 +464,8 @@ export function buildSiigoPurchasePayload(params: {
   invoicePrefix: string | null;
   invoiceNumber: string | null;
   observations: string | null;
-  costCenter?: string | null;
+  /** ID real del centro de costo en Siigo (nunca el código interno ni el nombre). */
+  costCenterId?: number | null;
   items: SiigoPurchaseItem[];
   paymentId: number | null;
   paymentValue: number;
@@ -464,17 +489,17 @@ export function buildSiigoPurchasePayload(params: {
     observations: (params.observations ?? "").slice(0, 500),
     items: params.items.map((item) => {
       const line: Record<string, unknown> = {
-        type: "Account",
-        code: item.account_code,
-        description: (item.description || `Cuenta ${item.account_code}`).slice(0, 500),
+        type: item.type,
+        code: item.code,
+        description: (item.description || `${item.type} ${item.code}`).slice(0, 500),
         quantity: item.quantity > 0 ? item.quantity : 1,
         price: item.price,
       };
       if (item.discount && item.discount > 0) line["discount"] = item.discount;
       if (item.tax_ids && item.tax_ids.length > 0) line["taxes"] = item.tax_ids.map((id) => ({ id }));
-      // El centro de costo del renglón se respeta tal cual viene de la causación.
-      const centro = item.cost_center ?? params.costCenter ?? null;
-      if (centro && /^\d+$/.test(String(centro))) line["cost_center"] = Number(centro);
+      // Centro de costo: siempre el ID real de Siigo.
+      const centro = item.cost_center_id ?? params.costCenterId ?? null;
+      if (centro != null) line["cost_center"] = Number(centro);
       return line;
     }),
     payments: [
@@ -485,7 +510,7 @@ export function buildSiigoPurchasePayload(params: {
       },
     ],
   };
-  if (params.costCenter && /^\d+$/.test(params.costCenter)) payload["cost_center"] = Number(params.costCenter);
+  if (params.costCenterId != null) payload["cost_center"] = Number(params.costCenterId);
   if (params.retentionIds && params.retentionIds.length > 0) {
     payload["retentions"] = params.retentionIds.map((id) => ({ id }));
   }
