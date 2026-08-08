@@ -23,9 +23,11 @@ import { cop, fechaHora } from "@/lib/format";
 import {
   siigoImportProviders,
   siigoImportPuc,
+  siigoImportTaxes,
   siigoListPurchases,
   siigoSaveCredentials,
   siigoStatus,
+  siigoSyncedTaxes,
 } from "@/lib/siigo.functions";
 
 export const Route = createFileRoute("/_authenticated/integraciones")({
@@ -57,6 +59,8 @@ function Integraciones() {
   const checkStatus = useServerFn(siigoStatus);
   const importProviders = useServerFn(siigoImportProviders);
   const importPuc = useServerFn(siigoImportPuc);
+  const importTaxes = useServerFn(siigoImportTaxes);
+  const listTaxes = useServerFn(siigoSyncedTaxes);
   const listPurchases = useServerFn(siigoListPurchases);
   const saveCreds = useServerFn(siigoSaveCredentials);
   const [purchases, setPurchases] = useState<Awaited<ReturnType<typeof siigoListPurchases>> | null>(null);
@@ -76,6 +80,19 @@ function Integraciones() {
   const puc = useMutation({
     mutationFn: () => importPuc({ data: { companyId: companyId! } }),
     onSuccess: (r) => toast.success(`${r.imported} cuentas del PUC importadas.`),
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const impuestosSync = useQuery({
+    queryKey: ["siigo-taxes", companyId],
+    queryFn: () => listTaxes({ data: { companyId: companyId! } }),
+    enabled: !!companyId,
+  });
+  const impuestos = useMutation({
+    mutationFn: () => importTaxes({ data: { companyId: companyId! } }),
+    onSuccess: (r) => {
+      toast.success(`${r.imported} impuestos sincronizados desde Siigo.`);
+      void impuestosSync.refetch();
+    },
     onError: (e: Error) => toast.error(e.message),
   });
   const compras = useMutation({
@@ -195,6 +212,10 @@ function Integraciones() {
           <Button onClick={() => puc.mutate()} disabled={!connected || !companyId || puc.isPending}>
             {puc.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
             Importar PUC
+          </Button>
+          <Button onClick={() => impuestos.mutate()} disabled={!connected || !companyId || impuestos.isPending}>
+            {impuestos.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            Sincronizar impuestos desde Siigo
           </Button>
           <Button variant="secondary" onClick={() => compras.mutate()} disabled={!connected || compras.isPending}>
             {compras.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
