@@ -243,7 +243,7 @@ function Revisar() {
     if (Math.abs(t.diferencia) > 1) e.push(`El comprobante está descuadrado por ${cop(t.diferencia)}.`);
     if (base <= 0) e.push("La base gravable debe ser mayor a cero.");
     return e;
-  }, [header, lines, data?.accounts, cuentasVerificadas, retenciones, t.diferencia, base]);
+  }, [header, lines, data?.accounts, data?.company, cuentasVerificadas, retenciones, t.diferencia, base]);
 
   async function guardarCambios() {
     if (!header) return;
