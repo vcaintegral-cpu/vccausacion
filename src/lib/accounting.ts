@@ -128,8 +128,10 @@ export function buildJournal(params: {
   retenciones: Retenciones;
   provider?: ProviderConfig | null;
   costCenter?: string | null;
+  /** Detalle del IVA por cuenta del impuesto seleccionado (fuente: Administración → Retenciones). */
+  ivaDetalle?: { account_code: string; account_name?: string | null; amount: number }[];
 }): JournalLine[] {
-  const { lines, iva, retenciones, provider, costCenter } = params;
+  const { lines, iva, retenciones, costCenter, ivaDetalle } = params;
   const impoconsumo = params.impoconsumo ?? 0;
   const out: JournalLine[] = [];
 
@@ -143,14 +145,21 @@ export function buildJournal(params: {
   for (const [code, g] of grouped)
     out.push({ account_code: code, account_name: g.name, debit: round(g.value), credit: 0, cost_center: costCenter ?? null });
 
-  if (iva > 0)
-    out.push({
-      account_code: provider?.default_iva_account || "621008",
-      account_name: "IVA del costo",
-      debit: round(iva),
-      credit: 0,
-      cost_center: costCenter ?? null,
-    });
+  // El IVA usa EXCLUSIVAMENTE la cuenta del impuesto seleccionado; nunca una cuenta por defecto.
+  if (ivaDetalle && ivaDetalle.length > 0) {
+    for (const d of ivaDetalle) {
+      if (!d.amount) continue;
+      out.push({
+        account_code: d.account_code,
+        account_name: d.account_name ?? null,
+        debit: round(d.amount),
+        credit: 0,
+        cost_center: costCenter ?? null,
+      });
+    }
+  } else if (iva > 0) {
+    out.push({ account_code: "", account_name: "IVA sin impuesto seleccionado", debit: round(iva), credit: 0, cost_center: costCenter ?? null });
+  }
 
   if (impoconsumo > 0)
     out.push({ account_code: "521595", account_name: "Impoconsumo", debit: round(impoconsumo), credit: 0, cost_center: costCenter ?? null });
@@ -161,7 +170,8 @@ export function buildJournal(params: {
   for (const d of retenciones.detalle) {
     if (d.kind === "autorretencion") continue;
     out.push({
-      account_code: d.account_code || defaultRetAccount(d.kind),
+      // La cuenta sale del registro exacto de la retención seleccionada.
+      account_code: d.account_code ?? "",
       account_name: d.name,
       debit: 0,
       credit: d.amount,
@@ -178,13 +188,6 @@ export function buildJournal(params: {
   });
 
   return out;
-}
-
-function defaultRetAccount(kind: string) {
-  if (kind === "retefuente") return "236540";
-  if (kind === "reteiva") return "236701";
-  if (kind === "reteica") return "236805";
-  return "236595";
 }
 
 export const totals = (j: JournalLine[]) => {
