@@ -135,8 +135,8 @@ export async function runReliableImport<T>(options: ReliableImportOptions<T>): P
   }
 
   const saved = options.rows.length - missingKeys.length;
-  const processed = total + invalid + duplicateCount;
   const invalid = invalidIssues.length;
+  const processed = total + invalid + duplicateCount;
   const saveErrors = issues.filter((issue) => !invalidIssues.includes(issue)).length;
   let status: ImportStatus;
   const rejected = invalid + missingKeys.length;
