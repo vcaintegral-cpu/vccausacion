@@ -12,7 +12,7 @@ import { type LearningRule } from "@/lib/learning";
 import { ITEM_TYPES, isValidItemType, normalizeItemType } from "@/lib/item-type";
 import { cop, fecha } from "@/lib/format";
 import { suggestCostCenter } from "@/lib/cost-center";
-import { checkInvoiceCompany, mensajeEmpresaIncorrecta } from "@/lib/company-validation";
+import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
 import { siigoCreateProduct, siigoFindProduct, siigoSyncInvoice } from "@/lib/siigo.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -217,8 +217,8 @@ function Revisar() {
     const e: string[] = [];
     if (!header) return e;
     // Segunda barrera: la factura debe pertenecer a la empresa activa (NIT del comprador).
-    const chequeo = checkInvoiceCompany(data?.company ?? null, header);
-    if (chequeo.status === "mismatch") e.push(mensajeEmpresaIncorrecta(chequeo));
+    const bloqueo = motivoBloqueoEmpresa(checkInvoiceCompany(data?.company ?? null, header));
+    if (bloqueo) e.push(bloqueo);
     if (!header.provider_nit) e.push("Falta el NIT del proveedor.");
     if (lines.length === 0) e.push("La factura no tiene renglones.");
     const pucCodes = new Set((data?.accounts ?? []).map((a) => a.code));
