@@ -131,7 +131,7 @@ export function buildJournal(params: {
   /** Detalle del IVA por cuenta del impuesto seleccionado (fuente: Administración → Retenciones). */
   ivaDetalle?: { account_code: string; account_name?: string | null; amount: number }[];
 }): JournalLine[] {
-  const { lines, iva, retenciones, costCenter, ivaDetalle } = params;
+  const { lines, iva, retenciones, provider, costCenter, ivaDetalle } = params;
   const impoconsumo = params.impoconsumo ?? 0;
   const out: JournalLine[] = [];
 
