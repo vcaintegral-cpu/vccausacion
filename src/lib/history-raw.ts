@@ -117,7 +117,7 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
   let period: string | null = null;
   for (let i = 0; i < headerRow; i += 1) {
     const value = (text[i]?.[0] ?? "").trim();
-    if (/^(de|del)\s/i.test(value) || /\bа\b|\ba\b/i.test(value) === false ? false : /^(de|del)\s/i.test(value)) period = value;
+    if (/^(de|del)\s/i.test(value)) period = value;
   }
 
   const rows: RawHistoryRow[] = [];
