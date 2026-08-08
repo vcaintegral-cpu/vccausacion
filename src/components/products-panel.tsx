@@ -133,7 +133,10 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
     setBusy("siigo");
     try {
       const res = await siigoImportProducts({ data: { companyId } });
-      toast.success(`Productos y servicios importados: ${res.imported}. Conservados por prioridad manual: ${res.skipped}.`);
+      toast.success(
+        `Productos consultados: ${res.consultados} · Nuevos: ${res.nuevos} · Actualizados: ${res.actualizados} · Activos: ${res.activos} · Inactivos: ${res.inactivos} · Errores: ${res.errores.length}`,
+      );
+      if (res.errores.length > 0) toast.error(res.errores[0] ?? "Error al sincronizar productos.");
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible sincronizar productos desde Siigo.");
