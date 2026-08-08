@@ -1015,6 +1015,8 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [analysis, setAnalysis] = useState<HistoryAnalysis | null>(null);
+  const [progreso, setProgreso] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ImportDetail | null>(null);
 
   const { data: learned } = useQuery({
     queryKey: ["learning_rules", companyId, "excel"],
@@ -1050,9 +1052,6 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
       if (result.rules.length === 0) {
         throw new Error("No se detectaron movimientos contables. Verifica que el archivo tenga columnas de cuenta, tercero y concepto.");
       }
-      // Reemplaza solo el conocimiento generado desde Excel; las reglas manuales se conservan.
-      const { error: delErr } = await supabase.from("learning_rules").delete().eq("company_id", companyId).eq("source", "excel");
-      if (delErr) throw new Error(delErr.message);
       const payload = result.rules.map((r) => ({
         company_id: companyId,
         provider_nit: r.provider_nit,
@@ -1070,19 +1069,52 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
         active: true,
         source: "excel",
       }));
-      for (let i = 0; i < payload.length; i += 500) {
-        const { error } = await supabase.from("learning_rules").insert(payload.slice(i, i + 500));
-        if (error) throw new Error(error.message);
-      }
+      const keyOf = (r: (typeof payload)[number]) => `${r.provider_nit ?? "-"}|${(r.concept ?? "").toLowerCase()}|${r.account_code}`;
+      const existingKeys = await fetchAllKeys(async (from, to) => {
+        const { data, error } = await supabase.from("learning_rules").select("provider_nit,concept,account_code").eq("company_id", companyId).eq("source", "excel").range(from, to);
+        if (error) return { keys: [], error: error.message };
+        return { keys: (data ?? []).map((r) => `${r.provider_nit ?? "-"}|${(r.concept ?? "").toLowerCase()}|${r.account_code}`) };
+      });
+      const existing = new Map(payload.filter((r) => existingKeys.has(keyOf(r))).map((r) => [keyOf(r), r]));
+      const { data: auth } = await supabase.auth.getUser();
+      const importResult = await runReliableImport({
+        module: "Historial contable", fileName: file.name, user: auth.user?.email ?? null,
+        found: result.rowsRead, rows: payload, duplicateCount: 0, keyOf, existingByKey: existing,
+        saveBatch: async (rows) => {
+          // Sin restricción única compuesta, se actualizan coincidencias y se insertan únicamente reglas nuevas.
+          let firstError: { message: string; details?: string | null; hint?: string | null } | null = null;
+          for (const row of rows) {
+            const { data: current, error: readError } = await supabase.from("learning_rules").select("id").eq("company_id", companyId).eq("source", "excel").eq("account_code", row.account_code).eq("provider_nit", row.provider_nit ?? "").eq("concept", row.concept ?? "").maybeSingle();
+            if (readError) { firstError = readError; continue; }
+            const { error } = current
+              ? await supabase.from("learning_rules").update(row).eq("id", current.id)
+              : await supabase.from("learning_rules").insert(row);
+            if (error && !firstError) firstError = error;
+          }
+          return { error: firstError };
+        },
+        verifyKeys: () => fetchAllKeys(async (from, to) => {
+          const { data, error } = await supabase.from("learning_rules").select("provider_nit,concept,account_code").eq("company_id", companyId).eq("source", "excel").range(from, to);
+          if (error) return { keys: [], error: error.message };
+          return { keys: (data ?? []).map((r) => `${r.provider_nit ?? "-"}|${(r.concept ?? "").toLowerCase()}|${r.account_code}`) };
+        }),
+        onProgress: (p) => setProgreso(`Importando historial contable… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)} - ${fmt(p.to)} de ${fmt(p.total)}`),
+      });
+      // Los movimientos se leen y procesan todos; las filas almacenadas son reglas consolidadas por proveedor/concepto/cuenta.
+      importResult.found = result.rowsRead;
+      importResult.processed = result.rowsRead;
+      importResult.invalid = result.rowsSkipped;
+      setDetail(importResult);
       setAnalysis(result);
-      toast.success(
-        `Historial analizado: ${result.rowsUsed} movimiento(s) procesados, ${result.rowsSkipped} omitido(s), ${result.rules.length} regla(s) aprendida(s).`,
-      );
+      if (importResult.status === "COMPLETADA") toast.success("IMPORTACIÓN COMPLETADA");
+      else if (importResult.status === "COMPLETADA CON ERRORES") toast.warning("Importación completada con errores. Revisa el detalle.");
+      else toast.error("La importación del historial quedó incompleta. Revisa el detalle.");
       await qc.invalidateQueries({ queryKey: ["learning_rules"] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible analizar el historial.");
     } finally {
       setBusy(false);
+      setProgreso(null);
     }
   }
 
@@ -1097,6 +1129,8 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
         <div className="mt-3">
           <FileButton label={busy ? "Analizando…" : "Importar Excel"} onFile={importar} busy={busy} />
         </div>
+        {progreso ? <p className="mt-3 rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p> : null}
+        <div className="mt-3"><ImportDetailPanel detail={detail} /></div>
         {analysis && (
           <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4">
             <p>Filas leídas: <strong>{analysis.rowsRead}</strong></p>
