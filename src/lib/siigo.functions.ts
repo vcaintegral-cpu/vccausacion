@@ -855,10 +855,24 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // contable del asiento se usa como criterio de selección, pero no se modifica.
       const retentionIds: Array<number | string> = [];
       if (retencionesPorTipo.length > 0) {
-        const response = await siigoGet<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
-        const allTaxes = (Array.isArray(response) ? response : (response.results ?? [])).filter(
-          (tax) => tax.active !== false && tax.id != null,
-        );
+        // Reglas tributarias configuradas por empresa: la tarifa oficial sale de aquí,
+        // nunca se infiere desde el valor monetario redondeado de la retención.
+        const { data: reglasRetencion } = await supabase
+          .from("tax_rates")
+          .select("kind, name, rate, active, siigo_id, siigo_name, account_code")
+          .eq("company_id", inv.company_id)
+          .eq("active", true);
+        let allTaxes: SiigoTax[] = [];
+        let taxesCargados = false;
+        const cargarTaxes = async () => {
+          if (taxesCargados) return allTaxes;
+          const response = await siigoGet<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
+          allTaxes = (Array.isArray(response) ? response : (response.results ?? [])).filter(
+            (tax) => tax.active !== false && tax.id != null,
+          );
+          taxesCargados = true;
+          return allTaxes;
+        };
         const normalize = (value: string) =>
           value
             .toLowerCase()
@@ -881,30 +895,101 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           );
           const accountCode = journalLine?.account_code ?? retention.accountPrefix;
           const base = retention.kind === "reteiva" ? iva : subtotal;
-          const expectedRate =
-            base > 0 ? Math.round((retention.amount / base) * 1000000) / 10000 : 0;
+          // Sólo se usa como criterio de desempate entre reglas configuradas.
+          const tarifaAproximada =
+            base > 0 ? (retention.amount / base) * 100 : 0;
+          const kindPattern =
+            retention.kind === "reteiva"
+              ? /rete\s*iva|retencion.*iva/
+              : retention.kind === "reteica"
+                ? /rete\s*ica|retencion.*ica/
+                : /rete\s*fuente|retencion.*fuente|renta/;
+          const reglasDelTipo = (reglasRetencion ?? []).filter(
+            (r) =>
+              kindPattern.test(normalize(`${r.kind ?? ""} ${r.name ?? ""}`)) &&
+              Number(r.rate ?? 0) > 0,
+          );
+          const reglasMismaCuenta = reglasDelTipo.filter(
+            (r) => (r.account_code ?? "") === accountCode,
+          );
+          const universoReglas =
+            reglasMismaCuenta.length > 0 ? reglasMismaCuenta : reglasDelTipo;
+          // Regla cuya tarifa configurada explica el valor calculado (tolerancia de redondeo).
+          const regla =
+            universoReglas
+              .slice()
+              .sort(
+                (a, b) =>
+                  Math.abs(Number(a.rate ?? 0) - tarifaAproximada) -
+                  Math.abs(Number(b.rate ?? 0) - tarifaAproximada),
+              )[0] ?? null;
+          // Tarifa OFICIAL configurada (ej. 2.5), no la derivada del monto redondeado.
+          const configuredRate = regla ? Number(regla.rate) : 0;
+
+          // 1) ID real de Siigo ya vinculado a la regla de esta empresa.
+          if (regla?.siigo_id) {
+            console.log("[siigo][retencion] ID desde regla local:", {
+              tipo: retention.label,
+              cuenta: accountCode,
+              tarifa_configurada: configuredRate,
+              valor: retention.amount,
+              siigo_id: regla.siigo_id,
+              nombre: regla.siigo_name ?? regla.name,
+            });
+            if (!retentionIds.some((id) => String(id) === String(regla.siigo_id)))
+              retentionIds.push(regla.siigo_id);
+            continue;
+          }
+
+          const taxes = await cargarTaxes();
           const typePattern =
             retention.kind === "reteiva"
               ? /rete\s*iva|retencion.*iva|withholding.*iva/
               : retention.kind === "reteica"
                 ? /rete\s*ica|retencion.*ica|withholding.*ica/
                 : /rete\s*fuente|retencion.*fuente|withholding|renta/;
-          const candidates = allTaxes.filter((tax) =>
+          const candidates = taxes.filter((tax) =>
             typePattern.test(normalize(`${tax.type ?? ""} ${tax.name ?? ""}`)),
           );
+          // 2) Búsqueda en Siigo por la TARIFA CONFIGURADA (no la inferida).
+          const mismaTarifa = (candidate: SiigoTax) =>
+            configuredRate > 0 &&
+            Math.abs(Number(candidate.percentage ?? 0) - configuredRate) < 0.01;
           const tax =
-            candidates.find((candidate) => readTaxCode(candidate) === accountCode) ??
-            candidates.find((candidate) =>
-              readTaxCode(candidate).startsWith(retention.accountPrefix),
-            ) ??
             candidates.find(
-              (candidate) => Math.abs(Number(candidate.percentage ?? 0) - expectedRate) < 0.0001,
-            );
+              (candidate) => mismaTarifa(candidate) && readTaxCode(candidate) === accountCode,
+            ) ??
+            candidates.find(mismaTarifa) ??
+            candidates.find((candidate) => readTaxCode(candidate) === accountCode) ??
+            (configuredRate > 0
+              ? undefined
+              : candidates.find((candidate) =>
+                  readTaxCode(candidate).startsWith(retention.accountPrefix),
+                ));
           if (tax?.id == null) {
             throw new Error(
               `No se encontró en Siigo el impuesto activo de ${retention.label} para la cuenta ${accountCode}` +
-                (expectedRate > 0 ? ` y tarifa aproximada ${expectedRate}%.` : "."),
+                (configuredRate > 0
+                  ? ` y tarifa configurada ${configuredRate}%. Sincronice los impuestos desde Integraciones.`
+                  : ". Configure la tarifa de retención en Impuestos y sincronice los impuestos desde Integraciones."),
             );
+          }
+          console.log("[siigo][retencion] ID desde /v1/taxes:", {
+            tipo: retention.label,
+            cuenta: accountCode,
+            tarifa_configurada: configuredRate,
+            valor: retention.amount,
+            siigo_id: tax.id,
+            nombre: tax.name,
+          });
+          // Se vincula el ID real a la regla de ESTA empresa para próximas causaciones.
+          if (regla) {
+            await supabase
+              .from("tax_rates")
+              .update({ siigo_id: String(tax.id), siigo_name: tax.name ?? null })
+              .eq("company_id", inv.company_id)
+              .eq("kind", regla.kind)
+              .eq("name", regla.name);
           }
           if (!retentionIds.some((id) => String(id) === String(tax.id))) retentionIds.push(tax.id);
         }
