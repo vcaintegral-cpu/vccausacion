@@ -954,11 +954,16 @@ function Causar() {
           <Label className="text-xs">Forma de pago</Label>
           <select
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-            value={String(header.payment_form ?? "") || "Crédito"}
+            value={
+              CREDIT_TERMS.includes(String(header.payment_form ?? "") as (typeof CREDIT_TERMS)[number])
+                ? String(header.payment_form)
+                : "Crédito"
+            }
             onChange={(e) => setHeader({ ...header, payment_form: e.target.value })}
           >
-            <option value="Crédito">Crédito</option>
-            <option value="Contado">Contado</option>
+            {CREDIT_TERMS.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
           </select>
         </div>
         <div className="space-y-1.5">
