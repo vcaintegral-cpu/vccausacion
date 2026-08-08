@@ -868,8 +868,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         );
       }
 
-      // Por defecto las compras se causan a crédito salvo que la factura indique contado.
-      const formaPago = /contado|efectivo/i.test(String(inv.payment_form ?? "")) ? "contado" : "crédito";
+      // Todas las compras se causan siempre a crédito en Siigo, aunque la factura diga contado.
+      const formaPago = "crédito";
       const paymentId = await siigoPurchasePaymentTypeId(formaPago);
       const retencionesPorTipo = [
         {
