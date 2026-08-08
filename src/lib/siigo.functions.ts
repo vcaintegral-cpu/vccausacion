@@ -867,18 +867,23 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           label: "Retefuente",
           amount: Number(inv.retefuente ?? 0),
           accountPrefix: "2365",
+          // Siigo NO admite Retefuente dentro de retentions[] en /v1/purchases:
+          // sólo se refleja en el asiento contable (cuenta 2365xx) y en el neto.
+          enviarEnRetentions: false,
         },
         {
           kind: "reteiva",
           label: "ReteIVA",
           amount: Number(inv.reteiva ?? 0),
           accountPrefix: "2367",
+          enviarEnRetentions: true,
         },
         {
           kind: "reteica",
           label: "ReteICA",
           amount: Number(inv.reteica ?? 0),
           accountPrefix: "2368",
+          enviarEnRetentions: true,
         },
       ].filter((retention) => retention.amount > 0);
       const retenciones = retencionesPorTipo.reduce(
