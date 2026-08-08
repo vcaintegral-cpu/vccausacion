@@ -164,7 +164,7 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
     for (let from = 0; ; from += 1000) {
       const { data: page, error: existingError } = await context.supabase
         .from("puc_accounts")
-        .select("id,company_id,code,name,nature,active,source,level,parent_code,has_children,is_movement,excel_active,siigo_id,siigo_code,synced_at,siigo_active,siigo_is_movement,siigo_seen_at")
+        .select("id,company_id,code,name,nature,active,source,level,parent_code,has_children,is_movement,excel_active,siigo_id,siigo_code,synced_at,siigo_active,siigo_is_movement,siigo_seen_at,created_at")
         .eq("company_id", data.companyId)
         .order("code")
         .range(from, from + 999);
