@@ -1032,6 +1032,47 @@ function Causar() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!duplicado} onOpenChange={(o) => !o && setDuplicado(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {duplicado && estadoUnico(duplicado) === "sincronizada" ? "Factura ya sincronizada" : "Esta factura ya fue procesada"}
+            </DialogTitle>
+          </DialogHeader>
+          {duplicado && (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">{mensajeDuplicado(duplicado)}</p>
+              <dl className="space-y-1">
+                <Row k="Proveedor" v={duplicado.provider_name ?? "—"} />
+                <Row k="NIT" v={duplicado.provider_nit ?? "—"} />
+                <Row k="Factura" v={[duplicado.prefix, duplicado.number].filter(Boolean).join("-") || "—"} />
+                <Row k="Fecha" v={duplicado.issue_date ?? "—"} />
+                <Row k="Total" v={cop(Number(duplicado.total ?? 0))} />
+                <Row k="CUFE" v={duplicado.cufe ? `${duplicado.cufe.slice(0, 16)}…` : "—"} />
+                <Row k="Estado" v={ESTADO_LABEL[estadoUnico(duplicado)] ?? estadoUnico(duplicado)} />
+                {duplicado.siigo_number && <Row k="Documento Siigo" v={duplicado.siigo_number} />}
+                {duplicado.siigo_synced_at && <Row k="Sincronización" v={duplicado.siigo_synced_at.slice(0, 10)} />}
+              </dl>
+            </div>
+          )}
+          <DialogFooter>
+            {duplicado && estadoUnico(duplicado) !== "sincronizada" && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const id = duplicado.id;
+                  setDuplicado(null);
+                  navigate({ to: "/causar", search: { id } });
+                }}
+              >
+                Continuar con el registro existente
+              </Button>
+            )}
+            <Button onClick={() => { setDuplicado(null); navigate({ to: "/facturas" }); }}>Ver histórico</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
