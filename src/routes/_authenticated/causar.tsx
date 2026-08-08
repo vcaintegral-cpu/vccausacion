@@ -1400,6 +1400,13 @@ function Causar() {
       {lines.length > 0 && journal.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-border bg-card">
           <div className="border-b border-border px-5 py-3 text-sm font-semibold">Validación contable</div>
+          {erroresImpuestos.length > 0 && (
+            <ul className="list-disc space-y-1 border-b border-border bg-destructive/5 px-8 py-3 text-xs text-destructive">
+              {erroresImpuestos.map((e, i) => (
+                <li key={i}>{e}</li>
+              ))}
+            </ul>
+          )}
           <table className="w-full text-sm">
             <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
               <tr>
