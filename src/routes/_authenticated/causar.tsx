@@ -235,6 +235,23 @@ function Causar() {
 
   const normTxt = (s?: string | null) => (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
+  /**
+   * Centro de costo del proveedor: 1) elección manual, 2) proveedor,
+   * 3) historial de causaciones del mismo proveedor, 4) regla contable.
+   */
+  useEffect(() => {
+    const nit = header.provider_nit;
+    if (!companyId || !nit) { setCentroSugerido(null); return; }
+    let cancelado = false;
+    void suggestCostCenter({ companyId, providerNit: nit }).then((s) => {
+      if (cancelado || !s) return;
+      setCentroSugerido(s.detail);
+      console.log("[causacion] centro de costo sugerido:", { proveedor: nit, centro: s.code, origen: s.origin });
+      setHeader((prev) => (centroTocado || prev.cost_center ? prev : { ...prev, cost_center: s.code }));
+    });
+    return () => { cancelado = true; };
+  }, [companyId, header.provider_nit, centroTocado]);
+
   /** Busca el producto/servicio del catálogo que corresponde a un renglón. */
   const buscarProducto = useCallback(
     (l: Line, kind: string) => {
