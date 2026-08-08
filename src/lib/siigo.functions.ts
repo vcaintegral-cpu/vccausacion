@@ -236,7 +236,6 @@ export const pucAccountsOverview = createServerFn({ method: "POST" })
       active: boolean;
       siigo_id: string | null;
       siigo_code: string | null;
-      parent_code: string | null;
       siigo_active: boolean | null;
       siigo_is_movement: boolean | null;
       siigo_seen_at: string | null;
@@ -246,7 +245,7 @@ export const pucAccountsOverview = createServerFn({ method: "POST" })
     for (let from = 0; ; from += 1000) {
       const { data: rows, error } = await context.supabase
         .from("puc_accounts")
-        .select("code, name, level, parent_code, has_children, is_movement, active, siigo_id, siigo_code, synced_at")
+        .select("code, name, level, parent_code, has_children, is_movement, active, siigo_id, siigo_code, synced_at, siigo_active, siigo_is_movement, siigo_seen_at")
         .eq("company_id", data.companyId)
         .order("code")
         .range(from, from + 999);
@@ -805,9 +804,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .order("position");
 
       const esCuentaFiscal = (code: string) => /^(2205|2365|2367|2368|2408|621008)/.test(code);
-      // La cuenta definida en la causación manda: si existe en el PUC de la
-      // empresa se envía exactamente igual, sin recalcular equivalencias.
-      const cuentaDelRenglon = (code: string) => (availableCodes.has(code) ? code : findEquivalent(code) || code);
+      // Toda cuenta de detalle pasa por el mismo resolvedor central utilizado
+      // por el comprobante y la validación previa.
+      const cuentaDelRenglon = (code: string) => {
+        const resolution = resolveOperationalAccount(accounts, code);
+        if (!resolution.valid || !resolution.operationalAccount) throw new Error(resolution.message ?? `La cuenta ${code} no es operativa en Siigo.`);
+        return resolution.operationalAccount;
+      };
 
       // Catálogo local de productos: la cuenta PUC y el código de producto son
       // campos distintos y nunca se intercambian.

@@ -345,10 +345,10 @@ export function evaluarCuenta(accounts: PucAccount[], code: string | null | unde
 
 /** Valida una cuenta contra el PUC de la empresa activa. */
 export function validarCuenta(accounts: PucAccount[], code: string | null | undefined): AccountCheck {
-  const evaluacion = evaluarCuenta(accounts, code);
+  const resolucion = resolveOperationalAccount(accounts, code);
   return {
-    ok: evaluacion.resultado === "VÁLIDA",
-    problema: evaluacion.resultado === "VÁLIDA" ? null : evaluacion.mensaje,
-    cuenta: evaluacion.cuenta,
+    ok: resolucion.valid,
+    problema: resolucion.valid ? null : resolucion.message,
+    cuenta: resolucion.operational ?? resolucion.account,
   };
 }

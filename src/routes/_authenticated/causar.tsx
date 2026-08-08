@@ -1366,7 +1366,7 @@ function Causar() {
           <table className="w-full text-sm">
             <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
               <tr>
-                <th className="px-4 py-2 text-left font-medium">Cuenta</th>
+                <th className="px-4 py-2 text-left font-medium">Cuenta solicitada</th>
                 <th className="px-4 py-2 text-left font-medium">PUC</th>
                 <th className="px-4 py-2 text-left font-medium">Nivel</th>
                 <th className="px-4 py-2 text-left font-medium">Movimiento</th>
