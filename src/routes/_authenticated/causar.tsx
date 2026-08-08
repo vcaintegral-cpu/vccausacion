@@ -10,7 +10,14 @@ import { ITEM_TYPES, normalizeItemType } from "@/lib/item-type";
 import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
-import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
+import { buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
+import {
+  applyEngineToLines,
+  emptyKnowledge,
+  fetchCompanyKnowledge,
+  registrarAprendizaje,
+  type LineDecisions,
+} from "@/lib/causacion-engine";
 import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
 import { AccountCombobox } from "@/components/account-combobox";
 import { CUENTA_PADRE_MSG, resolveOperationalAccount, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
@@ -121,6 +128,8 @@ function Causar() {
   const [centroTocado, setCentroTocado] = useState(false);
   const [duplicado, setDuplicado] = useState<DuplicateInvoice | null>(null);
   const [plazoTocado, setPlazoTocado] = useState(false);
+  // Trazabilidad de la sugerencia automática por renglón (motor de causación).
+  const [decisiones, setDecisiones] = useState<LineDecisions>({});
 
   // El plazo de crédito se recalcula con la fecha de vencimiento, salvo edición manual.
   useEffect(() => {
@@ -150,6 +159,13 @@ function Causar() {
         categories: categories.data ?? [],
       };
     },
+  });
+
+  /** Conocimiento contable de la empresa activa: reglas aprendidas + historial real. */
+  const { data: knowledge } = useQuery({
+    queryKey: ["knowledge", companyId],
+    enabled: !!companyId,
+    queryFn: () => fetchCompanyKnowledge(companyId!),
   });
 
   const baseGravable = useMemo(
