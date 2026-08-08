@@ -224,6 +224,10 @@ function Revisar() {
         }
       }
       if (!isValidItemType(l.item_type)) e.push(`Renglón ${i + 1}: tipo de ítem inválido.`);
+      const tipo = normalizeItemType(l.item_type);
+      if ((tipo === "producto" || tipo === "servicio") && !String(l.code ?? "").trim()) {
+        e.push(`Renglón ${i + 1}: el producto no tiene código válido de Siigo. Sincronice los productos con Siigo antes de causar.`);
+      }
     });
     if (!header.cost_center) e.push("Falta el centro de costo.");
     if (Number(header.iva) < 0) e.push("El IVA no puede ser negativo.");
