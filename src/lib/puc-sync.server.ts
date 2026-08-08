@@ -7,22 +7,27 @@ type Client = SupabaseClient<Database>;
 
 /** Recalcula nivel, padre, hijas y cuentas de movimiento de todo el PUC de una empresa. */
 export async function rebuildPucHierarchy(supabase: Client, companyId: string) {
-  const { data, error } = await supabase
-    .from("puc_accounts")
-    .select("id, code, name, nature, active, source, siigo_id, siigo_code")
-    .eq("company_id", companyId)
-    .order("code")
-    .range(0, 49999);
-  if (error) throw new Error(`No fue posible leer el PUC: ${error.message}`);
-  const rows = data ?? [];
+  type Row = Database["public"]["Tables"]["puc_accounts"]["Row"];
+  const rows: Pick<Row, "id" | "code" | "name" | "nature" | "active" | "source" | "siigo_id" | "siigo_code" | "synced_at">[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("puc_accounts")
+      .select("id, code, name, nature, active, source, siigo_id, siigo_code, synced_at")
+      .eq("company_id", companyId)
+      .order("code")
+      .range(from, from + 999);
+    if (error) throw new Error(`No fue posible leer el PUC: ${error.message}`);
+    const page = data ?? [];
+    rows.push(...page);
+    if (page.length < 1000) break;
+  }
   if (rows.length === 0) return { total: 0, movimiento: 0 };
 
   const hierarchy = buildHierarchy(rows.map((r) => ({ code: r.code, name: r.name, active: r.active })));
   const byCode = new Map(hierarchy.map((h) => [h.code, h]));
-  const now = new Date().toISOString();
-
   const updates = rows.map((r) => {
-    const h = byCode.get(r.code)!;
+    const h = byCode.get(r.code);
+    if (!h) throw new Error(`No fue posible reconstruir la cuenta ${r.code}.`);
     return {
       id: r.id,
       company_id: companyId,
@@ -36,8 +41,10 @@ export async function rebuildPucHierarchy(supabase: Client, companyId: string) {
       has_children: h.has_children,
       is_movement: h.is_movement,
       siigo_id: r.siigo_id ?? null,
-      siigo_code: r.siigo_code ?? r.code,
-      synced_at: now,
+      // La jerarquía no prueba existencia en Siigo. Estos campos solo se
+      // conservan cuando una sincronización real ya los obtuvo.
+      siigo_code: r.siigo_code ?? null,
+      synced_at: r.synced_at ?? null,
     };
   });
 

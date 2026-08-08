@@ -7,6 +7,7 @@ export type PucAccount = {
   parent_code?: string | null;
   has_children?: boolean | null;
   is_movement?: boolean | null;
+  source?: string | null;
   siigo_id?: string | null;
   siigo_code?: string | null;
   synced_at?: string | null;
@@ -136,7 +137,7 @@ export function evaluarCuenta(accounts: PucAccount[], code: string | null | unde
   };
   if (!codigo) return base;
 
-  const cuenta = accounts.find((a) => a.code === codigo) ?? null;
+  const cuenta = accounts.find((a) => String(a.code).trim() === codigo) ?? null;
   const descendientes = hijasActivas(accounts, codigo);
   const auxiliares = auxiliaresDe(accounts, codigo);
 
@@ -153,7 +154,9 @@ export function evaluarCuenta(accounts: PucAccount[], code: string | null | unde
   const activa = cuenta ? cuenta.active !== false : true;
   const tieneAuxiliares = descendientes.length > 0;
   const permiteMovimiento = activa && !tieneAuxiliares && (cuenta ? cuenta.is_movement !== false : false);
-  const cuentaOperativa = permiteMovimiento ? codigo : auxiliares.length === 1 ? auxiliares[0]!.code : null;
+  // Nunca se elige automáticamente una auxiliar por ser la única: el usuario debe
+  // confirmar una cuenta real que exista, esté activa y permita movimiento.
+  const cuentaOperativa = permiteMovimiento ? codigo : null;
 
   const common = {
     ...base,

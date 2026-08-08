@@ -120,11 +120,10 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
     type JournalPage = { pagination?: { page?: number; page_size?: number; total_results?: number }; results?: Journal[] };
 
     const pageSize = 100;
-    const maxPages = 40; // hasta 4.000 comprobantes
     const found = new Map<string, { name: string; nature: string }>();
     let scanned = 0;
 
-    for (let page = 1; page <= maxPages; page++) {
+    for (let page = 1; ; page++) {
       const path = `/v1/journals?page=${page}&page_size=${pageSize}`;
       console.log("[siigo][puc] consultando", `https://api.siigo.com${path}`, "companyId:", data.companyId);
       let res: JournalPage;
@@ -166,6 +165,10 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
       name: v.name,
       nature: v.nature,
       source: "siigo",
+      active: true,
+      is_movement: true,
+      siigo_code: code,
+      synced_at: new Date().toISOString(),
     }));
     console.log("[siigo][puc] registros válidos para insertar:", rows.length);
     if (rows.length === 0) {
@@ -175,7 +178,7 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
 
     const { data: inserted, error } = await context.supabase
       .from("puc_accounts")
-      .upsert(rows, { onConflict: "company_id,code", ignoreDuplicates: true })
+      .upsert(rows, { onConflict: "company_id,code", ignoreDuplicates: false })
       .select("id");
     if (error) {
       console.error("[siigo][puc] error de Supabase al insertar:", JSON.stringify(error));
@@ -614,25 +617,17 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .sort((a, b) => a.code.length - b.code.length || a.code.localeCompare(b.code));
     /** Baja hasta la auxiliar final, prefiriendo la que coincida con las palabras dadas. */
     const auxiliarDe = (code: string, palabras: string[] = []): string | null => {
-      let actual = code;
-      for (let i = 0; i < 6; i += 1) {
-        const hijas = hijasDe(actual);
-        if (hijas.length === 0) return availableCodes.has(actual) ? actual : null;
-        const preferida =
-          palabras.length > 0
-            ? hijas.find((h) => palabras.some((p) => h.name.toLowerCase().includes(p)))
-            : undefined;
-        actual = (preferida ?? hijas[0]!).code;
-      }
-      return availableCodes.has(actual) ? actual : null;
+      const validas = hijasDe(code).filter((account) => validarCuenta(accounts, account.code).ok);
+      if (validas.length === 0) return null;
+      const preferidas = palabras.length > 0
+        ? validas.filter((account) => palabras.some((word) => account.name.toLowerCase().includes(word)))
+        : validas;
+      // Nunca fabricar ni escoger arbitrariamente: solo resolver cuando la
+      // evidencia deja una única auxiliar válida.
+      return preferidas.length === 1 ? preferidas[0]?.code ?? null : null;
     };
 
     const findEquivalent = (baseCode: string) => {
-      if (baseCode === "621008") {
-        // 621008 (IVA de Costo) es transaccional en Siigo: se envía tal cual,
-        // exista o no en el PUC importado.
-        return "621008";
-      }
       if (baseCode === "240801") {
         const directo = (companyAccounts ?? []).find((account) => account.code === "621008");
         if (directo) return directo.code;
@@ -642,18 +637,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         })?.code;
         return auxiliarDe(porNombre ?? "240810", ["iva", "descontable"]) ?? porNombre ?? baseCode;
       }
-      if (baseCode.startsWith("2205")) {
-        return (
-          auxiliarDe("220505", ["nacional", "proveedor"]) ?? auxiliarDe("2205", ["proveedor", "nacional"]) ?? baseCode
-        );
-      }
       // El nivel operativo no siempre es el último de la jerarquía: si la
       // subcuenta permite movimiento se usa tal cual; solo se baja a la
       // auxiliar cuando la cuenta tiene auxiliares activas.
       const evaluacion = evaluarCuenta(accounts, baseCode);
       if (evaluacion.permiteMovimiento) return baseCode;
       if (evaluacion.cuentaOperativa) return evaluacion.cuentaOperativa;
-      return auxiliarDe(baseCode) ?? baseCode;
+       return auxiliarDe(baseCode) ?? baseCode;
     };
 
     const resolvedJournal = journal.map((line) => {
@@ -695,12 +685,11 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     }
 
     // Validación contable bloqueante: toda cuenta enviada a Siigo debe ser de movimiento,
-    // activa y pertenecer al PUC de esta empresa. Solo se exceptúa 621008 (IVA del costo),
-    // que Siigo maneja como cuenta transaccional aunque no venga en el PUC importado.
+    // activa y pertenecer al PUC de esta empresa. No hay excepciones por código:
+    // toda cuenta debe existir realmente en la fuente única de esta empresa.
     if ((companyAccounts ?? []).length > 0) {
       const problemas: string[] = [];
       for (const line of resolvedJournal) {
-        if (line.account_code === "621008") continue;
         const check = validarCuenta(companyAccounts ?? [], line.account_code);
         if (!check.ok && check.problema) problemas.push(check.problema);
       }

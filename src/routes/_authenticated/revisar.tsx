@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, PackageSearch, Send, Sparkles } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
+import { fetchCompanyPuc } from "@/lib/puc-data";
 import { useActiveCompany } from "@/lib/active-company";
 import { buildJournal, totals, type JournalLine, type Retenciones } from "@/lib/accounting";
 import { type LearningRule } from "@/lib/learning";
@@ -101,7 +102,7 @@ function Revisar() {
         supabase.from("invoices").select("*").eq("id", id).single(),
         supabase.from("invoice_lines").select("*").eq("invoice_id", id).order("position"),
         supabase.from("cost_centers").select("code, name").eq("company_id", companyId ?? "").order("code"),
-        supabase.from("puc_accounts").select("code, name").eq("company_id", companyId ?? "").order("code").range(0, 19999),
+        fetchCompanyPuc(companyId ?? ""),
         supabase.from("learning_rules").select("*").eq("company_id", companyId ?? ""),
       ]);
       if (inv.error) throw inv.error;
