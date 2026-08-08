@@ -208,11 +208,8 @@ async function siigoRequest<T>(method: "GET" | "POST", path: string, payload?: u
       );
       console.log("SUMA PAYMENTS", paymentsTotal);
       const totalFactura = Number(purchasePayload['total'] || 0);
-      if (paymentsTotal !== totalFactura && paymentsArr.length > 0) {
-        const lastPayment = paymentsArr[paymentsArr.length - 1] as Record<string, unknown>;
-        lastPayment['value'] = totalFactura;
-        console.log("[siigo] corrección payment:", totalFactura);
-      }
+      // No corregir payments contra el total bruto: cuando hay retenciones,
+      // Siigo espera allí el saldo neto que queda por pagar al proveedor.
       console.log("SIIGO FINAL PAYLOAD", JSON.stringify(payload, null, 2));
       console.log("========== SIIGO REQUEST ==========");
       console.log(JSON.stringify(payload, null, 2));
@@ -468,12 +465,16 @@ export function buildSiigoPurchasePayload(params: {
   costCenterId?: number | null;
   items: SiigoPurchaseItem[];
   paymentId: number | null;
+  /** Total bruto de la compra (base + impuestos, antes de retenciones). */
+  purchaseTotal: number;
+  /** Saldo neto por pagar al proveedor (total bruto - retenciones). */
   paymentValue: number;
   paymentDueDate: string | null;
   /** Retenciones aplicadas al documento (ids de Siigo). */
   retentionIds?: Array<number | string>;
 }) {
-  const total = Math.round(Number(params.paymentValue));
+  const total = Math.round(Number(params.purchaseTotal));
+  const paymentValue = Math.round(Number(params.paymentValue));
   const payload: Record<string, unknown> = {
     document: { id: params.documentId },
     date: params.date,
@@ -505,7 +506,7 @@ export function buildSiigoPurchasePayload(params: {
     payments: [
       {
         ...(params.paymentId != null ? { id: params.paymentId } : {}),
-        value: total,
+        value: paymentValue,
         due_date: params.paymentDueDate ?? params.date,
       },
     ],

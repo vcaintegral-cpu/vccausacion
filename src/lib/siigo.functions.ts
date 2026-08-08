@@ -741,8 +741,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       }
 
       const paymentId = await siigoPurchasePaymentTypeId(inv.payment_form);
-      const retenciones =
-        Number(inv.retefuente ?? 0) + Number(inv.reteiva ?? 0) + Number(inv.reteica ?? 0);
+      const retencionesPorTipo = [
+        { kind: "retefuente", label: "Retefuente", amount: Number(inv.retefuente ?? 0), accountPrefix: "2365" },
+        { kind: "reteiva", label: "ReteIVA", amount: Number(inv.reteiva ?? 0), accountPrefix: "2367" },
+        { kind: "reteica", label: "ReteICA", amount: Number(inv.reteica ?? 0), accountPrefix: "2368" },
+      ].filter((retention) => retention.amount > 0);
+      const retenciones = retencionesPorTipo.reduce((sum, retention) => sum + retention.amount, 0);
 
       const r2 = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
       // Subtotal e IVA: se prefieren los valores de la factura y, si vienen en 0,
@@ -754,9 +758,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const ivaLineas = (invoiceLines ?? []).reduce((acc, l) => acc + Number(l.iva ?? 0), 0);
       const subtotal = r2(Number(inv.subtotal ?? 0) > 0 ? Number(inv.subtotal) : subtotalItems);
       const iva = r2(Number(inv.iva ?? 0) > 0 ? Number(inv.iva) : ivaLineas);
-      // Siigo calcula el total de la compra como base + impuestos. Las retenciones
-      // son información tributaria del documento y NO se descuentan del total ni de
-      // los pagos (de lo contrario devuelve invalid_total_payments).
+      // El total de la compra permanece bruto. Las retenciones disminuyen únicamente
+      // el saldo asociado a la forma de pago/deuda del proveedor.
       const impoconsumo = r2(
         (invoiceLines ?? []).reduce(
           (acc, l) => acc + Number((l as unknown as { impoconsumo?: number }).impoconsumo ?? 0),
@@ -764,6 +767,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         ),
       );
       const totalFactura = r2(Math.max(subtotal + iva + impoconsumo, 0));
+      const netoAPagar = r2(Math.max(totalFactura - retenciones, 0));
 
       if (totalFactura <= 0) {
         throw new Error(
@@ -776,29 +780,81 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         );
       }
 
+      // Retenciones: resolver siempre el ID real configurado en Siigo. La cuenta
+      // contable del asiento se usa como criterio de selección, pero no se modifica.
+      const retentionIds: Array<number | string> = [];
+      if (retencionesPorTipo.length > 0) {
+        const response = await siigoGet<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
+        const allTaxes = (Array.isArray(response) ? response : (response.results ?? [])).filter(
+          (tax) => tax.active !== false && tax.id != null,
+        );
+        const normalize = (value: string) =>
+          value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const readTaxCode = (tax: SiigoTax) => {
+          for (const value of [tax.account, tax.accounting_account, tax.account_code]) {
+            if (value == null) continue;
+            const code = typeof value === "object" ? value.code : value;
+            if (code != null && String(code).trim()) return String(code).trim();
+          }
+          return "";
+        };
+
+        for (const retention of retencionesPorTipo) {
+          const journalLine = resolvedJournal.find(
+            (line) => Number(line.credit ?? 0) > 0 && line.account_code.startsWith(retention.accountPrefix),
+          );
+          const accountCode = journalLine?.account_code ?? retention.accountPrefix;
+          const base = retention.kind === "reteiva" ? iva : subtotal;
+          const expectedRate = base > 0 ? Math.round((retention.amount / base) * 1000000) / 10000 : 0;
+          const typePattern =
+            retention.kind === "reteiva"
+              ? /rete\s*iva|retencion.*iva|withholding.*iva/
+              : retention.kind === "reteica"
+                ? /rete\s*ica|retencion.*ica|withholding.*ica/
+                : /rete\s*fuente|retencion.*fuente|withholding|renta/;
+          const candidates = allTaxes.filter((tax) =>
+            typePattern.test(normalize(`${tax.type ?? ""} ${tax.name ?? ""}`)),
+          );
+          const tax =
+            candidates.find((candidate) => readTaxCode(candidate) === accountCode) ??
+            candidates.find((candidate) => readTaxCode(candidate).startsWith(retention.accountPrefix)) ??
+            candidates.find((candidate) => Math.abs(Number(candidate.percentage ?? 0) - expectedRate) < 0.0001);
+          if (tax?.id == null) {
+            throw new Error(
+              `No se encontró en Siigo el impuesto activo de ${retention.label} para la cuenta ${accountCode}` +
+                (expectedRate > 0 ? ` y tarifa aproximada ${expectedRate}%.` : "."),
+            );
+          }
+          if (!retentionIds.some((id) => String(id) === String(tax.id))) retentionIds.push(tax.id);
+        }
+      }
+
       const esCredito = /cr[eé]d/i.test(String(inv.payment_form ?? ""));
       const fechaDoc = inv.issue_date ?? new Date().toISOString().slice(0, 10);
       const dueDate = esCredito ? (inv.due_date ?? fechaDoc) : fechaDoc;
-      const payments = [{ id: paymentId, value: totalFactura, due_date: dueDate }];
+      const payments = [{ id: paymentId, value: netoAPagar, due_date: dueDate }];
       const sumaPagos = r2(payments.reduce((acc, p) => acc + p.value, 0));
-      if (Math.abs(sumaPagos - totalFactura) > 0.009) {
-        console.log("[siigo][causacion] ⚠ Suma de payments distinta al total calculado");
+      const diferencia = r2(totalFactura - retenciones - sumaPagos);
+      if (Math.abs(diferencia) > 0.009) {
+        console.log("[siigo][causacion] ⚠ Payments no coincide con el neto por pagar");
         console.log("[siigo][causacion] Suma de payments:", sumaPagos);
-        console.log("[siigo][causacion] Total calculado:", totalFactura);
+        console.log("[siigo][causacion] Neto por pagar:", netoAPagar);
         throw new Error(
-          `La suma de los pagos (${sumaPagos}) no coincide con el total calculado (${totalFactura}). Corrige los valores antes de enviar a Siigo.`,
+          `La suma de los pagos (${sumaPagos}) no coincide con el neto por pagar (${netoAPagar}). Corrige los valores antes de enviar a Siigo.`,
         );
       }
 
-      console.log("[siigo][causacion] Subtotal:", subtotal);
-      console.log("[siigo][causacion] IVA:", iva);
-      console.log("[siigo][causacion] Impoconsumo:", impoconsumo);
-      console.log("[siigo][causacion] Retenciones (informativas, no afectan el pago):", retenciones);
-      console.log("[siigo][causacion] Total factura (contable):", r2(subtotal + iva + impoconsumo - retenciones));
-      console.log("[siigo][causacion] Total enviado a Siigo:", totalFactura);
-      console.log("[siigo][causacion] Diferencia payments vs total:", r2(sumaPagos - totalFactura));
+      console.log("[siigo][causacion] Diagnóstico previo:", {
+        subtotal,
+        IVA: iva,
+        total_compra: totalFactura,
+        total_retenciones: retenciones,
+        neto_a_pagar: netoAPagar,
+        valor_payments: sumaPagos,
+        diferencia,
+        retention_ids: retentionIds,
+      });
       console.log("[siigo][causacion] Payments enviados:", JSON.stringify(payments, null, 2));
-      console.log("[siigo][causacion] Suma de payments:", sumaPagos);
 
       const payload = buildSiigoPurchasePayload({
         documentId,
@@ -810,8 +866,10 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         costCenterId,
         items,
         paymentId,
-        paymentValue: totalFactura,
+        purchaseTotal: totalFactura,
+        paymentValue: netoAPagar,
         paymentDueDate: dueDate,
+        retentionIds,
       });
       console.log("========== CAUSACIÓN ANTES DE ENVIAR ==========");
       items.forEach((it, i) => {
