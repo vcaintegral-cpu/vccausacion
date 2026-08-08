@@ -310,7 +310,11 @@ function Causar() {
     lines.forEach((l, i) => {
       const kind = normalizeItemType(l.item_type);
       // La cuenta escogida debe ser cuenta de movimiento del PUC de esta empresa.
-      if (l.account_code && puc.length > 0) {
+      if (l.account_code && puc.length === 0) {
+        out[i] = "No hay un PUC cargado para la empresa activa. Importe o sincronice las cuentas antes de aprobar.";
+        return;
+      }
+      if (l.account_code) {
         const check = validarCuenta(puc, l.account_code);
         if (!check.ok && check.problema) {
           out[i] = check.problema;
@@ -492,14 +496,14 @@ function Causar() {
           nombre: "",
           fuente: "—",
           nivel: "—",
-          movimiento: true,
-          activa: true,
-          enSiigo: true,
+          movimiento: false,
+          activa: false,
+          enSiigo: false,
           auxiliares: 0,
           operativa: code,
-          resultado: "VÁLIDA" as const,
-          ok: true,
-          problema: "",
+          resultado: "PUC SIN CARGAR" as const,
+          ok: false,
+          problema: "No hay un PUC cargado para la empresa activa.",
         };
       const e = evaluarCuenta(puc, code);
       return {

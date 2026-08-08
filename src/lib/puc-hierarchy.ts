@@ -73,11 +73,22 @@ export function buildHierarchy(accounts: PucAccount[]): HierarchyRow[] {
 
 /** Cuentas hijas activas directas o auxiliares finales de una cuenta padre. */
 export function auxiliaresDe(accounts: PucAccount[], code: string): PucAccount[] {
+  const byCode = new Map(accounts.map((account) => [account.code, account]));
+  const perteneceA = (account: PucAccount) => {
+    let parent = account.parent_code ?? null;
+    const visited = new Set<string>();
+    while (parent && !visited.has(parent)) {
+      if (parent === code) return true;
+      visited.add(parent);
+      parent = byCode.get(parent)?.parent_code ?? null;
+    }
+    return false;
+  };
   return accounts
     .filter(
       (a) =>
         a.code.length > code.length &&
-        a.code.startsWith(code) &&
+        perteneceA(a) &&
         a.active !== false &&
         a.is_movement !== false &&
         !accounts.some((h) => h.code.length > a.code.length && h.code.startsWith(a.code) && h.active !== false),
@@ -111,8 +122,20 @@ export type CuentaEval = {
 export const cuentaEnSiigo = (a: PucAccount | null) => !!(a && (a.siigo_id || a.siigo_code));
 
 /** Hijas activas directas o indirectas dentro del PUC de la empresa. */
-const hijasActivas = (accounts: PucAccount[], code: string) =>
-  accounts.filter((a) => a.code.length > code.length && a.code.startsWith(code) && a.active !== false);
+const hijasActivas = (accounts: PucAccount[], code: string) => {
+  const byCode = new Map(accounts.map((account) => [account.code, account]));
+  return accounts.filter((account) => {
+    if (account.active === false || account.code === code) return false;
+    let parent = account.parent_code ?? null;
+    const visited = new Set<string>();
+    while (parent && !visited.has(parent)) {
+      if (parent === code) return true;
+      visited.add(parent);
+      parent = byCode.get(parent)?.parent_code ?? null;
+    }
+    return false;
+  });
+};
 
 /**
  * Determina, para una cuenta del PUC, el nivel operativo que Siigo permite usar.
