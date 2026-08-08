@@ -1,0 +1,1 @@
+REVOKE ALL ON FUNCTION public.enforce_invoice_buyer_company() FROM PUBLIC, anon, authenticated;
