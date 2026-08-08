@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { prepareInvoiceFile } from "@/lib/invoice-file";
 import type { ExtractedInvoice } from "@/lib/extract.functions";
 import { resolveProductAccount } from "@/lib/product-account";
+import { findExistingInvoice, mensajeDuplicado } from "@/lib/invoice-duplicates";
 import {
   applyRulesToLines,
   buildJournal,
@@ -76,6 +77,15 @@ export async function processInvoiceFile(params: {
     data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
   })) as ExtractedInvoice;
   const { lines: extracted, ...header } = data;
+
+  // Control de duplicados por empresa: CUFE, o NIT + prefijo + número.
+  const existente = await findExistingInvoice(companyId, {
+    cufe: header.cufe,
+    provider_nit: header.provider_nit,
+    prefix: header.prefix,
+    number: header.number,
+  });
+  if (existente) throw new Error(mensajeDuplicado(existente));
 
   let provider = null;
   if (header.provider_nit) {
