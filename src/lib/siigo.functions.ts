@@ -1320,7 +1320,15 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       console.log("[siigo][causacion] Respuesta completa de Siigo:", JSON.stringify(res, null, 2));
       // Verificación posterior: la retención debe quedar realmente aplicada en Siigo.
       const retencionesRespuesta = Array.isArray(res.retentions) ? res.retentions : [];
-      if (retencionesSiigo.length > 0 && retencionesRespuesta.length === 0) {
+      // La Retefuente viaja como impuesto de renglón: se confirma dentro de items[].taxes.
+      const itemsRespuesta = Array.isArray((res as { items?: unknown }).items)
+        ? ((res as { items?: Array<{ taxes?: Array<{ id?: number | string; value?: number }> }> }).items ?? [])
+        : [];
+      const retencionesAplicadasEnRenglon = itemsRespuesta.flatMap((it) =>
+        (it.taxes ?? []).filter((t) => retencionesEnItem.some((r) => String(r.id) === String(t.id))),
+      );
+      const aplicadas = retencionesRespuesta.length + retencionesAplicadasEnRenglon.length;
+      if (retencionesSiigo.length > 0 && aplicadas === 0) {
         console.error(
           "[siigo][causacion] ⚠ Siigo creó el documento sin retenciones aplicadas:",
           JSON.stringify(res, null, 2),
