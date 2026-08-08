@@ -280,10 +280,6 @@ function Integraciones() {
         </DialogContent>
       </Dialog>
 
-      {purchases ? (
-        <></>
-      ) : null}
-
       <div className="rounded-lg border border-border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
           <div>
