@@ -355,8 +355,23 @@ export type Database = {
           invoice_id: string
           item_type: string
           iva: number
+          iva_account_code: string | null
+          iva_operational_account: string | null
+          iva_siigo_id: string | null
+          iva_siigo_name: string | null
+          iva_tax_id: string | null
+          iva_tax_name: string | null
+          iva_tax_rate: number | null
           position: number
           quantity: number
+          ret_account_code: string | null
+          ret_operational_account: string | null
+          ret_siigo_id: string | null
+          ret_siigo_name: string | null
+          ret_tax_id: string | null
+          ret_tax_kind: string | null
+          ret_tax_name: string | null
+          ret_tax_rate: number | null
           retention: number
           total: number
           unit_value: number
@@ -373,8 +388,23 @@ export type Database = {
           invoice_id: string
           item_type?: string
           iva?: number
+          iva_account_code?: string | null
+          iva_operational_account?: string | null
+          iva_siigo_id?: string | null
+          iva_siigo_name?: string | null
+          iva_tax_id?: string | null
+          iva_tax_name?: string | null
+          iva_tax_rate?: number | null
           position?: number
           quantity?: number
+          ret_account_code?: string | null
+          ret_operational_account?: string | null
+          ret_siigo_id?: string | null
+          ret_siigo_name?: string | null
+          ret_tax_id?: string | null
+          ret_tax_kind?: string | null
+          ret_tax_name?: string | null
+          ret_tax_rate?: number | null
           retention?: number
           total?: number
           unit_value?: number
@@ -391,8 +421,23 @@ export type Database = {
           invoice_id?: string
           item_type?: string
           iva?: number
+          iva_account_code?: string | null
+          iva_operational_account?: string | null
+          iva_siigo_id?: string | null
+          iva_siigo_name?: string | null
+          iva_tax_id?: string | null
+          iva_tax_name?: string | null
+          iva_tax_rate?: number | null
           position?: number
           quantity?: number
+          ret_account_code?: string | null
+          ret_operational_account?: string | null
+          ret_siigo_id?: string | null
+          ret_siigo_name?: string | null
+          ret_tax_id?: string | null
+          ret_tax_kind?: string | null
+          ret_tax_name?: string | null
+          ret_tax_rate?: number | null
           retention?: number
           total?: number
           unit_value?: number
