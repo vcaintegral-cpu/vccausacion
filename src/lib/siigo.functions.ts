@@ -408,6 +408,66 @@ export const siigoListPurchases = createServerFn({ method: "POST" })
     }));
   });
 
+export type SyncedTax = {
+  id: string;
+  kind: string;
+  name: string;
+  rate: number;
+  siigoId: string | null;
+  accountCode: string | null;
+  active: boolean;
+  syncedAt: string | null;
+};
+
+/** Impuestos sincronizados con Siigo para la empresa activa. */
+export const siigoSyncedTaxes = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }): Promise<SyncedTax[]> => {
+    const { data: rows, error } = await context.supabase
+      .from("tax_rates")
+      .select("id, kind, name, rate, siigo_id, siigo_synced_at, account_code, active")
+      .eq("company_id", data.companyId)
+      .order("kind")
+      .order("rate");
+    if (error) throw new Error(error.message);
+    return (rows ?? []).map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      name: r.name,
+      rate: Number(r.rate ?? 0),
+      siigoId: r.siigo_id ?? null,
+      accountCode: r.account_code ?? null,
+      active: r.active !== false,
+      syncedAt: r.siigo_synced_at ?? null,
+    }));
+  });
+
+const _siigoListPurchasesLegacy = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async (): Promise<SiigoPurchase[]> => {
+    const { siigoGet } = await import("./siigo.server");
+    type P = {
+      id?: string;
+      name?: string;
+      number?: number | string;
+      date?: string;
+      total?: number;
+      supplier?: { identification?: string; branch_office?: number };
+    };
+    const res = await siigoGet<{ results?: P[] }>("/v1/purchases?page_size=25");
+    return (res.results ?? []).map((p) => ({
+      id: String(p.id ?? p.number ?? crypto.randomUUID()),
+      number: String(p.name ?? p.number ?? "—"),
+      date: p.date ?? "",
+      supplier: p.supplier?.identification ?? "—",
+      total: Number(p.total ?? 0),
+    }));
+  });
+
 export type SiigoSyncResult = {
   ok: boolean;
   siigoId: string | null;
