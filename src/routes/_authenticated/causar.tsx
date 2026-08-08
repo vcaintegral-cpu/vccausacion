@@ -13,6 +13,7 @@ import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, typ
 import { AccountCombobox } from "@/components/account-combobox";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
+import { suggestCostCenter } from "@/lib/cost-center";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { expandInvoiceFiles, processInvoiceFile } from "@/lib/bulk-invoices";
@@ -88,6 +89,8 @@ function Causar() {
   const [lineTax, setLineTax] = useState<Record<number, { iva?: string | undefined; ret?: string | undefined }>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [existingFile, setExistingFile] = useState<{ path: string | null; name: string | null }>({ path: null, name: null });
+  const [centroSugerido, setCentroSugerido] = useState<string | null>(null);
+  const [centroTocado, setCentroTocado] = useState(false);
 
   const { data: config } = useQuery({
     queryKey: ["config", companyId],
@@ -232,6 +235,23 @@ function Causar() {
   );
 
   const normTxt = (s?: string | null) => (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+  /**
+   * Centro de costo del proveedor: 1) elección manual, 2) proveedor,
+   * 3) historial de causaciones del mismo proveedor, 4) regla contable.
+   */
+  useEffect(() => {
+    const nit = header.provider_nit;
+    if (!companyId || !nit) { setCentroSugerido(null); return; }
+    let cancelado = false;
+    void suggestCostCenter({ companyId, providerNit: nit }).then((s) => {
+      if (cancelado || !s) return;
+      setCentroSugerido(s.detail);
+      console.log("[causacion] centro de costo sugerido:", { proveedor: nit, centro: s.code, origen: s.origin });
+      setHeader((prev) => (centroTocado || prev.cost_center ? prev : { ...prev, cost_center: s.code }));
+    });
+    return () => { cancelado = true; };
+  }, [companyId, header.provider_nit, centroTocado]);
 
   /** Busca el producto/servicio del catálogo que corresponde a un renglón. */
   const buscarProducto = useCallback(
@@ -743,7 +763,7 @@ function Causar() {
           <select
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={header.cost_center ?? ""}
-            onChange={(e) => setHeader({ ...header, cost_center: e.target.value })}
+            onChange={(e) => { setCentroTocado(true); setHeader({ ...header, cost_center: e.target.value }); }}
           >
             <option value="">Sin centro de costo</option>
             {(config?.centers ?? []).map((c) => (
@@ -752,6 +772,9 @@ function Causar() {
               </option>
             ))}
           </select>
+          {centroSugerido && !centroTocado && (
+            <p className="text-xs text-muted-foreground">{centroSugerido}</p>
+          )}
         </div>
         <div className="space-y-1.5 sm:col-span-2 xl:col-span-4">
           <Label className="text-xs">Notas</Label>

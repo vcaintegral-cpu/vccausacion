@@ -571,14 +571,17 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // débitos del asiento excluyendo impuestos y proveedores.
       const { data: invoiceLines } = await supabase
         .from("invoice_lines")
-        .select("description, quantity, unit_value, discount, iva, account_code, account_name, position")
+        .select("code, description, quantity, unit_value, discount, iva, account_code, account_name, item_type, position")
         .eq("invoice_id", data.invoiceId)
         .order("position");
 
       const esCuentaFiscal = (code: string) => /^(2205|2365|2367|2368|2408|621008)/.test(code);
+      // La cuenta definida en la causación manda: si existe en el PUC de la
+      // empresa se envía exactamente igual, sin recalcular equivalencias.
+      const cuentaDelRenglon = (code: string) => (availableCodes.has(code) ? code : findEquivalent(code) || code);
       const items = (invoiceLines ?? []).length
         ? (invoiceLines ?? []).map((l) => {
-            const code = findEquivalent(l.account_code ?? "") || (l.account_code ?? "");
+            const code = cuentaDelRenglon(l.account_code ?? "");
             return {
               account_code: code,
               description: (l.description ?? l.account_name ?? `Cuenta ${code}`) as string,
@@ -586,6 +589,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               price: Number(l.unit_value ?? 0),
               discount: Number(l.discount ?? 0),
               tax_ids: Number(l.iva ?? 0) > 0 && ivaTaxId != null ? [ivaTaxId] : [],
+              // El tipo de ítem elegido en la revisión se conserva sin cambios.
+              item_type: (l.item_type ?? "gasto") as string,
+              cost_center: inv.cost_center,
             };
           })
         : resolvedJournal
@@ -597,9 +603,26 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               price: Number(l.debit ?? 0),
               discount: 0,
               tax_ids: ivaTaxId != null ? [ivaTaxId] : [],
+              item_type: "gasto",
+              cost_center: l.cost_center ?? inv.cost_center,
             }));
 
       if (items.length === 0) throw new Error("La factura no tiene renglones de gasto/costo para enviar a Siigo.");
+
+      console.log("========== CAUSACIÓN ANTES DE ENVIAR ==========");
+      console.log("Proveedor:", inv.provider_name, "· NIT:", inv.provider_nit);
+      console.log("Centro de costo:", inv.cost_center ?? "—");
+      (invoiceLines ?? []).forEach((l, i) => {
+        console.log(`Renglón ${i + 1}:`, {
+          tipo_item: l.item_type ?? "gasto",
+          codigo_producto: l.code ?? null,
+          cuenta_causacion: l.account_code,
+          cuenta_enviada: cuentaDelRenglon(l.account_code ?? ""),
+          conservada: cuentaDelRenglon(l.account_code ?? "") === l.account_code,
+          centro_costo: inv.cost_center ?? null,
+        });
+      });
+      console.log("===============================================");
 
       const paymentId = await siigoPurchasePaymentTypeId(inv.payment_form);
       const retenciones =

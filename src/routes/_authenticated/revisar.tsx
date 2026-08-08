@@ -10,6 +10,7 @@ import { useActiveCompany } from "@/lib/active-company";
 import { buildJournal, totals, type JournalLine, type Retenciones } from "@/lib/accounting";
 import { ITEM_TYPES, type LearningRule } from "@/lib/learning";
 import { cop, fecha } from "@/lib/format";
+import { suggestCostCenter } from "@/lib/cost-center";
 import { siigoCreateProduct, siigoFindProduct, siigoSyncInvoice } from "@/lib/siigo.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -83,6 +84,8 @@ function Revisar() {
   const [sending, setSending] = useState(false);
   const [ok, setOk] = useState<{ number: string | null; id: string | null; date: string | null; url: string | null } | null>(null);
   const [inventario, setInventario] = useState<{ index: number; query: string; results: { id: string; code: string; name: string }[] | null; busy: boolean } | null>(null);
+  const [centroSugerido, setCentroSugerido] = useState<string | null>(null);
+  const [centroTocado, setCentroTocado] = useState(false);
 
   const { data } = useQuery({
     queryKey: ["revisar", id],
@@ -92,7 +95,7 @@ function Revisar() {
         supabase.from("invoices").select("*").eq("id", id).single(),
         supabase.from("invoice_lines").select("*").eq("invoice_id", id).order("position"),
         supabase.from("cost_centers").select("code, name").eq("company_id", companyId ?? "").order("code"),
-        supabase.from("puc_accounts").select("code, name").eq("company_id", companyId ?? "").order("code"),
+        supabase.from("puc_accounts").select("code, name").eq("company_id", companyId ?? "").order("code").range(0, 19999),
         supabase.from("learning_rules").select("*").eq("company_id", companyId ?? ""),
       ]);
       if (inv.error) throw inv.error;
@@ -112,6 +115,21 @@ function Revisar() {
       setLines(data.lines);
     }
   }, [data]);
+
+  /** Centro de costo sugerido por el historial del proveedor en esta empresa. */
+  useEffect(() => {
+    const nit = header?.provider_nit;
+    const company = header?.company_id;
+    if (!company || !nit) return;
+    let cancelado = false;
+    void suggestCostCenter({ companyId: company, providerNit: nit }).then((s) => {
+      if (cancelado || !s) return;
+      setCentroSugerido(s.detail);
+      console.log("[revision] centro de costo sugerido:", { proveedor: nit, centro: s.code, origen: s.origin });
+      setHeader((prev) => (!prev || centroTocado || prev.cost_center ? prev : { ...prev, cost_center: s.code }));
+    });
+    return () => { cancelado = true; };
+  }, [header?.provider_nit, header?.company_id, centroTocado]);
 
   const base = useMemo(
     () => lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0), 0),
@@ -229,6 +247,22 @@ function Revisar() {
     setSending(true);
     try {
       await guardarCambios();
+      // Diagnóstico: lo que se ve en pantalla es exactamente lo que se envía.
+      console.log("========== CAUSACIÓN ANTES DE ENVIAR ==========");
+      console.log("Proveedor:", header.provider_name, "· NIT:", header.provider_nit);
+      console.log("Centro de costo:", header.cost_center || "—");
+      lines.forEach((l, i) =>
+        console.log(`Renglón ${i + 1}:`, {
+          tipo_item: l.item_type,
+          producto: l.code ?? null,
+          descripcion: l.description,
+          cuenta: l.account_code,
+          iva: l.iva,
+          retencion: l.retention,
+          centro_costo: header.cost_center ?? null,
+        }),
+      );
+      console.log("===============================================");
       const res = await sync({ data: { invoiceId: header.id } });
       if (!res.ok) { toast.error(res.error ?? "Siigo rechazó el comprobante."); return; }
       setOk({ number: res.siigoNumber, id: res.siigoId, date: res.syncedAt, url: res.documentUrl });
@@ -311,7 +345,7 @@ function Revisar() {
           <select
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={header.cost_center ?? ""}
-            onChange={(e) => setHeader({ ...header, cost_center: e.target.value })}
+            onChange={(e) => { setCentroTocado(true); setHeader({ ...header, cost_center: e.target.value }); }}
           >
             <option value="">Sin centro de costo</option>
             {(data?.centers ?? []).map((c) => (
@@ -320,6 +354,7 @@ function Revisar() {
               </option>
             ))}
           </select>
+          {centroSugerido && !centroTocado && <p className="text-xs text-muted-foreground">{centroSugerido}</p>}
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Forma de pago</Label>
@@ -445,6 +480,11 @@ function Revisar() {
           <dl className="mt-3 space-y-1.5 text-sm">
             <Row k="Proveedor" v={`${header.provider_name ?? "—"} (${header.provider_nit ?? "—"})`} />
             <Row k="Centro de costo" v={header.cost_center || "—"} />
+            <Row
+              k="Tipos de ítem"
+              v={[...new Set(lines.map((l) => l.item_type))].join(", ").toUpperCase() || "—"}
+            />
+            <Row k="Cuentas" v={[...new Set(lines.map((l) => l.account_code ?? "—"))].join(", ")} />
             <Row k="Subtotal" v={cop(base)} />
             <Row k="IVA" v={cop(Number(header.iva))} />
             <Row k="Retenciones" v={cop(retenciones.retefuente + retenciones.reteiva + retenciones.reteica)} />
