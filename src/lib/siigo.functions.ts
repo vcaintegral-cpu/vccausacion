@@ -1220,7 +1220,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       });
       console.log("[siigo][causacion] Payments enviados:", JSON.stringify(payments, null, 2));
 
-      const payload = buildSiigoPurchasePayload({
+      const construirPayload = (totalDocumento: number) =>
+        buildSiigoPurchasePayload({
         documentId,
         date: fechaDoc,
         providerNit: inv.provider_nit,
@@ -1232,11 +1233,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         costCenterId,
         items,
         paymentId,
-        purchaseTotal: totalFactura,
-        paymentValue: totalFactura,
+        purchaseTotal: totalDocumento,
+        paymentValue: netoAPagar,
         paymentDueDate: dueDate,
-        retentionIds,
-      });
+        retentions: retencionesSiigo.map((r) => ({ id: r.id, value: r.value })),
+        });
+      const payload = construirPayload(totalFactura);
       console.log("========== CAUSACIÓN ANTES DE ENVIAR ==========");
       items.forEach((it, i) => {
         const prod = it.type === "Product" ? porCodigo.get(it.code) : undefined;
@@ -1260,11 +1262,41 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       console.log(JSON.stringify(payload, null, 2));
       console.log("===================================");
 
-      const res = await siigoPost<{ id?: string; number?: number | string; name?: string; metadata?: { created?: string }; _links?: { self?: { href?: string } } }>(
-        "/v1/purchases",
-        payload,
-      );
+      type SiigoPurchaseResponse = {
+        id?: string;
+        number?: number | string;
+        name?: string;
+        total?: number;
+        retentions?: unknown;
+        payments?: unknown;
+        metadata?: { created?: string };
+        _links?: { self?: { href?: string } };
+      };
+      let payloadEnviado: unknown = payload;
+      let res: SiigoPurchaseResponse;
+      try {
+        res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payload);
+      } catch (err) {
+        const detalle = err instanceof Error ? err.message : String(err);
+        // Algunas configuraciones de Siigo exigen que "total" ya venga neto de retenciones.
+        const conciliacion = /total|payment/i.test(detalle) && retencionesSiigo.length > 0;
+        if (!conciliacion) throw err;
+        console.warn("[siigo][causacion] Reintento con total neto por rechazo de conciliación:", detalle);
+        const payloadNeto = construirPayload(netoAPagar);
+        payloadEnviado = payloadNeto;
+        console.log("========== PAYLOAD SIIGO (reintento neto) ==========");
+        console.log(JSON.stringify(payloadNeto, null, 2));
+        res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadNeto);
+      }
       console.log("[siigo][causacion] Respuesta completa de Siigo:", JSON.stringify(res, null, 2));
+      // Verificación posterior: la retención debe quedar realmente aplicada en Siigo.
+      const retencionesRespuesta = Array.isArray(res.retentions) ? res.retentions : [];
+      if (retencionesSiigo.length > 0 && retencionesRespuesta.length === 0) {
+        console.error(
+          "[siigo][causacion] ⚠ Siigo creó el documento sin retenciones aplicadas:",
+          JSON.stringify(res, null, 2),
+        );
+      }
 
       const syncedAt = new Date().toISOString();
       const siigoId = res.id ? String(res.id) : null;
