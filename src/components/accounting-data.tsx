@@ -1334,6 +1334,59 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
         </div>
         {progreso ? <p className="mt-3 rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p> : null}
         <div className="mt-3"><ImportDetailPanel detail={detail} /></div>
+        {raw ? (
+          <div className="mt-3 space-y-3 rounded-lg border border-border bg-muted/20 p-4">
+            <div className="grid gap-2 text-sm sm:grid-cols-4">
+              <p>Archivo: <strong>{raw.fileName}</strong></p>
+              <p>Movimientos en Excel: <strong>{fmt(raw.rows.length)}</strong></p>
+              <p>Filas de agrupación: <strong>{fmt(raw.groupRows)}</strong></p>
+              <p>Columnas conservadas: <strong>{raw.headers.length}</strong></p>
+            </div>
+            <Button size="sm" variant="outline" onClick={validarImportacion} disabled={validando}>
+              {validando ? "Validando…" : "VALIDAR IMPORTACIÓN"}
+            </Button>
+            {validacion ? (
+              <div className="space-y-2">
+                <div className="grid gap-2 text-sm sm:grid-cols-4">
+                  <p>Registros en Excel: <strong>{fmt(validacion.excelRows)}</strong></p>
+                  <p>Registros almacenados: <strong>{fmt(validacion.dbRows)}</strong></p>
+                  <p>Registros coincidentes: <strong className="text-emerald-600">{fmt(validacion.matching)}</strong></p>
+                  <p>Registros con diferencias: <strong className={validacion.different + validacion.missing.length > 0 ? "text-destructive" : ""}>{fmt(validacion.different + validacion.missing.length)}</strong></p>
+                </div>
+                {validacion.diffs.length > 0 || validacion.missing.length > 0 ? (
+                  <>
+                    <div className="max-h-64 overflow-auto rounded-md border border-border bg-card text-xs">
+                      {validacion.missing.slice(0, 200).map((row) => (
+                        <p key={`m-${row}`} className="border-b border-border px-3 py-2">Fila Excel {row} · No quedó almacenada · Estado: ERROR</p>
+                      ))}
+                      {validacion.diffs.slice(0, 500).map((d, i) => (
+                        <p key={`d-${d.excel_row}-${i}`} className="border-b border-border px-3 py-2 last:border-0">
+                          Fila Excel {d.excel_row} · Campo: {d.field} · Excel: {d.excel} · Aplicación: {d.app} · Estado: ERROR
+                        </p>
+                      ))}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => downloadSheet(
+                        [
+                          ...validacion.missing.map((row) => ({ "Fila Excel": row, Campo: "Registro completo", Excel: "Existe", Aplicación: "No almacenado", Estado: "ERROR" })),
+                          ...validacion.diffs.map((d) => ({ "Fila Excel": d.excel_row, Campo: d.field, Excel: d.excel, Aplicación: d.app, Estado: "ERROR" })),
+                        ],
+                        "diferencias-historial.xlsx",
+                        "Diferencias",
+                      )}
+                    >
+                      <Download className="size-4" /> Descargar diferencias
+                    </Button>
+                  </>
+                ) : (
+                  <p className="text-sm text-emerald-600">El historial almacenado coincide exactamente con el Excel.</p>
+                )}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {analysis && (
           <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4">
             <p>Filas leídas: <strong>{analysis.rowsRead}</strong></p>
@@ -1342,6 +1395,59 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
             <p>Terceros aprendidos: <strong>{analysis.providers}</strong></p>
           </div>
         )}
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <h3 className="text-sm font-semibold">Movimientos originales del Excel</h3>
+          <Input
+            value={buscarMov}
+            onChange={(e) => { setBuscarMov(e.target.value); setPaginaMov(1); }}
+            placeholder="Buscar por cuenta, tercero, comprobante o descripción…"
+            className="w-80"
+          />
+          <span className="text-xs text-muted-foreground">
+            Mostrando {fmt(movVisibles.length)} de {fmt(movFiltrados.length)} movimiento(s) · Página {pagMovActual} de {totalPagMov}
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="outline" size="sm" disabled={pagMovActual <= 1} onClick={() => setPaginaMov(pagMovActual - 1)}>Anterior</Button>
+            <Button variant="outline" size="sm" disabled={pagMovActual >= totalPagMov} onClick={() => setPaginaMov(pagMovActual + 1)}>Siguiente</Button>
+          </div>
+        </div>
+        <div className="overflow-x-auto rounded-lg border border-border bg-card">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Fila</th><th className="px-3 py-2 font-medium">Fecha</th>
+                <th className="px-3 py-2 font-medium">Comprobante</th><th className="px-3 py-2 font-medium">Cuenta</th>
+                <th className="px-3 py-2 font-medium">Nombre cuenta</th><th className="px-3 py-2 font-medium">NIT</th>
+                <th className="px-3 py-2 font-medium">Tercero</th><th className="px-3 py-2 font-medium">Descripción</th>
+                <th className="px-3 py-2 font-medium">C. costo</th>
+                <th className="px-3 py-2 text-right font-medium">Débito</th><th className="px-3 py-2 text-right font-medium">Crédito</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {movVisibles.map((r) => (
+                <tr key={String(r['id'])}>
+                  <td className="px-3 py-2 text-muted-foreground">{String(r['excel_row'] ?? "")}</td>
+                  <td className="px-3 py-2">{String(r['entry_date_text'] ?? "—")}</td>
+                  <td className="px-3 py-2">{String(r['voucher'] ?? "—")}</td>
+                  <td className="px-3 py-2 font-mono">{String(r['account_code'] ?? "—")}</td>
+                  <td className="px-3 py-2 max-w-[14rem] truncate">{String(r['account_name'] ?? "—")}</td>
+                  <td className="px-3 py-2">{String(r['provider_nit'] ?? "—")}</td>
+                  <td className="px-3 py-2 max-w-[14rem] truncate">{String(r['provider_name'] ?? "—")}</td>
+                  <td className="px-3 py-2 max-w-[18rem] truncate">{String(r['description'] ?? r['detail'] ?? "—")}</td>
+                  <td className="px-3 py-2">{String(r['cost_center'] ?? "—")}</td>
+                  <td className="px-3 py-2 text-right">{r['debit'] === null || r['debit'] === undefined ? "—" : String(r['debit_text'] ?? r['debit'])}</td>
+                  <td className="px-3 py-2 text-right">{r['credit'] === null || r['credit'] === undefined ? "—" : String(r['credit_text'] ?? r['credit'])}</td>
+                </tr>
+              ))}
+              {movVisibles.length === 0 && (
+                <tr><td colSpan={11} className="px-4 py-8 text-center text-sm text-muted-foreground">{buscarMov ? "Sin resultados." : "Aún no hay historial original importado."}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
