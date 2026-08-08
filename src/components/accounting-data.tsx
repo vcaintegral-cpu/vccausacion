@@ -14,6 +14,7 @@ import {
 import { downloadSheet, num, pick, readSheet, readSheetIndexed } from "@/lib/spreadsheet";
 import { compareCodes, parsePucSheet, type PucRowError } from "@/lib/puc-import";
 import { analyzeHistory, isSiigoAuxiliary, type HistoryAnalysis } from "@/lib/history-import";
+import { compareHistory, readRawHistory, type HistoryValidation, type RawHistoryFile } from "@/lib/history-raw";
 import { fetchAllKeys, runReliableImport, sameImportValues, type ImportDetail, type ImportIssue } from "@/lib/import-system";
 import { ImportDetailPanel } from "@/components/import-detail";
 import { Button } from "@/components/ui/button";
