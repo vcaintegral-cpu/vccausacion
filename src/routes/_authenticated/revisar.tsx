@@ -181,20 +181,50 @@ function Revisar() {
     [lines],
   );
 
-  const retenciones: Retenciones = useMemo(
-    () => ({
-      retefuente: Number(header?.retefuente ?? 0),
-      reteiva: Number(header?.reteiva ?? 0),
-      reteica: Number(header?.reteica ?? 0),
-      autorretencion: 0,
-      detalle: [
-        { kind: "retefuente", name: "Retefuente", rate: 0, base, amount: Number(header?.retefuente ?? 0), account_code: null },
-        { kind: "reteiva", name: "ReteIVA", rate: 0, base, amount: Number(header?.reteiva ?? 0), account_code: null },
-        { kind: "reteica", name: "ReteICA", rate: 0, base, amount: Number(header?.reteica ?? 0), account_code: null },
-      ].filter((d) => d.amount > 0),
-    }),
-    [header?.retefuente, header?.reteiva, header?.reteica, base],
+  const impuestos = (data?.taxes ?? []) as TaxRecord[];
+  const impuestosIva = impuestos.filter((t) => String(t.kind) === "iva" || String(t.kind) === "impoconsumo");
+  const impuestosRet = impuestos.filter((t) => String(t.kind).startsWith("rete"));
+  const puc = (data?.accounts ?? []) as PucAccount[];
+
+  // Cada retención usa la cuenta del registro exacto seleccionado en el renglón.
+  const retenciones: Retenciones = useMemo(() => {
+    const r: Retenciones = { retefuente: 0, reteiva: 0, reteica: 0, autorretencion: 0, detalle: [] };
+    lines.forEach((l) => {
+      const amount = Number(l.retention || 0);
+      if (!amount) return;
+      const tx = findTaxById(impuestosRet, l.ret_tax_id);
+      const kind = String(tx?.kind ?? "retefuente");
+      const key = kind === "reteiva" ? "reteiva" : kind === "reteica" ? "reteica" : "retefuente";
+      r[key] += amount;
+      const cuenta = tx ? resolveTaxAccount(tx, puc) : null;
+      r.detalle.push({
+        kind: key,
+        name: tx?.name ?? "Retención sin impuesto seleccionado",
+        rate: Number(tx?.rate ?? 0),
+        base: Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
+        amount,
+        account_code: cuenta?.error ? "" : cuenta?.code ?? "",
+      });
+    });
+    return r;
+  }, [lines, impuestosRet, puc]);
+
+  const ivaGroups = useMemo(
+    () => buildIvaGroups(lines.map((l) => ({ tax: findTaxById(impuestosIva, l.iva_tax_id), amount: Number(l.iva || 0) })), puc),
+    [lines, impuestosIva, puc],
   );
+
+  const erroresImpuestos = useMemo(() => {
+    const out = [...ivaGroups.errors];
+    lines.forEach((l, i) => {
+      if (!Number(l.retention || 0)) return;
+      const tx = findTaxById(impuestosRet, l.ret_tax_id);
+      if (!tx) { out.push(`Renglón ${i + 1}: hay retención sin impuesto seleccionado.`); return; }
+      const r = resolveTaxAccount(tx, puc);
+      if (r.error && !out.includes(r.error)) out.push(r.error);
+    });
+    return out;
+  }, [ivaGroups.errors, lines, impuestosRet, puc]);
 
   const journal: JournalLine[] = useMemo(
     () =>
@@ -215,8 +245,9 @@ function Revisar() {
         impoconsumo: Number(header?.impoconsumo ?? 0),
         retenciones,
         costCenter: header?.cost_center ?? null,
+        ivaDetalle: ivaGroups.groups,
       }),
-    [lines, header?.iva, header?.impoconsumo, header?.cost_center, retenciones],
+    [lines, header?.iva, header?.impoconsumo, header?.cost_center, retenciones, ivaGroups],
   );
   const operationalJournal = useMemo(() => {
     const puc = (data?.accounts ?? []) as PucAccount[];
