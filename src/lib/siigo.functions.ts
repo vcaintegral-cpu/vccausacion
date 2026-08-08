@@ -742,11 +742,29 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
       const paymentId = await siigoPurchasePaymentTypeId(inv.payment_form);
       const retencionesPorTipo = [
-        { kind: "retefuente", label: "Retefuente", amount: Number(inv.retefuente ?? 0), accountPrefix: "2365" },
-        { kind: "reteiva", label: "ReteIVA", amount: Number(inv.reteiva ?? 0), accountPrefix: "2367" },
-        { kind: "reteica", label: "ReteICA", amount: Number(inv.reteica ?? 0), accountPrefix: "2368" },
+        {
+          kind: "retefuente",
+          label: "Retefuente",
+          amount: Number(inv.retefuente ?? 0),
+          accountPrefix: "2365",
+        },
+        {
+          kind: "reteiva",
+          label: "ReteIVA",
+          amount: Number(inv.reteiva ?? 0),
+          accountPrefix: "2367",
+        },
+        {
+          kind: "reteica",
+          label: "ReteICA",
+          amount: Number(inv.reteica ?? 0),
+          accountPrefix: "2368",
+        },
       ].filter((retention) => retention.amount > 0);
-      const retenciones = retencionesPorTipo.reduce((sum, retention) => sum + retention.amount, 0);
+      const retenciones = retencionesPorTipo.reduce(
+        (sum, retention) => sum + retention.amount,
+        0,
+      );
 
       const r2 = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
       // Subtotal e IVA: se prefieren los valores de la factura y, si vienen en 0,
@@ -789,7 +807,10 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           (tax) => tax.active !== false && tax.id != null,
         );
         const normalize = (value: string) =>
-          value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          value
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "");
         const readTaxCode = (tax: SiigoTax) => {
           for (const value of [tax.account, tax.accounting_account, tax.account_code]) {
             if (value == null) continue;
@@ -801,11 +822,14 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
         for (const retention of retencionesPorTipo) {
           const journalLine = resolvedJournal.find(
-            (line) => Number(line.credit ?? 0) > 0 && line.account_code.startsWith(retention.accountPrefix),
+            (line) =>
+              Number(line.credit ?? 0) > 0 &&
+              line.account_code.startsWith(retention.accountPrefix),
           );
           const accountCode = journalLine?.account_code ?? retention.accountPrefix;
           const base = retention.kind === "reteiva" ? iva : subtotal;
-          const expectedRate = base > 0 ? Math.round((retention.amount / base) * 1000000) / 10000 : 0;
+          const expectedRate =
+            base > 0 ? Math.round((retention.amount / base) * 1000000) / 10000 : 0;
           const typePattern =
             retention.kind === "reteiva"
               ? /rete\s*iva|retencion.*iva|withholding.*iva/
