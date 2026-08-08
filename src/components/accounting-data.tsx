@@ -423,7 +423,9 @@ export function PucPanel({ companyId }: { companyId: string }) {
       const importResult = await runReliableImport<(typeof parsed.valid)[number]>({
         module: "PUC", fileName: file.name, user: auth.user?.email ?? null, found: parsed.rowsRead,
         rows: parsed.valid,
-        invalidIssues: parsed.errors.map((error) => ({ row: error.rowNumber, key: error.code, message: `${error.problema} ${error.accion}` })),
+        invalidIssues: parsed.errors
+          .filter((error) => !error.problema.startsWith("Código repetido"))
+          .map((error) => ({ row: error.rowNumber, key: error.code, message: `${error.problema} ${error.accion}` })),
         duplicateCount: parsed.duplicates, keyOf: (row) => row.code, existingByKey: existentes,
         equals: sameImportValues(["name", "nature", "active"]),
         saveBatch: async (batch) => {
@@ -454,7 +456,9 @@ export function PucPanel({ companyId }: { companyId: string }) {
 
       const guardadasDelArchivo = parsed.valid.filter((r) => verif.codes.has(r.code)).length;
       const faltantes = parsed.valid.filter((r) => !verif.codes.has(r.code)).map((r) => r.code);
-      const completo = importResult.status === "COMPLETADA";
+       const completo =
+         importResult.found === importResult.saved + importResult.rejected + importResult.duplicates &&
+         importResult.missing === 0;
 
       setResumen({
         archivo: file.name,

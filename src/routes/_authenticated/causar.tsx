@@ -13,6 +13,7 @@ import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { AccountCombobox } from "@/components/account-combobox";
 import { CUENTA_PADRE_MSG, evaluarCuenta, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
+import { fetchCompanyPuc } from "@/lib/puc-data";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { BulkApply } from "@/components/bulk-apply";
 import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
@@ -135,7 +136,7 @@ function Causar() {
         supabase.from("accounting_rules").select("*").eq("company_id", companyId!),
         supabase.from("tax_rates").select("*").eq("company_id", companyId!),
         supabase.from("cost_centers").select("*").eq("company_id", companyId!).order("code"),
-        supabase.from("puc_accounts").select("code, name, active, level, parent_code, has_children, is_movement, siigo_id, siigo_code").eq("company_id", companyId!).order("code").range(0, 19999),
+        fetchCompanyPuc(companyId!),
         supabase.from("products").select("code, name, kind, category, category_id, account_code, account_name").eq("company_id", companyId!).eq("active", true).order("code").range(0, 19999),
         supabase.from("product_categories").select("id, name, kind, account_code, account_name").eq("company_id", companyId!).eq("active", true).range(0, 19999),
       ]);
@@ -143,7 +144,7 @@ function Causar() {
         rules: (rules.data ?? []) as Rule[],
         taxes: (taxes.data ?? []) as TaxRate[],
         centers: centers.data ?? [],
-        accounts: accounts.data ?? [],
+        accounts,
         products: products.data ?? [],
         categories: categories.data ?? [],
       };
@@ -309,7 +310,11 @@ function Causar() {
     lines.forEach((l, i) => {
       const kind = normalizeItemType(l.item_type);
       // La cuenta escogida debe ser cuenta de movimiento del PUC de esta empresa.
-      if (l.account_code && puc.length > 0) {
+      if (l.account_code && puc.length === 0) {
+        out[i] = "No hay un PUC cargado para la empresa activa. Importe o sincronice las cuentas antes de aprobar.";
+        return;
+      }
+      if (l.account_code) {
         const check = validarCuenta(puc, l.account_code);
         if (!check.ok && check.problema) {
           out[i] = check.problema;
@@ -487,19 +492,25 @@ function Causar() {
       if (puc.length === 0)
         return {
           code,
+          existe: false,
+          nombre: "",
+          fuente: "—",
           nivel: "—",
-          movimiento: true,
-          activa: true,
-          enSiigo: true,
+          movimiento: false,
+          activa: false,
+          enSiigo: false,
           auxiliares: 0,
           operativa: code,
-          resultado: "VÁLIDA" as const,
-          ok: true,
-          problema: "",
+          resultado: "PUC SIN CARGAR" as const,
+          ok: false,
+          problema: "No hay un PUC cargado para la empresa activa.",
         };
       const e = evaluarCuenta(puc, code);
       return {
         code,
+        existe: e.existe,
+        nombre: e.cuenta?.name ?? "",
+        fuente: e.cuenta?.source ?? "—",
         nivel: e.nivel ?? "—",
         movimiento: e.permiteMovimiento,
         activa: e.activa,
@@ -1349,6 +1360,7 @@ function Causar() {
             <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="px-4 py-2 text-left font-medium">Cuenta</th>
+                <th className="px-4 py-2 text-left font-medium">PUC</th>
                 <th className="px-4 py-2 text-left font-medium">Nivel</th>
                 <th className="px-4 py-2 text-left font-medium">Movimiento</th>
                 <th className="px-4 py-2 text-left font-medium">Activa</th>
@@ -1362,6 +1374,9 @@ function Causar() {
               {validacionAsiento.map((v) => (
                 <tr key={v.code}>
                   <td className="px-4 py-1.5 font-mono text-xs">{v.code}</td>
+                  <td className="px-4 py-1.5 text-xs">
+                    {v.existe ? `Sí · ${v.nombre || "Sin nombre"} · ${v.fuente}` : "No"}
+                  </td>
                   <td className="px-4 py-1.5 text-xs capitalize">{v.nivel}</td>
                   <td className="px-4 py-1.5 text-xs">{v.movimiento ? "Sí" : "No"}</td>
                   <td className="px-4 py-1.5 text-xs">{v.activa ? "Sí" : "No"}</td>
