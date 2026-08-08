@@ -464,8 +464,9 @@ function Causar() {
         impoconsumo: Number(header.impoconsumo || 0),
         retenciones,
         costCenter: header.cost_center,
+        ivaDetalle: ivaGroups.groups,
       }),
-    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones],
+    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaGroups],
   );
   const operationalJournal = useMemo(() => {
     const puc = (config?.accounts ?? []) as PucAccount[];
