@@ -1298,10 +1298,24 @@ function Causar() {
                       value={l.account_code ?? ""}
                       onChange={(code, name) => {
                         setLine(i, { account_code: code, account_name: name });
+                        setDecisiones((p) => ({ ...p, [i]: { ...(p[i] as never), } }));
                         if (autoLearning && code) setRecordar({ index: i, code, name });
                       }}
                     />
                     {lineErrors[i] && <p className="mt-1 text-xs text-destructive">{lineErrors[i]}</p>}
+                    {decisiones[i]?.code && (
+                      <p
+                        className={`mt-1 text-xs ${
+                          decisiones[i]!.confidence === "ALTA"
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : decisiones[i]!.confidence === "MEDIA"
+                              ? "text-amber-600 dark:text-amber-400"
+                              : "text-muted-foreground"
+                        }`}
+                      >
+                        Confianza {decisiones[i]!.confidence} · {decisiones[i]!.origin}: {decisiones[i]!.reason}
+                      </p>
+                    )}
                   </td>
                   <td className="px-3 py-1.5 w-56">
                     <div className="flex items-center gap-1">
