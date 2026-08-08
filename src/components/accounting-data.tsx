@@ -1,11 +1,18 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Download, Plus, RefreshCw, Upload } from "lucide-react";
+import { Download, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
-import { siigoImportCostCenters, siigoImportProviders, siigoImportPuc, siigoImportTaxes } from "@/lib/siigo.functions";
-import { downloadSheet, num, pick, readSheet } from "@/lib/spreadsheet";
+import {
+  pucRebuildHierarchy,
+  siigoImportCostCenters,
+  siigoImportProviders,
+  siigoImportPuc,
+  siigoImportTaxes,
+} from "@/lib/siigo.functions";
+import { downloadSheet, num, pick, readSheet, readSheetIndexed } from "@/lib/spreadsheet";
+import { compareCodes, parsePucSheet, type PucRowError } from "@/lib/puc-import";
 import { analyzeHistory, isSiigoAuxiliary, type HistoryAnalysis } from "@/lib/history-import";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +21,124 @@ import { Switch } from "@/components/ui/switch";
 
 
 type Source = "manual" | "excel" | "siigo";
+
+const fmt = (n: number) => n.toLocaleString("es-CO");
+
+type PucImportSummary = {
+  archivo: string;
+  encontrados: number;
+  validos: number;
+  importados: number;
+  nuevas: number;
+  actualizadas: number;
+  duplicados: number;
+  errores: PucRowError[];
+  fallos: string[];
+  totalDb: number;
+  primeraExcel: string | null;
+  ultimaExcel: string | null;
+  primeraDb: string | null;
+  ultimaDb: string | null;
+  faltantes: string[];
+  movimiento: number | null;
+  completo: boolean;
+  intentados: number;
+};
+
+/** Cuenta y lista TODAS las cuentas guardadas de la empresa (COUNT + paginación completa). */
+async function verificarPuc(companyId: string) {
+  const { count, error: cErr } = await supabase
+    .from("puc_accounts")
+    .select("id", { count: "exact", head: true })
+    .eq("company_id", companyId);
+  if (cErr) throw new Error(cErr.message);
+  const all: string[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("puc_accounts")
+      .select("code")
+      .eq("company_id", companyId)
+      .order("code")
+      .range(from, from + 999);
+    if (error) throw new Error(error.message);
+    const chunk = data ?? [];
+    chunk.forEach((r) => all.push(String(r.code)));
+    if (chunk.length < 1000) break;
+  }
+  const ordenados = [...all].sort(compareCodes);
+  return {
+    total: count ?? all.length,
+    all,
+    codes: new Set(all),
+    first: ordenados[0] ?? null,
+    last: ordenados[ordenados.length - 1] ?? null,
+  };
+}
+
+function ImportSummary({
+  resumen,
+  onClose,
+  onErrores,
+}: {
+  resumen: PucImportSummary;
+  onClose: () => void;
+  onErrores: () => void;
+}) {
+  return (
+    <div className="space-y-3 rounded-lg border border-border bg-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold uppercase tracking-wide">Resumen de importación</h3>
+          <p className="text-xs text-muted-foreground">Archivo: {resumen.archivo}</p>
+        </div>
+        <Button variant="ghost" size="sm" onClick={onClose}><X className="size-4" /></Button>
+      </div>
+      <div className="grid gap-2 text-sm sm:grid-cols-3">
+        <p>Registros encontrados: <strong>{fmt(resumen.encontrados)}</strong></p>
+        <p>Registros válidos: <strong>{fmt(resumen.validos)}</strong></p>
+        <p>Registros importados: <strong>{fmt(resumen.importados)}</strong></p>
+        <p>Cuentas nuevas: <strong>{fmt(resumen.nuevas)}</strong></p>
+        <p>Cuentas actualizadas: <strong>{fmt(resumen.actualizadas)}</strong></p>
+        <p>Duplicados evitados: <strong>{fmt(resumen.duplicados)}</strong></p>
+        <p>Registros con error: <strong>{fmt(resumen.errores.length)}</strong></p>
+        <p>Total en la base de datos: <strong>{fmt(resumen.totalDb)}</strong></p>
+        <p>Cuentas de movimiento: <strong>{resumen.movimiento === null ? "—" : fmt(resumen.movimiento)}</strong></p>
+        <p>Primera cuenta (Excel): <strong>{resumen.primeraExcel ?? "-"}</strong></p>
+        <p>Última cuenta (Excel): <strong>{resumen.ultimaExcel ?? "-"}</strong></p>
+        <p>Última cuenta guardada: <strong>{resumen.ultimaDb ?? "-"}</strong></p>
+      </div>
+      <p className={`text-sm font-semibold ${resumen.completo ? "text-emerald-600" : "text-destructive"}`}>
+        {resumen.completo
+          ? "PUC IMPORTADO CORRECTAMENTE."
+          : `EL PUC NO SE IMPORTÓ COMPLETAMENTE. Excel: ${fmt(resumen.validos)} · Guardadas: ${fmt(resumen.importados)} · Faltantes: ${fmt(resumen.faltantes.length)}.`}
+      </p>
+      {resumen.fallos.length > 0 ? (
+        <ul className="space-y-1 text-xs text-destructive">
+          {resumen.fallos.map((f, i) => <li key={i}>{f}</li>)}
+        </ul>
+      ) : null}
+      {resumen.faltantes.length > 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Cuentas faltantes (primeras 20): {resumen.faltantes.slice(0, 20).join(", ")}
+        </p>
+      ) : null}
+      {resumen.errores.length > 0 ? (
+        <div className="space-y-2">
+          <div className="max-h-40 space-y-1 overflow-auto text-xs text-muted-foreground">
+            {resumen.errores.slice(0, 50).map((e, i) => (
+              <p key={i}>
+                Fila {e.rowNumber}: {e.code ? `Código ${e.code}. ` : ""}{e.problema} {e.accion}
+              </p>
+            ))}
+          </div>
+          <Button variant="outline" size="sm" onClick={onErrores}>
+            <Download className="size-4" /> Descargar reporte de errores
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function SourceTag({ source }: { source?: string | null }) {
   const label = source === "siigo" ? "Siigo" : source === "excel" ? "Excel" : "Manual";
