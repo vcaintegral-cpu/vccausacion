@@ -1141,10 +1141,40 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // Validación bloqueante: toda retención con valor debe tener su ID real de Siigo.
       if (retencionesPorTipo.length > 0) {
         const sinId = retencionesTrace.filter((r) => !r.siigo_id);
-        if (sinId.length > 0 || retentionIds.length === 0) {
+        if (sinId.length > 0 || retencionesSiigo.length === 0) {
           throw new Error(
             "Retención configurada pero no sincronizada con Siigo. Sincronice los impuestos desde Integraciones antes de causar.",
           );
+        }
+      }
+
+      // Validación final contra /v1/taxes: cada ID enviado debe existir, estar activo
+      // y corresponder al tipo de retención esperado. CUENTA CONTABLE ≠ ID DE IMPUESTO.
+      if (retencionesSiigo.length > 0) {
+        const respTaxes = await siigoGet<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
+        const listaTaxes = (Array.isArray(respTaxes) ? respTaxes : (respTaxes.results ?? [])).filter(
+          (t) => t.id != null,
+        );
+        const normTax = (v: string) => v.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        for (const r of retencionesSiigo) {
+          const tax = listaTaxes.find((t) => String(t.id) === String(r.id));
+          const patron =
+            r.kind === "reteiva"
+              ? /rete\s*iva|retencion.*iva|withholding.*iva/
+              : r.kind === "reteica"
+                ? /rete\s*ica|retencion.*ica|withholding.*ica/
+                : /rete\s*fuente|retencion.*fuente|withholding|renta/;
+          const tipoOk = tax ? patron.test(normTax(`${tax.type ?? ""} ${tax.name ?? ""}`)) : false;
+          if (!tax || tax.active === false || !tipoOk) {
+            console.error("[siigo][retencion] ID inválido en /v1/taxes:", {
+              tipo: r.tipo,
+              id_enviado: r.id,
+              encontrado: tax ?? null,
+            });
+            throw new Error(
+              `El impuesto de ${r.tipo} seleccionado no está correctamente configurado en Siigo. Sincroniza nuevamente los impuestos.`,
+            );
+          }
         }
       }
       console.log("[siigo][retenciones] Diagnóstico:", {
@@ -1164,15 +1194,17 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       });
       const fechaDoc = inv.issue_date ?? new Date().toISOString().slice(0, 10);
       const dueDate = esCredito ? (inv.due_date ?? fechaDoc) : fechaDoc;
-      const payments = [{ id: paymentId, value: totalFactura, due_date: dueDate }];
+      // La retención NO aumenta el total ni el pago: disminuye la obligación con el
+      // proveedor. payments.value = TOTAL FACTURA − RETENCIONES.
+      const sumaRetencionesEnviadas = r2(retencionesSiigo.reduce((acc, r) => acc + r.value, 0));
+      const payments = [{ id: paymentId, value: netoAPagar, due_date: dueDate }];
       const sumaPagos = r2(payments.reduce((acc, p) => acc + p.value, 0));
-      const diferencia = r2(totalFactura - sumaPagos);
+      const diferencia = r2(totalFactura - sumaRetencionesEnviadas - sumaPagos);
       if (Math.abs(diferencia) > 0.009) {
-        console.log("[siigo][causacion] ⚠ Payments no coincide con el total de la compra");
-        console.log("[siigo][causacion] Suma de payments:", sumaPagos);
-        console.log("[siigo][causacion] Total de la compra:", totalFactura);
+        console.log("[siigo][causacion] ⚠ Payments no coincide con el neto a pagar");
+        console.log("[siigo][causacion] Suma de payments:", sumaPagos, "Neto:", netoAPagar);
         throw new Error(
-          `La suma de los pagos (${sumaPagos}) no coincide con el total de la compra (${totalFactura}). Corrige los valores antes de enviar a Siigo.`,
+          `La suma de los pagos (${sumaPagos}) no coincide con el valor neto a pagar (${netoAPagar}). Corrige los valores antes de enviar a Siigo.`,
         );
       }
 
@@ -1184,7 +1216,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         neto_a_pagar: netoAPagar,
         valor_payments: sumaPagos,
         diferencia,
-        retention_ids: retentionIds,
+        retenciones_siigo: retencionesSiigo,
       });
       console.log("[siigo][causacion] Payments enviados:", JSON.stringify(payments, null, 2));
 
