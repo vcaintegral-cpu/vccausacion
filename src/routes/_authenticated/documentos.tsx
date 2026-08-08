@@ -9,7 +9,8 @@ import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { fecha } from "@/lib/format";
 import { ESTADO_LABEL, estadoUnico } from "@/lib/invoice-duplicates";
-import { downloadInvoiceFile, openInvoiceFile } from "@/lib/invoice-pdf";
+import { downloadInvoiceFile } from "@/lib/invoice-pdf";
+import { InvoicePdfViewer } from "@/components/invoice-pdf-viewer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -61,6 +62,7 @@ function Documentos() {
   const [numero, setNumero] = useState("");
   const [proveedor, setProveedor] = useState("");
   const [nit, setNit] = useState("");
+  const [pdfDoc, setPdfDoc] = useState<Doc | null>(null);
 
   // La consulta siempre se hace por empresa (company_id), nunca solo por número de factura.
   const empresaId = empresa === "activa" ? companyId : empresa;
@@ -86,10 +88,9 @@ function Documentos() {
     [docs],
   );
 
-  async function abrir(d: Doc, descargar = false) {
+  async function descargar(d: Doc) {
     try {
-      if (descargar) await downloadInvoiceFile(d);
-      else await openInvoiceFile(d);
+      await downloadInvoiceFile(d);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "PDF no disponible");
     }
@@ -190,10 +191,10 @@ function Documentos() {
                 <td className="whitespace-nowrap px-4 py-2 text-right">
                   {d.file_path ? (
                     <>
-                      <Button variant="ghost" size="icon" title="Ver PDF original" onClick={() => abrir(d)}>
+                      <Button variant="ghost" size="icon" title="Ver PDF original" onClick={() => setPdfDoc(d)}>
                         <Eye className="size-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" title="Descargar PDF original" onClick={() => abrir(d, true)}>
+                      <Button variant="ghost" size="icon" title="Descargar PDF original" onClick={() => descargar(d)}>
                         <Download className="size-4" />
                       </Button>
                     </>
@@ -213,6 +214,8 @@ function Documentos() {
           </tbody>
         </table>
       </div>
+
+      <InvoicePdfViewer factura={pdfDoc} onOpenChange={(o) => !o && setPdfDoc(null)} />
     </div>
   );
 }
