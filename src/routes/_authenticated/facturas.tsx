@@ -9,6 +9,7 @@ import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { cop, fecha } from "@/lib/format";
 import { exportCsv, exportTxt, exportXlsx } from "@/lib/export";
+import { ESTADO_LABEL, estadoUnico } from "@/lib/invoice-duplicates";
 import type { JournalLine } from "@/lib/accounting";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +48,7 @@ type Inv = {
   siigo_number: string | null;
   siigo_synced_at: string | null;
   siigo_last_attempt_at: string | null;
+  siigo_error?: string | null;
 };
 
 const SIIGO_LABEL: Record<string, string> = {
@@ -72,7 +74,7 @@ function Facturas() {
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
   const [detalle, setDetalle] = useState<Inv | null>(null);
-  const [estado, setEstado] = useState<"aprobado" | "borrador" | "todas">("aprobado");
+  const [estado, setEstado] = useState<"todas" | "borrador" | "aprobado" | "sincronizada" | "error">("todas");
 
   const { data: invoices } = useQuery({
     queryKey: ["invoices", companyId],
@@ -81,7 +83,7 @@ function Facturas() {
       const { data, error } = await supabase
         .from("invoices")
         .select(
-          "id, prefix, number, issue_date, provider_nit, provider_name, cost_center, notes, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_synced_at, siigo_last_attempt_at",
+          "id, prefix, number, issue_date, provider_nit, provider_name, cost_center, notes, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_synced_at, siigo_last_attempt_at, siigo_error",
         )
         .eq("company_id", companyId!)
         .order("issue_date", { ascending: false });
@@ -105,7 +107,8 @@ function Facturas() {
   });
 
   const abrir = (r: Inv) => {
-    if (r.status !== "aprobado") navigate({ to: "/causar", search: { id: r.id } });
+    const e = estadoUnico(r);
+    if (e === "borrador" || e === "error") navigate({ to: "/causar", search: { id: r.id } });
     else setDetalle(r);
   };
 
@@ -143,7 +146,7 @@ function Facturas() {
     if (q && !text.includes(q.toLowerCase())) return false;
     if (desde && (r.issue_date ?? "") < desde) return false;
     if (hasta && (r.issue_date ?? "") > hasta) return false;
-    if (estado !== "todas" && r.status !== estado) return false;
+    if (estado !== "todas" && estadoUnico(r) !== estado) return false;
     return true;
   });
 
