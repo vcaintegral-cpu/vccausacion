@@ -23,9 +23,11 @@ import { cop, fechaHora } from "@/lib/format";
 import {
   siigoImportProviders,
   siigoImportPuc,
+  siigoImportTaxes,
   siigoListPurchases,
   siigoSaveCredentials,
   siigoStatus,
+  siigoSyncedTaxes,
 } from "@/lib/siigo.functions";
 
 export const Route = createFileRoute("/_authenticated/integraciones")({
@@ -57,6 +59,8 @@ function Integraciones() {
   const checkStatus = useServerFn(siigoStatus);
   const importProviders = useServerFn(siigoImportProviders);
   const importPuc = useServerFn(siigoImportPuc);
+  const importTaxes = useServerFn(siigoImportTaxes);
+  const listTaxes = useServerFn(siigoSyncedTaxes);
   const listPurchases = useServerFn(siigoListPurchases);
   const saveCreds = useServerFn(siigoSaveCredentials);
   const [purchases, setPurchases] = useState<Awaited<ReturnType<typeof siigoListPurchases>> | null>(null);
@@ -76,6 +80,19 @@ function Integraciones() {
   const puc = useMutation({
     mutationFn: () => importPuc({ data: { companyId: companyId! } }),
     onSuccess: (r) => toast.success(`${r.imported} cuentas del PUC importadas.`),
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const impuestosSync = useQuery({
+    queryKey: ["siigo-taxes", companyId],
+    queryFn: () => listTaxes({ data: { companyId: companyId! } }),
+    enabled: !!companyId,
+  });
+  const impuestos = useMutation({
+    mutationFn: () => importTaxes({ data: { companyId: companyId! } }),
+    onSuccess: (r) => {
+      toast.success(`${r.imported} impuestos sincronizados desde Siigo.`);
+      void impuestosSync.refetch();
+    },
     onError: (e: Error) => toast.error(e.message),
   });
   const compras = useMutation({
@@ -196,6 +213,10 @@ function Integraciones() {
             {puc.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
             Importar PUC
           </Button>
+          <Button onClick={() => impuestos.mutate()} disabled={!connected || !companyId || impuestos.isPending}>
+            {impuestos.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            Sincronizar impuestos desde Siigo
+          </Button>
           <Button variant="secondary" onClick={() => compras.mutate()} disabled={!connected || compras.isPending}>
             {compras.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
             Ver facturas de compra
@@ -258,6 +279,70 @@ function Integraciones() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <div className="rounded-lg border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+          <div>
+            <h2 className="text-sm font-semibold">Impuestos sincronizados con Siigo</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Identificadores reales por empresa. La causación usa exclusivamente estos ID.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => impuestos.mutate()}
+            disabled={!connected || !companyId || impuestos.isPending}
+          >
+            {impuestos.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            Sincronizar nuevamente
+          </Button>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Tipo</TableHead>
+              <TableHead>Nombre</TableHead>
+              <TableHead className="text-right">Tarifa</TableHead>
+              <TableHead>ID Siigo</TableHead>
+              <TableHead>Cuenta</TableHead>
+              <TableHead>Estado</TableHead>
+              <TableHead>Última sincronización</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {(impuestosSync.data ?? []).length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">
+                  {companyId
+                    ? "Sin impuestos sincronizados. Usa “Sincronizar impuestos desde Siigo”."
+                    : "Selecciona una empresa activa."}
+                </TableCell>
+              </TableRow>
+            ) : (
+              (impuestosSync.data ?? []).map((t) => (
+                <TableRow key={t.id}>
+                  <TableCell className="text-xs uppercase">{t.kind}</TableCell>
+                  <TableCell className="text-xs">{t.name}</TableCell>
+                  <TableCell className="text-right font-mono text-xs">{t.rate}%</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {t.siigoId ?? <span className="text-destructive">Sin ID</span>}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{t.accountCode ?? "—"}</TableCell>
+                  <TableCell className="text-xs">
+                    {t.active ? (
+                      <Badge className="bg-success text-success-foreground hover:bg-success">Activo</Badge>
+                    ) : (
+                      <Badge variant="secondary">Inactivo</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{t.syncedAt ? fechaHora(t.syncedAt) : "—"}</TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
 
       {purchases ? (
         <div className="rounded-lg border border-border bg-card">

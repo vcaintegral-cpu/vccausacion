@@ -327,6 +327,7 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
     const rows = list
       .map((t) => {
         const account = resolveAccount(t);
+        const syncedAt = new Date().toISOString();
         return {
           company_id: data.companyId,
           kind: String(t.type ?? "IVA").toLowerCase(),
@@ -337,6 +338,8 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
           source: "siigo",
           siigo_id: t.id != null ? String(t.id) : null,
           siigo_name: String(t.name ?? "").trim() || null,
+          siigo_code: t.id != null ? String(t.id) : null,
+          siigo_synced_at: syncedAt,
         };
       })
       .filter((r) => r.name);
@@ -361,7 +364,14 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
       if (!protectedKeys.has(`${r.kind}|${r.name}`) || !r.siigo_id) continue;
       await context.supabase
         .from("tax_rates")
-        .update({ siigo_id: r.siigo_id, siigo_name: r.siigo_name, rate: r.rate, active: r.active })
+        .update({
+          siigo_id: r.siigo_id,
+          siigo_name: r.siigo_name,
+          siigo_code: r.siigo_code,
+          siigo_synced_at: r.siigo_synced_at,
+          rate: r.rate,
+          active: r.active,
+        })
         .eq("company_id", data.companyId)
         .eq("kind", r.kind)
         .eq("name", r.name);
@@ -397,6 +407,45 @@ export const siigoListPurchases = createServerFn({ method: "POST" })
       total: Number(p.total ?? 0),
     }));
   });
+
+export type SyncedTax = {
+  id: string;
+  kind: string;
+  name: string;
+  rate: number;
+  siigoId: string | null;
+  accountCode: string | null;
+  active: boolean;
+  syncedAt: string | null;
+};
+
+/** Impuestos sincronizados con Siigo para la empresa activa. */
+export const siigoSyncedTaxes = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }): Promise<SyncedTax[]> => {
+    const { data: rows, error } = await context.supabase
+      .from("tax_rates")
+      .select("id, kind, name, rate, siigo_id, siigo_synced_at, account_code, active")
+      .eq("company_id", data.companyId)
+      .order("kind")
+      .order("rate");
+    if (error) throw new Error(error.message);
+    return (rows ?? []).map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      name: r.name,
+      rate: Number(r.rate ?? 0),
+      siigoId: r.siigo_id ?? null,
+      accountCode: r.account_code ?? null,
+      active: r.active !== false,
+      syncedAt: r.siigo_synced_at ?? null,
+    }));
+  });
+
 
 export type SiigoSyncResult = {
   ok: boolean;
@@ -581,6 +630,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         return Number(line.debit ?? 0) > 0 && (name.includes("iva") || line.account_code.startsWith("2408") || line.account_code.startsWith("621008"));
       });
       let ivaTaxId: number | string | null = null;
+      let ivaTaxRate = 0;
+      let ivaTaxName: string | null = null;
       if (Number(inv.iva ?? 0) > 0 && ivaLineIndex >= 0) {
         const ivaAccountLine = resolvedJournal[ivaLineIndex]?.account_code ?? "";
         const rateFactura = Number(inv.total ?? 0) > Number(inv.iva ?? 0)
@@ -606,6 +657,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           candidatasLocales[0];
         if (localElegida?.siigo_id) {
           ivaTaxId = localElegida.siigo_id;
+          ivaTaxRate = Number(localElegida.rate ?? rateFactura);
+          ivaTaxName = localElegida.siigo_name ?? localElegida.name ?? null;
           console.log("[siigo][iva] impuesto local:", {
             cuenta: ivaAccountLine,
             porcentaje: rateFactura,
@@ -643,10 +696,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         if (ivaTaxId == null) {
           if (!tax?.id) {
             throw new Error(
-              `IVA ${invoiceRate}% no encontrado o inactivo en Siigo. Sincronice los impuestos desde Integraciones antes de causar.`,
+              `No se encontró en Siigo el impuesto correspondiente para esta empresa y tarifa (IVA ${invoiceRate}%). Sincronice nuevamente los impuestos desde Integraciones.`,
             );
           }
           ivaTaxId = tax.id;
+          ivaTaxRate = invoiceRate;
+          ivaTaxName = tax.name ?? null;
           console.log("[siigo][iva] impuesto tomado de /v1/taxes:", {
             cuenta: ivaAccount,
             porcentaje: invoiceRate,
@@ -654,6 +709,18 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             nombre: tax.name,
             activo: tax.active !== false,
           });
+          // Se vincula el ID real a la configuración de impuestos de ESTA empresa.
+          await supabase
+            .from("tax_rates")
+            .update({
+              siigo_id: String(tax.id),
+              siigo_name: tax.name ?? null,
+              siigo_code: String(tax.id),
+              siigo_synced_at: new Date().toISOString(),
+            })
+            .eq("company_id", inv.company_id)
+            .eq("kind", "iva")
+            .eq("rate", invoiceRate);
         }
       }
       if (!inv.provider_nit) throw new Error("La factura no tiene NIT de proveedor; Siigo lo exige para la factura de compra.");
@@ -854,6 +921,14 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // Retenciones: resolver siempre el ID real configurado en Siigo. La cuenta
       // contable del asiento se usa como criterio de selección, pero no se modifica.
       const retentionIds: Array<number | string> = [];
+      const retencionesTrace: Array<{
+        tipo: string;
+        cuenta: string;
+        tarifa: number;
+        valor: number;
+        siigo_id: string | null;
+        nombre: string | null;
+      }> = [];
       if (retencionesPorTipo.length > 0) {
         // Reglas tributarias configuradas por empresa: la tarifa oficial sale de aquí,
         // nunca se infiere desde el valor monetario redondeado de la retención.
@@ -938,6 +1013,14 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             });
             if (!retentionIds.some((id) => String(id) === String(regla.siigo_id)))
               retentionIds.push(regla.siigo_id);
+            retencionesTrace.push({
+              tipo: retention.label,
+              cuenta: accountCode,
+              tarifa: configuredRate,
+              valor: retention.amount,
+              siigo_id: String(regla.siigo_id),
+              nombre: regla.siigo_name ?? regla.name ?? null,
+            });
             continue;
           }
 
@@ -968,10 +1051,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
                 ));
           if (tax?.id == null) {
             throw new Error(
-              `No se encontró en Siigo el impuesto activo de ${retention.label} para la cuenta ${accountCode}` +
-                (configuredRate > 0
-                  ? ` y tarifa configurada ${configuredRate}%. Sincronice los impuestos desde Integraciones.`
-                  : ". Configure la tarifa de retención en Impuestos y sincronice los impuestos desde Integraciones."),
+              `No se encontró en Siigo el impuesto correspondiente para esta empresa y tarifa (${retention.label}` +
+                (configuredRate > 0 ? ` ${configuredRate}%` : "") +
+                `, cuenta ${accountCode}). Sincronice nuevamente los impuestos desde Integraciones.`,
             );
           }
           console.log("[siigo][retencion] ID desde /v1/taxes:", {
@@ -986,12 +1068,25 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           if (regla) {
             await supabase
               .from("tax_rates")
-              .update({ siigo_id: String(tax.id), siigo_name: tax.name ?? null })
+              .update({
+                siigo_id: String(tax.id),
+                siigo_name: tax.name ?? null,
+                siigo_code: String(tax.id),
+                siigo_synced_at: new Date().toISOString(),
+              })
               .eq("company_id", inv.company_id)
               .eq("kind", regla.kind)
               .eq("name", regla.name);
           }
           if (!retentionIds.some((id) => String(id) === String(tax.id))) retentionIds.push(tax.id);
+          retencionesTrace.push({
+            tipo: retention.label,
+            cuenta: accountCode,
+            tarifa: configuredRate || Number(tax.percentage ?? 0),
+            valor: retention.amount,
+            siigo_id: String(tax.id),
+            nombre: tax.name ?? null,
+          });
         }
       }
 
@@ -1073,6 +1168,34 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const siigoNumber = res.name ? String(res.name) : res.number != null ? String(res.number) : null;
       const documentUrl = res._links?.self?.href ?? null;
 
+      const trace = {
+        company_id: inv.company_id,
+        factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
+        proveedor: { nit: inv.provider_nit, nombre: inv.provider_name ?? null },
+        renglones: items.map((it) => ({
+          descripcion: it.description,
+          tipo_item: it.item_type,
+          cuenta_puc: it.account_code,
+          codigo: it.type === "Product" ? it.code : null,
+          cantidad: it.quantity,
+          precio: it.price,
+          tax_ids: it.tax_ids,
+        })),
+        iva: { siigo_id: ivaTaxId != null ? String(ivaTaxId) : null, nombre: ivaTaxName, tarifa: ivaTaxRate, valor: iva },
+        retenciones: retencionesTrace,
+        centro_costo: { nombre: inv.cost_center ?? null, siigo_id: costCenterId ?? null },
+        valores: {
+          subtotal,
+          iva,
+          impoconsumo,
+          total: totalFactura,
+          retenciones: retenciones,
+          neto_a_pagar: netoAPagar,
+        },
+        siigo_respuesta: res,
+        enviado_at: syncedAt,
+      };
+
       await supabase
         .from("invoices")
         .update({
@@ -1084,6 +1207,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           siigo_synced_at: syncedAt,
           siigo_synced_by: context.userId,
           siigo_error: null,
+          siigo_trace: trace,
         })
         .eq("id", data.invoiceId);
 

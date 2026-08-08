@@ -313,6 +313,7 @@ export type Database = {
           siigo_status: string
           siigo_synced_at: string | null
           siigo_synced_by: string | null
+          siigo_trace: Json | null
           status: string
           subtotal: number
           total: number
@@ -359,6 +360,7 @@ export type Database = {
           siigo_status?: string
           siigo_synced_at?: string | null
           siigo_synced_by?: string | null
+          siigo_trace?: Json | null
           status?: string
           subtotal?: number
           total?: number
@@ -405,6 +407,7 @@ export type Database = {
           siigo_status?: string
           siigo_synced_at?: string | null
           siigo_synced_by?: string | null
+          siigo_trace?: Json | null
           status?: string
           subtotal?: number
           total?: number
@@ -849,8 +852,10 @@ export type Database = {
           min_base: number
           name: string
           rate: number
+          siigo_code: string | null
           siigo_id: string | null
           siigo_name: string | null
+          siigo_synced_at: string | null
           source: string
         }
         Insert: {
@@ -863,8 +868,10 @@ export type Database = {
           min_base?: number
           name: string
           rate?: number
+          siigo_code?: string | null
           siigo_id?: string | null
           siigo_name?: string | null
+          siigo_synced_at?: string | null
           source?: string
         }
         Update: {
@@ -877,8 +884,10 @@ export type Database = {
           min_base?: number
           name?: string
           rate?: number
+          siigo_code?: string | null
           siigo_id?: string | null
           siigo_name?: string | null
+          siigo_synced_at?: string | null
           source?: string
         }
         Relationships: [
