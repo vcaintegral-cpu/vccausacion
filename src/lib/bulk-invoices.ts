@@ -108,18 +108,6 @@ export async function processInvoiceFile(params: {
     provider = p;
   }
 
-  const cuentaDeProducto = (p: {
-    name?: string | null;
-    kind?: string | null;
-    category?: string | null;
-    category_id?: string | null;
-    account_code?: string | null;
-    account_name?: string | null;
-  }) => {
-    const r = resolveProductAccount(p, config.categories, config.rules);
-    return r.code ? { code: r.code, name: r.name } : null;
-  };
-
   const conCatalogo: Line[] = extracted.map((l) => {
     const base: Line = {
       description: l.description ?? "",
@@ -138,12 +126,20 @@ export async function processInvoiceFile(params: {
     const prod =
       config.products.find((p) => base.code && norm(p.code) === norm(String(base.code))) ??
       config.products.find((p) => norm(p.name) === norm(base.description));
-    if (!prod) return base;
-    const cuenta = cuentaDeProducto(prod);
-    return { ...base, account_code: cuenta?.code ?? "", account_name: cuenta?.name ?? "", item_type: prod.kind ?? "gasto" };
+    return prod ? { ...base, item_type: prod.kind ?? "gasto" } : base;
   });
 
-  const lines = applyRulesToLines(conCatalogo, config.rules, provider);
+  // Mismo motor inteligente que la causación individual.
+  const conocimiento = params.knowledge ?? config.knowledge ?? (await fetchCompanyKnowledge(companyId)) ?? emptyKnowledge();
+  const { lines } = applyEngineToLines(conCatalogo, {
+    providerNit: header.provider_nit,
+    knowledge: conocimiento,
+    products: config.products,
+    categories: config.categories,
+    rules: config.rules,
+    puc: config.accounts,
+    provider,
+  });
   const baseGravable = lines.reduce(
     (s, l) => s + Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
     0,
