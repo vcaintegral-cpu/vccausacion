@@ -1349,9 +1349,12 @@ function Causar() {
             <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="px-4 py-2 text-left font-medium">Cuenta</th>
+                <th className="px-4 py-2 text-left font-medium">Nivel</th>
                 <th className="px-4 py-2 text-left font-medium">Movimiento</th>
                 <th className="px-4 py-2 text-left font-medium">Activa</th>
                 <th className="px-4 py-2 text-left font-medium">Siigo</th>
+                <th className="px-4 py-2 text-left font-medium">Auxiliares</th>
+                <th className="px-4 py-2 text-left font-medium">Cuenta operativa</th>
                 <th className="px-4 py-2 text-left font-medium">Resultado</th>
               </tr>
             </thead>
@@ -1359,11 +1362,14 @@ function Causar() {
               {validacionAsiento.map((v) => (
                 <tr key={v.code}>
                   <td className="px-4 py-1.5 font-mono text-xs">{v.code}</td>
+                  <td className="px-4 py-1.5 text-xs capitalize">{v.nivel}</td>
                   <td className="px-4 py-1.5 text-xs">{v.movimiento ? "Sí" : "No"}</td>
                   <td className="px-4 py-1.5 text-xs">{v.activa ? "Sí" : "No"}</td>
                   <td className="px-4 py-1.5 text-xs">{v.enSiigo ? "Sí" : "No"}</td>
+                  <td className="px-4 py-1.5 text-xs">{v.auxiliares > 0 ? `Sí (${v.auxiliares})` : "No"}</td>
+                  <td className="px-4 py-1.5 font-mono text-xs">{v.operativa}</td>
                   <td className={`px-4 py-1.5 text-xs ${v.ok ? "text-success" : "text-destructive"}`}>
-                    {v.ok ? "✓" : v.problema}
+                    {v.ok ? "✓ VÁLIDA" : `⚠ ${v.resultado} · ${v.problema}`}
                   </td>
                 </tr>
               ))}
