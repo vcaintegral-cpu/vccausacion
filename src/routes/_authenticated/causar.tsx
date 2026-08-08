@@ -567,10 +567,11 @@ function Causar() {
   async function guardar(status: "borrador" | "aprobado") {
     if (!companyId) return;
     if (lines.length === 0) { toast.error("Agrega al menos un renglón."); return; }
-    if (status === "aprobado" && chequeoEmpresa.status === "mismatch") {
-      toast.error(mensajeEmpresaIncorrecta(chequeoEmpresa));
-      return;
-    }
+    // Se revalida al guardar y al aprobar: no basta con deshabilitar los botones.
+    const bloqueo = motivoBloqueoEmpresa(
+      checkInvoiceCompany(empresaActiva, { buyer_nit: header.buyer_nit, buyer_name: header.buyer_name }),
+    );
+    if (bloqueo) { toast.error(bloqueo); return; }
     if (status === "aprobado" && hayErroresDeCuenta) {
       toast.error(Object.values(lineErrors)[0] ?? "Hay renglones sin cuenta contable.");
       return;
@@ -645,10 +646,6 @@ function Causar() {
           dian_status: header.cufe ? "con CUFE" : "sin CUFE",
           // Al aprobar tras corregir, se limpia el error previo y queda pendiente de envío.
           ...(status === "aprobado" ? { siigo_status: "pendiente", siigo_error: null } : {}),
-          // La factura de otra empresa no se elimina: queda registrada con el motivo del rechazo.
-          ...(chequeoEmpresa.status === "mismatch"
-            ? { siigo_status: "error", siigo_error: `RECHAZADA — EMPRESA INCORRECTA. ${mensajeEmpresaIncorrecta(chequeoEmpresa)}` }
-            : {}),
         file_path: filePath ?? existingFile.path,
         file_name: file?.name ?? existingFile.name,
       };
