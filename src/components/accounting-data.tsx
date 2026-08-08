@@ -48,14 +48,34 @@ function FileButton({ label, onFile, busy }: { label: string; onFile: (file: Fil
   );
 }
 
+const PAGE = 1000;
+
+/** Lee TODAS las filas de la tabla paginando (PostgREST devuelve máximo 1000 por consulta). */
+async function fetchAllRows(
+  table: "puc_accounts" | "cost_centers" | "tax_rates",
+  companyId: string,
+  order: string,
+): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .eq("company_id", companyId)
+      .order(order)
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    const chunk = (data ?? []) as Record<string, unknown>[];
+    out.push(...chunk);
+    if (chunk.length < PAGE) break;
+  }
+  return out;
+}
+
 function useTable(table: "puc_accounts" | "cost_centers" | "tax_rates", companyId: string, order: string) {
   return useQuery({
     queryKey: [table, companyId, "datos-contables"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from(table).select("*").eq("company_id", companyId).order(order);
-      if (error) throw error;
-      return data as Record<string, unknown>[];
-    },
+    queryFn: () => fetchAllRows(table, companyId, order),
   });
 }
 
