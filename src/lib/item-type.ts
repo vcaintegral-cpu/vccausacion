@@ -32,7 +32,10 @@ export function normalizeItemType(value?: string | null): ItemType {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ");
   if (!clean) return "gasto";
-  return ALIAS[clean] ?? (ITEM_TYPES as readonly string[]).includes(clean) ? (ALIAS[clean] ?? (clean as ItemType)) : "gasto";
+  const alias = ALIAS[clean];
+  if (alias) return alias;
+  if ((ITEM_TYPES as readonly string[]).includes(clean)) return clean as ItemType;
+  return "gasto";
 }
 
 export function isValidItemType(value?: string | null): boolean {
