@@ -357,6 +357,19 @@ function Causar() {
         data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
       })) as ExtractedInvoice;
       const { lines: extracted, ...rest } = data;
+      // Control de duplicados por empresa antes de crear cualquier borrador.
+      if (companyId) {
+        const existente = await findExistingInvoice(
+          companyId,
+          { cufe: rest.cufe, provider_nit: rest.provider_nit, prefix: rest.prefix, number: rest.number },
+          editingId,
+        );
+        if (existente) {
+          setDuplicado(existente);
+          toast.error(mensajeDuplicado(existente));
+          return;
+        }
+      }
       setHeader({ ...emptyHeader(), ...rest });
       let provider = null;
       if (rest.provider_nit && companyId) {
