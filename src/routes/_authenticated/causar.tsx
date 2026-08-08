@@ -13,6 +13,7 @@ import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { AccountCombobox } from "@/components/account-combobox";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
+import { BulkApply } from "@/components/bulk-apply";
 import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
 import { suggestCostCenter } from "@/lib/cost-center";
 import { cop } from "@/lib/format";
