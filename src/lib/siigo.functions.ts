@@ -246,7 +246,7 @@ export const pucAccountsOverview = createServerFn({ method: "POST" })
     for (let from = 0; ; from += 1000) {
       const { data: rows, error } = await context.supabase
         .from("puc_accounts")
-        .select("code, name, level, parent_code, has_children, is_movement, active, siigo_id, siigo_code, synced_at, siigo_active, siigo_is_movement, siigo_seen_at")
+        .select("code, name, level, parent_code, has_children, is_movement, active, excel_active, siigo_id, siigo_code, synced_at, siigo_active, siigo_is_movement, siigo_seen_at")
         .eq("company_id", data.companyId)
         .order("code")
         .range(from, from + 999);
@@ -604,6 +604,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       siigo_active: boolean | null;
       siigo_is_movement: boolean | null;
       siigo_seen_at: string | null;
+      excel_active: boolean | null;
     };
     const companyAccounts: PucRow[] = [];
     for (let from = 0; ; from += 1000) {
