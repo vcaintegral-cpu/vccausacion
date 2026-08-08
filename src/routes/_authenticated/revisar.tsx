@@ -140,8 +140,9 @@ function Revisar() {
         const encontrado = new Map((rows ?? []).map((r) => [r.code as string, (r.name ?? null) as string | null]));
         setCuentasVerificadas((prev) => {
           const next = { ...prev };
-          for (const code of faltantes) next[code] = encontrado.has(code) ? (encontrado.get(code) ?? null) : undefined as never;
-          for (const code of faltantes) if (!encontrado.has(code)) delete next[code], (next[code] = null);
+          for (const code of faltantes) {
+            next[code] = encontrado.has(code) ? { exists: true, name: encontrado.get(code) ?? null } : { exists: false, name: null };
+          }
           return next;
         });
       });
