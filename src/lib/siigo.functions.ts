@@ -580,12 +580,30 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     // Las cuentas base del PUC colombiano pueden no existir con el mismo nivel
     // de detalle en Siigo. Antes de enviar, cambia únicamente esos códigos base
     // por la cuenta equivalente que ya fue importada desde esta empresa.
-    const { data: companyAccounts, error: accountsErr } = await supabase
-      .from("puc_accounts")
-      .select("code, name, active, has_children, is_movement, siigo_id, siigo_code")
-      .eq("company_id", inv.company_id)
-      .order("code");
-    if (accountsErr) throw new Error(`No fue posible validar el PUC de Siigo: ${accountsErr.message}`);
+    // El PUC se lee completo por páginas: una lista parcial haría ver como
+    // inexistentes cuentas que sí están importadas (por ejemplo 621008).
+    type PucRow = {
+      code: string;
+      name: string;
+      active: boolean;
+      has_children: boolean;
+      is_movement: boolean;
+      siigo_id: string | null;
+      siigo_code: string | null;
+    };
+    const companyAccounts: PucRow[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data: page, error: accountsErr } = await supabase
+        .from("puc_accounts")
+        .select("code, name, active, has_children, is_movement, siigo_id, siigo_code")
+        .eq("company_id", inv.company_id)
+        .order("code")
+        .range(from, from + 999);
+      if (accountsErr) throw new Error(`No fue posible validar el PUC de Siigo: ${accountsErr.message}`);
+      const chunk = (page ?? []) as PucRow[];
+      companyAccounts.push(...chunk);
+      if (chunk.length < 1000) break;
+    }
 
     const availableCodes = new Set((companyAccounts ?? []).map((account) => account.code));
     const accounts = companyAccounts ?? [];
