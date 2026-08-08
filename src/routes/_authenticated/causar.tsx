@@ -293,6 +293,14 @@ function Causar() {
   }, [lines, buscarProducto, resolverCuentaItem]);
   const hayErroresDeCuenta = Object.keys(lineErrors).length > 0;
 
+  // Validación determinística: el NIT del comprador de la factura debe ser el de la empresa activa.
+  const empresaActiva = useMemo(() => (companies ?? []).find((c) => c.id === companyId) ?? null, [companies, companyId]);
+  const chequeoEmpresa = useMemo(
+    () => checkInvoiceCompany(empresaActiva, { buyer_nit: header.buyer_nit, buyer_name: header.buyer_name }),
+    [empresaActiva, header.buyer_nit, header.buyer_name],
+  );
+  const empresaIncorrecta = chequeoEmpresa.status === "mismatch";
+
   /** Cambios de un renglón al cambiar su tipo de ítem, conservando la lógica producto → categoría → cuenta. */
   const parcheDeTipo = useCallback(
     (actual: Line, kind: string, log = false): Partial<Line> => {
