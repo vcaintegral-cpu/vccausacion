@@ -630,6 +630,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         return Number(line.debit ?? 0) > 0 && (name.includes("iva") || line.account_code.startsWith("2408") || line.account_code.startsWith("621008"));
       });
       let ivaTaxId: number | string | null = null;
+      let ivaTaxRate = 0;
+      let ivaTaxName: string | null = null;
       if (Number(inv.iva ?? 0) > 0 && ivaLineIndex >= 0) {
         const ivaAccountLine = resolvedJournal[ivaLineIndex]?.account_code ?? "";
         const rateFactura = Number(inv.total ?? 0) > Number(inv.iva ?? 0)
