@@ -1070,7 +1070,7 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
     queryKey: ["learning_rules", companyId, "excel"],
     queryFn: async () => {
       // Se pagina la lectura: PostgREST devuelve máximo 1000 filas por consulta.
-      const out: NonNullable<Awaited<ReturnType<typeof supabase.from>> extends never ? never : Record<string, unknown>>[] = [];
+      const out: Record<string, unknown>[] = [];
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await supabase
           .from("learning_rules")
