@@ -18,6 +18,13 @@ import { suggestCostCenter } from "@/lib/cost-center";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { expandInvoiceFiles, processInvoiceFile } from "@/lib/bulk-invoices";
+import {
+  ESTADO_LABEL,
+  estadoUnico,
+  findExistingInvoice,
+  mensajeDuplicado,
+  type DuplicateInvoice,
+} from "@/lib/invoice-duplicates";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -91,6 +98,7 @@ function Causar() {
   const [existingFile, setExistingFile] = useState<{ path: string | null; name: string | null }>({ path: null, name: null });
   const [centroSugerido, setCentroSugerido] = useState<string | null>(null);
   const [centroTocado, setCentroTocado] = useState(false);
+  const [duplicado, setDuplicado] = useState<DuplicateInvoice | null>(null);
 
   const { data: config } = useQuery({
     queryKey: ["config", companyId],
