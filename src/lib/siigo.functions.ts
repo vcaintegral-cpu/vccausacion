@@ -582,7 +582,41 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       });
       let ivaTaxId: number | string | null = null;
       if (Number(inv.iva ?? 0) > 0 && ivaLineIndex >= 0) {
-        const response = await siigoGet<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
+        const ivaAccountLine = resolvedJournal[ivaLineIndex]?.account_code ?? "";
+        const rateFactura = Number(inv.total ?? 0) > Number(inv.iva ?? 0)
+          ? Math.round((Number(inv.iva) / (Number(inv.total) - Number(inv.iva))) * 10000) / 100
+          : 0;
+        // 1) Identificador real guardado por empresa al sincronizar impuestos.
+        const { data: localTaxes } = await supabase
+          .from("tax_rates")
+          .select("kind, name, rate, active, siigo_id, siigo_name, account_code")
+          .eq("company_id", inv.company_id)
+          .eq("active", true)
+          .not("siigo_id", "is", null);
+        const esIva = (t: { kind: string | null; name: string | null }) =>
+          /iva|impuesto al valor/i.test(`${t.kind ?? ""} ${t.name ?? ""}`) &&
+          !/rete/i.test(`${t.kind ?? ""} ${t.name ?? ""}`);
+        const candidatasLocales = (localTaxes ?? []).filter(
+          (t) => esIva(t) && Math.abs(Number(t.rate ?? 0) - rateFactura) < 0.01,
+        );
+        const localElegida =
+          candidatasLocales.find((t) => /compra.*costo|costo.*compra/i.test(t.name ?? "")) ??
+          candidatasLocales.find((t) => /costo|compra/i.test(t.name ?? "")) ??
+          candidatasLocales.find((t) => t.account_code === ivaAccountLine) ??
+          candidatasLocales[0];
+        if (localElegida?.siigo_id) {
+          ivaTaxId = localElegida.siigo_id;
+          console.log("[siigo][iva] impuesto local:", {
+            cuenta: ivaAccountLine,
+            porcentaje: rateFactura,
+            siigo_id: localElegida.siigo_id,
+            nombre: localElegida.siigo_name ?? localElegida.name,
+            activo: true,
+          });
+        }
+        const response = ivaTaxId != null
+          ? { results: [] as SiigoTax[] }
+          : await siigoGet<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
         const taxes = (Array.isArray(response) ? response : (response.results ?? [])).filter(
           (tax) => tax.active !== false && tax.id != null && /iva|value.added/i.test(`${tax.type ?? ""} ${tax.name ?? ""}`),
         );
@@ -591,10 +625,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           if (typeof value === "object") return String(value.code ?? "").trim();
           return String(value).trim();
         };
-        const ivaAccount = resolvedJournal[ivaLineIndex]?.account_code ?? "";
-        const invoiceRate = Number(inv.total ?? 0) > Number(inv.iva ?? 0)
-          ? Math.round((Number(inv.iva) / (Number(inv.total) - Number(inv.iva))) * 10000) / 100
-          : 0;
+        const ivaAccount = ivaAccountLine;
+        const invoiceRate = rateFactura;
         const tax =
           taxes.find((candidate) =>
             Number(candidate.percentage ?? 0) === invoiceRate && /compra.*costo|costo.*compra/i.test(candidate.name ?? ""),
@@ -608,13 +640,21 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               .includes(ivaAccount),
           ) ??
           taxes.find((candidate) => Number(candidate.percentage ?? 0) === invoiceRate);
-        if (!tax?.id) {
-          throw new Error(
-            `La cuenta ${ivaAccount} exige un impuesto de Siigo, pero no se encontró un IVA activo de ${invoiceRate}% con identificador válido. ` +
-              "Sincroniza nuevamente los impuestos desde Integraciones y vuelve a intentar.",
-          );
+        if (ivaTaxId == null) {
+          if (!tax?.id) {
+            throw new Error(
+              `IVA ${invoiceRate}% no encontrado o inactivo en Siigo. Sincronice los impuestos desde Integraciones antes de causar.`,
+            );
+          }
+          ivaTaxId = tax.id;
+          console.log("[siigo][iva] impuesto tomado de /v1/taxes:", {
+            cuenta: ivaAccount,
+            porcentaje: invoiceRate,
+            siigo_id: tax.id,
+            nombre: tax.name,
+            activo: tax.active !== false,
+          });
         }
-        ivaTaxId = tax.id;
       }
       if (!inv.provider_nit) throw new Error("La factura no tiene NIT de proveedor; Siigo lo exige para la factura de compra.");
 
