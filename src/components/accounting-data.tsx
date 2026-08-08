@@ -577,6 +577,26 @@ export function PucPanel({ companyId }: { companyId: string }) {
         <Button type="submit"><Plus className="size-4" /> Crear cuenta</Button>
       </form>
 
+      <div className="flex flex-wrap items-center gap-3">
+        <Input
+          value={buscar}
+          onChange={(e) => { setBuscar(e.target.value); setPagina(1); }}
+          placeholder="Buscar por código o nombre…"
+          className="w-72"
+        />
+        <span className="text-xs text-muted-foreground">
+          Mostrando {fmt(visibles.length)} de {fmt(filtradas.length)} cuenta(s) · Página {paginaActual} de {totalPaginas}
+        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled={paginaActual <= 1} onClick={() => setPagina(paginaActual - 1)}>
+            Anterior
+          </Button>
+          <Button variant="outline" size="sm" disabled={paginaActual >= totalPaginas} onClick={() => setPagina(paginaActual + 1)}>
+            Siguiente
+          </Button>
+        </div>
+      </div>
+
       <div className="overflow-x-auto rounded-lg border border-border bg-card">
         <table className="w-full text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -590,7 +610,7 @@ export function PucPanel({ companyId }: { companyId: string }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {(rows ?? []).map((r) => {
+            {visibles.map((r) => {
               const id = String(r['id']);
               const draft = edit[id];
               return (
@@ -624,7 +644,7 @@ export function PucPanel({ companyId }: { companyId: string }) {
                 </tr>
               );
             })}
-            {(rows ?? []).length === 0 && (
+            {visibles.length === 0 && (
               <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">Sin cuentas registradas.</td></tr>
             )}
           </tbody>
