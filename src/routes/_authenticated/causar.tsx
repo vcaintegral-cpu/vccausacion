@@ -808,7 +808,13 @@ function Causar() {
 
       await Promise.all([
         supabase.from("invoice_lines").insert(
-          lines.map((l, i) => ({
+          lines.map((l, i) => {
+            const puc = (config?.accounts ?? []) as PucAccount[];
+            const ivaTax = findTaxById(impuestosIva as unknown as TaxRecord[], lineTax[i]?.iva) as TaxRecord | null;
+            const retTax = findTaxById(impuestosRet as unknown as TaxRecord[], lineTax[i]?.ret) as TaxRecord | null;
+            const ivaTrace = ivaTax ? taxTrace(ivaTax, resolveTaxAccount(ivaTax, puc).code || null) : null;
+            const retTrace = retTax ? taxTrace(retTax, resolveTaxAccount(retTax, puc).code || null) : null;
+            return {
             invoice_id: inv.id,
             company_id: companyId,
             code: l.code ?? null,
@@ -824,7 +830,23 @@ function Causar() {
             account_name: l.account_name ?? null,
             item_type: normalizeItemType(l.item_type),
             position: i,
-          })),
+            iva_tax_id: ivaTrace?.tax_id ?? null,
+            iva_tax_name: ivaTrace?.tax_name ?? null,
+            iva_tax_rate: ivaTrace?.tax_rate ?? null,
+            iva_account_code: ivaTrace?.account_code ?? null,
+            iva_operational_account: ivaTrace?.operational_account ?? null,
+            iva_siigo_id: ivaTrace?.siigo_id ?? null,
+            iva_siigo_name: ivaTrace?.siigo_name ?? null,
+            ret_tax_id: retTrace?.tax_id ?? null,
+            ret_tax_kind: retTrace?.tax_type ?? null,
+            ret_tax_name: retTrace?.tax_name ?? null,
+            ret_tax_rate: retTrace?.tax_rate ?? null,
+            ret_account_code: retTrace?.account_code ?? null,
+            ret_operational_account: retTrace?.operational_account ?? null,
+            ret_siigo_id: retTrace?.siigo_id ?? null,
+            ret_siigo_name: retTrace?.siigo_name ?? null,
+            };
+          }),
         ),
         supabase.from("journal_lines").insert(
           operationalJournal.map((j, i) => ({
