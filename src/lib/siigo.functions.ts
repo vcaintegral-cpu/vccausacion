@@ -924,7 +924,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
       // Retenciones: resolver siempre el ID real configurado en Siigo. La cuenta
       // contable del asiento se usa como criterio de selección, pero no se modifica.
-      const retentionIds: Array<number | string> = [];
+      const retencionesSiigo: Array<{ id: number | string; value: number; tipo: string; kind: string }> = [];
       const retencionesTrace: Array<{
         tipo: string;
         cuenta: string;
@@ -1024,8 +1024,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               siigo_id: regla.siigo_id,
               nombre: regla.siigo_name ?? regla.name,
             });
-            if (!retentionIds.some((id) => String(id) === String(regla.siigo_id)))
-              retentionIds.push(regla.siigo_id);
+            if (!retencionesSiigo.some((r) => String(r.id) === String(regla.siigo_id)))
+              retencionesSiigo.push({
+                id: regla.siigo_id,
+                value: retention.amount,
+                tipo: retention.label,
+                kind: retention.kind,
+              });
             retencionesTrace.push({
               tipo: retention.label,
               cuenta: accountCode,
@@ -1091,7 +1096,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               .eq("kind", regla.kind)
               .eq("name", regla.name);
           }
-          if (!retentionIds.some((id) => String(id) === String(tax.id))) retentionIds.push(tax.id);
+          if (!retencionesSiigo.some((r) => String(r.id) === String(tax.id)))
+            retencionesSiigo.push({
+              id: tax.id,
+              value: retention.amount,
+              tipo: retention.label,
+              kind: retention.kind,
+            });
           retencionesTrace.push({
             tipo: retention.label,
             cuenta: accountCode,
