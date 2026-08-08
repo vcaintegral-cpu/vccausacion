@@ -10,7 +10,14 @@ import { ITEM_TYPES, normalizeItemType } from "@/lib/item-type";
 import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
-import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
+import { buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
+import {
+  applyEngineToLines,
+  emptyKnowledge,
+  fetchCompanyKnowledge,
+  registrarAprendizaje,
+  type LineDecisions,
+} from "@/lib/causacion-engine";
 import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
 import { AccountCombobox } from "@/components/account-combobox";
 import { CUENTA_PADRE_MSG, resolveOperationalAccount, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
@@ -121,6 +128,8 @@ function Causar() {
   const [centroTocado, setCentroTocado] = useState(false);
   const [duplicado, setDuplicado] = useState<DuplicateInvoice | null>(null);
   const [plazoTocado, setPlazoTocado] = useState(false);
+  // Trazabilidad de la sugerencia automática por renglón (motor de causación).
+  const [decisiones, setDecisiones] = useState<LineDecisions>({});
 
   // El plazo de crédito se recalcula con la fecha de vencimiento, salvo edición manual.
   useEffect(() => {
@@ -150,6 +159,13 @@ function Causar() {
         categories: categories.data ?? [],
       };
     },
+  });
+
+  /** Conocimiento contable de la empresa activa: reglas aprendidas + historial real. */
+  const { data: knowledge } = useQuery({
+    queryKey: ["knowledge", companyId],
+    enabled: !!companyId,
+    queryFn: () => fetchCompanyKnowledge(companyId!),
   });
 
   const baseGravable = useMemo(
@@ -587,16 +603,20 @@ function Causar() {
         const prod =
           catalogo.find((p) => base.code && norm(p.code) === norm(String(base.code))) ??
           catalogo.find((p) => norm(p.name) === norm(base.description ?? ""));
-        if (!prod) return base;
-        const cuenta = cuentaDeProducto(prod);
-        return {
-          ...base,
-          account_code: base.account_code || cuenta?.code || "",
-          account_name: base.account_name || cuenta?.name || "",
-          item_type: prod.kind ?? base.item_type,
-        };
+        return prod ? { ...base, item_type: prod.kind ?? base.item_type } : base;
       });
-      setLines(applyRulesToLines(conCatalogo, config?.rules ?? [], provider));
+      // Motor de causación: catálogo → aprendizaje → historial → reglas → PUC.
+      const motor = applyEngineToLines(conCatalogo, {
+        providerNit: rest.provider_nit,
+        knowledge: knowledge ?? emptyKnowledge(),
+        products: catalogo,
+        categories: config?.categories ?? [],
+        rules: config?.rules ?? [],
+        puc: (config?.accounts ?? []) as PucAccount[],
+        provider,
+      });
+      setLines(motor.lines);
+      setDecisiones(motor.decisions);
       setPasswordOpen(false);
       setPdfPassword("");
       setPasswordError("");
@@ -637,7 +657,13 @@ function Causar() {
     let ok = 0;
     for (const f of bulkFiles) {
       try {
-        const r = await processInvoiceFile({ file: f, companyId, config: config as never, extract: extract as never });
+        const r = await processInvoiceFile({
+          file: f,
+          companyId,
+          config: config as never,
+          extract: extract as never,
+          ...(knowledge ? { knowledge } : {}),
+        });
         ok += 1;
         setBulkResults((p) => [...p, { name: f.name, ok: true, detail: `${r.numero} · ${cop(r.total)}` }]);
       } catch (err) {
@@ -860,17 +886,23 @@ function Causar() {
             position: i,
           })),
         ),
-        ...lines
-          .filter((l) => l.account_code)
-          .map((l) =>
-            supabase.from("learning_events").insert({
-              company_id: companyId,
-              provider_nit: header.provider_nit,
-              concept: l.description,
-              account_code: resolveOperationalAccount((config?.accounts ?? []) as PucAccount[], l.account_code).operationalAccount ?? l.account_code!,
-            }),
-          ),
       ]);
+
+      // El aprendizaje solo se registra cuando la causación queda aprobada.
+      if (status === "aprobado") {
+        await registrarAprendizaje({
+          companyId,
+          invoiceId: inv.id,
+          userId,
+          providerNit: header.provider_nit,
+          providerName: header.provider_name,
+          costCenter: header.cost_center,
+          lines,
+          decisions: decisiones,
+          puc: (config?.accounts ?? []) as PucAccount[],
+          autoLearning,
+        });
+      }
 
       toast.success(status === "aprobado" ? "Comprobante aprobado." : "Comprobante guardado en borrador.");
       navigate({ to: "/facturas" });
@@ -1276,6 +1308,19 @@ function Causar() {
                       }}
                     />
                     {lineErrors[i] && <p className="mt-1 text-xs text-destructive">{lineErrors[i]}</p>}
+                    {decisiones[i]?.code && (
+                      <p
+                        className={`mt-1 text-xs ${
+                          decisiones[i]!.confidence === "ALTA"
+                            ? "text-primary"
+                            : decisiones[i]!.confidence === "MEDIA"
+                              ? "text-foreground"
+                              : "text-muted-foreground"
+                        }`}
+                      >
+                        Confianza {decisiones[i]!.confidence} · {decisiones[i]!.origin}: {decisiones[i]!.reason}
+                      </p>
+                    )}
                   </td>
                   <td className="px-3 py-1.5 w-56">
                     <div className="flex items-center gap-1">

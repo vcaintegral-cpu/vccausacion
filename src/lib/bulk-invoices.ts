@@ -2,12 +2,11 @@ import { unzipSync } from "fflate";
 import { supabase } from "@/integrations/supabase/client";
 import { prepareInvoiceFile } from "@/lib/invoice-file";
 import type { ExtractedInvoice } from "@/lib/extract.functions";
-import { resolveProductAccount } from "@/lib/product-account";
+import { applyEngineToLines, emptyKnowledge, fetchCompanyKnowledge, type CompanyKnowledge } from "@/lib/causacion-engine";
 import { findExistingInvoice, mensajeDuplicado } from "@/lib/invoice-duplicates";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 import {
-  applyRulesToLines,
   buildJournal,
   computeRetenciones,
   type Line,
@@ -60,6 +59,8 @@ export type BulkConfig = {
     account_name: string | null;
   }[];
   categories: { id?: string | null; name: string; kind: string; account_code: string | null; account_name: string | null }[];
+  /** Conocimiento contable de la empresa (se lee una sola vez para todo el lote). */
+  knowledge?: CompanyKnowledge;
 };
 
 type ExtractFn = (args: { data: { fileName: string; mimeType: string } & Record<string, unknown> }) => Promise<unknown>;
@@ -73,6 +74,7 @@ export async function processInvoiceFile(params: {
   companyId: string;
   config: BulkConfig;
   extract: ExtractFn;
+  knowledge?: CompanyKnowledge;
 }): Promise<{ invoiceId: string; numero: string; total: number }> {
   const { file, companyId, config, extract } = params;
   const content = await prepareInvoiceFile(file);
@@ -106,18 +108,6 @@ export async function processInvoiceFile(params: {
     provider = p;
   }
 
-  const cuentaDeProducto = (p: {
-    name?: string | null;
-    kind?: string | null;
-    category?: string | null;
-    category_id?: string | null;
-    account_code?: string | null;
-    account_name?: string | null;
-  }) => {
-    const r = resolveProductAccount(p, config.categories, config.rules);
-    return r.code ? { code: r.code, name: r.name } : null;
-  };
-
   const conCatalogo: Line[] = extracted.map((l) => {
     const base: Line = {
       description: l.description ?? "",
@@ -136,12 +126,20 @@ export async function processInvoiceFile(params: {
     const prod =
       config.products.find((p) => base.code && norm(p.code) === norm(String(base.code))) ??
       config.products.find((p) => norm(p.name) === norm(base.description));
-    if (!prod) return base;
-    const cuenta = cuentaDeProducto(prod);
-    return { ...base, account_code: cuenta?.code ?? "", account_name: cuenta?.name ?? "", item_type: prod.kind ?? "gasto" };
+    return prod ? { ...base, item_type: prod.kind ?? "gasto" } : base;
   });
 
-  const lines = applyRulesToLines(conCatalogo, config.rules, provider);
+  // Mismo motor inteligente que la causación individual.
+  const conocimiento = params.knowledge ?? config.knowledge ?? (await fetchCompanyKnowledge(companyId)) ?? emptyKnowledge();
+  const { lines } = applyEngineToLines(conCatalogo, {
+    providerNit: header.provider_nit,
+    knowledge: conocimiento,
+    products: config.products,
+    categories: config.categories,
+    rules: config.rules,
+    puc: config.accounts,
+    provider,
+  });
   const baseGravable = lines.reduce(
     (s, l) => s + Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
     0,
