@@ -603,16 +603,20 @@ function Causar() {
         const prod =
           catalogo.find((p) => base.code && norm(p.code) === norm(String(base.code))) ??
           catalogo.find((p) => norm(p.name) === norm(base.description ?? ""));
-        if (!prod) return base;
-        const cuenta = cuentaDeProducto(prod);
-        return {
-          ...base,
-          account_code: base.account_code || cuenta?.code || "",
-          account_name: base.account_name || cuenta?.name || "",
-          item_type: prod.kind ?? base.item_type,
-        };
+        return prod ? { ...base, item_type: prod.kind ?? base.item_type } : base;
       });
-      setLines(applyRulesToLines(conCatalogo, config?.rules ?? [], provider));
+      // Motor de causación: catálogo → aprendizaje → historial → reglas → PUC.
+      const motor = applyEngineToLines(conCatalogo, {
+        providerNit: rest.provider_nit,
+        knowledge: knowledge ?? emptyKnowledge(),
+        products: catalogo,
+        categories: config?.categories ?? [],
+        rules: config?.rules ?? [],
+        puc: (config?.accounts ?? []) as PucAccount[],
+        provider,
+      });
+      setLines(motor.lines);
+      setDecisiones(motor.decisions);
       setPasswordOpen(false);
       setPdfPassword("");
       setPasswordError("");
