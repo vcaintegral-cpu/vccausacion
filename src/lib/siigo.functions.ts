@@ -1222,6 +1222,33 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       console.log("[siigo][causacion] Payments enviados:", JSON.stringify(payments, null, 2));
 
       const providerNit = String(inv.provider_nit);
+      // HALLAZGO VERIFICADO CONTRA LA API: /v1/purchases NO acepta la Retefuente en
+      // retentions[] (responde invalid_array en retentions[0].id, incluso con el ID real
+      // y activo). La Retefuente debe viajar como impuesto de RENGLÓN (items[].taxes[])
+      // con su ID real de Siigo; ReteIVA/ReteICA sí van en retentions[] a nivel documento.
+      const retencionesEnItem = retencionesSiigo.filter((r) => r.kind === "retefuente");
+      const retencionesEnDocumento = retencionesSiigo.filter((r) => r.kind !== "retefuente");
+      const itemsConRetencion =
+        retencionesEnItem.length > 0
+          ? items.map((it) => ({
+              ...it,
+              tax_ids: [
+                ...it.tax_ids,
+                ...retencionesEnItem
+                  .map((r) => r.id)
+                  .filter((id) => !it.tax_ids.some((t) => String(t) === String(id))),
+              ],
+            }))
+          : items;
+      const totalRetencionesItem = r2(retencionesEnItem.reduce((acc, r) => acc + r.value, 0));
+      // Siigo calcula el total del documento ya neto de las retenciones de renglón.
+      const totalDocumentoSiigo = r2(totalFactura - totalRetencionesItem);
+      for (const r of retencionesEnItem) {
+        console.log("SIIGO TAX ID RETEFUENTE:", r.id);
+        console.log("CUENTA CONTABLE RETEFUENTE:", retencionesTrace.find((t) => t.tipo === r.tipo)?.cuenta ?? null);
+        console.log("VALOR RETEFUENTE:", r.value);
+      }
+      console.log("PAYMENT:", netoAPagar);
       const construirPayload = (totalDocumento: number) =>
         buildSiigoPurchasePayload({
         documentId,
@@ -1233,14 +1260,14 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           inv.provider_name ?? ""
         } ${inv.notes ?? ""}`.trim(),
         costCenterId,
-        items,
+        items: itemsConRetencion,
         paymentId,
         purchaseTotal: totalDocumento,
         paymentValue: netoAPagar,
         paymentDueDate: dueDate,
-        retentions: retencionesSiigo.map((r) => ({ id: r.id, value: r.value })),
+        retentions: retencionesEnDocumento.map((r) => ({ id: r.id, value: r.value })),
         });
-      const payload = construirPayload(totalFactura);
+      const payload = construirPayload(totalDocumentoSiigo);
       console.log("========== CAUSACIÓN ANTES DE ENVIAR ==========");
       items.forEach((it, i) => {
         const prod = it.type === "Product" ? porCodigo.get(it.code) : undefined;
