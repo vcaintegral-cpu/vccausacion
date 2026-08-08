@@ -72,6 +72,7 @@ export async function runReliableImport<T>(options: ReliableImportOptions<T>): P
   const issues: ImportIssue[] = [...invalidIssues];
   let attempted = 0;
   let batchesProcessed = 0;
+  const total = options.rows.length;
 
   const newRows = options.existingByKey
     ? options.rows.filter((row) => !options.existingByKey?.has(options.keyOf(row))).length
@@ -89,7 +90,6 @@ export async function runReliableImport<T>(options: ReliableImportOptions<T>): P
         return !current || options.equals?.(current, row) !== true;
       })
     : options.rows;
-  const total = options.rows.length;
   const batches = Math.ceil(rowsToSave.length / IMPORT_BATCH_SIZE);
 
   for (let batchIndex = 0; batchIndex < batches; batchIndex += 1) {
