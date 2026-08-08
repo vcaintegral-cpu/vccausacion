@@ -14,6 +14,22 @@ import { Label } from "@/components/ui/label";
 
 export const PRODUCT_KINDS = ["producto", "servicio", "gasto", "activo"] as const;
 
+/** Lee TODAS las filas por páginas de 1.000 (PostgREST limita cada consulta). */
+async function leerTodo<T>(
+  build: () => ReturnType<ReturnType<typeof supabase.from>["select"]>,
+): Promise<T[]> {
+  const PAGE = 1000;
+  const out: T[] = [];
+  for (let desde = 0; ; desde += PAGE) {
+    const { data, error } = await build().range(desde, desde + PAGE - 1);
+    if (error) throw error;
+    const chunk = (data ?? []) as T[];
+    out.push(...chunk);
+    if (chunk.length < PAGE) break;
+  }
+  return out;
+}
+
 function normKind(value: string) {
   const v = (value ?? "").toLowerCase();
   if (v.startsWith("serv")) return "servicio";
@@ -31,18 +47,17 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
 
   const { data: rows } = useQuery({
     queryKey: ["products", companyId],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("products").select("*").eq("company_id", companyId).order("code");
-      if (error) throw error;
-      return data ?? [];
-    },
+    queryFn: async () =>
+      leerTodo<Record<string, never>>(() =>
+        supabase.from("products").select("*").eq("company_id", companyId).order("code") as never,
+      ) as never,
   });
   const { data: cuentas } = useQuery({
     queryKey: ["puc_accounts", companyId, "productos"],
-    queryFn: async () => {
-      const { data } = await supabase.from("puc_accounts").select("code, name").eq("company_id", companyId).order("code");
-      return (data ?? []) as { code: string; name: string }[];
-    },
+    queryFn: async () =>
+      leerTodo<{ code: string; name: string }>(() =>
+        supabase.from("puc_accounts").select("code, name").eq("company_id", companyId).order("code") as never,
+      ),
   });
   const { data: categorias } = useQuery({
     queryKey: ["product_categories", companyId, "productos-panel"],
