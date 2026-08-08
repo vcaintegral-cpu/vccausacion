@@ -868,7 +868,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         );
       }
 
-      const paymentId = await siigoPurchasePaymentTypeId(inv.payment_form);
+      // Por defecto las compras se causan a crédito salvo que la factura indique contado.
+      const formaPago = /contado|efectivo/i.test(String(inv.payment_form ?? "")) ? "contado" : "crédito";
+      const paymentId = await siigoPurchasePaymentTypeId(formaPago);
       const retencionesPorTipo = [
         {
           kind: "retefuente",
