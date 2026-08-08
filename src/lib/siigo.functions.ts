@@ -1220,11 +1220,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       });
       console.log("[siigo][causacion] Payments enviados:", JSON.stringify(payments, null, 2));
 
+      const providerNit = String(inv.provider_nit);
       const construirPayload = (totalDocumento: number) =>
         buildSiigoPurchasePayload({
         documentId,
         date: fechaDoc,
-        providerNit: inv.provider_nit,
+        providerNit,
         invoicePrefix: inv.prefix,
         invoiceNumber: inv.number,
         observations: `Factura ${[inv.prefix, inv.number].filter(Boolean).join("-")} · ${
