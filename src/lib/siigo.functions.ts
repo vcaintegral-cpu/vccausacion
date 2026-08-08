@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { validarCuenta } from "@/lib/puc-hierarchy";
+import { mensajeSiigoAmigable } from "@/lib/siigo-errors";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "./company-validation";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { normalizeItemType } from "@/lib/item-type";
@@ -1565,11 +1566,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       return { ok: true, siigoId, siigoNumber, documentUrl, syncedAt, status: "sincronizada", error: null };
     } catch (e) {
       const raw = e instanceof Error ? e.message : JSON.stringify(e);
-      const cuenta = /"?code"?:\s*"?(\d{4,10})/.exec(raw)?.[1] ?? /(\d{6,10}) cannot be used/.exec(raw)?.[1];
-      const message = raw.includes("account_not_allowed")
-        ? `Siigo no permite registrar movimientos en la cuenta ${cuenta ?? "seleccionada"} (no es cuenta auxiliar de movimiento). ` +
-          "Cambia la cuenta del renglón por una auxiliar del PUC de Siigo y vuelve a causar."
-        : raw;
+      const message = mensajeSiigoAmigable(raw);
       console.error("[siigo][causacion] error:", message);
       const failedTrace = {
         ...siigoAttemptTrace,
