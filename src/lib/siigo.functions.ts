@@ -1104,7 +1104,45 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         if (id.length >= 6 && /^23/.test(id)) return false;
         return true;
       };
-      const retencionesAEnviar = retencionesPorTipo.filter((r) => r.enviarEnRetentions);
+      // Retenciones elegidas por ID en los renglones: se usa ese registro exacto.
+      const retencionesPorTaxId = new Map<
+        string,
+        { siigoId: string; nombre: string; kind: string; cuenta: string; tarifa: number; valor: number }
+      >();
+      for (const l of lineasImpuesto ?? []) {
+        if (!(Number(l.retention ?? 0) > 0) || !l.ret_tax_id) continue;
+        const registro = impuestoPorId.get(l.ret_tax_id);
+        const siigoId = siigoIdDelImpuesto(l.ret_tax_id, l.ret_siigo_id);
+        const nombre = l.ret_siigo_name ?? l.ret_tax_name ?? registro?.name ?? "Retención";
+        if (!siigoId) {
+          throw new Error(
+            `La retención "${nombre}" no tiene su identificador de Siigo. Sincroniza los impuestos desde Integraciones.`,
+          );
+        }
+        const prev = retencionesPorTaxId.get(l.ret_tax_id);
+        retencionesPorTaxId.set(l.ret_tax_id, {
+          siigoId,
+          nombre,
+          kind: String(l.ret_tax_kind ?? registro?.kind ?? "retefuente"),
+          cuenta: String(l.ret_operational_account ?? registro?.account_code ?? ""),
+          tarifa: Number(l.ret_tax_rate ?? registro?.rate ?? 0),
+          valor: (prev?.valor ?? 0) + Number(l.retention ?? 0),
+        });
+      }
+      const retencionesSeleccionadas = [...retencionesPorTaxId.values()];
+      for (const r of retencionesSeleccionadas) {
+        retencionesSiigo.push({ id: r.siigoId, value: r.valor, tipo: r.nombre, kind: r.kind });
+        retencionesTrace.push({
+          tipo: r.nombre,
+          cuenta: r.cuenta,
+          tarifa: r.tarifa,
+          valor: r.valor,
+          siigo_id: r.siigoId,
+          nombre: r.nombre,
+        });
+      }
+      const retencionesAEnviar =
+        retencionesSeleccionadas.length > 0 ? [] : retencionesPorTipo.filter((r) => r.enviarEnRetentions);
       if (retencionesAEnviar.length > 0) {
         // Reglas tributarias configuradas por empresa: la tarifa oficial sale de aquí,
         // nunca se infiere desde el valor monetario redondeado de la retención.
