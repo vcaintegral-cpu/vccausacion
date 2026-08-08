@@ -1298,7 +1298,6 @@ function Causar() {
                       value={l.account_code ?? ""}
                       onChange={(code, name) => {
                         setLine(i, { account_code: code, account_name: name });
-                        setDecisiones((p) => ({ ...p, [i]: { ...(p[i] as never), } }));
                         if (autoLearning && code) setRecordar({ index: i, code, name });
                       }}
                     />
@@ -1307,9 +1306,9 @@ function Causar() {
                       <p
                         className={`mt-1 text-xs ${
                           decisiones[i]!.confidence === "ALTA"
-                            ? "text-emerald-600 dark:text-emerald-400"
+                            ? "text-primary"
                             : decisiones[i]!.confidence === "MEDIA"
-                              ? "text-amber-600 dark:text-amber-400"
+                              ? "text-foreground"
                               : "text-muted-foreground"
                         }`}
                       >
