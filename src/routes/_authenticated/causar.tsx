@@ -16,7 +16,7 @@ import { ProductCombobox, type ProductOption } from "@/components/product-combob
 import { BulkApply } from "@/components/bulk-apply";
 import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
 import { suggestCostCenter } from "@/lib/cost-center";
-import { checkInvoiceCompany, mensajeEmpresaIncorrecta } from "@/lib/company-validation";
+import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { expandInvoiceFiles, processInvoiceFile } from "@/lib/bulk-invoices";
@@ -301,6 +301,8 @@ function Causar() {
     [empresaActiva, header.buyer_nit, header.buyer_name],
   );
   const empresaIncorrecta = chequeoEmpresa.status === "mismatch";
+  // Bloqueo total (guardar / aprobar / causar) cuando la factura no se puede atribuir a la empresa activa.
+  const bloqueoEmpresa = motivoBloqueoEmpresa(chequeoEmpresa);
 
   /** Cambios de un renglón al cambiar su tipo de ítem, conservando la lógica producto → categoría → cuenta. */
   const parcheDeTipo = useCallback(
@@ -565,10 +567,11 @@ function Causar() {
   async function guardar(status: "borrador" | "aprobado") {
     if (!companyId) return;
     if (lines.length === 0) { toast.error("Agrega al menos un renglón."); return; }
-    if (status === "aprobado" && chequeoEmpresa.status === "mismatch") {
-      toast.error(mensajeEmpresaIncorrecta(chequeoEmpresa));
-      return;
-    }
+    // Se revalida al guardar y al aprobar: no basta con deshabilitar los botones.
+    const bloqueo = motivoBloqueoEmpresa(
+      checkInvoiceCompany(empresaActiva, { buyer_nit: header.buyer_nit, buyer_name: header.buyer_name }),
+    );
+    if (bloqueo) { toast.error(bloqueo); return; }
     if (status === "aprobado" && hayErroresDeCuenta) {
       toast.error(Object.values(lineErrors)[0] ?? "Hay renglones sin cuenta contable.");
       return;
@@ -643,10 +646,6 @@ function Causar() {
           dian_status: header.cufe ? "con CUFE" : "sin CUFE",
           // Al aprobar tras corregir, se limpia el error previo y queda pendiente de envío.
           ...(status === "aprobado" ? { siigo_status: "pendiente", siigo_error: null } : {}),
-          // La factura de otra empresa no se elimina: queda registrada con el motivo del rechazo.
-          ...(chequeoEmpresa.status === "mismatch"
-            ? { siigo_status: "error", siigo_error: `RECHAZADA — EMPRESA INCORRECTA. ${mensajeEmpresaIncorrecta(chequeoEmpresa)}` }
-            : {}),
         file_path: filePath ?? existingFile.path,
         file_name: file?.name ?? existingFile.name,
       };
@@ -877,20 +876,26 @@ function Causar() {
       <div className="grid gap-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2 xl:grid-cols-4">
         {empresaIncorrecta && (
           <div className="sm:col-span-2 xl:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
-            <p className="font-semibold text-destructive">Esta factura no pertenece a la empresa seleccionada.</p>
+            <p className="font-semibold uppercase text-destructive">Esta factura no pertenece a la empresa seleccionada</p>
             <div className="mt-2 grid gap-1 sm:grid-cols-2">
               <p>
-                Empresa seleccionada: <span className="font-medium">{empresaActiva?.name ?? "—"}</span> · NIT:{" "}
+                Empresa activa: <span className="font-medium">{empresaActiva?.name ?? "—"}</span> · NIT:{" "}
                 <span className="font-medium">{empresaActiva?.nit ?? "—"}</span>
               </p>
               <p>
-                Empresa que aparece en la factura: <span className="font-medium">{header.buyer_name || "—"}</span> · NIT:{" "}
+                Comprador de la factura: <span className="font-medium">{header.buyer_name || "—"}</span> · NIT:{" "}
                 <span className="font-medium">{header.buyer_nit || "—"}</span>
               </p>
             </div>
             <p className="mt-2 text-muted-foreground">
-              Verifique que haya seleccionado la empresa correcta antes de continuar. No es posible aprobar ni enviar esta factura a Siigo.
+              Verifique que haya seleccionado la empresa correcta antes de continuar.
             </p>
+            <p className="mt-1 font-medium text-destructive">No es posible guardar, aprobar ni causar esta factura.</p>
+          </div>
+        )}
+        {!empresaIncorrecta && bloqueoEmpresa && (
+          <div className="sm:col-span-2 xl:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
+            <p className="font-medium text-destructive">{bloqueoEmpresa}</p>
           </div>
         )}
         {chequeoEmpresa.status === "ok" && chequeoEmpresa.nameMismatch && (
@@ -1225,13 +1230,18 @@ function Causar() {
 
       {lines.length > 0 && (
         <div className="flex flex-wrap gap-3">
-          <Button onClick={() => guardar("borrador")} disabled={saving} variant="outline">
+          <Button
+            onClick={() => guardar("borrador")}
+            disabled={saving || !!bloqueoEmpresa}
+            title={bloqueoEmpresa ?? undefined}
+            variant="outline"
+          >
             <Save className="size-4" /> Guardar borrador
           </Button>
           <Button
             onClick={() => guardar("aprobado")}
-            disabled={saving || hayErroresDeCuenta || empresaIncorrecta}
-            title={empresaIncorrecta ? "Esta factura no pertenece a la empresa seleccionada." : undefined}
+            disabled={saving || hayErroresDeCuenta || !!bloqueoEmpresa}
+            title={bloqueoEmpresa ?? undefined}
           >
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Aprobar comprobante
           </Button>
