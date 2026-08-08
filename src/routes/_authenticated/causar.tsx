@@ -13,6 +13,7 @@ import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { AccountCombobox } from "@/components/account-combobox";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
+import { BulkApply } from "@/components/bulk-apply";
 import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
 import { suggestCostCenter } from "@/lib/cost-center";
 import { cop } from "@/lib/format";
@@ -289,20 +290,87 @@ function Causar() {
   }, [lines, buscarProducto, resolverCuentaItem]);
   const hayErroresDeCuenta = Object.keys(lineErrors).length > 0;
 
+  /** Cambios de un renglón al cambiar su tipo de ítem, conservando la lógica producto → categoría → cuenta. */
+  const parcheDeTipo = useCallback(
+    (actual: Line, kind: string, log = false): Partial<Line> => {
+      if (kind === "producto" || kind === "servicio") {
+        const prod = buscarProducto({ ...actual, item_type: kind }, kind);
+        if (!prod) return { item_type: kind };
+        const r = resolverCuentaItem(prod, log);
+        if (r.error && log) toast.warning(r.error);
+        return { item_type: kind, code: prod.code, account_code: r.code, account_name: r.name };
+      }
+      const s = suggestAccount(actual.description ?? "", config?.rules ?? [], null);
+      return { item_type: kind, account_code: s.code, account_name: s.name };
+    },
+    [buscarProducto, resolverCuentaItem, config?.rules],
+  );
+
   /** Al cambiar el tipo de ítem se recalcula la cuenta contable según el nuevo tipo. */
   function cambiarTipo(i: number, kind: string) {
     const actual = lines[i];
     if (!actual) return;
-    if (kind === "producto" || kind === "servicio") {
-      const prod = buscarProducto({ ...actual, item_type: kind }, kind);
-      if (!prod) { setLine(i, { item_type: kind }); return; }
-      const r = resolverCuentaItem(prod, true);
-      if (r.error) toast.warning(r.error);
-      setLine(i, { item_type: kind, code: prod.code, account_code: r.code, account_name: r.name });
-      return;
-    }
-    const s = suggestAccount(actual.description ?? "", config?.rules ?? [], null);
-    setLine(i, { item_type: kind, account_code: s.code, account_name: s.name });
+    setLine(i, parcheDeTipo(actual, kind, true));
+  }
+
+  const baseDe = (l: Line) => Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+
+  /** Aplica el mismo tipo de ítem a todos los renglones, recalculando su cuenta. */
+  function aplicarTipoTodos(kind: string) {
+    setLines((prev) => prev.map((l) => ({ ...l, ...parcheDeTipo(l, kind) })));
+    toast.success(`Tipo "${kind}" aplicado a todos los renglones.`);
+  }
+
+  /** Aplica el mismo impuesto (IVA/impoconsumo) a todos los renglones. */
+  function aplicarIvaTodos(id: string) {
+    const tx = impuestosIva.find((t) => String(t.id) === id);
+    setLines((prev) => prev.map((l) => ({ ...l, iva: tx ? Math.round((baseDe(l) * Number(tx.rate)) / 100) : 0 })));
+    setLineTax((prev) => {
+      const out = { ...prev };
+      lines.forEach((_, i) => { out[i] = { ...out[i], iva: tx ? String(tx.id) : undefined }; });
+      return out;
+    });
+    toast.success(tx ? `${tx.name} aplicado a todos los renglones.` : "Todos los renglones quedaron sin impuesto.");
+  }
+
+  /** Aplica la misma retención a todos los renglones. */
+  function aplicarRetencionTodos(id: string) {
+    const tx = impuestosRet.find((t) => String(t.id) === id);
+    setLines((prev) =>
+      prev.map((l) => {
+        const base = String(tx?.kind) === "reteiva" ? Number(l.iva || 0) : baseDe(l);
+        return { ...l, retention: tx ? Math.round((base * Number(tx.rate)) / 100) : 0 };
+      }),
+    );
+    setLineTax((prev) => {
+      const out = { ...prev };
+      lines.forEach((_, i) => { out[i] = { ...out[i], ret: tx ? String(tx.id) : undefined }; });
+      return out;
+    });
+    toast.success(tx ? `${tx.name} aplicada a todos los renglones.` : "Todos los renglones quedaron sin retención.");
+  }
+
+  /** Aplica manualmente la misma cuenta PUC a todos los renglones. */
+  function aplicarCuentaTodos(code: string, name: string | null) {
+    setLines((prev) => prev.map((l) => ({ ...l, account_code: code, account_name: name })));
+    toast.success(code ? `Cuenta ${code} aplicada a todos los renglones.` : "Cuenta retirada de todos los renglones.");
+  }
+
+  /** Aplica el mismo producto/servicio a todos los renglones, con su cuenta automática. */
+  function aplicarProductoTodos(p: ProductOption) {
+    const cuenta = resolverCuentaItem(p);
+    if (cuenta.error) toast.warning(cuenta.error);
+    setLines((prev) =>
+      prev.map((l) => ({
+        ...l,
+        code: p.code,
+        description: p.name,
+        item_type: p.kind,
+        account_code: cuenta.code,
+        account_name: cuenta.name,
+      })),
+    );
+    toast.success(`"${p.name}" aplicado a todos los renglones.`);
   }
   // Si la factura trae IVA en los renglones, ese es el IVA que se causa; si no, el del encabezado.
   const ivaLineas = useMemo(() => lines.reduce((s, l) => s + Number(l.iva || 0), 0), [lines]);
@@ -823,14 +891,116 @@ function Causar() {
           <table className="w-full min-w-[900px] text-sm">
             <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">Descripción</th>
-                <th className="px-3 py-2 font-medium">Tipo</th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    Descripción
+                    <BulkApply title="Producto / descripción" className="w-96 space-y-2 p-3">
+                      {(close) => (
+                        <>
+                          <ProductCombobox
+                            products={((config?.products ?? []) as ProductOption[]).filter(
+                              (p) => !!(p.code ?? "").trim() && !!(p.name ?? "").trim(),
+                            )}
+                            value=""
+                            onSelect={(p) => { aplicarProductoTodos(p); close(); }}
+                          />
+                          <p className="text-xs normal-case tracking-normal text-muted-foreground">
+                            Se aplica el producto y su cuenta contable automática a todos los renglones.
+                          </p>
+                        </>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    Tipo
+                    <BulkApply title="Tipo de ítem" className="w-64 space-y-2 p-3">
+                      {(close) => (
+                        <div className="grid gap-1">
+                          {(["producto", "servicio", "gasto"] as const).map((k) => (
+                            <Button
+                              key={k}
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="justify-start text-xs normal-case tracking-normal"
+                              onClick={() => { aplicarTipoTodos(k); close(); }}
+                            >
+                              {k}
+                            </Button>
+                          ))}
+                        </div>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
                 <th className="px-3 py-2 font-medium">Cant.</th>
                 <th className="px-3 py-2 font-medium">Vr. unitario</th>
                 <th className="px-3 py-2 font-medium">Descuento</th>
-                <th className="px-3 py-2 font-medium">Cuenta PUC</th>
-                <th className="px-3 py-2 font-medium">IVA</th>
-                <th className="px-3 py-2 font-medium">Retención</th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    Cuenta PUC
+                    <BulkApply title="Cuenta PUC" className="w-96 space-y-2 p-3">
+                      {(close) => (
+                        <>
+                          <AccountCombobox
+                            accounts={config?.accounts ?? []}
+                            value=""
+                            onChange={(code, name) => { aplicarCuentaTodos(code, name); close(); }}
+                          />
+                          <p className="text-xs normal-case tracking-normal text-muted-foreground">
+                            Asignación manual: no reemplaza la lógica automática producto → categoría → cuenta.
+                          </p>
+                        </>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    IVA
+                    <BulkApply title="IVA" className="w-72 space-y-2 p-3">
+                      {(close) => (
+                        <select
+                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs normal-case tracking-normal"
+                          defaultValue=""
+                          onChange={(e) => { aplicarIvaTodos(e.target.value); close(); }}
+                        >
+                          <option value="" disabled>Selecciona un impuesto…</option>
+                          <option value="">Sin impuesto</option>
+                          {impuestosIva.map((t) => (
+                            <option key={String(t.id)} value={String(t.id)}>
+                              {t.name} {Number(t.rate)}%
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    Retención
+                    <BulkApply title="Retención" className="w-72 space-y-2 p-3">
+                      {(close) => (
+                        <select
+                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs normal-case tracking-normal"
+                          defaultValue=""
+                          onChange={(e) => { aplicarRetencionTodos(e.target.value); close(); }}
+                        >
+                          <option value="" disabled>Selecciona una retención…</option>
+                          <option value="">Sin retención</option>
+                          {impuestosRet.map((t) => (
+                            <option key={String(t.id)} value={String(t.id)}>
+                              {t.name} {Number(t.rate)}%
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
                 <th className="px-3 py-2 text-right font-medium">Valor</th>
                 <th className="px-3 py-2" />
               </tr>
