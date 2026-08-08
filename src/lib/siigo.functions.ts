@@ -1104,6 +1104,28 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         }
       }
 
+      // Retenciones que sólo son contables (Retefuente): quedan en el asiento y en el
+      // neto al proveedor, pero NO viajan en retentions[] ni usan la cuenta PUC como ID.
+      for (const retention of retencionesPorTipo.filter((r) => !r.enviarEnRetentions)) {
+        const journalLine = resolvedJournal.find(
+          (line) => Number(line.credit ?? 0) > 0 && line.account_code.startsWith(retention.accountPrefix),
+        );
+        const accountCode = journalLine?.account_code ?? retention.accountPrefix;
+        console.log("[siigo][retencion] Sólo contable (no va en retentions[]):", {
+          tipo: retention.label,
+          cuenta: accountCode,
+          valor: retention.amount,
+        });
+        retencionesTrace.push({
+          tipo: retention.label,
+          cuenta: accountCode,
+          tarifa: 0,
+          valor: retention.amount,
+          siigo_id: null,
+          nombre: null,
+        });
+      }
+
       const esCredito = /cr[eé]d/i.test(String(inv.payment_form ?? ""));
       const fechaDoc = inv.issue_date ?? new Date().toISOString().slice(0, 10);
       const dueDate = esCredito ? (inv.due_date ?? fechaDoc) : fechaDoc;
