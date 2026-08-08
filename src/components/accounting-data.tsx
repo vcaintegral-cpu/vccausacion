@@ -243,13 +243,16 @@ export function ProvidersToolbar({ companyId }: { companyId: string }) {
         .filter((r) => r.nit);
       if (parsed.length === 0) throw new Error("No se encontraron terceros (columnas esperadas: NIT, Razón social).");
       const unicos = Array.from(new Map(parsed.map((r) => [r.nit, r])).values());
+      if (!window.confirm(`Se reemplazarán los terceros actuales por ${unicos.length} del archivo. ¿Continuar?`)) return;
+      const { error: delErr } = await supabase.from("providers").delete().eq("company_id", companyId);
+      if (delErr) throw new Error(`No fue posible reemplazar los terceros actuales: ${delErr.message}`);
       for (let i = 0; i < unicos.length; i += 500) {
         const { error } = await supabase
           .from("providers")
           .upsert(unicos.slice(i, i + 500), { onConflict: "company_id,nit", ignoreDuplicates: false });
         if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}`);
       }
-      toast.success(`Terceros cargados desde Excel: ${unicos.length}.`);
+      toast.success(`Terceros reemplazados: ${unicos.length} cargado(s) desde Excel.`);
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
@@ -366,7 +369,7 @@ export function PucPanel({ companyId }: { companyId: string }) {
           `Registros con errores: ${fmt(parsed.errors.length)}\n` +
           `Primera cuenta: ${parsed.firstCode ?? "-"} · Última cuenta: ${parsed.lastCode ?? "-"}\n\n` +
           `Columnas detectadas: ${parsed.columns.join(", ")}\n\n` +
-          `Las cuentas existentes se actualizarán y las nuevas se crearán (no se borra nada). ¿Continuar?`,
+          `El PUC actual se REEMPLAZARÁ por completo con las cuentas de este archivo. ¿Continuar?`,
       );
       if (!ok) return;
 
@@ -385,6 +388,11 @@ export function PucPanel({ companyId }: { companyId: string }) {
       }
       const nuevas = parsed.valid.filter((r) => !existentes.has(r.code)).length;
       const actualizadas = parsed.valid.length - nuevas;
+
+      // Reemplazo total: se borra el PUC anterior de la empresa antes de cargar el nuevo.
+      setProgreso("Eliminando el PUC anterior…");
+      const { error: delPucErr } = await supabase.from("puc_accounts").delete().eq("company_id", companyId);
+      if (delPucErr) throw new Error(`No fue posible reemplazar el PUC actual: ${delPucErr.message}`);
 
       // Importación por lotes: espera cada lote y reporta el que falle.
       const LOTE = 500;
