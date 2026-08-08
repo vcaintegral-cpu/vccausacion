@@ -474,7 +474,7 @@ export function calculateSiigoPurchaseTotals(params: {
     retencionesAplicadas,
     netoAPagar,
     totalPayments,
-    diferencia: roundMoney(netoAPagar - totalPayments),
+    diferencia: roundMoney(Math.round(netoAPagar) - totalPayments),
   };
 }
 
