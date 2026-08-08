@@ -327,24 +327,6 @@ function Causar() {
   }, [lines, buscarProducto, resolverCuentaItem, config?.accounts]);
   const hayErroresDeCuenta = Object.keys(lineErrors).length > 0;
 
-  /** Validación contable del asiento: toda cuenta debe ser de movimiento, activa y estar en el PUC de la empresa. */
-  const validacionAsiento = useMemo(() => {
-    const puc = (config?.accounts ?? []) as PucAccount[];
-    const codes = [...new Set(journal.map((j) => j.account_code).filter(Boolean))];
-    return codes.map((code) => {
-      const cuenta = puc.find((a) => a.code === code) ?? null;
-      const check = puc.length > 0 ? validarCuenta(puc, code) : { ok: true, problema: null, cuenta };
-      return {
-        code,
-        movimiento: cuenta ? cuenta.is_movement !== false && !cuenta.has_children : true,
-        activa: cuenta ? cuenta.active !== false : true,
-        enSiigo: !!cuenta,
-        ok: check.ok,
-        problema: check.problema ?? "",
-      };
-    });
-  }, [journal, config?.accounts]);
-  const asientoInvalido = validacionAsiento.some((v) => !v.ok);
 
   // Validación determinística: el NIT del comprador de la factura debe ser el de la empresa activa.
   const empresaActiva = useMemo(() => (companies ?? []).find((c) => c.id === companyId) ?? null, [companies, companyId]);
@@ -496,6 +478,25 @@ function Causar() {
     [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones],
   );
   const t = totals(journal);
+
+  /** Validación contable del asiento: toda cuenta debe ser de movimiento, activa y estar en el PUC de la empresa. */
+  const validacionAsiento = useMemo(() => {
+    const puc = (config?.accounts ?? []) as PucAccount[];
+    const codes = [...new Set(journal.map((j) => j.account_code).filter(Boolean))];
+    return codes.map((code) => {
+      const cuenta = puc.find((a) => a.code === code) ?? null;
+      const check = puc.length > 0 ? validarCuenta(puc, code) : { ok: true, problema: null, cuenta };
+      return {
+        code,
+        movimiento: cuenta ? cuenta.is_movement !== false && !cuenta.has_children : true,
+        activa: cuenta ? cuenta.active !== false : true,
+        enSiigo: !!cuenta,
+        ok: check.ok,
+        problema: check.problema ?? "",
+      };
+    });
+  }, [journal, config?.accounts]);
+  const asientoInvalido = validacionAsiento.some((v) => !v.ok);
 
   async function leer(password?: string) {
     if (!file) { toast.error("Selecciona un archivo de factura."); return; }
