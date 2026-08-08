@@ -8,7 +8,8 @@ import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, PackageSearch, Send
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
 import { buildJournal, totals, type JournalLine, type Retenciones } from "@/lib/accounting";
-import { ITEM_TYPES, type LearningRule } from "@/lib/learning";
+import { type LearningRule } from "@/lib/learning";
+import { ITEM_TYPES, isValidItemType, normalizeItemType } from "@/lib/item-type";
 import { cop, fecha } from "@/lib/format";
 import { suggestCostCenter } from "@/lib/cost-center";
 import { siigoCreateProduct, siigoFindProduct, siigoSyncInvoice } from "@/lib/siigo.functions";
@@ -86,6 +87,8 @@ function Revisar() {
   const [inventario, setInventario] = useState<{ index: number; query: string; results: { id: string; code: string; name: string }[] | null; busy: boolean } | null>(null);
   const [centroSugerido, setCentroSugerido] = useState<string | null>(null);
   const [centroTocado, setCentroTocado] = useState(false);
+  // Cuentas confirmadas contra la base (company_id + código) cuando no vienen en el listado local.
+  const [cuentasVerificadas, setCuentasVerificadas] = useState<Record<string, string | null>>({});
 
   const { data } = useQuery({
     queryKey: ["revisar", id],
@@ -112,9 +115,38 @@ function Revisar() {
   useEffect(() => {
     if (data) {
       setHeader(data.invoice);
-      setLines(data.lines);
+      // Una sola fuente de verdad: el tipo de ítem se normaliza al cargar y nunca se degrada a gasto.
+      setLines(data.lines.map((l) => ({ ...l, item_type: normalizeItemType(l.item_type) })));
     }
   }, [data]);
+
+  /** Verifica en la base las cuentas de los renglones que no están en el listado cargado. */
+  useEffect(() => {
+    const company = header?.company_id;
+    if (!company) return;
+    const conocidas = new Set((data?.accounts ?? []).map((a) => a.code));
+    const faltantes = [...new Set(lines.map((l) => l.account_code).filter((c): c is string => !!c))].filter(
+      (c) => !conocidas.has(c) && !(c in cuentasVerificadas),
+    );
+    if (faltantes.length === 0) return;
+    let cancelado = false;
+    void supabase
+      .from("puc_accounts")
+      .select("code, name")
+      .eq("company_id", company)
+      .in("code", faltantes)
+      .then(({ data: rows }) => {
+        if (cancelado) return;
+        const encontrado = new Map((rows ?? []).map((r) => [r.code as string, (r.name ?? null) as string | null]));
+        setCuentasVerificadas((prev) => {
+          const next = { ...prev };
+          for (const code of faltantes) next[code] = encontrado.has(code) ? (encontrado.get(code) ?? null) : undefined as never;
+          for (const code of faltantes) if (!encontrado.has(code)) delete next[code], (next[code] = null);
+          return next;
+        });
+      });
+    return () => { cancelado = true; };
+  }, [lines, data?.accounts, header?.company_id, cuentasVerificadas]);
 
   /** Centro de costo sugerido por el historial del proveedor en esta empresa. */
   useEffect(() => {
