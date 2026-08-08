@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
 
@@ -31,17 +31,33 @@ type Table = "puc_accounts" | "providers" | "accounting_rules" | "tax_rates" | "
 
 type FieldDef = { key: string; label: string; type?: "text" | "number"; width?: string };
 
+const PAGE = 1000;
+
 function useRows(table: Table, companyId: string | null, order: string) {
   return useQuery({
     queryKey: [table, companyId],
     enabled: !!companyId,
     queryFn: async () => {
-      const { data, error } = await supabase.from(table).select("*").eq("company_id", companyId!).order(order);
-      if (error) throw error;
-      return data as Record<string, unknown>[];
+      // PostgREST devuelve máximo 1000 filas por consulta: se pagina hasta traer todo.
+      const out: Record<string, unknown>[] = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from(table)
+          .select("*")
+          .eq("company_id", companyId!)
+          .order(order)
+          .range(from, from + PAGE - 1);
+        if (error) throw error;
+        const chunk = (data ?? []) as Record<string, unknown>[];
+        out.push(...chunk);
+        if (chunk.length < PAGE) break;
+      }
+      return out;
     },
   });
 }
+
+const fmtNum = (value: number) => value.toLocaleString("es-CO");
 
 function Section({
   table,
@@ -49,16 +65,31 @@ function Section({
   order,
   fields,
   defaults,
+  noun = "registro(s)",
 }: {
   table: Table;
   companyId: string;
   order: string;
   fields: FieldDef[];
   defaults?: Record<string, unknown>;
+  noun?: string;
 }) {
   const queryClient = useQueryClient();
   const { data: rows } = useRows(table, companyId, order);
   const [form, setForm] = useState<Record<string, string>>({});
+  const [buscar, setBuscar] = useState("");
+  const [pagina, setPagina] = useState(1);
+  const porPagina = 100;
+
+  const filtradas = useMemo(() => {
+    const q = buscar.trim().toLowerCase();
+    const all = rows ?? [];
+    if (!q) return all;
+    return all.filter((r) => fields.some((f) => String(r[f.key] ?? "").toLowerCase().includes(q)));
+  }, [rows, buscar, fields]);
+  const totalPaginas = Math.max(1, Math.ceil(filtradas.length / porPagina));
+  const paginaActual = Math.min(pagina, totalPaginas);
+  const visibles = filtradas.slice((paginaActual - 1) * porPagina, paginaActual * porPagina);
 
   async function agregar(e: React.FormEvent) {
     e.preventDefault();
@@ -99,6 +130,22 @@ function Section({
         </Button>
       </form>
 
+      <div className="flex flex-wrap items-center gap-3">
+        <Input
+          value={buscar}
+          onChange={(e) => { setBuscar(e.target.value); setPagina(1); }}
+          placeholder="Buscar…"
+          className="w-72"
+        />
+        <span className="text-xs text-muted-foreground">
+          Mostrando {fmtNum(visibles.length)} de {fmtNum(filtradas.length)} {noun} · Página {paginaActual} de {totalPaginas}
+        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled={paginaActual <= 1} onClick={() => setPagina(paginaActual - 1)}>Anterior</Button>
+          <Button variant="outline" size="sm" disabled={paginaActual >= totalPaginas} onClick={() => setPagina(paginaActual + 1)}>Siguiente</Button>
+        </div>
+      </div>
+
       <div className="overflow-x-auto rounded-lg border border-border bg-card">
         <table className="w-full text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -112,7 +159,7 @@ function Section({
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {(rows ?? []).map((r) => (
+            {visibles.map((r) => (
               <tr key={String(r['id'])}>
                 {fields.map((f) => (
                   <td key={f.key} className="px-4 py-2">
@@ -126,10 +173,10 @@ function Section({
                 </td>
               </tr>
             ))}
-            {(rows ?? []).length === 0 && (
+            {visibles.length === 0 && (
               <tr>
                 <td colSpan={fields.length + 1} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  Sin registros.
+                  {buscar ? "Sin resultados para la búsqueda." : "Sin registros."}
                 </td>
               </tr>
             )}
@@ -180,6 +227,7 @@ function Admin() {
               table="providers"
               companyId={companyId}
               order="name"
+              noun="tercero(s)"
               fields={[
                 { key: "nit", label: "NIT" },
                 { key: "name", label: "Razón social", width: "w-72" },
