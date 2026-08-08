@@ -623,6 +623,8 @@ function Causar() {
           total,
           status,
           dian_status: header.cufe ? "con CUFE" : "sin CUFE",
+          // Al aprobar tras corregir, se limpia el error previo y queda pendiente de envío.
+          ...(status === "aprobado" ? { siigo_status: "pendiente", siigo_error: null } : {}),
         file_path: filePath ?? existingFile.path,
         file_name: file?.name ?? existingFile.name,
       };
