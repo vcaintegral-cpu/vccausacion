@@ -217,27 +217,12 @@ function Causar() {
       item_type: normalizeItemType(l["item_type"] as string | null),
     }));
     setLines(cargadas);
-    // Reconstruye la tarifa elegida por renglón a partir de los valores guardados.
-    const impuestosGuardados = config.taxes ?? [];
+    // El impuesto elegido se recupera por su identificador guardado, nunca por tarifa.
     const seleccion: Record<number, { iva?: string | undefined; ret?: string | undefined }> = {};
-    cargadas.forEach((l, i) => {
-      const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
-      const ivaTax = Number(l.iva || 0)
-        ? impuestosGuardados.find(
-            (t) =>
-              (String(t.kind) === "iva" || String(t.kind) === "impoconsumo") &&
-              Math.abs(Math.round((base * Number(t.rate)) / 100) - Number(l.iva)) <= 1,
-          )
-        : undefined;
-      const retTax = Number(l.retention || 0)
-        ? impuestosGuardados.find((t) => {
-            if (!String(t.kind).startsWith("rete")) return false;
-            const b = String(t.kind) === "reteiva" ? Number(l.iva || 0) : base;
-            return Math.abs(Math.round((b * Number(t.rate)) / 100) - Number(l.retention)) <= 1;
-          })
-        : undefined;
-      if (ivaTax || retTax)
-        seleccion[i] = { iva: ivaTax ? String(ivaTax.id) : undefined, ret: retTax ? String(retTax.id) : undefined };
+    (borrador.lines as Record<string, any>[]).forEach((l, i) => {
+      const ivaId = l["iva_tax_id"] ? String(l["iva_tax_id"]) : undefined;
+      const retId = l["ret_tax_id"] ? String(l["ret_tax_id"]) : undefined;
+      if (ivaId || retId) seleccion[i] = { iva: ivaId, ret: retId };
     });
     setLineTax(seleccion);
   }, [borrador, config, editingId]);
