@@ -13,6 +13,7 @@ import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, typ
 import { AccountCombobox } from "@/components/account-combobox";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
+import { suggestCostCenter } from "@/lib/cost-center";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { expandInvoiceFiles, processInvoiceFile } from "@/lib/bulk-invoices";
