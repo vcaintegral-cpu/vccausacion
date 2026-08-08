@@ -925,6 +925,7 @@ export type Database = {
           code: string
           company_id: string
           created_at: string
+          excel_active: boolean | null
           has_children: boolean
           id: string
           is_movement: boolean
@@ -932,8 +933,11 @@ export type Database = {
           name: string
           nature: string
           parent_code: string | null
+          siigo_active: boolean | null
           siigo_code: string | null
           siigo_id: string | null
+          siigo_is_movement: boolean | null
+          siigo_seen_at: string | null
           source: string
           synced_at: string | null
         }
@@ -942,6 +946,7 @@ export type Database = {
           code: string
           company_id: string
           created_at?: string
+          excel_active?: boolean | null
           has_children?: boolean
           id?: string
           is_movement?: boolean
@@ -949,8 +954,11 @@ export type Database = {
           name: string
           nature?: string
           parent_code?: string | null
+          siigo_active?: boolean | null
           siigo_code?: string | null
           siigo_id?: string | null
+          siigo_is_movement?: boolean | null
+          siigo_seen_at?: string | null
           source?: string
           synced_at?: string | null
         }
@@ -959,6 +967,7 @@ export type Database = {
           code?: string
           company_id?: string
           created_at?: string
+          excel_active?: boolean | null
           has_children?: boolean
           id?: string
           is_movement?: boolean
@@ -966,8 +975,11 @@ export type Database = {
           name?: string
           nature?: string
           parent_code?: string | null
+          siigo_active?: boolean | null
           siigo_code?: string | null
           siigo_id?: string | null
+          siigo_is_movement?: boolean | null
+          siigo_seen_at?: string | null
           source?: string
           synced_at?: string | null
         }
