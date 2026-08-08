@@ -807,6 +807,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .from("invoices")
         .update({
           siigo_status: "sincronizada",
+          status: "sincronizada",
           siigo_id: siigoId,
           siigo_number: siigoNumber,
           siigo_document_url: documentUrl,
@@ -827,8 +828,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       console.error("[siigo][causacion] error:", message);
       await supabase
         .from("invoices")
-        // Si Siigo falla, el comprobante vuelve a Borrador para corregirlo y reenviarlo.
-        .update({ siigo_status: "error", siigo_error: message, siigo_synced_by: context.userId, status: "borrador" })
+        // Si Siigo falla, la factura queda en estado Error para revisarla y reenviarla.
+        .update({ siigo_status: "error", siigo_error: message, siigo_synced_by: context.userId, status: "error" })
         .eq("id", data.invoiceId);
       return { ok: false, siigoId: null, siigoNumber: null, documentUrl: null, syncedAt: null, status: "error", error: message };
     }
