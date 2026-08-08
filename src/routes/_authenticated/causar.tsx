@@ -68,6 +68,7 @@ const emptyHeader = (): Header => ({
   prefix: "", number: "", issue_date: "", due_date: "",
   provider_nit: "", provider_name: "", provider_address: "", provider_city: "",
   provider_phone: "", provider_email: "", cufe: "", payment_form: "", payment_method: "",
+  buyer_nit: "", buyer_name: "",
   currency: "COP", cost_center: "", notes: "",
   subtotal: 0, discount: 0, iva: 0, impoconsumo: 0, total: 0,
 });
