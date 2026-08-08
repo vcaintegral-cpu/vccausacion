@@ -5,6 +5,7 @@ import type { ExtractedInvoice } from "@/lib/extract.functions";
 import { resolveProductAccount } from "@/lib/product-account";
 import { findExistingInvoice, mensajeDuplicado } from "@/lib/invoice-duplicates";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
+import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 import {
   applyRulesToLines,
   buildJournal,
@@ -46,6 +47,7 @@ export async function expandInvoiceFiles(input: File[]): Promise<File[]> {
 }
 
 export type BulkConfig = {
+  accounts: PucAccount[];
   rules: Rule[];
   taxes: TaxRate[];
   products: {
@@ -154,6 +156,17 @@ export async function processInvoiceFile(params: {
     retenciones,
     costCenter: header.cost_center,
   });
+  const operationalJournal = journal.map((line) => {
+    const resolution = resolveOperationalAccount(config.accounts, line.account_code);
+    if (!resolution.valid || !resolution.operationalAccount) {
+      throw new Error(resolution.message ?? `La cuenta ${line.account_code} no es operativa en Siigo.`);
+    }
+    return {
+      ...line,
+      account_code: resolution.operationalAccount,
+      account_name: resolution.operational?.name ?? line.account_name,
+    };
+  });
 
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth.user?.id;
@@ -241,7 +254,7 @@ export async function processInvoiceFile(params: {
       })),
     ),
     supabase.from("journal_lines").insert(
-      journal.map((j, i) => ({
+      operationalJournal.map((j, i) => ({
         invoice_id: inv.id,
         company_id: companyId,
         account_code: j.account_code,

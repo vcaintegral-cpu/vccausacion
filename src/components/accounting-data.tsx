@@ -407,16 +407,25 @@ export function PucPanel({ companyId }: { companyId: string }) {
       );
       if (!ok) return;
 
-      const existentes = new Map<string, (typeof parsed.valid)[number]>();
+      type ExistingPuc = (typeof parsed.valid)[number] & {
+        id?: string;
+        siigo_id?: string | null;
+        siigo_code?: string | null;
+        synced_at?: string | null;
+        siigo_active?: boolean | null;
+        siigo_is_movement?: boolean | null;
+        siigo_seen_at?: string | null;
+      };
+      const existentes = new Map<string, ExistingPuc>();
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await supabase
           .from("puc_accounts")
-          .select("company_id,code,name,nature,active,source")
+          .select("id,company_id,code,name,nature,active,source,excel_active,siigo_id,siigo_code,synced_at,siigo_active,siigo_is_movement,siigo_seen_at")
           .eq("company_id", companyId)
           .order("code")
           .range(from, from + PAGE - 1);
         if (error) throw new Error(`No fue posible leer el PUC actual: ${error.message}`);
-        (data ?? []).forEach((r) => existentes.set(String(r.code), r as (typeof parsed.valid)[number]));
+        (data ?? []).forEach((r) => existentes.set(String(r.code), r as ExistingPuc));
         if ((data ?? []).length < PAGE) break;
       }
       const { data: auth } = await supabase.auth.getUser();
@@ -427,9 +436,13 @@ export function PucPanel({ companyId }: { companyId: string }) {
           .filter((error) => !error.problema.startsWith("Código repetido"))
           .map((error) => ({ row: error.rowNumber, key: error.code, message: `${error.problema} ${error.accion}` })),
         duplicateCount: parsed.duplicates, keyOf: (row) => row.code, existingByKey: existentes,
-        equals: sameImportValues(["name", "nature", "active"]),
+        equals: sameImportValues(["name", "nature", "active", "excel_active"]),
         saveBatch: async (batch) => {
-          const { error } = await supabase.from("puc_accounts").upsert(batch, { onConflict: "company_id,code", ignoreDuplicates: false });
+          const merged = batch.map((row) => {
+            const current = existentes.get(row.code);
+            return current ? { ...current, ...row } : row;
+          });
+          const { error } = await supabase.from("puc_accounts").upsert(merged, { onConflict: "company_id,code", ignoreDuplicates: false });
           return { error };
         },
         verifyKeys: () => fetchAllKeys(async (from, to) => {

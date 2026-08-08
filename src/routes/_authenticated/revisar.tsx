@@ -7,6 +7,7 @@ import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, PackageSearch, Send
 
 import { supabase } from "@/integrations/supabase/client";
 import { fetchCompanyPuc } from "@/lib/puc-data";
+import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 import { useActiveCompany } from "@/lib/active-company";
 import { buildJournal, totals, type JournalLine, type Retenciones } from "@/lib/accounting";
 import { type LearningRule } from "@/lib/learning";
@@ -212,7 +213,14 @@ function Revisar() {
       }),
     [lines, header?.iva, header?.impoconsumo, header?.cost_center, retenciones],
   );
-  const t = totals(journal);
+  const operationalJournal = useMemo(() => {
+    const puc = (data?.accounts ?? []) as PucAccount[];
+    return journal.map((line) => {
+      const resolution = resolveOperationalAccount(puc, line.account_code);
+      return resolution.operationalAccount ? { ...line, account_code: resolution.operationalAccount, account_name: resolution.operational?.name ?? line.account_name } : line;
+    });
+  }, [journal, data?.accounts]);
+  const t = totals(operationalJournal);
 
   const errores = useMemo(() => {
     const e: string[] = [];
@@ -226,6 +234,11 @@ function Revisar() {
     lines.forEach((l, i) => {
       if (!l.account_code) e.push(`Renglón ${i + 1}: falta la cuenta contable.`);
       else {
+        const resolution = resolveOperationalAccount((data?.accounts ?? []) as PucAccount[], l.account_code);
+        if (!resolution.valid) {
+          e.push(`Renglón ${i + 1}: ${resolution.message ?? `la cuenta ${l.account_code} no es operativa.`}`);
+          return;
+        }
         const verificada = cuentasVerificadas[l.account_code];
         // Solo se marca inexistente cuando la base confirmó que no está (company_id + código).
         if (!pucCodes.has(l.account_code) && verificada && !verificada.exists) {
@@ -280,7 +293,7 @@ function Revisar() {
 
     await supabase.from("journal_lines").delete().eq("invoice_id", header.id);
     await supabase.from("journal_lines").insert(
-      journal.map((j, i) => ({
+       operationalJournal.map((j, i) => ({
         invoice_id: header.id,
         company_id: header.company_id,
         account_code: j.account_code,
@@ -589,7 +602,7 @@ function Revisar() {
           <div className="border-b border-border px-5 py-3 text-sm font-semibold">Asiento contable generado</div>
           <table className="w-full text-sm">
             <tbody className="divide-y divide-border">
-              {journal.map((j, i) => (
+               {operationalJournal.map((j, i) => (
                 <tr key={i}>
                   <td className="px-4 py-1.5 font-mono text-xs">{j.account_code}</td>
                   <td className="px-4 py-1.5 text-muted-foreground">{j.account_name}</td>

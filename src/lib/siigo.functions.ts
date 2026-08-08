@@ -1,10 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
-import { evaluarCuenta, validarCuenta } from "@/lib/puc-hierarchy";
+import { resolveOperationalAccount, validarCuenta } from "@/lib/puc-hierarchy";
 import { mensajeSiigoAmigable } from "@/lib/siigo-errors";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "./company-validation";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { normalizeItemType } from "@/lib/item-type";
-import type { Json } from "@/integrations/supabase/types";
+import type { Database, Json } from "@/integrations/supabase/types";
 
 export type SiigoStatus = {
   configured: boolean;
@@ -159,17 +159,38 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
 
     console.log("[siigo][puc] comprobantes revisados:", scanned, "| cuentas únicas encontradas:", found.size);
 
-    const rows = [...found.entries()].map(([code, v]) => ({
-      company_id: data.companyId,
-      code,
-      name: v.name,
-      nature: v.nature,
-      source: "siigo",
-      active: true,
-      is_movement: true,
-      siigo_code: code,
-      synced_at: new Date().toISOString(),
-    }));
+    type ExistingPucRow = Database["public"]["Tables"]["puc_accounts"]["Row"];
+    const existing = new Map<string, ExistingPucRow>();
+    for (let from = 0; ; from += 1000) {
+      const { data: page, error: existingError } = await context.supabase
+        .from("puc_accounts")
+        .select("id,company_id,code,name,nature,active,source,level,parent_code,has_children,is_movement,excel_active,siigo_id,siigo_code,synced_at,siigo_active,siigo_is_movement,siigo_seen_at,created_at")
+        .eq("company_id", data.companyId)
+        .order("code")
+        .range(from, from + 999);
+      if (existingError) throw new Error(`No fue posible preservar el PUC actual: ${existingError.message}`);
+      for (const account of page ?? []) existing.set(account.code, account);
+      if ((page ?? []).length < 1000) break;
+    }
+    const now = new Date().toISOString();
+    const rows = [...found.entries()].map(([code, v]) => {
+      const current = existing.get(code);
+      return {
+        ...current,
+        company_id: data.companyId,
+        code,
+        name: current?.name ?? v.name,
+        nature: current?.nature ?? v.nature,
+        source: current?.source ?? "siigo",
+        active: current?.active ?? true,
+        is_movement: current?.is_movement ?? true,
+        siigo_code: code,
+        synced_at: now,
+        siigo_active: true,
+        siigo_is_movement: true,
+        siigo_seen_at: now,
+      };
+    });
     console.log("[siigo][puc] registros válidos para insertar:", rows.length);
     if (rows.length === 0) {
       console.warn("[siigo][puc] no se encontraron cuentas en los comprobantes de Siigo; no se inserta nada.");
@@ -233,13 +254,17 @@ export const pucAccountsOverview = createServerFn({ method: "POST" })
       active: boolean;
       siigo_id: string | null;
       siigo_code: string | null;
+      siigo_active: boolean | null;
+      siigo_is_movement: boolean | null;
+      siigo_seen_at: string | null;
+      excel_active: boolean | null;
       synced_at: string | null;
     };
     const out: PucOverviewRow[] = [];
     for (let from = 0; ; from += 1000) {
       const { data: rows, error } = await context.supabase
         .from("puc_accounts")
-        .select("code, name, level, parent_code, has_children, is_movement, active, siigo_id, siigo_code, synced_at")
+        .select("code, name, level, parent_code, has_children, is_movement, active, excel_active, siigo_id, siigo_code, synced_at, siigo_active, siigo_is_movement, siigo_seen_at")
         .eq("company_id", data.companyId)
         .order("code")
         .range(from, from + 999);
@@ -593,12 +618,17 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       is_movement: boolean;
       siigo_id: string | null;
       siigo_code: string | null;
+      parent_code: string | null;
+      siigo_active: boolean | null;
+      siigo_is_movement: boolean | null;
+      siigo_seen_at: string | null;
+      excel_active: boolean | null;
     };
     const companyAccounts: PucRow[] = [];
     for (let from = 0; ; from += 1000) {
       const { data: page, error: accountsErr } = await supabase
         .from("puc_accounts")
-        .select("code, name, active, has_children, is_movement, siigo_id, siigo_code")
+        .select("code, name, active, has_children, is_movement, siigo_id, siigo_code, parent_code, excel_active, siigo_active, siigo_is_movement, siigo_seen_at")
         .eq("company_id", inv.company_id)
         .order("code")
         .range(from, from + 999);
@@ -608,53 +638,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       if (chunk.length < 1000) break;
     }
 
-    const availableCodes = new Set((companyAccounts ?? []).map((account) => account.code));
     const accounts = companyAccounts ?? [];
-    /** Una cuenta es de grupo (no de movimiento) si el PUC tiene auxiliares que dependen de ella. */
-    const hijasDe = (code: string) =>
-      accounts
-        .filter((account) => account.code.startsWith(code) && account.code.length > code.length)
-        .sort((a, b) => a.code.length - b.code.length || a.code.localeCompare(b.code));
-    /** Baja hasta la auxiliar final, prefiriendo la que coincida con las palabras dadas. */
-    const auxiliarDe = (code: string, palabras: string[] = []): string | null => {
-      const validas = hijasDe(code).filter((account) => validarCuenta(accounts, account.code).ok);
-      if (validas.length === 0) return null;
-      const preferidas = palabras.length > 0
-        ? validas.filter((account) => palabras.some((word) => account.name.toLowerCase().includes(word)))
-        : validas;
-      // Nunca fabricar ni escoger arbitrariamente: solo resolver cuando la
-      // evidencia deja una única auxiliar válida.
-      return preferidas.length === 1 ? preferidas[0]?.code ?? null : null;
-    };
-
-    const findEquivalent = (baseCode: string) => {
-      if (baseCode === "240801") {
-        const directo = (companyAccounts ?? []).find((account) => account.code === "621008");
-        if (directo) return directo.code;
-        const porNombre = (companyAccounts ?? []).find((account) => {
-          const name = account.name.toLowerCase();
-          return account.code.startsWith("2408") && name.includes("iva") && name.includes("descontable") && !name.includes("devoluci");
-        })?.code;
-        return auxiliarDe(porNombre ?? "240810", ["iva", "descontable"]) ?? porNombre ?? baseCode;
-      }
-      // El nivel operativo no siempre es el último de la jerarquía: si la
-      // subcuenta permite movimiento se usa tal cual; solo se baja a la
-      // auxiliar cuando la cuenta tiene auxiliares activas.
-      const evaluacion = evaluarCuenta(accounts, baseCode);
-      if (evaluacion.permiteMovimiento) return baseCode;
-      if (evaluacion.cuentaOperativa) return evaluacion.cuentaOperativa;
-       return auxiliarDe(baseCode) ?? baseCode;
-    };
 
     const resolvedJournal = journal.map((line) => {
-      const resolvedCode = findEquivalent(line.account_code);
-      if (!resolvedCode) {
-        throw new Error(
-          `La cuenta ${line.account_code} no es una cuenta de movimiento en Siigo y no se encontró una auxiliar equivalente en el PUC importado. ` +
-            "Cambia la cuenta del renglón por una auxiliar (por ejemplo 51959501) o importa el PUC desde Integraciones antes de volver a causar.",
-        );
-      }
-      return { ...line, account_code: resolvedCode };
+      const resolution = resolveOperationalAccount(accounts, line.account_code);
+      if (!resolution.valid || !resolution.operationalAccount) throw new Error(resolution.message ?? `La cuenta ${line.account_code} no es operativa en Siigo.`);
+      return { ...line, account_code: resolution.operationalAccount };
     });
 
     const replacements = resolvedJournal.filter((line, index) => line.account_code !== journal[index]?.account_code);
@@ -839,9 +828,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .order("position");
 
       const esCuentaFiscal = (code: string) => /^(2205|2365|2367|2368|2408|621008)/.test(code);
-      // La cuenta definida en la causación manda: si existe en el PUC de la
-      // empresa se envía exactamente igual, sin recalcular equivalencias.
-      const cuentaDelRenglon = (code: string) => (availableCodes.has(code) ? code : findEquivalent(code) || code);
+      // Toda cuenta de detalle pasa por el mismo resolvedor central utilizado
+      // por el comprobante y la validación previa.
+      const cuentaDelRenglon = (code: string) => {
+        const resolution = resolveOperationalAccount(accounts, code);
+        if (!resolution.valid || !resolution.operationalAccount) throw new Error(resolution.message ?? `La cuenta ${code} no es operativa en Siigo.`);
+        return resolution.operationalAccount;
+      };
 
       // Catálogo local de productos: la cuenta PUC y el código de producto son
       // campos distintos y nunca se intercambian.
