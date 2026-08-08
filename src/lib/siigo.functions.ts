@@ -220,14 +220,32 @@ export const pucAccountsOverview = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }) => {
-    const { data: rows, error } = await context.supabase
-      .from("puc_accounts")
-      .select("code, name, level, parent_code, has_children, is_movement, active, siigo_id, siigo_code, synced_at")
-      .eq("company_id", data.companyId)
-      .order("code")
-      .range(0, 4999);
-    if (error) throw new Error(error.message);
-    return rows ?? [];
+    type PucOverviewRow = {
+      code: string;
+      name: string;
+      level: string | null;
+      parent_code: string | null;
+      has_children: boolean;
+      is_movement: boolean;
+      active: boolean;
+      siigo_id: string | null;
+      siigo_code: string | null;
+      synced_at: string | null;
+    };
+    const out: PucOverviewRow[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data: rows, error } = await context.supabase
+        .from("puc_accounts")
+        .select("code, name, level, parent_code, has_children, is_movement, active, siigo_id, siigo_code, synced_at")
+        .eq("company_id", data.companyId)
+        .order("code")
+        .range(from, from + 999);
+      if (error) throw new Error(error.message);
+      const chunk = rows ?? [];
+      out.push(...chunk);
+      if (chunk.length < 1000) break;
+    }
+    return out;
   });
 
 export type SiigoPurchase = {

@@ -1,11 +1,18 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Download, Plus, RefreshCw, Upload } from "lucide-react";
+import { Download, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
-import { siigoImportCostCenters, siigoImportProviders, siigoImportPuc, siigoImportTaxes } from "@/lib/siigo.functions";
-import { downloadSheet, num, pick, readSheet } from "@/lib/spreadsheet";
+import {
+  pucRebuildHierarchy,
+  siigoImportCostCenters,
+  siigoImportProviders,
+  siigoImportPuc,
+  siigoImportTaxes,
+} from "@/lib/siigo.functions";
+import { downloadSheet, num, pick, readSheet, readSheetIndexed } from "@/lib/spreadsheet";
+import { compareCodes, parsePucSheet, type PucRowError } from "@/lib/puc-import";
 import { analyzeHistory, isSiigoAuxiliary, type HistoryAnalysis } from "@/lib/history-import";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +21,124 @@ import { Switch } from "@/components/ui/switch";
 
 
 type Source = "manual" | "excel" | "siigo";
+
+const fmt = (n: number) => n.toLocaleString("es-CO");
+
+type PucImportSummary = {
+  archivo: string;
+  encontrados: number;
+  validos: number;
+  importados: number;
+  nuevas: number;
+  actualizadas: number;
+  duplicados: number;
+  errores: PucRowError[];
+  fallos: string[];
+  totalDb: number;
+  primeraExcel: string | null;
+  ultimaExcel: string | null;
+  primeraDb: string | null;
+  ultimaDb: string | null;
+  faltantes: string[];
+  movimiento: number | null;
+  completo: boolean;
+  intentados: number;
+};
+
+/** Cuenta y lista TODAS las cuentas guardadas de la empresa (COUNT + paginación completa). */
+async function verificarPuc(companyId: string) {
+  const { count, error: cErr } = await supabase
+    .from("puc_accounts")
+    .select("id", { count: "exact", head: true })
+    .eq("company_id", companyId);
+  if (cErr) throw new Error(cErr.message);
+  const all: string[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("puc_accounts")
+      .select("code")
+      .eq("company_id", companyId)
+      .order("code")
+      .range(from, from + 999);
+    if (error) throw new Error(error.message);
+    const chunk = data ?? [];
+    chunk.forEach((r) => all.push(String(r.code)));
+    if (chunk.length < 1000) break;
+  }
+  const ordenados = [...all].sort(compareCodes);
+  return {
+    total: count ?? all.length,
+    all,
+    codes: new Set(all),
+    first: ordenados[0] ?? null,
+    last: ordenados[ordenados.length - 1] ?? null,
+  };
+}
+
+function ImportSummary({
+  resumen,
+  onClose,
+  onErrores,
+}: {
+  resumen: PucImportSummary;
+  onClose: () => void;
+  onErrores: () => void;
+}) {
+  return (
+    <div className="space-y-3 rounded-lg border border-border bg-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold uppercase tracking-wide">Resumen de importación</h3>
+          <p className="text-xs text-muted-foreground">Archivo: {resumen.archivo}</p>
+        </div>
+        <Button variant="ghost" size="sm" onClick={onClose}><X className="size-4" /></Button>
+      </div>
+      <div className="grid gap-2 text-sm sm:grid-cols-3">
+        <p>Registros encontrados: <strong>{fmt(resumen.encontrados)}</strong></p>
+        <p>Registros válidos: <strong>{fmt(resumen.validos)}</strong></p>
+        <p>Registros importados: <strong>{fmt(resumen.importados)}</strong></p>
+        <p>Cuentas nuevas: <strong>{fmt(resumen.nuevas)}</strong></p>
+        <p>Cuentas actualizadas: <strong>{fmt(resumen.actualizadas)}</strong></p>
+        <p>Duplicados evitados: <strong>{fmt(resumen.duplicados)}</strong></p>
+        <p>Registros con error: <strong>{fmt(resumen.errores.length)}</strong></p>
+        <p>Total en la base de datos: <strong>{fmt(resumen.totalDb)}</strong></p>
+        <p>Cuentas de movimiento: <strong>{resumen.movimiento === null ? "—" : fmt(resumen.movimiento)}</strong></p>
+        <p>Primera cuenta (Excel): <strong>{resumen.primeraExcel ?? "-"}</strong></p>
+        <p>Última cuenta (Excel): <strong>{resumen.ultimaExcel ?? "-"}</strong></p>
+        <p>Última cuenta guardada: <strong>{resumen.ultimaDb ?? "-"}</strong></p>
+      </div>
+      <p className={`text-sm font-semibold ${resumen.completo ? "text-emerald-600" : "text-destructive"}`}>
+        {resumen.completo
+          ? "PUC IMPORTADO CORRECTAMENTE."
+          : `EL PUC NO SE IMPORTÓ COMPLETAMENTE. Excel: ${fmt(resumen.validos)} · Guardadas: ${fmt(resumen.importados)} · Faltantes: ${fmt(resumen.faltantes.length)}.`}
+      </p>
+      {resumen.fallos.length > 0 ? (
+        <ul className="space-y-1 text-xs text-destructive">
+          {resumen.fallos.map((f, i) => <li key={i}>{f}</li>)}
+        </ul>
+      ) : null}
+      {resumen.faltantes.length > 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Cuentas faltantes (primeras 20): {resumen.faltantes.slice(0, 20).join(", ")}
+        </p>
+      ) : null}
+      {resumen.errores.length > 0 ? (
+        <div className="space-y-2">
+          <div className="max-h-40 space-y-1 overflow-auto text-xs text-muted-foreground">
+            {resumen.errores.slice(0, 50).map((e, i) => (
+              <p key={i}>
+                Fila {e.rowNumber}: {e.code ? `Código ${e.code}. ` : ""}{e.problema} {e.accion}
+              </p>
+            ))}
+          </div>
+          <Button variant="outline" size="sm" onClick={onErrores}>
+            <Download className="size-4" /> Descargar reporte de errores
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function SourceTag({ source }: { source?: string | null }) {
   const label = source === "siigo" ? "Siigo" : source === "excel" ? "Excel" : "Manual";
@@ -48,14 +173,34 @@ function FileButton({ label, onFile, busy }: { label: string; onFile: (file: Fil
   );
 }
 
+const PAGE = 1000;
+
+/** Lee TODAS las filas de la tabla paginando (PostgREST devuelve máximo 1000 por consulta). */
+async function fetchAllRows(
+  table: "puc_accounts" | "cost_centers" | "tax_rates",
+  companyId: string,
+  order: string,
+): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .eq("company_id", companyId)
+      .order(order)
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    const chunk = (data ?? []) as Record<string, unknown>[];
+    out.push(...chunk);
+    if (chunk.length < PAGE) break;
+  }
+  return out;
+}
+
 function useTable(table: "puc_accounts" | "cost_centers" | "tax_rates", companyId: string, order: string) {
   return useQuery({
     queryKey: [table, companyId, "datos-contables"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from(table).select("*").eq("company_id", companyId).order(order);
-      if (error) throw error;
-      return data as Record<string, unknown>[];
-    },
+    queryFn: () => fetchAllRows(table, companyId, order),
   });
 }
 
@@ -153,8 +298,43 @@ export function PucPanel({ companyId }: { companyId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [form, setForm] = useState({ code: "", name: "", nature: "debito" });
   const [edit, setEdit] = useState<Record<string, { code: string; name: string; nature: string }>>({});
+  const [resumen, setResumen] = useState<PucImportSummary | null>(null);
+  const [progreso, setProgreso] = useState<string | null>(null);
+  const [buscar, setBuscar] = useState("");
+  const [pagina, setPagina] = useState(1);
+  const porPagina = 100;
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["puc_accounts"] });
+
+  // Total real en la base de datos (COUNT), independiente de lo que se muestre en pantalla.
+  const { data: totalDb } = useQuery({
+    queryKey: ["puc_accounts", companyId, "count"],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("puc_accounts")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", companyId);
+      if (error) throw error;
+      return count ?? 0;
+    },
+  });
+
+  const filtradas = useMemo(() => {
+    const q = buscar.trim().toLowerCase();
+    const all = (rows ?? []) as Record<string, unknown>[];
+    if (!q) return all;
+    return all.filter(
+      (r) =>
+        String(r['code'] ?? "").toLowerCase().includes(q) || String(r['name'] ?? "").toLowerCase().includes(q),
+    );
+  }, [rows, buscar]);
+  const totalPaginas = Math.max(1, Math.ceil(filtradas.length / porPagina));
+  const paginaActual = Math.min(pagina, totalPaginas);
+  const visibles = filtradas.slice((paginaActual - 1) * porPagina, paginaActual * porPagina);
+  const codigosDb = useMemo(
+    () => (rows ?? []).map((r) => String(r['code'] ?? "")).sort(compareCodes),
+    [rows],
+  );
 
   async function sincronizar() {
     setBusy("siigo");
@@ -171,51 +351,126 @@ export function PucPanel({ companyId }: { companyId: string }) {
 
   async function importar(file: File) {
     setBusy("excel");
+    setResumen(null);
     try {
-      const sheet = await readSheet(file);
-      const parsed = sheet
-        .map((r) => ({
-          company_id: companyId,
-          code: pick(r, "codigo cuenta", "codigo", "cuenta", "code", "cuenta contable").replace(/\s+/g, ""),
-          name:
-            pick(
-              r,
-              "nombre cuenta",
-              "nombre de la cuenta",
-              "nombre",
-              "descripcion cuenta",
-              "descripcion",
-              "detalle",
-              "concepto",
-              "name",
-              "description",
-            ) || "Sin nombre",
-          nature: /cr/i.test(pick(r, "naturaleza", "movimiento", "nature")) ? "credito" : "debito",
-          active: true,
-          source: "excel" satisfies Source,
-        }))
-        .filter((r) => r.code);
-      if (parsed.length === 0) throw new Error("No se encontraron cuentas en el archivo (columnas esperadas: Código, Nombre, Naturaleza).");
-      // Evita "cannot affect row a second time": una sola fila por código.
-      const unicas = Array.from(new Map(parsed.map((r) => [r.code, r])).values());
-      if (!window.confirm(`Se reemplazará el PUC actual por ${unicas.length} cuenta(s) del archivo. ¿Continuar?`)) return;
-      // Reemplazo total: elimina el PUC actual de la empresa y carga el del archivo.
-      const { error: delErr } = await supabase.from("puc_accounts").delete().eq("company_id", companyId);
-      if (delErr) throw new Error(`No fue posible reemplazar el PUC actual: ${delErr.message}`);
-      for (let i = 0; i < unicas.length; i += 500) {
+      const sheet = await readSheetIndexed(file);
+      const parsed = parsePucSheet(sheet, companyId);
+      if (parsed.valid.length === 0)
+        throw new Error(
+          `No se encontraron cuentas válidas en el archivo (filas leídas: ${parsed.rowsRead}; columnas detectadas: ${parsed.columns.join(", ") || "ninguna"}).`,
+        );
+
+      const ok = window.confirm(
+        `Registros encontrados en el Excel: ${fmt(parsed.rowsRead)}\n` +
+          `Registros válidos para importar: ${fmt(parsed.valid.length)}\n` +
+          `Registros con errores: ${fmt(parsed.errors.length)}\n` +
+          `Primera cuenta: ${parsed.firstCode ?? "-"} · Última cuenta: ${parsed.lastCode ?? "-"}\n\n` +
+          `Columnas detectadas: ${parsed.columns.join(", ")}\n\n` +
+          `Las cuentas existentes se actualizarán y las nuevas se crearán (no se borra nada). ¿Continuar?`,
+      );
+      if (!ok) return;
+
+      // Cuentas ya existentes: para diferenciar nuevas de actualizadas.
+      const existentes = new Set<string>();
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from("puc_accounts")
+          .select("code")
+          .eq("company_id", companyId)
+          .order("code")
+          .range(from, from + PAGE - 1);
+        if (error) throw new Error(`No fue posible leer el PUC actual: ${error.message}`);
+        (data ?? []).forEach((r) => existentes.add(String(r.code)));
+        if ((data ?? []).length < PAGE) break;
+      }
+      const nuevas = parsed.valid.filter((r) => !existentes.has(r.code)).length;
+      const actualizadas = parsed.valid.length - nuevas;
+
+      // Importación por lotes: espera cada lote y reporta el que falle.
+      const LOTE = 500;
+      const totalLotes = Math.ceil(parsed.valid.length / LOTE);
+      const fallos: string[] = [];
+      let guardadosIntento = 0;
+      for (let i = 0; i < totalLotes; i++) {
+        const lote = parsed.valid.slice(i * LOTE, (i + 1) * LOTE);
+        setProgreso(`Importando lote ${i + 1} de ${totalLotes}…`);
         const { error } = await supabase
           .from("puc_accounts")
-          .upsert(unicas.slice(i, i + 500), { onConflict: "company_id,code", ignoreDuplicates: false });
-        if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}${error.hint ? ` (${error.hint})` : ""}`);
+          .upsert(lote, { onConflict: "company_id,code", ignoreDuplicates: false });
+        if (error) {
+          fallos.push(
+            `Lote ${i + 1} de ${totalLotes} presentó un error: ${error.message}` +
+              (error.details ? ` — ${error.details}` : "") +
+              (error.hint ? ` (${error.hint})` : ""),
+          );
+        } else {
+          guardadosIntento += lote.length;
+        }
       }
-      const sinNombre = unicas.filter((r) => r.name === "Sin nombre").length;
-      toast.success(
-        `PUC reemplazado: ${unicas.length} cuenta(s) cargadas desde Excel.` +
-          (sinNombre ? ` ${sinNombre} sin nombre detectado (revisa el encabezado de la columna de nombre).` : ""),
-      );
+
+      // Validación posterior obligatoria: contar en la base de datos.
+      setProgreso("Verificando cuentas guardadas…");
+      const verif = await verificarPuc(companyId);
+
+      // Reconstruye la jerarquía con TODAS las cuentas ya cargadas.
+      setProgreso("Construyendo jerarquía de cuentas…");
+      let movimiento: number | null = null;
+      try {
+        const jer = await pucRebuildHierarchy({ data: { companyId } });
+        movimiento = jer.movimiento;
+      } catch (e) {
+        fallos.push(e instanceof Error ? e.message : "No fue posible construir la jerarquía.");
+      }
+
+      const guardadasDelArchivo = parsed.valid.filter((r) => verif.codes.has(r.code)).length;
+      const faltantes = parsed.valid.filter((r) => !verif.codes.has(r.code)).map((r) => r.code);
+      const completo = fallos.length === 0 && faltantes.length === 0;
+
+      setResumen({
+        archivo: file.name,
+        encontrados: parsed.rowsRead,
+        validos: parsed.valid.length,
+        importados: guardadasDelArchivo,
+        nuevas,
+        actualizadas,
+        duplicados: parsed.duplicates,
+        errores: parsed.errors,
+        fallos,
+        totalDb: verif.total,
+        primeraExcel: parsed.firstCode,
+        ultimaExcel: parsed.lastCode,
+        primeraDb: verif.first,
+        ultimaDb: verif.last,
+        faltantes,
+        movimiento,
+        completo,
+        intentados: guardadosIntento,
+      });
+
+      if (completo) toast.success("PUC importado correctamente.");
+      else toast.error("El PUC no se importó completamente. Revisa el resumen de importación.");
+
       await refresh();
+      await qc.invalidateQueries({ queryKey: ["puc_accounts", companyId, "count"] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
+    } finally {
+      setProgreso(null);
+      setBusy(null);
+    }
+  }
+
+  async function verificarIntegridad() {
+    setBusy("verificar");
+    try {
+      const verif = await verificarPuc(companyId);
+      const duplicados = verif.all.length - verif.codes.size;
+      toast.message("Integridad del PUC", {
+        description: `Total en la base de datos: ${fmt(verif.total)} · Cuentas únicas: ${fmt(verif.codes.size)} · Duplicadas: ${fmt(duplicados)} · Primera: ${verif.first ?? "-"} · Última: ${verif.last ?? "-"}`,
+      });
+      setResumen((prev) => (prev ? { ...prev, totalDb: verif.total, primeraDb: verif.first, ultimaDb: verif.last } : prev));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No fue posible verificar el PUC.");
     } finally {
       setBusy(null);
     }
@@ -267,6 +522,20 @@ export function PucPanel({ companyId }: { companyId: string }) {
     );
   }
 
+  function descargarErrores() {
+    if (!resumen) return;
+    downloadSheet(
+      resumen.errores.map((e) => ({
+        Fila: e.rowNumber,
+        Codigo: e.code,
+        Problema: e.problema,
+        Accion: e.accion,
+      })),
+      "errores-puc.xlsx",
+      "Errores",
+    );
+  }
+
   return (
     <div className="space-y-4">
       <Toolbar>
@@ -274,10 +543,23 @@ export function PucPanel({ companyId }: { companyId: string }) {
           <RefreshCw className={`size-4 ${busy === "siigo" ? "animate-spin" : ""}`} /> Sincronizar desde Siigo
         </Button>
         <FileButton label="Importar Excel" onFile={importar} busy={busy !== null} />
+        <Button variant="outline" onClick={verificarIntegridad} disabled={busy !== null}>
+          <Search className="size-4" /> Verificar integridad del PUC
+        </Button>
         <Button variant="outline" onClick={exportar}>
           <Download className="size-4" /> Exportar Excel
         </Button>
+        <span className="ml-auto rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
+          Total de cuentas de esta empresa: <strong className="text-foreground">{fmt(totalDb ?? 0)}</strong>
+          {codigosDb.length > 0 ? ` · Última: ${codigosDb[codigosDb.length - 1]}` : ""}
+        </span>
       </Toolbar>
+
+      {progreso ? (
+        <p className="rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p>
+      ) : null}
+
+      {resumen ? <ImportSummary resumen={resumen} onClose={() => setResumen(null)} onErrores={descargarErrores} /> : null}
 
       <form onSubmit={crear} className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-4">
         <div className="w-40 space-y-1.5">
@@ -295,6 +577,26 @@ export function PucPanel({ companyId }: { companyId: string }) {
         <Button type="submit"><Plus className="size-4" /> Crear cuenta</Button>
       </form>
 
+      <div className="flex flex-wrap items-center gap-3">
+        <Input
+          value={buscar}
+          onChange={(e) => { setBuscar(e.target.value); setPagina(1); }}
+          placeholder="Buscar por código o nombre…"
+          className="w-72"
+        />
+        <span className="text-xs text-muted-foreground">
+          Mostrando {fmt(visibles.length)} de {fmt(filtradas.length)} cuenta(s) · Página {paginaActual} de {totalPaginas}
+        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled={paginaActual <= 1} onClick={() => setPagina(paginaActual - 1)}>
+            Anterior
+          </Button>
+          <Button variant="outline" size="sm" disabled={paginaActual >= totalPaginas} onClick={() => setPagina(paginaActual + 1)}>
+            Siguiente
+          </Button>
+        </div>
+      </div>
+
       <div className="overflow-x-auto rounded-lg border border-border bg-card">
         <table className="w-full text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -308,7 +610,7 @@ export function PucPanel({ companyId }: { companyId: string }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {(rows ?? []).map((r) => {
+            {visibles.map((r) => {
               const id = String(r['id']);
               const draft = edit[id];
               return (
@@ -342,7 +644,7 @@ export function PucPanel({ companyId }: { companyId: string }) {
                 </tr>
               );
             })}
-            {(rows ?? []).length === 0 && (
+            {visibles.length === 0 && (
               <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">Sin cuentas registradas.</td></tr>
             )}
           </tbody>
