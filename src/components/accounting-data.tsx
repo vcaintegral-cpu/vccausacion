@@ -588,6 +588,7 @@ export function PucPanel({ companyId }: { companyId: string }) {
       {progreso ? (
         <p className="rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p>
       ) : null}
+      <ImportDetailPanel detail={detail} />
 
       {resumen ? <ImportSummary resumen={resumen} onClose={() => setResumen(null)} onErrores={descargarErrores} /> : null}
 
