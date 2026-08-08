@@ -211,7 +211,16 @@ function Facturas() {
                   {cop(Number(r.retefuente) + Number(r.reteiva) + Number(r.reteica))}
                 </td>
                 <td className="px-4 py-2 text-right font-mono tabular-nums">{cop(r.total)}</td>
-                <td className="px-4 py-2 text-xs capitalize text-muted-foreground">{r.status}</td>
+                <td className="px-4 py-2">
+                  <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${SIIGO_CLASS[estadoUnico(r) === "sincronizada" ? "sincronizada" : estadoUnico(r) === "error" ? "error" : estadoUnico(r) === "aprobado" ? "sincronizando" : "pendiente"]}`}>
+                    {ESTADO_LABEL[estadoUnico(r)]}
+                  </span>
+                  {estadoUnico(r) === "error" && r.siigo_error && (
+                    <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-destructive" title={r.siigo_error}>
+                      {r.siigo_error}
+                    </div>
+                  )}
+                </td>
                 <td className="px-4 py-2">
                   <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${SIIGO_CLASS[r.siigo_status] ?? "bg-muted text-muted-foreground"}`}>
                     {SIIGO_LABEL[r.siigo_status] ?? r.siigo_status}
@@ -227,18 +236,30 @@ function Facturas() {
                   )}
                 </td>
                 <td className="whitespace-nowrap px-4 py-2 text-right">
-                  {r.status !== "aprobado" && (
-                    <Button asChild variant="ghost" size="icon" title="Editar borrador">
+                  {estadoUnico(r) === "borrador" && (
+                    <Button asChild variant="ghost" size="icon" title="Continuar borrador">
                       <Link to="/causar" search={{ id: r.id }}>
                         <Pencil className="size-4" />
                       </Link>
                     </Button>
                   )}
-                  {r.status === "aprobado" && r.siigo_status !== "sincronizada" && (
-                    <Button asChild variant="ghost" size="icon" title="Causar en Siigo">
+                  {estadoUnico(r) === "error" && (
+                    <Button asChild variant="ghost" size="icon" title="Revisar y corregir">
+                      <Link to="/causar" search={{ id: r.id }}>
+                        <Pencil className="size-4" />
+                      </Link>
+                    </Button>
+                  )}
+                  {estadoUnico(r) === "aprobado" && (
+                    <Button asChild variant="ghost" size="icon" title="Revisar y causar en Siigo">
                       <Link to="/revisar" search={{ id: r.id }}>
                         <Send className="size-4" />
                       </Link>
+                    </Button>
+                  )}
+                  {estadoUnico(r) === "sincronizada" && (
+                    <Button variant="ghost" size="icon" title="Ver documento" onClick={() => setDetalle(r)}>
+                      <FileText className="size-4" />
                     </Button>
                   )}
                   <Button variant="ghost" size="icon" title="Excel" onClick={() => exportar(r, "xlsx")}>
@@ -250,7 +271,7 @@ function Facturas() {
                   <Button variant="ghost" size="icon" title="TXT" onClick={() => exportar(r, "txt")}>
                     <FileText className="size-4" />
                   </Button>
-                  {r.status !== "aprobado" && (
+                  {estadoUnico(r) === "borrador" && (
                     <Button variant="ghost" size="icon" title="Aprobar" onClick={() => aprobar(r)}>
                       <CheckCircle2 className="size-4" />
                     </Button>
