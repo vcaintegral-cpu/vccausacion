@@ -867,18 +867,23 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           label: "Retefuente",
           amount: Number(inv.retefuente ?? 0),
           accountPrefix: "2365",
+          // Siigo NO admite Retefuente dentro de retentions[] en /v1/purchases:
+          // sólo se refleja en el asiento contable (cuenta 2365xx) y en el neto.
+          enviarEnRetentions: false,
         },
         {
           kind: "reteiva",
           label: "ReteIVA",
           amount: Number(inv.reteiva ?? 0),
           accountPrefix: "2367",
+          enviarEnRetentions: true,
         },
         {
           kind: "reteica",
           label: "ReteICA",
           amount: Number(inv.reteica ?? 0),
           accountPrefix: "2368",
+          enviarEnRetentions: true,
         },
       ].filter((retention) => retention.amount > 0);
       const retenciones = retencionesPorTipo.reduce(
@@ -929,7 +934,16 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         siigo_id: string | null;
         nombre: string | null;
       }> = [];
-      if (retencionesPorTipo.length > 0) {
+      // Un ID de impuesto de Siigo es numérico; una cuenta PUC (2365xx, 2367xx…) nunca lo es.
+      const esIdSiigoValido = (value: unknown, accountCode: string) => {
+        const id = String(value ?? "").trim();
+        if (!id || !/^\d+$/.test(id)) return false;
+        if (id === accountCode) return false;
+        if (id.length >= 6 && /^23/.test(id)) return false;
+        return true;
+      };
+      const retencionesAEnviar = retencionesPorTipo.filter((r) => r.enviarEnRetentions);
+      if (retencionesAEnviar.length > 0) {
         // Reglas tributarias configuradas por empresa: la tarifa oficial sale de aquí,
         // nunca se infiere desde el valor monetario redondeado de la retención.
         const { data: reglasRetencion } = await supabase
@@ -962,7 +976,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           return "";
         };
 
-        for (const retention of retencionesPorTipo) {
+        for (const retention of retencionesAEnviar) {
           const journalLine = resolvedJournal.find(
             (line) =>
               Number(line.credit ?? 0) > 0 &&
@@ -1002,7 +1016,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           const configuredRate = regla ? Number(regla.rate) : 0;
 
           // 1) ID real de Siigo ya vinculado a la regla de esta empresa.
-          if (regla?.siigo_id) {
+          if (regla?.siigo_id && esIdSiigoValido(regla.siigo_id, accountCode)) {
             console.log("[siigo][retencion] ID desde regla local:", {
               tipo: retention.label,
               cuenta: accountCode,
@@ -1049,11 +1063,11 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               : candidates.find((candidate) =>
                   readTaxCode(candidate).startsWith(retention.accountPrefix),
                 ));
-          if (tax?.id == null) {
+          if (tax?.id == null || !esIdSiigoValido(tax.id, accountCode)) {
             throw new Error(
-              `No se encontró en Siigo el impuesto correspondiente para esta empresa y tarifa (${retention.label}` +
+              `No se encontró un ID de impuesto válido en Siigo para esta retención (${retention.label}` +
                 (configuredRate > 0 ? ` ${configuredRate}%` : "") +
-                `, cuenta ${accountCode}). Sincronice nuevamente los impuestos desde Integraciones.`,
+                `, cuenta ${accountCode}). Verifique la configuración de impuestos de la empresa.`,
             );
           }
           console.log("[siigo][retencion] ID desde /v1/taxes:", {
@@ -1088,6 +1102,28 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             nombre: tax.name ?? null,
           });
         }
+      }
+
+      // Retenciones que sólo son contables (Retefuente): quedan en el asiento y en el
+      // neto al proveedor, pero NO viajan en retentions[] ni usan la cuenta PUC como ID.
+      for (const retention of retencionesPorTipo.filter((r) => !r.enviarEnRetentions)) {
+        const journalLine = resolvedJournal.find(
+          (line) => Number(line.credit ?? 0) > 0 && line.account_code.startsWith(retention.accountPrefix),
+        );
+        const accountCode = journalLine?.account_code ?? retention.accountPrefix;
+        console.log("[siigo][retencion] Sólo contable (no va en retentions[]):", {
+          tipo: retention.label,
+          cuenta: accountCode,
+          valor: retention.amount,
+        });
+        retencionesTrace.push({
+          tipo: retention.label,
+          cuenta: accountCode,
+          tarifa: 0,
+          valor: retention.amount,
+          siigo_id: null,
+          nombre: null,
+        });
       }
 
       const esCredito = /cr[eé]d/i.test(String(inv.payment_form ?? ""));

@@ -518,7 +518,7 @@ export function buildSiigoPurchasePayload(params: {
   };
   if (params.costCenterId != null) payload["cost_center"] = Number(params.costCenterId);
   if (params.retentionIds && params.retentionIds.length > 0) {
-    payload["retentions"] = params.retentionIds.map((id) => ({ id }));
+    payload["retentions"] = params.retentionIds.map((id) => ({ id: Number(id) }));
   }
   return payload;
 }
