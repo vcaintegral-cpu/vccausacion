@@ -1328,9 +1328,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           retenciones: retenciones,
           neto_a_pagar: netoAPagar,
         },
+        siigo_request: payloadEnviado,
         siigo_respuesta: res,
+        siigo_documento_id: siigoId,
+        siigo_documento_numero: siigoNumber,
+        retenciones_aplicadas_en_siigo: retencionesRespuesta,
         enviado_at: syncedAt,
-      };
+      } as unknown as Json;
 
       await supabase
         .from("invoices")
@@ -1356,6 +1360,17 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           "Cambia la cuenta del renglón por una auxiliar del PUC de Siigo y vuelve a causar."
         : raw;
       console.error("[siigo][causacion] error:", message);
+      await supabase
+        .from("invoices")
+        .update({
+          siigo_trace: {
+            error: message,
+            error_raw: raw,
+            fallo_at: new Date().toISOString(),
+            invoice_id: data.invoiceId,
+          } as unknown as Json,
+        })
+        .eq("id", data.invoiceId);
       await supabase
         .from("invoices")
         // Si Siigo falla, la factura queda en estado Error para revisarla y reenviarla.
