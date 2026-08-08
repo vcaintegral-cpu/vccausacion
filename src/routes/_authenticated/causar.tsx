@@ -12,7 +12,7 @@ import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { AccountCombobox } from "@/components/account-combobox";
-import { CUENTA_PADRE_MSG, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
+import { CUENTA_PADRE_MSG, evaluarCuenta, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { BulkApply } from "@/components/bulk-apply";
 import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
@@ -479,20 +479,36 @@ function Causar() {
   );
   const t = totals(journal);
 
-  /** Validación contable del asiento: toda cuenta debe ser de movimiento, activa y estar en el PUC de la empresa. */
+  /** Validación contable del asiento: nivel, movimiento, auxiliares y cuenta operativa por cuenta. */
   const validacionAsiento = useMemo(() => {
     const puc = (config?.accounts ?? []) as PucAccount[];
     const codes = [...new Set(journal.map((j) => j.account_code).filter(Boolean))];
     return codes.map((code) => {
-      const cuenta = puc.find((a) => a.code === code) ?? null;
-      const check = puc.length > 0 ? validarCuenta(puc, code) : { ok: true, problema: null, cuenta };
+      if (puc.length === 0)
+        return {
+          code,
+          nivel: "—",
+          movimiento: true,
+          activa: true,
+          enSiigo: true,
+          auxiliares: 0,
+          operativa: code,
+          resultado: "VÁLIDA" as const,
+          ok: true,
+          problema: "",
+        };
+      const e = evaluarCuenta(puc, code);
       return {
         code,
-        movimiento: cuenta ? cuenta.is_movement !== false && !cuenta.has_children : true,
-        activa: cuenta ? cuenta.active !== false : true,
-        enSiigo: !!cuenta,
-        ok: check.ok,
-        problema: check.problema ?? "",
+        nivel: e.nivel ?? "—",
+        movimiento: e.permiteMovimiento,
+        activa: e.activa,
+        enSiigo: e.enSiigo,
+        auxiliares: e.auxiliares.length,
+        operativa: e.cuentaOperativa ?? "—",
+        resultado: e.resultado,
+        ok: e.resultado === "VÁLIDA",
+        problema: e.mensaje ?? "",
       };
     });
   }, [journal, config?.accounts]);
@@ -1333,9 +1349,12 @@ function Causar() {
             <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="px-4 py-2 text-left font-medium">Cuenta</th>
+                <th className="px-4 py-2 text-left font-medium">Nivel</th>
                 <th className="px-4 py-2 text-left font-medium">Movimiento</th>
                 <th className="px-4 py-2 text-left font-medium">Activa</th>
                 <th className="px-4 py-2 text-left font-medium">Siigo</th>
+                <th className="px-4 py-2 text-left font-medium">Auxiliares</th>
+                <th className="px-4 py-2 text-left font-medium">Cuenta operativa</th>
                 <th className="px-4 py-2 text-left font-medium">Resultado</th>
               </tr>
             </thead>
@@ -1343,11 +1362,14 @@ function Causar() {
               {validacionAsiento.map((v) => (
                 <tr key={v.code}>
                   <td className="px-4 py-1.5 font-mono text-xs">{v.code}</td>
+                  <td className="px-4 py-1.5 text-xs capitalize">{v.nivel}</td>
                   <td className="px-4 py-1.5 text-xs">{v.movimiento ? "Sí" : "No"}</td>
                   <td className="px-4 py-1.5 text-xs">{v.activa ? "Sí" : "No"}</td>
                   <td className="px-4 py-1.5 text-xs">{v.enSiigo ? "Sí" : "No"}</td>
+                  <td className="px-4 py-1.5 text-xs">{v.auxiliares > 0 ? `Sí (${v.auxiliares})` : "No"}</td>
+                  <td className="px-4 py-1.5 font-mono text-xs">{v.operativa}</td>
                   <td className={`px-4 py-1.5 text-xs ${v.ok ? "text-success" : "text-destructive"}`}>
-                    {v.ok ? "✓" : v.problema}
+                    {v.ok ? "✓ VÁLIDA" : `⚠ ${v.resultado} · ${v.problema}`}
                   </td>
                 </tr>
               ))}

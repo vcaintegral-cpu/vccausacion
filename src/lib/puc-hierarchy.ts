@@ -89,23 +89,108 @@ export const CUENTA_PADRE_MSG =
 
 export type AccountCheck = { ok: boolean; problema: string | null; cuenta: PucAccount | null };
 
+export type ResultadoCuenta = "VÁLIDA" | "REQUIERE AUXILIAR" | "INACTIVA" | "NO ENCONTRADA" | "SIN CUENTA";
+
+export type CuentaEval = {
+  code: string;
+  cuenta: PucAccount | null;
+  existe: boolean;
+  activa: boolean;
+  nivel: Nivel | null;
+  enSiigo: boolean;
+  tieneAuxiliares: boolean;
+  auxiliares: PucAccount[];
+  permiteMovimiento: boolean;
+  cuentaOperativa: string | null;
+  resultado: ResultadoCuenta;
+  mensaje: string | null;
+};
+
+/** ¿La cuenta existe en Siigo? (tiene identificador o código sincronizado) */
+export const cuentaEnSiigo = (a: PucAccount | null) => !!(a && (a.siigo_id || a.siigo_code));
+
+/** Hijas activas directas o indirectas dentro del PUC de la empresa. */
+const hijasActivas = (accounts: PucAccount[], code: string) =>
+  accounts.filter((a) => a.code.length > code.length && a.code.startsWith(code) && a.active !== false);
+
+/**
+ * Determina, para una cuenta del PUC, el nivel operativo que Siigo permite usar.
+ * Existencia, actividad, jerarquía y movimiento son conceptos separados: una cuenta
+ * puede existir y estar activa aunque no permita movimiento directo.
+ */
+export function evaluarCuenta(accounts: PucAccount[], code: string | null | undefined): CuentaEval {
+  const codigo = String(code ?? "").trim();
+  const base: CuentaEval = {
+    code: codigo,
+    cuenta: null,
+    existe: false,
+    activa: false,
+    nivel: codigo ? nivelDeCodigo(codigo) : null,
+    enSiigo: false,
+    tieneAuxiliares: false,
+    auxiliares: [],
+    permiteMovimiento: false,
+    cuentaOperativa: null,
+    resultado: "SIN CUENTA",
+    mensaje: "Falta la cuenta contable.",
+  };
+  if (!codigo) return base;
+
+  const cuenta = accounts.find((a) => a.code === codigo) ?? null;
+  const descendientes = hijasActivas(accounts, codigo);
+  const auxiliares = auxiliaresDe(accounts, codigo);
+
+  // Segunda validación antes de declarar inexistente: si el PUC tiene cuentas que
+  // dependen de este código, la cuenta existe como nivel superior de la jerarquía.
+  if (!cuenta && descendientes.length === 0) {
+    return {
+      ...base,
+      resultado: "NO ENCONTRADA",
+      mensaje: `La cuenta ${codigo} no aparece en el PUC de la empresa seleccionada. Impórtelo o sincronícelo desde Integraciones antes de causar.`,
+    };
+  }
+
+  const activa = cuenta ? cuenta.active !== false : true;
+  const tieneAuxiliares = descendientes.length > 0;
+  const permiteMovimiento = activa && !tieneAuxiliares && (cuenta ? cuenta.is_movement !== false : false);
+  const cuentaOperativa = permiteMovimiento ? codigo : auxiliares.length === 1 ? auxiliares[0]!.code : null;
+
+  const common = {
+    ...base,
+    cuenta,
+    existe: true,
+    activa,
+    nivel: nivelDeCodigo(codigo),
+    enSiigo: cuentaEnSiigo(cuenta),
+    tieneAuxiliares,
+    auxiliares,
+    permiteMovimiento,
+    cuentaOperativa,
+  };
+
+  if (!activa)
+    return { ...common, resultado: "INACTIVA", mensaje: `La cuenta ${codigo} está inactiva en el PUC de la empresa.` };
+
+  if (permiteMovimiento) return { ...common, resultado: "VÁLIDA", mensaje: null };
+
+  const nombre = cuenta?.name ? ` — ${cuenta.name}` : "";
+  const lista = auxiliares.slice(0, 8).map((a) => `${a.code} — ${a.name}`).join(", ");
+  return {
+    ...common,
+    resultado: "REQUIERE AUXILIAR",
+    mensaje:
+      auxiliares.length > 0
+        ? `La cuenta ${codigo}${nombre} tiene auxiliares activas y no permite movimiento directo. Seleccione la cuenta de movimiento: ${lista}${auxiliares.length > 8 ? "…" : ""}.`
+        : `La cuenta ${codigo}${nombre} no permite movimiento directo y no tiene auxiliares activas sincronizadas. Revise el PUC de la empresa.`,
+  };
+}
+
 /** Valida una cuenta contra el PUC de la empresa activa. */
 export function validarCuenta(accounts: PucAccount[], code: string | null | undefined): AccountCheck {
-  const codigo = String(code ?? "").trim();
-  if (!codigo) return { ok: false, problema: "Falta la cuenta contable.", cuenta: null };
-  const cuenta = accounts.find((a) => a.code === codigo) ?? null;
-  if (!cuenta)
-    return {
-      ok: false,
-      problema: `La cuenta ${codigo} no existe en el PUC de la empresa seleccionada. Sincronice las cuentas contables desde Integraciones.`,
-      cuenta: null,
-    };
-  if (cuenta.active === false) return { ok: false, problema: `La cuenta ${codigo} está inactiva.`, cuenta };
-  if (cuenta.has_children || cuenta.is_movement === false)
-    return {
-      ok: false,
-      problema: `La cuenta ${codigo} — ${cuenta.name} tiene cuentas auxiliares y no permite movimiento directo. Seleccione una cuenta auxiliar activa.`,
-      cuenta,
-    };
-  return { ok: true, problema: null, cuenta };
+  const evaluacion = evaluarCuenta(accounts, code);
+  return {
+    ok: evaluacion.resultado === "VÁLIDA",
+    problema: evaluacion.resultado === "VÁLIDA" ? null : evaluacion.mensaje,
+    cuenta: evaluacion.cuenta,
+  };
 }

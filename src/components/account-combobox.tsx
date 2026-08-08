@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
-import { auxiliaresDe, CUENTA_PADRE_MSG, type PucAccount } from "@/lib/puc-hierarchy";
+import { evaluarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
 
 export type PucOption = PucAccount;
 
@@ -23,10 +23,10 @@ export function AccountCombobox({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [aviso, setAviso] = useState<{ code: string; hijas: PucOption[] } | null>(null);
+  const [aviso, setAviso] = useState<{ code: string; nombre: string; mensaje: string; hijas: PucOption[] } | null>(null);
   const selected = useMemo(() => accounts.find((a) => a.code === value), [accounts, value]);
 
-  const esMovimiento = (a: PucOption) => a.active !== false && !a.has_children && a.is_movement !== false;
+  const esMovimiento = (a: PucOption) => evaluarCuenta(accounts, a.code).permiteMovimiento;
   const ordenadas = useMemo(() => {
     const mov = accounts.filter(esMovimiento);
     const padres = accounts.filter((a) => !esMovimiento(a));
@@ -34,8 +34,14 @@ export function AccountCombobox({
   }, [accounts]);
 
   const elegir = (a: PucOption) => {
-    if (!esMovimiento(a)) {
-      setAviso({ code: a.code, hijas: auxiliaresDe(accounts, a.code) });
+    const evaluacion = evaluarCuenta(accounts, a.code);
+    if (!evaluacion.permiteMovimiento) {
+      setAviso({
+        code: a.code,
+        nombre: a.name ?? "",
+        mensaje: evaluacion.mensaje ?? "",
+        hijas: evaluacion.auxiliares,
+      });
       return;
     }
     onChange(a.code, a.name ?? null);
@@ -67,11 +73,11 @@ export function AccountCombobox({
       <PopoverContent className="w-[380px] p-0" align="start">
         {aviso ? (
           <div className="border-b border-border bg-muted/40 p-3">
-            <p className="text-xs text-destructive">{CUENTA_PADRE_MSG}</p>
+            <p className="text-xs font-medium text-amber-600">⚠ Esta cuenta requiere auxiliar</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              La cuenta <span className="font-mono">{aviso.code}</span> tiene cuentas auxiliares. Seleccione la cuenta de
-              movimiento:
+              <span className="font-mono">{aviso.code}</span> {aviso.nombre}
             </p>
+            <p className="mt-1 text-xs text-muted-foreground">{aviso.mensaje}</p>
             <div className="mt-2 max-h-40 space-y-1 overflow-auto">
               {aviso.hijas.length === 0 ? (
                 <p className="text-xs text-muted-foreground">No hay auxiliares activas sincronizadas para esta cuenta.</p>

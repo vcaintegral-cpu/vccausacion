@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { validarCuenta } from "@/lib/puc-hierarchy";
+import { evaluarCuenta, validarCuenta } from "@/lib/puc-hierarchy";
 import { mensajeSiigoAmigable } from "@/lib/siigo-errors";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "./company-validation";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -580,12 +580,30 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     // Las cuentas base del PUC colombiano pueden no existir con el mismo nivel
     // de detalle en Siigo. Antes de enviar, cambia únicamente esos códigos base
     // por la cuenta equivalente que ya fue importada desde esta empresa.
-    const { data: companyAccounts, error: accountsErr } = await supabase
-      .from("puc_accounts")
-      .select("code, name, active, has_children, is_movement, siigo_id, siigo_code")
-      .eq("company_id", inv.company_id)
-      .order("code");
-    if (accountsErr) throw new Error(`No fue posible validar el PUC de Siigo: ${accountsErr.message}`);
+    // El PUC se lee completo por páginas: una lista parcial haría ver como
+    // inexistentes cuentas que sí están importadas (por ejemplo 621008).
+    type PucRow = {
+      code: string;
+      name: string;
+      active: boolean;
+      has_children: boolean;
+      is_movement: boolean;
+      siigo_id: string | null;
+      siigo_code: string | null;
+    };
+    const companyAccounts: PucRow[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data: page, error: accountsErr } = await supabase
+        .from("puc_accounts")
+        .select("code, name, active, has_children, is_movement, siigo_id, siigo_code")
+        .eq("company_id", inv.company_id)
+        .order("code")
+        .range(from, from + 999);
+      if (accountsErr) throw new Error(`No fue posible validar el PUC de Siigo: ${accountsErr.message}`);
+      const chunk = (page ?? []) as PucRow[];
+      companyAccounts.push(...chunk);
+      if (chunk.length < 1000) break;
+    }
 
     const availableCodes = new Set((companyAccounts ?? []).map((account) => account.code));
     const accounts = companyAccounts ?? [];
@@ -629,10 +647,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           auxiliarDe("220505", ["nacional", "proveedor"]) ?? auxiliarDe("2205", ["proveedor", "nacional"]) ?? baseCode
         );
       }
-      // Siigo solo acepta cuentas de movimiento (auxiliares). Si la cuenta del
-      // asiento tiene auxiliares dependientes, se baja hasta la auxiliar final.
-      // Si el PUC importado no aporta información, se envía la cuenta tal cual
-      // y es Siigo quien valida.
+      // El nivel operativo no siempre es el último de la jerarquía: si la
+      // subcuenta permite movimiento se usa tal cual; solo se baja a la
+      // auxiliar cuando la cuenta tiene auxiliares activas.
+      const evaluacion = evaluarCuenta(accounts, baseCode);
+      if (evaluacion.permiteMovimiento) return baseCode;
+      if (evaluacion.cuentaOperativa) return evaluacion.cuentaOperativa;
       return auxiliarDe(baseCode) ?? baseCode;
     };
 
