@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { validarCuenta } from "@/lib/puc-hierarchy";
+import { evaluarCuenta, validarCuenta } from "@/lib/puc-hierarchy";
 import { mensajeSiigoAmigable } from "@/lib/siigo-errors";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "./company-validation";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
