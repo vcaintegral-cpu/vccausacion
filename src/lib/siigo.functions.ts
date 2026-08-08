@@ -1351,7 +1351,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           codigo: it.type === "Product" ? it.code : null,
           cantidad: it.quantity,
           precio: it.price,
-          tax_ids: it.tax_ids,
+          tax_ids: itemsConRetencion.find((x) => x.code === it.code)?.tax_ids ?? it.tax_ids,
         })),
         iva: { siigo_id: ivaTaxId != null ? String(ivaTaxId) : null, nombre: ivaTaxName, tarifa: ivaTaxRate, valor: iva },
         retenciones: retencionesTrace,
@@ -1368,7 +1368,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         siigo_respuesta: res,
         siigo_documento_id: siigoId,
         siigo_documento_numero: siigoNumber,
-        retenciones_aplicadas_en_siigo: retencionesRespuesta,
+        retenciones_aplicadas_en_siigo: [...retencionesRespuesta, ...retencionesAplicadasEnRenglon],
         enviado_at: syncedAt,
       } as unknown as Json;
 
