@@ -1,6 +1,6 @@
 // Motor de aprendizaje contable. Siempre por empresa: las reglas nunca se comparten.
 import { suggestAccount, type ProviderConfig, type Rule } from "@/lib/accounting";
-import { auxiliaresDe, type PucAccount } from "@/lib/puc-hierarchy";
+import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 
 export { ITEM_TYPES, normalizeItemType, isValidItemType } from "@/lib/item-type";
 export type { ItemType } from "@/lib/item-type";
@@ -80,9 +80,7 @@ export function suggestSmart(params: {
   // Una cuenta aprendida solo se usa si sigue siendo cuenta de movimiento válida de la empresa.
   const esMovimiento = (code: string) => {
     if (puc.length === 0) return true;
-    const cuenta = puc.find((p) => p.code === code);
-    if (!cuenta) return false;
-    return cuenta.active !== false && !cuenta.has_children && cuenta.is_movement !== false;
+    return resolveOperationalAccount(puc, code).valid;
   };
   const actives = learning.filter((r) => r.active && esMovimiento(r.account_code));
   const pucName = (code: string) => puc.find((p) => p.code === code)?.name ?? null;
@@ -157,17 +155,11 @@ export function suggestSmart(params: {
   // 5) reglas contables del usuario + 7) reglas generales / cuenta del tercero
   const base = suggestAccount(description, rules, provider);
   if (!esMovimiento(base.code)) {
-    const hijas = auxiliaresDe(puc, base.code);
+    const resolution = resolveOperationalAccount(puc, base.code);
     return {
-      code: hijas.length === 1 ? hijas[0]!.code : "",
-      name: hijas.length === 1 ? hijas[0]!.name : null,
-      reason:
-        hijas.length > 0
-          ? `La cuenta sugerida ${base.code} tiene cuentas auxiliares. Seleccione la cuenta de movimiento: ${hijas
-              .slice(0, 5)
-              .map((h) => `${h.code} - ${h.name}`)
-              .join(", ")}.`
-          : `La cuenta sugerida ${base.code} no es una cuenta de movimiento válida en Siigo. Seleccione una cuenta auxiliar activa.`,
+      code: resolution.operationalAccount ?? "",
+      name: resolution.operational?.name ?? null,
+      reason: resolution.message ?? `La cuenta sugerida ${base.code} no es una cuenta operativa válida en Siigo.`,
     };
   }
   const existsInPuc = puc.some((p) => p.code === base.code);

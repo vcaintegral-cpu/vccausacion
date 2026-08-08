@@ -11,6 +11,10 @@ export type PucAccount = {
   siigo_id?: string | null;
   siigo_code?: string | null;
   synced_at?: string | null;
+  excel_active?: boolean | null;
+  siigo_active?: boolean | null;
+  siigo_is_movement?: boolean | null;
+  siigo_seen_at?: string | null;
 };
 
 export const NIVELES = ["clase", "grupo", "cuenta", "subcuenta", "auxiliar"] as const;
@@ -103,6 +107,127 @@ export type AccountCheck = { ok: boolean; problema: string | null; cuenta: PucAc
 
 export type ResultadoCuenta = "VÁLIDA" | "REQUIERE AUXILIAR" | "INACTIVA" | "NO ENCONTRADA" | "SIN CUENTA";
 
+export type OperationalAccountResult = {
+  requestedAccount: string;
+  operationalAccount: string | null;
+  level: Nivel | null;
+  hasMovement: boolean;
+  active: boolean;
+  hasChildren: boolean;
+  siigoExists: boolean;
+  valid: boolean;
+  result: "VÁLIDA" | "RESUELTA A AUXILIAR" | "REQUIERE SELECCIÓN" | "INACTIVA" | "NO ENCONTRADA" | "SIN MOVIMIENTO" | "SIN CUENTA";
+  message: string | null;
+  account: PucAccount | null;
+  operational: PucAccount | null;
+  candidates: PucAccount[];
+};
+
+export type OperationalAccountContext = {
+  /** Códigos relacionados con proveedor, histórico o configuración manual, en orden de prioridad. */
+  preferredAccountCodes?: (string | null | undefined)[];
+};
+
+const siigoExists = (account: PucAccount | null) =>
+  !!account && (account.siigo_active === true || account.siigo_is_movement === true || !!account.siigo_id || !!account.siigo_code || account.is_movement === true);
+
+const isOperational = (accounts: PucAccount[], account: PucAccount) => {
+  const activeChildren = hijasActivas(accounts, account.code);
+  const active = account.siigo_active ?? account.active !== false;
+  const movement = account.siigo_is_movement ?? account.is_movement !== false;
+  return active && movement && activeChildren.length === 0;
+};
+
+/**
+ * Resolución central y determinística de la cuenta que realmente recibe movimiento.
+ * No inventa códigos ni elige arbitrariamente entre varios auxiliares operativos.
+ */
+export function resolveOperationalAccount(
+  accounts: PucAccount[],
+  accountCode: string | null | undefined,
+  context: OperationalAccountContext = {},
+): OperationalAccountResult {
+  const requestedAccount = String(accountCode ?? "").trim();
+  const base = {
+    requestedAccount,
+    operationalAccount: null,
+    level: requestedAccount ? nivelDeCodigo(requestedAccount) : null,
+    hasMovement: false,
+    active: false,
+    hasChildren: false,
+    siigoExists: false,
+    valid: false,
+    account: null,
+    operational: null,
+    candidates: [],
+  } satisfies Omit<OperationalAccountResult, "result" | "message">;
+  if (!requestedAccount) return { ...base, result: "SIN CUENTA", message: "Falta la cuenta contable." };
+
+  const account = accounts.find((item) => String(item.code).trim() === requestedAccount) ?? null;
+  const descendants = hijasActivas(accounts, requestedAccount);
+  if (!account && descendants.length === 0) {
+    return { ...base, result: "NO ENCONTRADA", message: `La cuenta ${requestedAccount} no aparece en el PUC completo de la empresa.` };
+  }
+
+  const active = account ? (account.siigo_active ?? account.active !== false) : true;
+  const hasMovement = account ? (account.siigo_is_movement ?? account.is_movement !== false) : false;
+  const hasChildren = descendants.length > 0;
+  const direct = account && isOperational(accounts, account) ? account : null;
+  if (direct) {
+    return {
+      ...base,
+      account,
+      operational: direct,
+      operationalAccount: direct.code,
+      level: nivelDeCodigo(direct.code),
+      hasMovement: true,
+      active,
+      hasChildren: false,
+      siigoExists: siigoExists(direct),
+      valid: true,
+      result: "VÁLIDA",
+      message: null,
+    };
+  }
+
+  const candidates = auxiliaresDe(accounts, requestedAccount).filter((candidate) => isOperational(accounts, candidate));
+  const preferred = (context.preferredAccountCodes ?? []).map((code) => String(code ?? "").trim()).filter(Boolean);
+  const preferredMatches = candidates.filter((candidate) => preferred.includes(candidate.code));
+  const chosen = preferredMatches.length === 1 ? preferredMatches[0] : candidates.length === 1 ? candidates[0] : null;
+  if (chosen) {
+    return {
+      ...base,
+      account,
+      operational: chosen,
+      candidates,
+      operationalAccount: chosen.code,
+      level: nivelDeCodigo(chosen.code),
+      hasMovement,
+      active,
+      hasChildren,
+      siigoExists: siigoExists(chosen),
+      valid: true,
+      result: "RESUELTA A AUXILIAR",
+      message: `${requestedAccount} es una cuenta padre con auxiliares. Se utilizará automáticamente la cuenta operativa ${chosen.code}.`,
+    };
+  }
+  if (candidates.length > 1) {
+    return {
+      ...base, account, candidates, active, hasMovement, hasChildren, siigoExists: siigoExists(account),
+      result: "REQUIERE SELECCIÓN",
+      message: `La cuenta ${requestedAccount} tiene varios auxiliares operativos. Seleccione el correspondiente al proveedor.`,
+    };
+  }
+  if (!active && candidates.length === 0) {
+    return { ...base, account, active, hasMovement, hasChildren, siigoExists: siigoExists(account), result: "INACTIVA", message: `La cuenta ${requestedAccount} está inactiva y no tiene una cuenta auxiliar operativa.` };
+  }
+  return {
+    ...base, account, candidates, active, hasMovement, hasChildren, siigoExists: siigoExists(account),
+    result: "SIN MOVIMIENTO",
+    message: "Esta cuenta existe en el PUC, pero actualmente no tiene movimiento en Siigo y no tiene una cuenta auxiliar operativa.",
+  };
+}
+
 export type CuentaEval = {
   code: string;
   cuenta: PucAccount | null;
@@ -143,6 +268,7 @@ const hijasActivas = (accounts: PucAccount[], code: string) => {
  * puede existir y estar activa aunque no permita movimiento directo.
  */
 export function evaluarCuenta(accounts: PucAccount[], code: string | null | undefined): CuentaEval {
+  const resolved = resolveOperationalAccount(accounts, code);
   const codigo = String(code ?? "").trim();
   const base: CuentaEval = {
     code: codigo,
@@ -179,7 +305,7 @@ export function evaluarCuenta(accounts: PucAccount[], code: string | null | unde
   const permiteMovimiento = activa && !tieneAuxiliares && (cuenta ? cuenta.is_movement !== false : false);
   // Nunca se elige automáticamente una auxiliar por ser la única: el usuario debe
   // confirmar una cuenta real que exista, esté activa y permita movimiento.
-  const cuentaOperativa = permiteMovimiento ? codigo : null;
+  const cuentaOperativa = resolved.operationalAccount;
 
   const common = {
     ...base,
@@ -197,7 +323,13 @@ export function evaluarCuenta(accounts: PucAccount[], code: string | null | unde
   if (!activa)
     return { ...common, resultado: "INACTIVA", mensaje: `La cuenta ${codigo} está inactiva en el PUC de la empresa.` };
 
-  if (permiteMovimiento) return { ...common, resultado: "VÁLIDA", mensaje: null };
+  if (resolved.valid)
+    return {
+      ...common,
+      cuentaOperativa: resolved.operationalAccount,
+      resultado: "VÁLIDA",
+      mensaje: resolved.message,
+    };
 
   const nombre = cuenta?.name ? ` — ${cuenta.name}` : "";
   const lista = auxiliares.slice(0, 8).map((a) => `${a.code} — ${a.name}`).join(", ");

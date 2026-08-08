@@ -411,7 +411,7 @@ export function PucPanel({ companyId }: { companyId: string }) {
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await supabase
           .from("puc_accounts")
-          .select("company_id,code,name,nature,active,source")
+          .select("company_id,code,name,nature,active,source,excel_active")
           .eq("company_id", companyId)
           .order("code")
           .range(from, from + PAGE - 1);
@@ -427,7 +427,7 @@ export function PucPanel({ companyId }: { companyId: string }) {
           .filter((error) => !error.problema.startsWith("Código repetido"))
           .map((error) => ({ row: error.rowNumber, key: error.code, message: `${error.problema} ${error.accion}` })),
         duplicateCount: parsed.duplicates, keyOf: (row) => row.code, existingByKey: existentes,
-        equals: sameImportValues(["name", "nature", "active"]),
+        equals: sameImportValues(["name", "nature", "active", "excel_active"]),
         saveBatch: async (batch) => {
           const { error } = await supabase.from("puc_accounts").upsert(batch, { onConflict: "company_id,code", ignoreDuplicates: false });
           return { error };

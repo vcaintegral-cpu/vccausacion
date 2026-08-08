@@ -8,11 +8,11 @@ type Client = SupabaseClient<Database>;
 /** Recalcula nivel, padre, hijas y cuentas de movimiento de todo el PUC de una empresa. */
 export async function rebuildPucHierarchy(supabase: Client, companyId: string) {
   type Row = Database["public"]["Tables"]["puc_accounts"]["Row"];
-  const rows: Pick<Row, "id" | "code" | "name" | "nature" | "active" | "source" | "siigo_id" | "siigo_code" | "synced_at">[] = [];
+  const rows: Pick<Row, "id" | "code" | "name" | "nature" | "active" | "source" | "siigo_id" | "siigo_code" | "synced_at" | "excel_active" | "siigo_active" | "siigo_is_movement" | "siigo_seen_at">[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase
       .from("puc_accounts")
-      .select("id, code, name, nature, active, source, siigo_id, siigo_code, synced_at")
+      .select("id, code, name, nature, active, source, siigo_id, siigo_code, synced_at, excel_active, siigo_active, siigo_is_movement, siigo_seen_at")
       .eq("company_id", companyId)
       .order("code")
       .range(from, from + 999);
@@ -45,6 +45,10 @@ export async function rebuildPucHierarchy(supabase: Client, companyId: string) {
       // conservan cuando una sincronización real ya los obtuvo.
       siigo_code: r.siigo_code ?? null,
       synced_at: r.synced_at ?? null,
+      excel_active: r.excel_active ?? (r.source === "excel" ? r.active : null),
+      siigo_active: r.siigo_active ?? null,
+      siigo_is_movement: r.siigo_is_movement ?? null,
+      siigo_seen_at: r.siigo_seen_at ?? null,
     };
   });
 

@@ -7,6 +7,7 @@ export type PucRow = {
   name: string;
   nature: string;
   active: boolean;
+  excel_active: boolean;
   source: "excel";
 };
 
@@ -75,12 +76,14 @@ export function parsePucSheet(
       continue;
     }
     seen.set(code, rowNumber);
+    const active = !/^(no|inactiva|inactivo|false|0)$/i.test(pick(row, "activa", "activo", "estado", "active"));
     valid.push({
       company_id: companyId,
       code,
       name,
       nature: /cr/i.test(pick(row, "naturaleza", "movimiento", "nature")) ? "credito" : "debito",
-      active: !/^(no|inactiva|inactivo|false|0)$/i.test(pick(row, "activa", "activo", "estado", "active")),
+      active,
+      excel_active: active,
       source: "excel",
     });
   }
