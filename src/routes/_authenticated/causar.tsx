@@ -289,20 +289,87 @@ function Causar() {
   }, [lines, buscarProducto, resolverCuentaItem]);
   const hayErroresDeCuenta = Object.keys(lineErrors).length > 0;
 
+  /** Cambios de un renglón al cambiar su tipo de ítem, conservando la lógica producto → categoría → cuenta. */
+  const parcheDeTipo = useCallback(
+    (actual: Line, kind: string, log = false): Partial<Line> => {
+      if (kind === "producto" || kind === "servicio") {
+        const prod = buscarProducto({ ...actual, item_type: kind }, kind);
+        if (!prod) return { item_type: kind };
+        const r = resolverCuentaItem(prod, log);
+        if (r.error && log) toast.warning(r.error);
+        return { item_type: kind, code: prod.code, account_code: r.code, account_name: r.name };
+      }
+      const s = suggestAccount(actual.description ?? "", config?.rules ?? [], null);
+      return { item_type: kind, account_code: s.code, account_name: s.name };
+    },
+    [buscarProducto, resolverCuentaItem, config?.rules],
+  );
+
   /** Al cambiar el tipo de ítem se recalcula la cuenta contable según el nuevo tipo. */
   function cambiarTipo(i: number, kind: string) {
     const actual = lines[i];
     if (!actual) return;
-    if (kind === "producto" || kind === "servicio") {
-      const prod = buscarProducto({ ...actual, item_type: kind }, kind);
-      if (!prod) { setLine(i, { item_type: kind }); return; }
-      const r = resolverCuentaItem(prod, true);
-      if (r.error) toast.warning(r.error);
-      setLine(i, { item_type: kind, code: prod.code, account_code: r.code, account_name: r.name });
-      return;
-    }
-    const s = suggestAccount(actual.description ?? "", config?.rules ?? [], null);
-    setLine(i, { item_type: kind, account_code: s.code, account_name: s.name });
+    setLine(i, parcheDeTipo(actual, kind, true));
+  }
+
+  const baseDe = (l: Line) => Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+
+  /** Aplica el mismo tipo de ítem a todos los renglones, recalculando su cuenta. */
+  function aplicarTipoTodos(kind: string) {
+    setLines((prev) => prev.map((l) => ({ ...l, ...parcheDeTipo(l, kind) })));
+    toast.success(`Tipo "${kind}" aplicado a todos los renglones.`);
+  }
+
+  /** Aplica el mismo impuesto (IVA/impoconsumo) a todos los renglones. */
+  function aplicarIvaTodos(id: string) {
+    const tx = impuestosIva.find((t) => String(t.id) === id);
+    setLines((prev) => prev.map((l) => ({ ...l, iva: tx ? Math.round((baseDe(l) * Number(tx.rate)) / 100) : 0 })));
+    setLineTax((prev) => {
+      const out = { ...prev };
+      lines.forEach((_, i) => { out[i] = { ...out[i], iva: tx ? String(tx.id) : undefined }; });
+      return out;
+    });
+    toast.success(tx ? `${tx.name} aplicado a todos los renglones.` : "Todos los renglones quedaron sin impuesto.");
+  }
+
+  /** Aplica la misma retención a todos los renglones. */
+  function aplicarRetencionTodos(id: string) {
+    const tx = impuestosRet.find((t) => String(t.id) === id);
+    setLines((prev) =>
+      prev.map((l) => {
+        const base = String(tx?.kind) === "reteiva" ? Number(l.iva || 0) : baseDe(l);
+        return { ...l, retention: tx ? Math.round((base * Number(tx.rate)) / 100) : 0 };
+      }),
+    );
+    setLineTax((prev) => {
+      const out = { ...prev };
+      lines.forEach((_, i) => { out[i] = { ...out[i], ret: tx ? String(tx.id) : undefined }; });
+      return out;
+    });
+    toast.success(tx ? `${tx.name} aplicada a todos los renglones.` : "Todos los renglones quedaron sin retención.");
+  }
+
+  /** Aplica manualmente la misma cuenta PUC a todos los renglones. */
+  function aplicarCuentaTodos(code: string, name: string | null) {
+    setLines((prev) => prev.map((l) => ({ ...l, account_code: code, account_name: name })));
+    toast.success(code ? `Cuenta ${code} aplicada a todos los renglones.` : "Cuenta retirada de todos los renglones.");
+  }
+
+  /** Aplica el mismo producto/servicio a todos los renglones, con su cuenta automática. */
+  function aplicarProductoTodos(p: ProductOption) {
+    const cuenta = resolverCuentaItem(p);
+    if (cuenta.error) toast.warning(cuenta.error);
+    setLines((prev) =>
+      prev.map((l) => ({
+        ...l,
+        code: p.code,
+        description: p.name,
+        item_type: p.kind,
+        account_code: cuenta.code,
+        account_name: cuenta.name,
+      })),
+    );
+    toast.success(`"${p.name}" aplicado a todos los renglones.`);
   }
   // Si la factura trae IVA en los renglones, ese es el IVA que se causa; si no, el del encabezado.
   const ivaLineas = useMemo(() => lines.reduce((s, l) => s + Number(l.iva || 0), 0), [lines]);
