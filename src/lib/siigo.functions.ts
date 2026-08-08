@@ -647,10 +647,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           auxiliarDe("220505", ["nacional", "proveedor"]) ?? auxiliarDe("2205", ["proveedor", "nacional"]) ?? baseCode
         );
       }
-      // Siigo solo acepta cuentas de movimiento (auxiliares). Si la cuenta del
-      // asiento tiene auxiliares dependientes, se baja hasta la auxiliar final.
-      // Si el PUC importado no aporta información, se envía la cuenta tal cual
-      // y es Siigo quien valida.
+      // El nivel operativo no siempre es el último de la jerarquía: si la
+      // subcuenta permite movimiento se usa tal cual; solo se baja a la
+      // auxiliar cuando la cuenta tiene auxiliares activas.
+      const evaluacion = evaluarCuenta(accounts, baseCode);
+      if (evaluacion.permiteMovimiento) return baseCode;
+      if (evaluacion.cuentaOperativa) return evaluacion.cuentaOperativa;
       return auxiliarDe(baseCode) ?? baseCode;
     };
 
