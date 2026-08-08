@@ -255,12 +255,12 @@ export function ProvidersToolbar({ companyId }: { companyId: string }) {
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await supabase.from("providers").select("*").eq("company_id", companyId).order("nit").range(from, from + PAGE - 1);
         if (error) throw error;
-        (data ?? []).forEach((row) => existing.set(row.nit, row as (typeof unicos)[number]));
+        (data ?? []).forEach((row) => existing.set(row.nit, { ...row, rowNumber: 0 } as (typeof unicos)[number]));
         if ((data ?? []).length < PAGE) break;
       }
       const { data: auth } = await supabase.auth.getUser();
       const result = await runReliableImport({
-        module: "Terceros", fileName: file.name, user: auth.user?.email, found: sheet.length, rows: unicos,
+        module: "Terceros", fileName: file.name, user: auth.user?.email ?? null, found: sheet.length, rows: unicos,
         invalidIssues, duplicateCount: duplicates, keyOf: (row) => row.nit, rowNumberOf: (row) => row.rowNumber,
         existingByKey: existing,
         equals: sameImportValues(["name", "address", "city", "phone", "email", "default_expense_account", "default_payable_account"]),
@@ -271,7 +271,8 @@ export function ProvidersToolbar({ companyId }: { companyId: string }) {
         },
         verifyKeys: () => fetchAllKeys(async (from, to) => {
           const { data, error } = await supabase.from("providers").select("nit").eq("company_id", companyId).order("nit").range(from, to);
-          return { keys: (data ?? []).map((row) => row.nit), error: error?.message };
+          if (error) return { keys: [], error: error.message };
+          return { keys: (data ?? []).map((row) => row.nit) };
         }),
         onProgress: (p) => setProgreso(`Importando terceros… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)} - ${fmt(p.to)} de ${fmt(p.total)}`),
       });
