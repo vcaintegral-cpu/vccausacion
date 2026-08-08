@@ -5,6 +5,8 @@ import { Download, Plus, Trash2, Upload } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { downloadSheet, pick, readSheet } from "@/lib/spreadsheet";
+import { fetchAllKeys, runReliableImport, sameImportValues, type ImportDetail, type ImportIssue } from "@/lib/import-system";
+import { ImportDetailPanel } from "@/components/import-detail";
 import { AccountCombobox } from "@/components/account-combobox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +28,8 @@ export function ProductCategoriesPanel({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [progreso, setProgreso] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ImportDetail | null>(null);
   const [form, setForm] = useState({ name: "", kind: "producto", account_code: "", account_name: "" });
 
   const { data: rows } = useQuery({
@@ -55,8 +59,8 @@ export function ProductCategoriesPanel({ companyId }: { companyId: string }) {
     setBusy(true);
     try {
       const sheet = await readSheet(file);
-      const parsed = sheet
-        .map((r) => ({
+      const parsed = sheet.map((r, index) => ({
+          rowNumber: index + 2,
           company_id: companyId,
           name: pick(r, "categoria", "categoría", "grupo", "linea", "nombre", "category"),
           kind: normKind(pick(r, "tipo", "clase", "type")),
@@ -64,29 +68,45 @@ export function ProductCategoriesPanel({ companyId }: { companyId: string }) {
           account_name: pick(r, "nombre cuenta", "nombre de la cuenta", "account name") || null,
           active: true,
           source: "excel",
-        }))
-        .filter((r) => r.name);
-      if (parsed.length === 0)
+        }));
+      const invalidIssues: ImportIssue[] = parsed.filter((r) => !r.name).map((r) => ({ row: r.rowNumber, key: "", message: "Nombre de categoría vacío; registro rechazado." }));
+      const valid = parsed.filter((r) => r.name);
+      if (valid.length === 0)
         throw new Error("No se encontraron categorías (columnas esperadas: Categoría, Tipo, Cuenta).");
-      const unicos = Array.from(new Map(parsed.map((r) => [`${r.kind}|${r.name.toLowerCase()}`, r])).values()).map((r) => ({
+      const unicos = Array.from(new Map(valid.map((r) => [`${r.kind}|${r.name.toLowerCase()}`, r])).values()).map((r) => ({
         ...r,
         account_name: r.account_name ?? (cuentas ?? []).find((c) => c.code === r.account_code)?.name ?? null,
       }));
-      if (!window.confirm(`Se reemplazarán las categorías actuales por ${unicos.length} del archivo. ¿Continuar?`)) return;
-      const { error: delErr } = await supabase.from("product_categories").delete().eq("company_id", companyId);
-      if (delErr) throw new Error(`No fue posible reemplazar las categorías actuales: ${delErr.message}`);
-      for (let i = 0; i < unicos.length; i += 500) {
-        const { error } = await supabase
-          .from("product_categories")
-          .upsert(unicos.slice(i, i + 500), { onConflict: "company_id,kind,name" });
-        if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}`);
-      }
-      toast.success(`Categorías cargadas: ${unicos.length}.`);
+      if (!window.confirm(`Se encontraron ${sheet.length.toLocaleString("es-CO")} registros. Se procesarán todos en lotes de 500 sin eliminar información existente. ¿Continuar?`)) return;
+      const existing = new Map((rows ?? []).map((row) => [`${row.kind}|${row.name.toLowerCase()}`, { ...row, rowNumber: 0 }]));
+      const { data: auth } = await supabase.auth.getUser();
+      const result = await runReliableImport({
+        module: "Categorías", fileName: file.name, user: auth.user?.email ?? null, found: sheet.length,
+        rows: unicos, invalidIssues, duplicateCount: valid.length - unicos.length,
+        keyOf: (row) => `${row.kind}|${row.name.toLowerCase()}`, rowNumberOf: (row) => row.rowNumber,
+        existingByKey: existing, equals: sameImportValues(["account_code", "account_name", "active"]),
+        saveBatch: async (batch) => {
+          const payload = batch.map(({ rowNumber: _rowNumber, ...row }) => row);
+          const { error } = await supabase.from("product_categories").upsert(payload, { onConflict: "company_id,kind,name" });
+          return { error };
+        },
+        verifyKeys: () => fetchAllKeys(async (from, to) => {
+          const { data, error } = await supabase.from("product_categories").select("kind,name").eq("company_id", companyId).order("kind").order("name").range(from, to);
+          if (error) return { keys: [], error: error.message };
+          return { keys: (data ?? []).map((row) => `${row.kind}|${row.name.toLowerCase()}`) };
+        }),
+        onProgress: (p) => setProgreso(`Importando categorías… Lote ${p.batch} de ${p.batches} · Registros ${p.from}–${p.to} de ${p.total}`),
+      });
+      setDetail(result);
+      if (result.status === "COMPLETADA") toast.success("IMPORTACIÓN COMPLETADA");
+      else if (result.status === "COMPLETADA CON ERRORES") toast.warning("Importación completada con errores. Revisa el detalle.");
+      else toast.error("La importación quedó incompleta. Revisa el detalle.");
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
     } finally {
       setBusy(false);
+      setProgreso(null);
     }
   }
 
@@ -163,6 +183,8 @@ export function ProductCategoriesPanel({ companyId }: { companyId: string }) {
           <Download className="size-4" /> Exportar Excel
         </Button>
       </div>
+      {progreso ? <p className="rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p> : null}
+      <ImportDetailPanel detail={detail} />
 
       <form onSubmit={crear} className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-4">
         <div className="w-64 space-y-1.5">
