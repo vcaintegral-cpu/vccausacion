@@ -482,8 +482,12 @@ function Causar() {
           return;
         }
       }
-      // La forma de pago siempre es crédito, aunque la factura diga contado.
-      setHeader({ ...emptyHeader(), ...rest, payment_form: "Crédito" });
+      // La forma de pago siempre es crédito; el plazo sale de la fecha de vencimiento.
+      setHeader({
+        ...emptyHeader(),
+        ...rest,
+        payment_form: creditTermFromDates(rest.issue_date, rest.due_date),
+      });
       let provider = null;
       if (rest.provider_nit && companyId) {
         const { data: p } = await supabase
