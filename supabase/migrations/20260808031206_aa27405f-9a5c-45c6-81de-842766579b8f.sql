@@ -1,0 +1,1 @@
+ALTER TABLE public.tax_rates ADD COLUMN IF NOT EXISTS siigo_id text, ADD COLUMN IF NOT EXISTS siigo_name text;

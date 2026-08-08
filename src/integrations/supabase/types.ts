@@ -849,6 +849,8 @@ export type Database = {
           min_base: number
           name: string
           rate: number
+          siigo_id: string | null
+          siigo_name: string | null
           source: string
         }
         Insert: {
@@ -861,6 +863,8 @@ export type Database = {
           min_base?: number
           name: string
           rate?: number
+          siigo_id?: string | null
+          siigo_name?: string | null
           source?: string
         }
         Update: {
@@ -873,6 +877,8 @@ export type Database = {
           min_base?: number
           name?: string
           rate?: number
+          siigo_id?: string | null
+          siigo_name?: string | null
           source?: string
         }
         Relationships: [
