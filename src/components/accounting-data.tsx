@@ -14,6 +14,7 @@ import {
 import { downloadSheet, num, pick, readSheet, readSheetIndexed } from "@/lib/spreadsheet";
 import { compareCodes, parsePucSheet, type PucRowError } from "@/lib/puc-import";
 import { analyzeHistory, isSiigoAuxiliary, type HistoryAnalysis } from "@/lib/history-import";
+import { compareHistory, readRawHistory, type HistoryValidation, type RawHistoryFile } from "@/lib/history-raw";
 import { fetchAllKeys, runReliableImport, sameImportValues, type ImportDetail, type ImportIssue } from "@/lib/import-system";
 import { ImportDetailPanel } from "@/components/import-detail";
 import { Button } from "@/components/ui/button";
@@ -1065,6 +1066,76 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
   const [buscar, setBuscar] = useState("");
   const [pagina, setPagina] = useState(1);
   const porPagina = 100;
+  const [raw, setRaw] = useState<RawHistoryFile | null>(null);
+  const [validacion, setValidacion] = useState<HistoryValidation | null>(null);
+  const [validando, setValidando] = useState(false);
+  const [buscarMov, setBuscarMov] = useState("");
+  const [paginaMov, setPaginaMov] = useState(1);
+
+  // CAPA 1 · movimientos originales (tal cual el Excel).
+  const { data: movimientos } = useQuery({
+    queryKey: ["accounting_history", companyId],
+    queryFn: async () => {
+      const out: Record<string, unknown>[] = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from("accounting_history")
+          .select("*")
+          .eq("company_id", companyId)
+          .order("excel_row", { ascending: true })
+          .range(from, from + PAGE - 1);
+        if (error) throw error;
+        const chunk = (data ?? []) as Record<string, unknown>[];
+        out.push(...chunk);
+        if (chunk.length < PAGE) break;
+      }
+      return out;
+    },
+  });
+
+  const movFiltrados = useMemo(() => {
+    const q = buscarMov.trim().toLowerCase();
+    const all = (movimientos ?? []) as Record<string, unknown>[];
+    if (!q) return all;
+    return all.filter((r) =>
+      ["account_code", "account_name", "provider_nit", "provider_name", "voucher", "description", "detail", "cost_center", "entry_date_text"].some(
+        (k) => String(r[k] ?? "").toLowerCase().includes(q),
+      ),
+    );
+  }, [movimientos, buscarMov]);
+  const totalPagMov = Math.max(1, Math.ceil(movFiltrados.length / porPagina));
+  const pagMovActual = Math.min(paginaMov, totalPagMov);
+  const movVisibles = movFiltrados.slice((pagMovActual - 1) * porPagina, pagMovActual * porPagina);
+
+  async function leerHistorialGuardado() {
+    const out: Record<string, unknown>[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from("accounting_history")
+        .select("*")
+        .eq("company_id", companyId)
+        .order("excel_row", { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) throw new Error(error.message);
+      const chunk = (data ?? []) as Record<string, unknown>[];
+      out.push(...chunk);
+      if (chunk.length < PAGE) break;
+    }
+    return out;
+  }
+
+  async function validarImportacion() {
+    if (!raw) return;
+    setValidando(true);
+    try {
+      const stored = await leerHistorialGuardado();
+      setValidacion(compareHistory(raw.rows, stored));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No fue posible validar la importación.");
+    } finally {
+      setValidando(false);
+    }
+  }
 
   const { data: learned } = useQuery({
     queryKey: ["learning_rules", companyId, "excel"],
@@ -1105,6 +1176,72 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
   async function importar(file: File) {
     setBusy(true);
     try {
+      setValidacion(null);
+      // ---------- CAPA 1: historial ORIGINAL, fiel al Excel ----------
+      const original = await readRawHistory(file);
+      if (original.rows.length === 0) {
+        throw new Error("No se encontraron filas de movimiento en el archivo.");
+      }
+      const { data: authUser } = await supabase.auth.getUser();
+      const userId = authUser.user?.id;
+      if (!userId) throw new Error("Sesión no válida.");
+      // Un archivo nuevo reemplaza el historial anterior de la empresa.
+      const { error: delError } = await supabase.from("accounting_history").delete().eq("company_id", companyId);
+      if (delError) throw new Error(delError.message);
+
+      const rawPayload = original.rows.map((r) => ({
+        company_id: companyId,
+        imported_by: userId,
+        file_name: original.fileName,
+        period: original.period,
+        excel_row: r.excel_row,
+        account_code: r.account_code,
+        account_name: r.account_name,
+        provider_nit: r.provider_nit,
+        provider_name: r.provider_name,
+        branch: r.branch,
+        voucher: r.voucher,
+        sequence: r.sequence,
+        entry_date_text: r.entry_date_text,
+        description: r.description,
+        detail: r.detail,
+        cost_center: r.cost_center,
+        debit: r.debit,
+        credit: r.credit,
+        debit_text: r.debit_text,
+        credit_text: r.credit_text,
+        original_row_data: r.original_row_data,
+      }));
+      const rawKey = (r: (typeof rawPayload)[number]) => String(r.excel_row);
+      const rawResult = await runReliableImport({
+        module: "Historial contable (original)",
+        fileName: file.name,
+        user: authUser.user?.email ?? null,
+        found: original.rows.length,
+        rows: rawPayload,
+        invalidIssues: original.issues.map((i) => ({ row: i.row, key: String(i.row), message: i.message })),
+        duplicateCount: 0,
+        keyOf: rawKey,
+        rowNumberOf: (r) => r.excel_row,
+        saveBatch: async (rows) => {
+          const { error } = await supabase.from("accounting_history").insert(rows);
+          return { error };
+        },
+        verifyKeys: () => fetchAllKeys(async (from, to) => {
+          const { data, error } = await supabase.from("accounting_history").select("excel_row").eq("company_id", companyId).range(from, to);
+          if (error) return { keys: [], error: error.message };
+          return { keys: (data ?? []).map((r) => String(r.excel_row)) };
+        }),
+        onProgress: (p) => setProgreso(`Guardando historial original… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)} - ${fmt(p.to)} de ${fmt(p.total)}`),
+      });
+      setRaw(original);
+      setDetail(rawResult);
+      await qc.invalidateQueries({ queryKey: ["accounting_history"] });
+      if (rawResult.status === "COMPLETADA") toast.success(`Historial importado: ${fmt(rawResult.saved)} movimientos guardados.`);
+      else toast.warning("La importación del historial terminó con novedades. Revisa el detalle.");
+
+      // ---------- CAPA 2: análisis / aprendizaje IA (no altera la capa 1) ----------
+      setProgreso("Analizando patrones para la IA…");
       const sheet = await readSheet(file);
       if (!isSiigoAuxiliary(sheet)) {
         const keys = Object.keys(sheet[0] ?? {});
@@ -1119,7 +1256,8 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
       }
       const result = analyzeHistory(sheet);
       if (result.rules.length === 0) {
-        throw new Error("No se detectaron movimientos contables. Verifica que el archivo tenga columnas de cuenta, tercero y concepto.");
+        setAnalysis(null);
+        return;
       }
       const payload = result.rules.map((r) => ({
         company_id: companyId,
@@ -1147,7 +1285,7 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
       const existing = new Map(payload.filter((r) => existingKeys.has(keyOf(r))).map((r) => [keyOf(r), r]));
       const { data: auth } = await supabase.auth.getUser();
       const importResult = await runReliableImport({
-        module: "Historial contable", fileName: file.name, user: auth.user?.email ?? null,
+        module: "Aprendizaje IA", fileName: file.name, user: auth.user?.email ?? null,
         found: result.rowsRead, rows: payload, duplicateCount: 0, keyOf, existingByKey: existing,
         saveBatch: async (rows) => {
           // Sin restricción única compuesta, se actualizan coincidencias y se insertan únicamente reglas nuevas.
@@ -1167,17 +1305,13 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
           if (error) return { keys: [], error: error.message };
           return { keys: (data ?? []).map((r) => `${r.provider_nit ?? "-"}|${(r.concept ?? "").toLowerCase()}|${r.account_code}`) };
         }),
-        onProgress: (p) => setProgreso(`Importando historial contable… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)} - ${fmt(p.to)} de ${fmt(p.total)}`),
+        onProgress: (p) => setProgreso(`Generando aprendizaje IA… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)} - ${fmt(p.to)} de ${fmt(p.total)}`),
       });
       // Los movimientos se leen y procesan todos; las filas almacenadas son reglas consolidadas por proveedor/concepto/cuenta.
       importResult.found = result.rowsRead;
       importResult.processed = result.rowsRead;
       importResult.invalid = result.rowsSkipped;
-      setDetail(importResult);
       setAnalysis(result);
-      if (importResult.status === "COMPLETADA") toast.success("IMPORTACIÓN COMPLETADA");
-      else if (importResult.status === "COMPLETADA CON ERRORES") toast.warning("Importación completada con errores. Revisa el detalle.");
-      else toast.error("La importación del historial quedó incompleta. Revisa el detalle.");
       await qc.invalidateQueries({ queryKey: ["learning_rules"] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible analizar el historial.");
@@ -1200,6 +1334,59 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
         </div>
         {progreso ? <p className="mt-3 rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p> : null}
         <div className="mt-3"><ImportDetailPanel detail={detail} /></div>
+        {raw ? (
+          <div className="mt-3 space-y-3 rounded-lg border border-border bg-muted/20 p-4">
+            <div className="grid gap-2 text-sm sm:grid-cols-4">
+              <p>Archivo: <strong>{raw.fileName}</strong></p>
+              <p>Movimientos en Excel: <strong>{fmt(raw.rows.length)}</strong></p>
+              <p>Filas de agrupación: <strong>{fmt(raw.groupRows)}</strong></p>
+              <p>Columnas conservadas: <strong>{raw.headers.length}</strong></p>
+            </div>
+            <Button size="sm" variant="outline" onClick={validarImportacion} disabled={validando}>
+              {validando ? "Validando…" : "VALIDAR IMPORTACIÓN"}
+            </Button>
+            {validacion ? (
+              <div className="space-y-2">
+                <div className="grid gap-2 text-sm sm:grid-cols-4">
+                  <p>Registros en Excel: <strong>{fmt(validacion.excelRows)}</strong></p>
+                  <p>Registros almacenados: <strong>{fmt(validacion.dbRows)}</strong></p>
+                  <p>Registros coincidentes: <strong className="text-emerald-600">{fmt(validacion.matching)}</strong></p>
+                  <p>Registros con diferencias: <strong className={validacion.different + validacion.missing.length > 0 ? "text-destructive" : ""}>{fmt(validacion.different + validacion.missing.length)}</strong></p>
+                </div>
+                {validacion.diffs.length > 0 || validacion.missing.length > 0 ? (
+                  <>
+                    <div className="max-h-64 overflow-auto rounded-md border border-border bg-card text-xs">
+                      {validacion.missing.slice(0, 200).map((row) => (
+                        <p key={`m-${row}`} className="border-b border-border px-3 py-2">Fila Excel {row} · No quedó almacenada · Estado: ERROR</p>
+                      ))}
+                      {validacion.diffs.slice(0, 500).map((d, i) => (
+                        <p key={`d-${d.excel_row}-${i}`} className="border-b border-border px-3 py-2 last:border-0">
+                          Fila Excel {d.excel_row} · Campo: {d.field} · Excel: {d.excel} · Aplicación: {d.app} · Estado: ERROR
+                        </p>
+                      ))}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => downloadSheet(
+                        [
+                          ...validacion.missing.map((row) => ({ "Fila Excel": row, Campo: "Registro completo", Excel: "Existe", Aplicación: "No almacenado", Estado: "ERROR" })),
+                          ...validacion.diffs.map((d) => ({ "Fila Excel": d.excel_row, Campo: d.field, Excel: d.excel, Aplicación: d.app, Estado: "ERROR" })),
+                        ],
+                        "diferencias-historial.xlsx",
+                        "Diferencias",
+                      )}
+                    >
+                      <Download className="size-4" /> Descargar diferencias
+                    </Button>
+                  </>
+                ) : (
+                  <p className="text-sm text-emerald-600">El historial almacenado coincide exactamente con el Excel.</p>
+                )}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {analysis && (
           <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4">
             <p>Filas leídas: <strong>{analysis.rowsRead}</strong></p>
@@ -1208,6 +1395,59 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
             <p>Terceros aprendidos: <strong>{analysis.providers}</strong></p>
           </div>
         )}
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <h3 className="text-sm font-semibold">Movimientos originales del Excel</h3>
+          <Input
+            value={buscarMov}
+            onChange={(e) => { setBuscarMov(e.target.value); setPaginaMov(1); }}
+            placeholder="Buscar por cuenta, tercero, comprobante o descripción…"
+            className="w-80"
+          />
+          <span className="text-xs text-muted-foreground">
+            Mostrando {fmt(movVisibles.length)} de {fmt(movFiltrados.length)} movimiento(s) · Página {pagMovActual} de {totalPagMov}
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="outline" size="sm" disabled={pagMovActual <= 1} onClick={() => setPaginaMov(pagMovActual - 1)}>Anterior</Button>
+            <Button variant="outline" size="sm" disabled={pagMovActual >= totalPagMov} onClick={() => setPaginaMov(pagMovActual + 1)}>Siguiente</Button>
+          </div>
+        </div>
+        <div className="overflow-x-auto rounded-lg border border-border bg-card">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Fila</th><th className="px-3 py-2 font-medium">Fecha</th>
+                <th className="px-3 py-2 font-medium">Comprobante</th><th className="px-3 py-2 font-medium">Cuenta</th>
+                <th className="px-3 py-2 font-medium">Nombre cuenta</th><th className="px-3 py-2 font-medium">NIT</th>
+                <th className="px-3 py-2 font-medium">Tercero</th><th className="px-3 py-2 font-medium">Descripción</th>
+                <th className="px-3 py-2 font-medium">C. costo</th>
+                <th className="px-3 py-2 text-right font-medium">Débito</th><th className="px-3 py-2 text-right font-medium">Crédito</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {movVisibles.map((r) => (
+                <tr key={String(r['id'])}>
+                  <td className="px-3 py-2 text-muted-foreground">{String(r['excel_row'] ?? "")}</td>
+                  <td className="px-3 py-2">{String(r['entry_date_text'] ?? "—")}</td>
+                  <td className="px-3 py-2">{String(r['voucher'] ?? "—")}</td>
+                  <td className="px-3 py-2 font-mono">{String(r['account_code'] ?? "—")}</td>
+                  <td className="px-3 py-2 max-w-[14rem] truncate">{String(r['account_name'] ?? "—")}</td>
+                  <td className="px-3 py-2">{String(r['provider_nit'] ?? "—")}</td>
+                  <td className="px-3 py-2 max-w-[14rem] truncate">{String(r['provider_name'] ?? "—")}</td>
+                  <td className="px-3 py-2 max-w-[18rem] truncate">{String(r['description'] ?? r['detail'] ?? "—")}</td>
+                  <td className="px-3 py-2">{String(r['cost_center'] ?? "—")}</td>
+                  <td className="px-3 py-2 text-right">{r['debit'] === null || r['debit'] === undefined ? "—" : String(r['debit_text'] ?? r['debit'])}</td>
+                  <td className="px-3 py-2 text-right">{r['credit'] === null || r['credit'] === undefined ? "—" : String(r['credit_text'] ?? r['credit'])}</td>
+                </tr>
+              ))}
+              {movVisibles.length === 0 && (
+                <tr><td colSpan={11} className="px-4 py-8 text-center text-sm text-muted-foreground">{buscarMov ? "Sin resultados." : "Aún no hay historial original importado."}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">

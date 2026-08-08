@@ -68,6 +68,95 @@ export type Database = {
           },
         ]
       }
+      accounting_history: {
+        Row: {
+          account_code: string | null
+          account_name: string | null
+          branch: string | null
+          company_id: string
+          cost_center: string | null
+          created_at: string
+          credit: number | null
+          credit_text: string | null
+          debit: number | null
+          debit_text: string | null
+          description: string | null
+          detail: string | null
+          entry_date_text: string | null
+          excel_row: number
+          file_name: string
+          id: string
+          imported_at: string
+          imported_by: string
+          original_row_data: Json
+          period: string | null
+          provider_name: string | null
+          provider_nit: string | null
+          sequence: string | null
+          voucher: string | null
+        }
+        Insert: {
+          account_code?: string | null
+          account_name?: string | null
+          branch?: string | null
+          company_id: string
+          cost_center?: string | null
+          created_at?: string
+          credit?: number | null
+          credit_text?: string | null
+          debit?: number | null
+          debit_text?: string | null
+          description?: string | null
+          detail?: string | null
+          entry_date_text?: string | null
+          excel_row: number
+          file_name: string
+          id?: string
+          imported_at?: string
+          imported_by: string
+          original_row_data?: Json
+          period?: string | null
+          provider_name?: string | null
+          provider_nit?: string | null
+          sequence?: string | null
+          voucher?: string | null
+        }
+        Update: {
+          account_code?: string | null
+          account_name?: string | null
+          branch?: string | null
+          company_id?: string
+          cost_center?: string | null
+          created_at?: string
+          credit?: number | null
+          credit_text?: string | null
+          debit?: number | null
+          debit_text?: string | null
+          description?: string | null
+          detail?: string | null
+          entry_date_text?: string | null
+          excel_row?: number
+          file_name?: string
+          id?: string
+          imported_at?: string
+          imported_by?: string
+          original_row_data?: Json
+          period?: string | null
+          provider_name?: string | null
+          provider_nit?: string | null
+          sequence?: string | null
+          voucher?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "accounting_history_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       accounting_rules: {
         Row: {
           account_code: string
