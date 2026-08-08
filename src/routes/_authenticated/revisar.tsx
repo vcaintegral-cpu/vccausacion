@@ -481,6 +481,11 @@ function Revisar() {
                       }}
                     >
                       <option value="">Seleccionar…</option>
+                      {l.account_code && !(data?.accounts ?? []).some((a) => a.code === l.account_code) && (
+                        <option value={l.account_code}>
+                          {l.account_code} · {l.account_name ?? cuentasVerificadas[l.account_code]?.name ?? "Cuenta del renglón"}
+                        </option>
+                      )}
                       {(data?.accounts ?? []).map((a) => (
                         <option key={a.code} value={a.code}>
                           {a.code} · {a.name}
@@ -492,10 +497,9 @@ function Revisar() {
                     <div className="flex items-center gap-1">
                       <select
                         className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm capitalize"
-                        value={l.item_type}
+                        value={normalizeItemType(l.item_type)}
                         onChange={(e) => {
-                          setLine(i, { item_type: e.target.value });
-                          if (e.target.value === "inventario") void buscarProducto(i);
+                          setLine(i, { item_type: normalizeItemType(e.target.value) });
                         }}
                       >
                         {ITEM_TYPES.map((it) => (
@@ -504,7 +508,7 @@ function Revisar() {
                           </option>
                         ))}
                       </select>
-                      {l.item_type === "inventario" && (
+                      {normalizeItemType(l.item_type) === "producto" && (
                         <Button variant="ghost" size="icon" title="Buscar en Siigo" onClick={() => buscarProducto(i)}>
                           <PackageSearch className="size-4" />
                         </Button>
