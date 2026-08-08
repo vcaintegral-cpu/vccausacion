@@ -522,12 +522,22 @@ export function buildSiigoPurchasePayload(params: {
   const roundMoney = (value: number) => Math.round(Number(value) * 100) / 100;
   const total = roundMoney(params.purchaseTotal);
   const paymentValue = roundMoney(params.paymentValue);
+  const isSiigoTaxId = (value: number | string) => {
+    const id = String(value ?? "").trim();
+    return /^\d+$/.test(id) && !(/^23/.test(id) && id.length >= 6);
+  };
   if (params.paymentId == null || !Number.isInteger(params.paymentId) || params.paymentId <= 0) {
     throw new Error("No se puede sincronizar con Siigo porque el medio de pago de compras no es válido.");
   }
   for (const retention of params.retentions ?? []) {
-    const id = String(retention.id ?? "").trim();
-    if (!/^\d+$/.test(id) || (/^23/.test(id) && id.length >= 6)) {
+    if (!isSiigoTaxId(retention.id)) {
+      throw new Error(
+        "No se puede sincronizar con Siigo porque la estructura de impuestos, retenciones o pagos no coincide con la configuración de Siigo.",
+      );
+    }
+  }
+  for (const item of params.items) {
+    if ((item.tax_ids ?? []).some((id) => !isSiigoTaxId(id))) {
       throw new Error(
         "No se puede sincronizar con Siigo porque la estructura de impuestos, retenciones o pagos no coincide con la configuración de Siigo.",
       );
