@@ -630,7 +630,12 @@ function Causar() {
       toast.success(status === "aprobado" ? "Comprobante aprobado." : "Comprobante guardado en borrador.");
       navigate({ to: "/facturas" });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "No fue posible guardar el comprobante.");
+      const msg = err instanceof Error ? err.message : "No fue posible guardar el comprobante.";
+      toast.error(
+        /duplicate key|ux_invoices_company/.test(msg)
+          ? "Esta factura ya está registrada en esta empresa."
+          : msg,
+      );
     } finally {
       setSaving(false);
     }
