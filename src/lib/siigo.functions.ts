@@ -980,7 +980,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               quantity: Number(l.quantity ?? 1) || 1,
               price: Number(l.unit_value ?? 0),
               discount: Number(l.discount ?? 0),
-              tax_ids: Number(l.iva ?? 0) > 0 && ivaTaxId != null ? [ivaTaxId] : [],
+              tax_ids:
+                Number(l.iva ?? 0) > 0
+                  ? (() => {
+                      const propio = ivaSiigoPorPosicion.get(Number(l.position ?? i));
+                      return propio != null ? [propio] : ivaTaxId != null ? [ivaTaxId] : [];
+                    })()
+                  : [],
               // El tipo de ítem elegido en la revisión se conserva sin cambios.
               item_type: tipo,
             };
