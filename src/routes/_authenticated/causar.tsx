@@ -1230,13 +1230,18 @@ function Causar() {
 
       {lines.length > 0 && (
         <div className="flex flex-wrap gap-3">
-          <Button onClick={() => guardar("borrador")} disabled={saving} variant="outline">
+          <Button
+            onClick={() => guardar("borrador")}
+            disabled={saving || !!bloqueoEmpresa}
+            title={bloqueoEmpresa ?? undefined}
+            variant="outline"
+          >
             <Save className="size-4" /> Guardar borrador
           </Button>
           <Button
             onClick={() => guardar("aprobado")}
-            disabled={saving || hayErroresDeCuenta || empresaIncorrecta}
-            title={empresaIncorrecta ? "Esta factura no pertenece a la empresa seleccionada." : undefined}
+            disabled={saving || hayErroresDeCuenta || !!bloqueoEmpresa}
+            title={bloqueoEmpresa ?? undefined}
           >
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Aprobar comprobante
           </Button>
