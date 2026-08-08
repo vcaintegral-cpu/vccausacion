@@ -634,6 +634,7 @@ export type Database = {
           id: string
           kind: string
           name: string
+          siigo_id: string | null
           source: string
           updated_at: string
         }
@@ -649,6 +650,7 @@ export type Database = {
           id?: string
           kind?: string
           name: string
+          siigo_id?: string | null
           source?: string
           updated_at?: string
         }
@@ -664,6 +666,7 @@ export type Database = {
           id?: string
           kind?: string
           name?: string
+          siigo_id?: string | null
           source?: string
           updated_at?: string
         }
