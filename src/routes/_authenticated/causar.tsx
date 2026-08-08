@@ -657,7 +657,13 @@ function Causar() {
     let ok = 0;
     for (const f of bulkFiles) {
       try {
-        const r = await processInvoiceFile({ file: f, companyId, config: config as never, extract: extract as never });
+        const r = await processInvoiceFile({
+          file: f,
+          companyId,
+          config: config as never,
+          extract: extract as never,
+          ...(knowledge ? { knowledge } : {}),
+        });
         ok += 1;
         setBulkResults((p) => [...p, { name: f.name, ok: true, detail: `${r.numero} · ${cop(r.total)}` }]);
       } catch (err) {
