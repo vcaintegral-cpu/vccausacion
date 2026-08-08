@@ -265,7 +265,7 @@ export function ProvidersToolbar({ companyId }: { companyId: string }) {
         existingByKey: existing,
         equals: sameImportValues(["name", "address", "city", "phone", "email", "default_expense_account", "default_payable_account"]),
         saveBatch: async (rows) => {
-          const payload = rows.map(({ rowNumber: _rowNumber, ...row }) => row;
+          const payload = rows.map(({ rowNumber: _rowNumber, ...row }) => row);
           const { error } = await supabase.from("providers").upsert(payload, { onConflict: "company_id,nit", ignoreDuplicates: false });
           return { error };
         },
