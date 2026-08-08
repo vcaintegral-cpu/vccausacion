@@ -451,9 +451,8 @@ export type SiigoPurchaseTotals = {
 /**
  * Única regla monetaria para Facturas de Compra en Siigo.
  *
- * Siigo descuenta las retenciones enviadas como impuestos de renglón al calcular
- * el total conciliable de la compra. Por eso el total documental permanece bruto,
- * mientras payments debe coincidir con el neto calculado por Siigo.
+ * Siigo descuenta las retenciones aplicadas como impuestos del renglón al calcular
+ * el total conciliable de la compra. El total documental permanece bruto.
  */
 export function calculateSiigoPurchaseTotals(params: {
   subtotal: number;
@@ -475,7 +474,7 @@ export function calculateSiigoPurchaseTotals(params: {
     retencionesAplicadas,
     netoAPagar,
     totalPayments,
-    diferencia: roundMoney(netoAPagar - totalPayments),
+    diferencia: roundMoney(Math.round(netoAPagar) - totalPayments),
   };
 }
 
@@ -513,7 +512,7 @@ export function buildSiigoPurchasePayload(params: {
   paymentId: number | null;
   /** Total bruto de la compra (base + impuestos, antes de retenciones). */
   purchaseTotal: number;
-  /** Valor NETO a pagar al proveedor (total − retenciones) que viaja en payments. */
+  /** Total conciliable calculado por Siigo después de impuestos de retención. */
   paymentValue: number;
   paymentDueDate: string | null;
   /** Retenciones aplicadas al documento: ID REAL del impuesto en Siigo + valor. */
@@ -584,7 +583,10 @@ export function buildSiigoPurchasePayload(params: {
   if (params.costCenterId != null) payload["cost_center"] = Number(params.costCenterId);
   if (params.retentions && params.retentions.length > 0) {
     // id = identificador del impuesto en Siigo (NUNCA la cuenta contable PUC).
-    payload["retentions"] = params.retentions.map((r) => ({ id: Number(r.id) }));
+    payload["retentions"] = params.retentions.map((r) => ({
+      id: Number(r.id),
+      value: roundMoney(r.value),
+    }));
   }
   return payload;
 }
