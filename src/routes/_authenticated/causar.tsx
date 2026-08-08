@@ -643,6 +643,10 @@ function Causar() {
           dian_status: header.cufe ? "con CUFE" : "sin CUFE",
           // Al aprobar tras corregir, se limpia el error previo y queda pendiente de envío.
           ...(status === "aprobado" ? { siigo_status: "pendiente", siigo_error: null } : {}),
+          // La factura de otra empresa no se elimina: queda registrada con el motivo del rechazo.
+          ...(chequeoEmpresa.status === "mismatch"
+            ? { siigo_status: "error", siigo_error: `RECHAZADA — EMPRESA INCORRECTA. ${mensajeEmpresaIncorrecta(chequeoEmpresa)}` }
+            : {}),
         file_path: filePath ?? existingFile.path,
         file_name: file?.name ?? existingFile.name,
       };
