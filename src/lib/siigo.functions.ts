@@ -562,7 +562,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     // por la cuenta equivalente que ya fue importada desde esta empresa.
     const { data: companyAccounts, error: accountsErr } = await supabase
       .from("puc_accounts")
-      .select("code, name")
+      .select("code, name, active, has_children, is_movement, siigo_id, siigo_code")
       .eq("company_id", inv.company_id)
       .order("code");
     if (accountsErr) throw new Error(`No fue posible validar el PUC de Siigo: ${accountsErr.message}`);
@@ -633,6 +633,18 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         "[siigo][causacion] cuentas base reemplazadas:",
         replacements.map((line) => ({ id: line.id, account_code: line.account_code })),
       );
+      // Trazabilidad: queda registro de la cuenta sugerida, la utilizada y el motivo.
+      await supabase.from("account_resolutions").insert(
+        replacements.map((line, index) => ({
+          company_id: inv.company_id,
+          invoice_id: inv.id,
+          suggested_code: journal.find((j) => j.id === line.id)?.account_code ?? line.account_code,
+          used_code: line.account_code,
+          reason: `La cuenta ${journal.find((j) => j.id === line.id)?.account_code ?? ""} tiene cuentas auxiliares activas y no permite movimiento.`,
+          siigo_id: companyAccounts?.find((a) => a.code === line.account_code)?.siigo_id ?? null,
+          siigo_code: companyAccounts?.find((a) => a.code === line.account_code)?.siigo_code ?? line.account_code,
+        })).map((r, i) => ({ ...r, position: undefined as never, ...(i >= 0 ? {} : {}) })).map(({ position: _p, ...r }) => r),
+      );
       const updates = await Promise.all(
         replacements.map((line) =>
           supabase.from("journal_lines").update({ account_code: line.account_code }).eq("id", line.id),
@@ -640,6 +652,29 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       );
       const updateError = updates.find((result) => result.error)?.error;
       if (updateError) throw new Error(`No fue posible guardar las cuentas equivalentes: ${updateError.message}`);
+    }
+
+    // Validación contable bloqueante: toda cuenta enviada a Siigo debe ser de movimiento,
+    // activa y pertenecer al PUC de esta empresa. Solo se exceptúa 621008 (IVA del costo),
+    // que Siigo maneja como cuenta transaccional aunque no venga en el PUC importado.
+    if ((companyAccounts ?? []).length > 0) {
+      const problemas: string[] = [];
+      for (const line of resolvedJournal) {
+        if (line.account_code === "621008") continue;
+        const check = validarCuenta(companyAccounts ?? [], line.account_code);
+        if (!check.ok && check.problema) problemas.push(check.problema);
+      }
+      if (problemas.length > 0) {
+        const mensajeCuentas =
+          "NO SE PUEDE CAUSAR EN SIIGO.\n" +
+          problemas.join("\n") +
+          "\nAcción: seleccione una cuenta auxiliar activa en la pantalla de causación.";
+        await supabase
+          .from("invoices")
+          .update({ siigo_status: "error", siigo_error: mensajeCuentas })
+          .eq("id", inv.id);
+        throw new Error(mensajeCuentas);
+      }
     }
 
     await supabase
