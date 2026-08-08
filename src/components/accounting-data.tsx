@@ -334,6 +334,7 @@ export function PucPanel({ companyId }: { companyId: string }) {
   const [form, setForm] = useState({ code: "", name: "", nature: "debito" });
   const [edit, setEdit] = useState<Record<string, { code: string; name: string; nature: string }>>({});
   const [resumen, setResumen] = useState<PucImportSummary | null>(null);
+  const [detail, setDetail] = useState<ImportDetail | null>(null);
   const [progreso, setProgreso] = useState<string | null>(null);
   const [buscar, setBuscar] = useState("");
   const [pagina, setPagina] = useState(1);
@@ -405,50 +406,43 @@ export function PucPanel({ companyId }: { companyId: string }) {
       );
       if (!ok) return;
 
-      // Cuentas ya existentes: para diferenciar nuevas de actualizadas.
-      const existentes = new Set<string>();
+      const existentes = new Map<string, (typeof parsed.valid)[number]>();
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await supabase
           .from("puc_accounts")
-          .select("code")
+          .select("company_id,code,name,nature,active,source")
           .eq("company_id", companyId)
           .order("code")
           .range(from, from + PAGE - 1);
         if (error) throw new Error(`No fue posible leer el PUC actual: ${error.message}`);
-        (data ?? []).forEach((r) => existentes.add(String(r.code)));
+        (data ?? []).forEach((r) => existentes.set(String(r.code), r as (typeof parsed.valid)[number]));
         if ((data ?? []).length < PAGE) break;
       }
-      const nuevas = parsed.valid.filter((r) => !existentes.has(r.code)).length;
-      const actualizadas = parsed.valid.length - nuevas;
-
-      // Importación por lotes: espera cada lote y reporta el que falle.
-      const LOTE = 500;
-      const totalLotes = Math.ceil(parsed.valid.length / LOTE);
-      const fallos: string[] = [];
-      let guardadosIntento = 0;
-      for (let i = 0; i < totalLotes; i++) {
-        const lote = parsed.valid.slice(i * LOTE, (i + 1) * LOTE);
-        setProgreso(`Importando lote ${i + 1} de ${totalLotes}…`);
-        const { error } = await supabase
-          .from("puc_accounts")
-          .upsert(lote, { onConflict: "company_id,code", ignoreDuplicates: false });
-        if (error) {
-          fallos.push(
-            `Lote ${i + 1} de ${totalLotes} presentó un error: ${error.message}` +
-              (error.details ? ` — ${error.details}` : "") +
-              (error.hint ? ` (${error.hint})` : ""),
-          );
-        } else {
-          guardadosIntento += lote.length;
-        }
-      }
-
-      // Validación posterior obligatoria: contar en la base de datos.
+      const { data: auth } = await supabase.auth.getUser();
+      const importResult = await runReliableImport<(typeof parsed.valid)[number]>({
+        module: "PUC", fileName: file.name, user: auth.user?.email ?? null, found: parsed.rowsRead,
+        rows: parsed.valid,
+        invalidIssues: parsed.errors.map((error) => ({ row: error.rowNumber, key: error.code, message: `${error.problema} ${error.accion}` })),
+        duplicateCount: parsed.duplicates, keyOf: (row) => row.code, existingByKey: existentes,
+        equals: sameImportValues(["name", "nature", "active"]),
+        saveBatch: async (batch) => {
+          const { error } = await supabase.from("puc_accounts").upsert(batch, { onConflict: "company_id,code", ignoreDuplicates: false });
+          return { error };
+        },
+        verifyKeys: () => fetchAllKeys(async (from, to) => {
+          const { data, error } = await supabase.from("puc_accounts").select("code").eq("company_id", companyId).order("code").range(from, to);
+          if (error) return { keys: [], error: error.message };
+          return { keys: (data ?? []).map((row) => row.code) };
+        }),
+        onProgress: (p) => setProgreso(`Importando PUC… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)}–${fmt(p.to)} de ${fmt(p.total)}`),
+      });
+      setDetail(importResult);
       setProgreso("Verificando cuentas guardadas…");
       const verif = await verificarPuc(companyId);
 
       // Reconstruye la jerarquía con TODAS las cuentas ya cargadas.
       setProgreso("Construyendo jerarquía de cuentas…");
+      const fallos = importResult.issues.filter((issue) => issue.batch).map((issue) => issue.message);
       let movimiento: number | null = null;
       try {
         const jer = await pucRebuildHierarchy({ data: { companyId } });
@@ -459,15 +453,15 @@ export function PucPanel({ companyId }: { companyId: string }) {
 
       const guardadasDelArchivo = parsed.valid.filter((r) => verif.codes.has(r.code)).length;
       const faltantes = parsed.valid.filter((r) => !verif.codes.has(r.code)).map((r) => r.code);
-      const completo = faltantes.length === 0;
+      const completo = importResult.status === "COMPLETADA";
 
       setResumen({
         archivo: file.name,
         encontrados: parsed.rowsRead,
         validos: parsed.valid.length,
         importados: guardadasDelArchivo,
-        nuevas,
-        actualizadas,
+        nuevas: importResult.newRows,
+        actualizadas: importResult.updated,
         duplicados: parsed.duplicates,
         errores: parsed.errors,
         fallos,
@@ -479,11 +473,12 @@ export function PucPanel({ companyId }: { companyId: string }) {
         faltantes,
         movimiento,
         completo,
-        intentados: guardadosIntento,
+        intentados: importResult.valid,
       });
 
-      if (completo) toast.success("PUC importado correctamente.");
-      else toast.error("El PUC no se importó completamente. Revisa el resumen de importación.");
+      if (importResult.status === "COMPLETADA") toast.success("IMPORTACIÓN COMPLETADA");
+      else if (importResult.status === "COMPLETADA CON ERRORES") toast.warning("Importación completada con errores. Revisa el detalle.");
+      else toast.error("El PUC no se importó completamente. Revisa el detalle.");
 
       await refresh();
       await qc.invalidateQueries({ queryKey: ["puc_accounts", companyId, "count"] });
