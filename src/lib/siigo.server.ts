@@ -210,8 +210,8 @@ async function siigoRequest<T>(method: "GET" | "POST", path: string, payload?: u
       );
       console.log("SUMA PAYMENTS", paymentsTotal);
       const totalFactura = Number(purchasePayload["total"] || 0);
-      // Diagnóstico únicamente: el payload ya debe llegar conciliado. Siigo exige
-      // que payments coincida con el total bruto y procesa retentions por separado.
+      // Diagnóstico únicamente: el payload ya debe llegar conciliado con el total
+      // que Siigo calcula desde los renglones, impuestos y retenciones aplicadas.
       console.log("SIIGO FINAL PAYLOAD", JSON.stringify(payload, null, 2));
       console.log("========== SIIGO REQUEST ==========");
       console.log(JSON.stringify(payload, null, 2));
@@ -415,13 +415,16 @@ export async function siigoPurchaseDocumentId(): Promise<number> {
 /** Forma de pago de compras: intenta coincidir con la forma de pago de la factura. */
 export async function siigoPurchasePaymentTypeId(preferido?: string | null): Promise<number | null> {
   const forced = (process.env["SIIGO_PURCHASE_PAYMENT_ID"] ?? "").trim();
-  if (forced && /^\d+$/.test(forced)) return Number(forced);
 
   type PayType = { id?: number; name?: string; active?: boolean; type?: string };
   try {
     const res = await siigoGet<PayType[] | { results?: PayType[] }>("/v1/payment-types?document_type=FC");
     const list = (Array.isArray(res) ? res : (res?.results ?? [])).filter((p) => p.id && p.active !== false);
     if (list.length === 0) return null;
+    if (forced && /^\d+$/.test(forced)) {
+      const configured = list.find((payment) => String(payment.id) === forced);
+      return configured?.id ?? null;
+    }
     const clave = (preferido ?? "").toLowerCase();
     const esCredito = clave.includes("cr");
     const porNombre = clave ? list.find((p) => (p.name ?? "").toLowerCase().includes(clave.slice(0, 6))) : undefined;
@@ -571,10 +574,7 @@ export function buildSiigoPurchasePayload(params: {
   if (params.costCenterId != null) payload["cost_center"] = Number(params.costCenterId);
   if (params.retentions && params.retentions.length > 0) {
     // id = identificador del impuesto en Siigo (NUNCA la cuenta contable PUC).
-    payload["retentions"] = params.retentions.map((r) => ({
-      id: Number(r.id),
-      value: roundMoney(r.value),
-    }));
+    payload["retentions"] = params.retentions.map((r) => ({ id: Number(r.id) }));
   }
   return payload;
 }
