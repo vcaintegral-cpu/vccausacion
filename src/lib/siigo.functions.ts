@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { checkInvoiceCompany, mensajeEmpresaIncorrecta } from "./company-validation";
+import { checkInvoiceCompany, motivoBloqueoEmpresa } from "./company-validation";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { normalizeItemType } from "@/lib/item-type";
 
@@ -430,8 +430,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       .eq("id", inv.company_id)
       .maybeSingle();
     const chequeoEmpresa = checkInvoiceCompany(empresa, inv);
-    if (chequeoEmpresa.status === "mismatch") {
-      const mensaje = mensajeEmpresaIncorrecta(chequeoEmpresa);
+    const mensaje = motivoBloqueoEmpresa(chequeoEmpresa);
+    if (mensaje) {
       await supabase
         .from("invoices")
         .update({ siigo_status: "error", siigo_error: `RECHAZADA — EMPRESA INCORRECTA. ${mensaje}` })
