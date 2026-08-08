@@ -69,8 +69,6 @@ function errorText(error: { message: string; details?: string | null; hint?: str
 export async function runReliableImport<T>(options: ReliableImportOptions<T>): Promise<ImportDetail> {
   const invalidIssues = options.invalidIssues ?? [];
   const duplicateCount = options.duplicateCount ?? 0;
-  const total = options.rows.length;
-  const batches = Math.ceil(total / IMPORT_BATCH_SIZE);
   const issues: ImportIssue[] = [...invalidIssues];
   let attempted = 0;
   let batchesProcessed = 0;
@@ -85,16 +83,24 @@ export async function runReliableImport<T>(options: ReliableImportOptions<T>): P
       }).length
     : 0;
   const updated = Math.max(0, total - newRows - unchanged);
+  const rowsToSave = options.existingByKey && options.equals
+    ? options.rows.filter((row) => {
+        const current = options.existingByKey?.get(options.keyOf(row));
+        return !current || options.equals?.(current, row) !== true;
+      })
+    : options.rows;
+  const total = options.rows.length;
+  const batches = Math.ceil(rowsToSave.length / IMPORT_BATCH_SIZE);
 
   for (let batchIndex = 0; batchIndex < batches; batchIndex += 1) {
     const fromIndex = batchIndex * IMPORT_BATCH_SIZE;
-    const batch = options.rows.slice(fromIndex, fromIndex + IMPORT_BATCH_SIZE);
+    const batch = rowsToSave.slice(fromIndex, fromIndex + IMPORT_BATCH_SIZE);
     options.onProgress?.({
       batch: batchIndex + 1,
       batches,
       from: fromIndex + 1,
       to: fromIndex + batch.length,
-      total,
+      total: rowsToSave.length,
       processed: attempted,
     });
     const result = await options.saveBatch(batch);
