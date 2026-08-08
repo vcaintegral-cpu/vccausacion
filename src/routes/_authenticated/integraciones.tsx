@@ -281,6 +281,74 @@ function Integraciones() {
       </Dialog>
 
       {purchases ? (
+        <></>
+      ) : null}
+
+      <div className="rounded-lg border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
+          <div>
+            <h2 className="text-sm font-semibold">Impuestos sincronizados con Siigo</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Identificadores reales por empresa. La causación usa exclusivamente estos ID.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => impuestos.mutate()}
+            disabled={!connected || !companyId || impuestos.isPending}
+          >
+            {impuestos.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            Sincronizar nuevamente
+          </Button>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Tipo</TableHead>
+              <TableHead>Nombre</TableHead>
+              <TableHead className="text-right">Tarifa</TableHead>
+              <TableHead>ID Siigo</TableHead>
+              <TableHead>Cuenta</TableHead>
+              <TableHead>Estado</TableHead>
+              <TableHead>Última sincronización</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {(impuestosSync.data ?? []).length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">
+                  {companyId
+                    ? "Sin impuestos sincronizados. Usa “Sincronizar impuestos desde Siigo”."
+                    : "Selecciona una empresa activa."}
+                </TableCell>
+              </TableRow>
+            ) : (
+              (impuestosSync.data ?? []).map((t) => (
+                <TableRow key={t.id}>
+                  <TableCell className="text-xs uppercase">{t.kind}</TableCell>
+                  <TableCell className="text-xs">{t.name}</TableCell>
+                  <TableCell className="text-right font-mono text-xs">{t.rate}%</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {t.siigoId ?? <span className="text-destructive">Sin ID</span>}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{t.accountCode ?? "—"}</TableCell>
+                  <TableCell className="text-xs">
+                    {t.active ? (
+                      <Badge className="bg-success text-success-foreground hover:bg-success">Activo</Badge>
+                    ) : (
+                      <Badge variant="secondary">Inactivo</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{t.syncedAt ? fechaHora(t.syncedAt) : "—"}</TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      {purchases ? (
         <div className="rounded-lg border border-border bg-card">
           <div className="border-b border-border px-4 py-3 text-sm font-semibold">Facturas de compra en Siigo</div>
           <Table>
