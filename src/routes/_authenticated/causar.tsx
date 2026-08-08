@@ -303,6 +303,21 @@ function Causar() {
   const empresaIncorrecta = chequeoEmpresa.status === "mismatch";
   // Bloqueo total (guardar / aprobar / causar) cuando la factura no se puede atribuir a la empresa activa.
   const bloqueoEmpresa = motivoBloqueoEmpresa(chequeoEmpresa);
+  // Solo se muestra el aviso cuando ya hay una factura cargada; el formulario vacío no debe alertar.
+  const facturaConDatos = useMemo(
+    () =>
+      !!(
+        header.buyer_nit ||
+        header.number ||
+        header.prefix ||
+        header.provider_nit ||
+        header.provider_name ||
+        header.cufe ||
+        lines.length > 0
+      ),
+    [header, lines.length],
+  );
+  const avisoEmpresa = facturaConDatos ? bloqueoEmpresa : null;
 
   /** Cambios de un renglón al cambiar su tipo de ítem, conservando la lógica producto → categoría → cuenta. */
   const parcheDeTipo = useCallback(
