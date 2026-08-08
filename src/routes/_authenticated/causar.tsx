@@ -12,7 +12,7 @@ import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { AccountCombobox } from "@/components/account-combobox";
-import { CUENTA_PADRE_MSG, evaluarCuenta, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
+import { CUENTA_PADRE_MSG, resolveOperationalAccount, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
 import { fetchCompanyPuc } from "@/lib/puc-data";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { BulkApply } from "@/components/bulk-apply";
@@ -482,7 +482,14 @@ function Causar() {
       }),
     [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones],
   );
-  const t = totals(journal);
+  const operationalJournal = useMemo(() => {
+    const puc = (config?.accounts ?? []) as PucAccount[];
+    return journal.map((line) => {
+      const resolution = resolveOperationalAccount(puc, line.account_code);
+      return resolution.operationalAccount ? { ...line, account_code: resolution.operationalAccount, account_name: resolution.operational?.name ?? line.account_name } : line;
+    });
+  }, [journal, config?.accounts]);
+  const t = totals(operationalJournal);
 
   /** Validación contable del asiento: nivel, movimiento, auxiliares y cuenta operativa por cuenta. */
   const validacionAsiento = useMemo(() => {
@@ -505,21 +512,21 @@ function Causar() {
           ok: false,
           problema: "No hay un PUC cargado para la empresa activa.",
         };
-      const e = evaluarCuenta(puc, code);
+      const e = resolveOperationalAccount(puc, code);
       return {
         code,
-        existe: e.existe,
-        nombre: e.cuenta?.name ?? "",
-        fuente: e.cuenta?.source ?? "—",
-        nivel: e.nivel ?? "—",
-        movimiento: e.permiteMovimiento,
-        activa: e.activa,
-        enSiigo: e.enSiigo,
-        auxiliares: e.auxiliares.length,
-        operativa: e.cuentaOperativa ?? "—",
-        resultado: e.resultado,
-        ok: e.resultado === "VÁLIDA",
-        problema: e.mensaje ?? "",
+        existe: !!e.account,
+        nombre: e.account?.name ?? "",
+        fuente: e.account?.source ?? "—",
+        nivel: e.account ? e.account.level ?? "—" : e.level ?? "—",
+        movimiento: e.hasMovement,
+        activa: e.active,
+        enSiigo: e.siigoExists,
+        auxiliares: e.candidates.length,
+        operativa: e.operationalAccount ?? "—",
+        resultado: e.result,
+        ok: e.valid,
+        problema: e.message ?? "",
       };
     });
   }, [journal, config?.accounts]);
@@ -805,7 +812,7 @@ function Causar() {
           })),
         ),
         supabase.from("journal_lines").insert(
-          journal.map((j, i) => ({
+          operationalJournal.map((j, i) => ({
             invoice_id: inv.id,
             company_id: companyId,
             account_code: j.account_code,
@@ -823,7 +830,7 @@ function Causar() {
               company_id: companyId,
               provider_nit: header.provider_nit,
               concept: l.description,
-              account_code: l.account_code!,
+              account_code: resolveOperationalAccount((config?.accounts ?? []) as PucAccount[], l.account_code).operationalAccount ?? l.account_code!,
             }),
           ),
       ]);
@@ -1330,7 +1337,7 @@ function Causar() {
             <div className="border-b border-border px-5 py-3 text-sm font-semibold">Comprobante contable</div>
             <table className="w-full text-sm">
               <tbody className="divide-y divide-border">
-                {journal.map((j, i) => (
+                {operationalJournal.map((j, i) => (
                   <tr key={i}>
                     <td className="px-4 py-1.5 font-mono text-xs">{j.account_code}</td>
                     <td className="px-4 py-1.5 text-muted-foreground">{j.account_name}</td>
@@ -1384,7 +1391,7 @@ function Causar() {
                   <td className="px-4 py-1.5 text-xs">{v.auxiliares > 0 ? `Sí (${v.auxiliares})` : "No"}</td>
                   <td className="px-4 py-1.5 font-mono text-xs">{v.operativa}</td>
                   <td className={`px-4 py-1.5 text-xs ${v.ok ? "text-success" : "text-destructive"}`}>
-                    {v.ok ? "✓ VÁLIDA" : `⚠ ${v.resultado} · ${v.problema}`}
+                    {v.ok ? (v.resultado === "RESUELTA A AUXILIAR" ? "✓ RESUELTA A AUXILIAR" : "✓ VÁLIDA") : `⚠ ${v.resultado} · ${v.problema}`}
                   </td>
                 </tr>
               ))}
