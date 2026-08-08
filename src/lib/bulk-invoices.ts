@@ -4,6 +4,7 @@ import { prepareInvoiceFile } from "@/lib/invoice-file";
 import type { ExtractedInvoice } from "@/lib/extract.functions";
 import { resolveProductAccount } from "@/lib/product-account";
 import { findExistingInvoice, mensajeDuplicado } from "@/lib/invoice-duplicates";
+import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
 import {
   applyRulesToLines,
   buildJournal,
@@ -77,6 +78,15 @@ export async function processInvoiceFile(params: {
     data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
   })) as ExtractedInvoice;
   const { lines: extracted, ...header } = data;
+
+  // Cada factura del ZIP se valida individualmente: si el NIT del comprador no es el de la
+  // empresa activa (o no se pudo leer), se rechaza y NO se crea borrador.
+  const { data: empresa } = await supabase
+    .from("companies").select("id, name, nit").eq("id", companyId).maybeSingle();
+  const bloqueo = motivoBloqueoEmpresa(
+    checkInvoiceCompany(empresa, { buyer_nit: header.buyer_nit, buyer_name: header.buyer_name }),
+  );
+  if (bloqueo) throw new Error(bloqueo);
 
   // Control de duplicados por empresa: CUFE, o NIT + prefijo + número.
   const existente = await findExistingInvoice(companyId, {
