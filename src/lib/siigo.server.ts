@@ -435,6 +435,47 @@ export async function siigoPurchasePaymentTypeId(preferido?: string | null): Pro
   }
 }
 
+export type SiigoPurchaseTotals = {
+  subtotal: number;
+  taxes: number;
+  totalFactura: number;
+  retencionesAplicadas: number;
+  netoAPagar: number;
+  totalPayments: number;
+  diferencia: number;
+};
+
+/**
+ * Única regla monetaria para Facturas de Compra en Siigo.
+ *
+ * Siigo descuenta las retenciones enviadas como impuestos de renglón al calcular
+ * el total conciliable de la compra. Por eso el total documental permanece bruto,
+ * mientras payments debe coincidir con el neto calculado por Siigo.
+ */
+export function calculateSiigoPurchaseTotals(params: {
+  subtotal: number;
+  taxes: number;
+  retentions: number;
+  payments?: number;
+}): SiigoPurchaseTotals {
+  const roundMoney = (value: number) => Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
+  const subtotal = roundMoney(params.subtotal);
+  const taxes = roundMoney(params.taxes);
+  const retencionesAplicadas = roundMoney(params.retentions);
+  const totalFactura = roundMoney(subtotal + taxes);
+  const netoAPagar = roundMoney(totalFactura - retencionesAplicadas);
+  const totalPayments = roundMoney(params.payments ?? netoAPagar);
+  return {
+    subtotal,
+    taxes,
+    totalFactura,
+    retencionesAplicadas,
+    netoAPagar,
+    totalPayments,
+    diferencia: roundMoney(netoAPagar - totalPayments),
+  };
+}
+
 /** Centro de costo de Siigo: devuelve el ID real a partir del código o nombre interno. */
 export async function siigoCostCenterId(value: string | null | undefined): Promise<number | null> {
   const clean = (value ?? "").toString().trim();
@@ -478,6 +519,17 @@ export function buildSiigoPurchasePayload(params: {
   const roundMoney = (value: number) => Math.round(Number(value) * 100) / 100;
   const total = roundMoney(params.purchaseTotal);
   const paymentValue = roundMoney(params.paymentValue);
+  if (params.paymentId == null || !Number.isInteger(params.paymentId) || params.paymentId <= 0) {
+    throw new Error("No se puede sincronizar con Siigo porque el medio de pago de compras no es válido.");
+  }
+  for (const retention of params.retentions ?? []) {
+    const id = String(retention.id ?? "").trim();
+    if (!/^\d+$/.test(id) || (/^23/.test(id) && id.length >= 6)) {
+      throw new Error(
+        "No se puede sincronizar con Siigo porque la estructura de impuestos, retenciones o pagos no coincide con la configuración de Siigo.",
+      );
+    }
+  }
   const payload: Record<string, unknown> = {
     document: { id: params.documentId },
     date: params.date,
@@ -510,7 +562,7 @@ export function buildSiigoPurchasePayload(params: {
     }),
     payments: [
       {
-        ...(params.paymentId != null ? { id: params.paymentId } : {}),
+        id: params.paymentId,
         value: paymentValue,
         due_date: params.paymentDueDate ?? params.date,
       },
