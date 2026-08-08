@@ -176,7 +176,7 @@ function Facturas() {
           <p className="mt-1 text-sm text-muted-foreground">{rows.length} comprobante(s). Exporta a Contai en Excel, CSV o TXT.</p>
         </div>
         <Button asChild variant="outline">
-          <Link to="/causar" search={{}}>Causar factura</Link>
+          <Link to="/causar" search={{ id: undefined }}>Causar factura</Link>
         </Button>
       </div>
 
