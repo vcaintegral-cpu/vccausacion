@@ -596,6 +596,41 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .range(0, 19999);
       const porCodigo = new Map((catalogo ?? []).map((p) => [String(p.code ?? "").trim(), p]));
 
+      // Si un renglón de producto no está en el catálogo local, se consulta
+      // directamente en Siigo y se crea/actualiza automáticamente.
+      const faltantes = Array.from(
+        new Set(
+          (invoiceLines ?? [])
+            .filter((l) => {
+              const t = normalizeItemType(l.item_type);
+              return t === "producto" || t === "servicio";
+            })
+            .map((l) => String(l.code ?? "").trim())
+            .filter((code) => code && !porCodigo.has(code)),
+        ),
+      );
+      if (faltantes.length > 0) {
+        const { fetchSiigoProductByCode, upsertSiigoProducts } = await import("./siigo-products.server");
+        const encontrados = [];
+        for (const code of faltantes) {
+          try {
+            const p = await fetchSiigoProductByCode(code);
+            if (p) encontrados.push(p);
+          } catch (e) {
+            console.log("[siigo][productos] Error consultando producto", code, e);
+          }
+        }
+        if (encontrados.length > 0) {
+          await upsertSiigoProducts(supabase, inv.company_id, encontrados);
+          const { data: recargado } = await supabase
+            .from("products")
+            .select("id, code, name, active, category_id, category, account_code, account_name")
+            .eq("company_id", inv.company_id)
+            .in("code", faltantes);
+          for (const p of recargado ?? []) porCodigo.set(String(p.code ?? "").trim(), p);
+        }
+      }
+
       type Renglon = {
         type: "Product" | "Account";
         code: string;
@@ -623,7 +658,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               const prod = porCodigo.get(productCode);
               if (!prod) {
                 throw new Error(
-                  `Renglón ${i + 1}: el producto ${productCode} no existe en los productos sincronizados desde Siigo. Sincronice los productos con Siigo antes de causar.`,
+                  `Renglón ${i + 1}: el producto ${productCode} no existe en Siigo. Debe sincronizar o crear el producto en Siigo antes de causar.`,
                 );
               }
               if (prod.active === false) {
