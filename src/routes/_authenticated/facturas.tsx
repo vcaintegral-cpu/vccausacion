@@ -10,7 +10,8 @@ import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { cop, fecha } from "@/lib/format";
 import { exportCsv, exportTxt, exportXlsx } from "@/lib/export";
 import { ESTADO_LABEL, estadoUnico } from "@/lib/invoice-duplicates";
-import { downloadInvoiceFile, openInvoiceFile } from "@/lib/invoice-pdf";
+import { downloadInvoiceFile } from "@/lib/invoice-pdf";
+import { InvoicePdfViewer } from "@/components/invoice-pdf-viewer";
 import type { JournalLine } from "@/lib/accounting";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -77,6 +78,7 @@ function Facturas() {
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
   const [detalle, setDetalle] = useState<Inv | null>(null);
+  const [pdfDoc, setPdfDoc] = useState<Inv | null>(null);
   const [estado, setEstado] = useState<"todas" | "borrador" | "aprobado" | "sincronizada" | "error">("todas");
 
   const { data: invoices } = useQuery({
@@ -126,10 +128,9 @@ function Facturas() {
     fn(inv, data as JournalLine[]);
   }
 
-  async function verPdf(inv: Inv, descargar = false) {
+  async function descargarPdf(inv: Inv) {
     try {
-      if (descargar) await downloadInvoiceFile(inv);
-      else await openInvoiceFile(inv);
+      await downloadInvoiceFile(inv);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "PDF no disponible");
     }
@@ -295,7 +296,7 @@ function Facturas() {
                     size="icon"
                     title={r.file_path ? "Ver PDF original" : "PDF no disponible"}
                     disabled={!r.file_path}
-                    onClick={() => verPdf(r)}
+                    onClick={() => setPdfDoc(r)}
                   >
                     <Eye className="size-4" />
                   </Button>
@@ -304,7 +305,7 @@ function Facturas() {
                     size="icon"
                     title={r.file_path ? "Descargar PDF original" : "PDF no disponible"}
                     disabled={!r.file_path}
-                    onClick={() => verPdf(r, true)}
+                    onClick={() => descargarPdf(r)}
                   >
                     <Download className="size-4" />
                   </Button>
@@ -329,6 +330,8 @@ function Facturas() {
           </tbody>
         </table>
       </div>
+
+      <InvoicePdfViewer factura={pdfDoc} onOpenChange={(o) => !o && setPdfDoc(null)} />
 
       <Dialog open={!!detalle} onOpenChange={(o) => !o && setDetalle(null)}>
         <DialogContent className="max-w-2xl">
