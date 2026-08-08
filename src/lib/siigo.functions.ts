@@ -923,6 +923,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       });
       const totalFactura = totalesSiigo.totalFactura;
       const netoAPagar = totalesSiigo.netoAPagar;
+      const netoSiigo = Math.round(netoAPagar);
 
       if (totalFactura <= 0) {
         throw new Error(
@@ -1210,7 +1211,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // La API de esta cuenta rechaza Retefuente en retentions[] y la acepta como
       // impuesto de renglón; en esa estructura payments concilia contra el neto.
       const sumaRetencionesEnviadas = r2(retencionesSiigo.reduce((acc, r) => acc + r.value, 0));
-      const payments = [{ id: paymentId, value: netoAPagar, due_date: dueDate }];
+      const payments = [{ id: paymentId, value: netoSiigo, due_date: dueDate }];
       const sumaPagos = r2(payments.reduce((acc, p) => acc + p.value, 0));
       const totalesValidados = calculateSiigoPurchaseTotals({
         subtotal,
@@ -1221,9 +1222,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const diferencia = totalesValidados.diferencia;
       if (Math.abs(diferencia) > 0.009) {
         console.log("[siigo][causacion] ⚠ Payments no coincide con el total conciliable de Siigo");
-        console.log("[siigo][causacion] Suma de payments:", sumaPagos, "Neto:", netoAPagar);
+        console.log("[siigo][causacion] Suma de payments:", sumaPagos, "Neto Siigo:", netoSiigo);
         throw new Error(
-          `La suma de los pagos (${sumaPagos}) no coincide con el total conciliable (${netoAPagar}).`,
+          `La suma de los pagos (${sumaPagos}) no coincide con el total conciliable (${netoSiigo}).`,
         );
       }
 
@@ -1285,7 +1286,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         console.log("CUENTA CONTABLE RETEFUENTE:", retencionesTrace.find((t) => t.tipo === r.tipo)?.cuenta ?? null);
         console.log("VALOR RETEFUENTE:", r.value);
       }
-      console.log("PAYMENT:", netoAPagar);
+      console.log("PAYMENT:", netoSiigo);
       const construirPayload = (totalDocumento: number) =>
         buildSiigoPurchasePayload({
         documentId,
@@ -1300,7 +1301,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         items: itemsConRetencion,
         paymentId,
         purchaseTotal: totalDocumento,
-        paymentValue: netoAPagar,
+        paymentValue: netoSiigo,
         paymentDueDate: dueDate,
         retentions: retencionesEnDocumento.map((r) => ({ id: r.id, value: r.value })),
         });
@@ -1315,7 +1316,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           cuenta_contable_local: r.cuenta,
           valor: r.valor,
         })),
-        medio_pago_siigo: { id: paymentId, valor: netoAPagar },
+        medio_pago_siigo: { id: paymentId, valor: netoSiigo },
         valores: {
           subtotal,
           iva,
@@ -1411,7 +1412,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             neto_local: netoAPagar,
             retenciones_local: retenciones,
           });
-          if (Math.abs(r2(pagoSiigo - netoAPagar)) > 0.009) {
+          if (Math.abs(r2(pagoSiigo - netoSiigo)) > 0.009) {
             throw new Error("El payment devuelto por Siigo no coincide con el total conciliable de la compra.");
           }
           if (retencionesSiigo.length > 0 && retSiigo <= 0) {
