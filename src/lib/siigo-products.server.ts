@@ -123,8 +123,7 @@ export async function upsertSiigoProducts(
       const catId = catName ? (categorias.get(norm(catName)) ?? null) : null;
 
       const rawAccount = String(p.accounting_account ?? p.account?.code ?? "").replace(/\s+/g, "");
-      let account_code = previo?.account_code ?? rawAccount ?? null;
-      if (!account_code) account_code = rawAccount || null;
+      const account_code: string | null = previo?.account_code ?? (rawAccount || null);
       let account_name = previo?.account_name ?? p.account?.name ?? null;
       if (account_code && !account_name) {
         account_name = cuentas.find((c) => c.code === account_code)?.name ?? null;
