@@ -6,10 +6,11 @@ Estructura exacta:
 {"prefix":string|null,"number":string|null,"issue_date":"YYYY-MM-DD"|null,"due_date":"YYYY-MM-DD"|null,
 "provider_nit":string|null,"provider_name":string|null,"provider_address":string|null,"provider_city":string|null,
 "provider_phone":string|null,"provider_email":string|null,"cufe":string|null,"payment_form":string|null,
+"buyer_nit":string|null,"buyer_name":string|null,
 "payment_method":string|null,"currency":string|null,"cost_center":string|null,"notes":string|null,
 "subtotal":number,"discount":number,"iva":number,"impoconsumo":number,"total":number,
 "lines":[{"code":string|null,"description":string,"quantity":number,"unit_value":number,"discount":number,"iva":number,"retention":number,"impoconsumo":number,"total":number}]}
-Reglas: los importes son números sin separadores ni símbolos. El NIT va sin dígito de verificación separado por guion (usa solo el número base). Si un dato no aparece, usa null o 0. Nunca inventes valores.`;
+Reglas: los importes son números sin separadores ni símbolos. El NIT va sin dígito de verificación separado por guion (usa solo el número base). "provider_*" es el emisor/vendedor; "buyer_nit" y "buyer_name" son el NIT y la razón social del ADQUIRIENTE/COMPRADOR (cliente que recibe la factura). Si un dato no aparece, usa null o 0. Nunca inventes valores.`;
 
 export type ExtractInvoiceInput = {
   fileName: string;
