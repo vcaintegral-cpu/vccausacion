@@ -60,8 +60,10 @@ export async function findExistingInvoice(
 /** Estado único de la factura, derivado del estado interno y del estado en Siigo. */
 export function estadoUnico(inv: { status: string; siigo_status?: string | null }): "borrador" | "aprobado" | "sincronizada" | "error" {
   if (inv.siigo_status === "sincronizada" || inv.status === "sincronizada") return "sincronizada";
-  if (inv.siigo_status === "error" || inv.status === "error") return "error";
+  // Una factura re-aprobada tras corregirla vuelve a estar "Aprobada" aunque conserve
+  // el rastro de un envío fallido anterior.
   if (inv.status === "aprobado") return "aprobado";
+  if (inv.siigo_status === "error" || inv.status === "error") return "error";
   return "borrador";
 }
 
