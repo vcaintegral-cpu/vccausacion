@@ -569,8 +569,18 @@ function Revisar() {
             <Row k="Cuentas" v={[...new Set(lines.map((l) => l.account_code ?? "—"))].join(", ")} />
             <Row k="Subtotal" v={cop(base)} />
             <Row k="IVA" v={cop(Number(header.iva))} />
-            <Row k="Retenciones" v={cop(retenciones.retefuente + retenciones.reteiva + retenciones.reteica)} />
-            <Row k="Total" v={cop(base + Number(header.iva) + Number(header.impoconsumo ?? 0))} />
+            <Row k="Total factura" v={cop(base + Number(header.iva) + Number(header.impoconsumo ?? 0))} />
+            <Row k="Retefuente" v={cop(retenciones.retefuente)} />
+            <Row k="Otras retenciones" v={cop(retenciones.reteiva + retenciones.reteica)} />
+            <Row
+              k="NETO A PAGAR"
+              v={cop(
+                base +
+                  Number(header.iva) +
+                  Number(header.impoconsumo ?? 0) -
+                  (retenciones.retefuente + retenciones.reteiva + retenciones.reteica),
+              )}
+            />
           </dl>
         </div>
 
@@ -597,6 +607,41 @@ function Revisar() {
               </tr>
             </tfoot>
           </table>
+          <dl className="space-y-1 border-t border-border px-5 py-3 text-xs">
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Subtotal</dt>
+              <dd className="font-mono tabular-nums">{cop(base)}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">IVA</dt>
+              <dd className="font-mono tabular-nums">{cop(Number(header.iva))}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Total factura</dt>
+              <dd className="font-mono tabular-nums">
+                {cop(base + Number(header.iva) + Number(header.impoconsumo ?? 0))}
+              </dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Retefuente</dt>
+              <dd className="font-mono tabular-nums">-{cop(retenciones.retefuente)}</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Otras retenciones</dt>
+              <dd className="font-mono tabular-nums">-{cop(retenciones.reteiva + retenciones.reteica)}</dd>
+            </div>
+            <div className="flex justify-between border-t border-border pt-1 font-semibold">
+              <dt>NETO A PAGAR</dt>
+              <dd className="font-mono tabular-nums">
+                {cop(
+                  base +
+                    Number(header.iva) +
+                    Number(header.impoconsumo ?? 0) -
+                    (retenciones.retefuente + retenciones.reteiva + retenciones.reteica),
+                )}
+              </dd>
+            </div>
+          </dl>
         </div>
       </div>
 
