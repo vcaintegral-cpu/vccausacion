@@ -74,6 +74,21 @@ const emptyHeader = (): Header => ({
   subtotal: 0, discount: 0, iva: 0, impoconsumo: 0, total: 0,
 });
 
+/** Plazo de crédito según los días entre la fecha de la factura y su vencimiento. */
+const CREDIT_TERMS = ["Crédito", "Crédito 15 días", "Crédito 30 días", "Crédito 45 días"] as const;
+
+function creditTermFromDates(issue?: string | null, due?: string | null): string {
+  if (!issue || !due) return "Crédito";
+  const a = new Date(issue);
+  const b = new Date(due);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return "Crédito";
+  const dias = Math.round((b.getTime() - a.getTime()) / 86_400_000);
+  if (dias <= 7) return "Crédito";
+  if (dias <= 22) return "Crédito 15 días";
+  if (dias <= 37) return "Crédito 30 días";
+  return "Crédito 45 días";
+}
+
 function Causar() {
   const navigate = useNavigate();
   const { id: editId } = Route.useSearch();
@@ -102,6 +117,14 @@ function Causar() {
   const [centroSugerido, setCentroSugerido] = useState<string | null>(null);
   const [centroTocado, setCentroTocado] = useState(false);
   const [duplicado, setDuplicado] = useState<DuplicateInvoice | null>(null);
+  const [plazoTocado, setPlazoTocado] = useState(false);
+
+  // El plazo de crédito se recalcula con la fecha de vencimiento, salvo edición manual.
+  useEffect(() => {
+    if (plazoTocado) return;
+    const term = creditTermFromDates(header.issue_date, header.due_date);
+    if (term !== header.payment_form) setHeader((h) => ({ ...h, payment_form: term }));
+  }, [header.issue_date, header.due_date, header.payment_form, plazoTocado]);
 
   const { data: config } = useQuery({
     queryKey: ["config", companyId],
@@ -166,7 +189,7 @@ function Causar() {
       buyer_nit: inv['buyer_nit'] ?? "",
       buyer_name: inv['buyer_name'] ?? "",
       cufe: inv['cufe'] ?? "",
-      payment_form: "Crédito",
+      payment_form: creditTermFromDates(inv['issue_date'], inv['due_date']),
       payment_method: inv['payment_method'] ?? "",
       currency: inv['currency'] ?? "COP",
       cost_center: inv['cost_center'] ?? "",
@@ -467,8 +490,12 @@ function Causar() {
           return;
         }
       }
-      // La forma de pago siempre es crédito, aunque la factura diga contado.
-      setHeader({ ...emptyHeader(), ...rest, payment_form: "Crédito" });
+      // La forma de pago siempre es crédito; el plazo sale de la fecha de vencimiento.
+      setHeader({
+        ...emptyHeader(),
+        ...rest,
+        payment_form: creditTermFromDates(rest.issue_date, rest.due_date),
+      });
       let provider = null;
       if (rest.provider_nit && companyId) {
         const { data: p } = await supabase
@@ -935,11 +962,16 @@ function Causar() {
           <Label className="text-xs">Forma de pago</Label>
           <select
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-            value={String(header.payment_form ?? "") || "Crédito"}
-            onChange={(e) => setHeader({ ...header, payment_form: e.target.value })}
+            value={
+              CREDIT_TERMS.includes(String(header.payment_form ?? "") as (typeof CREDIT_TERMS)[number])
+                ? String(header.payment_form)
+                : "Crédito"
+            }
+            onChange={(e) => { setPlazoTocado(true); setHeader({ ...header, payment_form: e.target.value }); }}
           >
-            <option value="Crédito">Crédito</option>
-            <option value="Contado">Contado</option>
+            {CREDIT_TERMS.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
           </select>
         </div>
         <div className="space-y-1.5">
