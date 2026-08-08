@@ -340,6 +340,76 @@ export function PucPanel({ companyId }: { companyId: string }) {
   const [buscar, setBuscar] = useState("");
   const [pagina, setPagina] = useState(1);
   const porPagina = 100;
+  const [raw, setRaw] = useState<RawHistoryFile | null>(null);
+  const [validacion, setValidacion] = useState<HistoryValidation | null>(null);
+  const [validando, setValidando] = useState(false);
+  const [buscarMov, setBuscarMov] = useState("");
+  const [paginaMov, setPaginaMov] = useState(1);
+
+  // CAPA 1 · movimientos originales (tal cual el Excel).
+  const { data: movimientos } = useQuery({
+    queryKey: ["accounting_history", companyId],
+    queryFn: async () => {
+      const out: Record<string, unknown>[] = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from("accounting_history")
+          .select("*")
+          .eq("company_id", companyId)
+          .order("excel_row", { ascending: true })
+          .range(from, from + PAGE - 1);
+        if (error) throw error;
+        const chunk = (data ?? []) as Record<string, unknown>[];
+        out.push(...chunk);
+        if (chunk.length < PAGE) break;
+      }
+      return out;
+    },
+  });
+
+  const movFiltrados = useMemo(() => {
+    const q = buscarMov.trim().toLowerCase();
+    const all = (movimientos ?? []) as Record<string, unknown>[];
+    if (!q) return all;
+    return all.filter((r) =>
+      ["account_code", "account_name", "provider_nit", "provider_name", "voucher", "description", "detail", "cost_center", "entry_date_text"].some(
+        (k) => String(r[k] ?? "").toLowerCase().includes(q),
+      ),
+    );
+  }, [movimientos, buscarMov]);
+  const totalPagMov = Math.max(1, Math.ceil(movFiltrados.length / porPagina));
+  const pagMovActual = Math.min(paginaMov, totalPagMov);
+  const movVisibles = movFiltrados.slice((pagMovActual - 1) * porPagina, pagMovActual * porPagina);
+
+  async function leerHistorialGuardado() {
+    const out: Record<string, unknown>[] = [];
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from("accounting_history")
+        .select("*")
+        .eq("company_id", companyId)
+        .order("excel_row", { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) throw new Error(error.message);
+      const chunk = (data ?? []) as Record<string, unknown>[];
+      out.push(...chunk);
+      if (chunk.length < PAGE) break;
+    }
+    return out;
+  }
+
+  async function validarImportacion() {
+    if (!raw) return;
+    setValidando(true);
+    try {
+      const stored = await leerHistorialGuardado();
+      setValidacion(compareHistory(raw.rows, stored));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No fue posible validar la importación.");
+    } finally {
+      setValidando(false);
+    }
+  }
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["puc_accounts"] });
 
