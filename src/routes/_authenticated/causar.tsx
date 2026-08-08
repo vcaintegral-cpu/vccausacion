@@ -12,7 +12,7 @@ import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { applyRulesToLines, buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import { AccountCombobox } from "@/components/account-combobox";
-import { CUENTA_PADRE_MSG, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
+import { CUENTA_PADRE_MSG, evaluarCuenta, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { BulkApply } from "@/components/bulk-apply";
 import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
