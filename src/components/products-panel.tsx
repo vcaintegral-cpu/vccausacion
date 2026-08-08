@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Download, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
 import { siigoImportProducts } from "@/lib/siigo.functions";
 import { normalizeCategoryName } from "@/lib/product-account";
 import { downloadSheet, pick, readSheet } from "@/lib/spreadsheet";
@@ -13,6 +14,22 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export const PRODUCT_KINDS = ["producto", "servicio", "gasto", "activo"] as const;
+
+/** Lee TODAS las filas por páginas de 1.000 (PostgREST limita cada consulta). */
+async function leerTodo<T>(
+  build: () => ReturnType<ReturnType<typeof supabase.from>["select"]>,
+): Promise<T[]> {
+  const PAGE = 1000;
+  const out: T[] = [];
+  for (let desde = 0; ; desde += PAGE) {
+    const { data, error } = await build().range(desde, desde + PAGE - 1);
+    if (error) throw error;
+    const chunk = (data ?? []) as T[];
+    out.push(...chunk);
+    if (chunk.length < PAGE) break;
+  }
+  return out;
+}
 
 function normKind(value: string) {
   const v = (value ?? "").toLowerCase();
@@ -26,23 +43,23 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [progreso, setProgreso] = useState<string | null>(null);
   const [filtro, setFiltro] = useState("");
   const [form, setForm] = useState({ code: "", name: "", kind: "producto", category: "", account_code: "", account_name: "" });
 
   const { data: rows } = useQuery({
     queryKey: ["products", companyId],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("products").select("*").eq("company_id", companyId).order("code");
-      if (error) throw error;
-      return data ?? [];
-    },
+    queryFn: async () =>
+      leerTodo<Tables<"products">>(() =>
+        supabase.from("products").select("*").eq("company_id", companyId).order("code") as never,
+      ),
   });
   const { data: cuentas } = useQuery({
     queryKey: ["puc_accounts", companyId, "productos"],
-    queryFn: async () => {
-      const { data } = await supabase.from("puc_accounts").select("code, name").eq("company_id", companyId).order("code");
-      return (data ?? []) as { code: string; name: string }[];
-    },
+    queryFn: async () =>
+      leerTodo<{ code: string; name: string }>(() =>
+        supabase.from("puc_accounts").select("code, name").eq("company_id", companyId).order("code") as never,
+      ),
   });
   const { data: categorias } = useQuery({
     queryKey: ["product_categories", companyId, "productos-panel"],
@@ -185,16 +202,40 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
       if (!window.confirm(`Se reemplazará el catálogo actual por ${unicos.length} producto(s)/servicio(s) del archivo. ¿Continuar?`)) return;
       const { error: delErr } = await supabase.from("products").delete().eq("company_id", companyId);
       if (delErr) throw new Error(`No fue posible reemplazar el catálogo actual: ${delErr.message}`);
-      for (let i = 0; i < unicos.length; i += 500) {
-        const { error } = await supabase.from("products").upsert(unicos.slice(i, i + 500), { onConflict: "company_id,code" });
-        if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}`);
+      // Lotes de MÁXIMO 500: se continúa automáticamente hasta procesar TODOS los registros.
+      const LOTE = 500;
+      const totalLotes = Math.ceil(unicos.length / LOTE);
+      let procesados = 0;
+      for (let i = 0; i < totalLotes; i++) {
+        const lote = unicos.slice(i * LOTE, (i + 1) * LOTE);
+        setProgreso(`Importando lote ${i + 1} de ${totalLotes} (${procesados + 1}–${procesados + lote.length} de ${unicos.length})…`);
+        const { error } = await supabase.from("products").upsert(lote, { onConflict: "company_id,code" });
+        if (error)
+          throw new Error(
+            `Lote ${i + 1} de ${totalLotes} (registros ${procesados + 1}–${procesados + lote.length}): ${error.message}${error.details ? ` — ${error.details}` : ""}`,
+          );
+        procesados += lote.length;
       }
-      toast.success(`Catálogo reemplazado: ${unicos.length} producto(s)/servicio(s) cargados desde Excel.`);
+      setProgreso("Verificando registros guardados…");
+      const { count } = await supabase
+        .from("products")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", companyId);
+      if ((count ?? 0) < unicos.length) {
+        toast.warning(
+          `Se procesaron ${procesados} de ${unicos.length} registros en ${totalLotes} lote(s), pero la base tiene ${count ?? 0}. Revise el archivo por códigos repetidos.`,
+        );
+      } else {
+        toast.success(
+          `Importación completada: ${procesados} de ${unicos.length} registros en ${totalLotes} lote(s) de máximo ${LOTE}. Guardados en la base: ${count ?? 0}.`,
+        );
+      }
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
     } finally {
       setBusy(null);
+      setProgreso(null);
     }
   }
 
@@ -287,6 +328,9 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
         </Button>
         <Input className="ml-auto w-64" placeholder="Buscar…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
       </div>
+      {progreso ? (
+        <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">{progreso}</p>
+      ) : null}
 
       <form onSubmit={crear} className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-4">
         <div className="w-36 space-y-1.5">
