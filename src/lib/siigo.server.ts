@@ -198,16 +198,18 @@ async function siigoRequest<T>(method: "GET" | "POST", path: string, payload?: u
     if (bodyString !== undefined) init.body = bodyString;
     if (path === "/v1/purchases" && payload !== undefined) {
       console.log("SIIGO PURCHASE PAYLOAD", JSON.stringify(payload, null, 2));
-      console.log("TOTAL FACTURA:", (payload as Record<string, unknown>)['total']);
-      console.log("PAYMENTS:", (payload as Record<string, unknown>)['payments']);
+      console.log("TOTAL FACTURA:", (payload as Record<string, unknown>)["total"]);
+      console.log("PAYMENTS:", (payload as Record<string, unknown>)["payments"]);
       const purchasePayload = payload as Record<string, unknown>;
-      const paymentsArr = Array.isArray(purchasePayload['payments']) ? purchasePayload['payments'] : [];
+      const paymentsArr = Array.isArray(purchasePayload["payments"])
+        ? purchasePayload["payments"]
+        : [];
       const paymentsTotal = paymentsArr.reduce(
-        (a, p) => a + Number((p as Record<string, unknown>)['value'] || 0),
+        (a, p) => a + Number((p as Record<string, unknown>)["value"] || 0),
         0,
       );
       console.log("SUMA PAYMENTS", paymentsTotal);
-      const totalFactura = Number(purchasePayload['total'] || 0);
+      const totalFactura = Number(purchasePayload["total"] || 0);
       // No corregir payments contra el total bruto: cuando hay retenciones,
       // Siigo espera allí el saldo neto que queda por pagar al proveedor.
       console.log("SIIGO FINAL PAYLOAD", JSON.stringify(payload, null, 2));
@@ -497,7 +499,9 @@ export function buildSiigoPurchasePayload(params: {
         price: item.price,
       };
       if (item.discount && item.discount > 0) line["discount"] = item.discount;
-      if (item.tax_ids && item.tax_ids.length > 0) line["taxes"] = item.tax_ids.map((id) => ({ id }));
+      if (item.tax_ids && item.tax_ids.length > 0) {
+        line["taxes"] = item.tax_ids.map((id) => ({ id }));
+      }
       // Centro de costo: siempre el ID real de Siigo.
       const centro = item.cost_center_id ?? params.costCenterId ?? null;
       if (centro != null) line["cost_center"] = Number(centro);

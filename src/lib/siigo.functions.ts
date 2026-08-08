@@ -817,8 +817,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           );
           const tax =
             candidates.find((candidate) => readTaxCode(candidate) === accountCode) ??
-            candidates.find((candidate) => readTaxCode(candidate).startsWith(retention.accountPrefix)) ??
-            candidates.find((candidate) => Math.abs(Number(candidate.percentage ?? 0) - expectedRate) < 0.0001);
+            candidates.find((candidate) =>
+              readTaxCode(candidate).startsWith(retention.accountPrefix),
+            ) ??
+            candidates.find(
+              (candidate) => Math.abs(Number(candidate.percentage ?? 0) - expectedRate) < 0.0001,
+            );
           if (tax?.id == null) {
             throw new Error(
               `No se encontró en Siigo el impuesto activo de ${retention.label} para la cuenta ${accountCode}` +
@@ -862,7 +866,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         providerNit: inv.provider_nit,
         invoicePrefix: inv.prefix,
         invoiceNumber: inv.number,
-        observations: `Factura ${[inv.prefix, inv.number].filter(Boolean).join("-")} · ${inv.provider_name ?? ""} ${inv.notes ?? ""}`.trim(),
+        observations: `Factura ${[inv.prefix, inv.number].filter(Boolean).join("-")} · ${
+          inv.provider_name ?? ""
+        } ${inv.notes ?? ""}`.trim(),
         costCenterId,
         items,
         paymentId,
