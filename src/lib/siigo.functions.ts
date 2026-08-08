@@ -335,6 +335,8 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
           account_code: account.code,
           active: t.active !== false,
           source: "siigo",
+          siigo_id: t.id != null ? String(t.id) : null,
+          siigo_name: String(t.name ?? "").trim() || null,
         };
       })
       .filter((r) => r.name);
@@ -350,10 +352,16 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
       .from("tax_rates")
       .select("kind, name, source")
       .eq("company_id", data.companyId);
-    const protectedKeys = new Set(
-      (existing ?? []).filter((e) => e.source !== "siigo").map((e) => `${e.kind}|${e.name}`),
+    // Los impuestos creados manualmente conservan su cuenta contable, pero sí
+    // reciben el identificador real de Siigo cuando coinciden tipo y nombre.
+    const manuales = new Map(
+      (existing ?? []).filter((e) => e.source !== "siigo").map((e) => [`${e.kind}|${e.name}`, e]),
     );
-    const toUpsert = rows.filter((r) => !protectedKeys.has(`${r.kind}|${r.name}`));
+    const toUpsert = rows.map((r) =>
+      manuales.has(`${r.kind}|${r.name}`)
+        ? { company_id: r.company_id, kind: r.kind, name: r.name, rate: r.rate, active: r.active, siigo_id: r.siigo_id, siigo_name: r.siigo_name }
+        : r,
+    );
     if (toUpsert.length === 0) return { imported: 0, skipped: rows.length };
 
     const { error } = await context.supabase
