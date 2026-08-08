@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Download, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
 import { siigoImportProducts } from "@/lib/siigo.functions";
 import { normalizeCategoryName } from "@/lib/product-account";
 import { downloadSheet, pick, readSheet } from "@/lib/spreadsheet";
@@ -48,9 +49,9 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
   const { data: rows } = useQuery({
     queryKey: ["products", companyId],
     queryFn: async () =>
-      leerTodo<Record<string, never>>(() =>
+      leerTodo<Tables<"products">>(() =>
         supabase.from("products").select("*").eq("company_id", companyId).order("code") as never,
-      ) as never,
+      ),
   });
   const { data: cuentas } = useQuery({
     queryKey: ["puc_accounts", companyId, "productos"],
