@@ -205,7 +205,6 @@ function Causar() {
 
   /** Cuenta del ítem: 1) cuenta propia del producto, 2) cuenta de su categoría, 3) reglas de aprendizaje. */
   const resolverCuentaItem = useCallback(
-
     (
       p: {
         code?: string | null;
