@@ -80,7 +80,7 @@ export function ProductCategoriesPanel({ companyId }: { companyId: string }) {
       if (!window.confirm(`Se encontraron ${sheet.length.toLocaleString("es-CO")} registros. Se procesarán todos en lotes de 500 sin eliminar información existente. ¿Continuar?`)) return;
       const existing = new Map((rows ?? []).map((row) => [`${row.kind}|${row.name.toLowerCase()}`, { ...row, rowNumber: 0 }]));
       const { data: auth } = await supabase.auth.getUser();
-      const result = await runReliableImport({
+      const result = await runReliableImport<(typeof unicos)[number]>({
         module: "Categorías", fileName: file.name, user: auth.user?.email ?? null, found: sheet.length,
         rows: unicos, invalidIssues, duplicateCount: valid.length - unicos.length,
         keyOf: (row) => `${row.kind}|${row.name.toLowerCase()}`, rowNumberOf: (row) => row.rowNumber,
