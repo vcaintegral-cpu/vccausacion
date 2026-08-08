@@ -16,7 +16,7 @@ import { ProductCombobox, type ProductOption } from "@/components/product-combob
 import { BulkApply } from "@/components/bulk-apply";
 import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
 import { suggestCostCenter } from "@/lib/cost-center";
-import { checkInvoiceCompany, mensajeEmpresaIncorrecta } from "@/lib/company-validation";
+import { checkInvoiceCompany, mensajeEmpresaIncorrecta, motivoBloqueoEmpresa } from "@/lib/company-validation";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { expandInvoiceFiles, processInvoiceFile } from "@/lib/bulk-invoices";
@@ -301,6 +301,8 @@ function Causar() {
     [empresaActiva, header.buyer_nit, header.buyer_name],
   );
   const empresaIncorrecta = chequeoEmpresa.status === "mismatch";
+  // Bloqueo total (guardar / aprobar / causar) cuando la factura no se puede atribuir a la empresa activa.
+  const bloqueoEmpresa = motivoBloqueoEmpresa(chequeoEmpresa);
 
   /** Cambios de un renglón al cambiar su tipo de ítem, conservando la lógica producto → categoría → cuenta. */
   const parcheDeTipo = useCallback(
