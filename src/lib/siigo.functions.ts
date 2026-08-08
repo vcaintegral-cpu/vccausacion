@@ -596,6 +596,41 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .range(0, 19999);
       const porCodigo = new Map((catalogo ?? []).map((p) => [String(p.code ?? "").trim(), p]));
 
+      // Si un renglón de producto no está en el catálogo local, se consulta
+      // directamente en Siigo y se crea/actualiza automáticamente.
+      const faltantes = Array.from(
+        new Set(
+          (invoiceLines ?? [])
+            .filter((l) => {
+              const t = normalizeItemType(l.item_type);
+              return t === "producto" || t === "servicio";
+            })
+            .map((l) => String(l.code ?? "").trim())
+            .filter((code) => code && !porCodigo.has(code)),
+        ),
+      );
+      if (faltantes.length > 0) {
+        const { fetchSiigoProductByCode, upsertSiigoProducts } = await import("./siigo-products.server");
+        const encontrados = [];
+        for (const code of faltantes) {
+          try {
+            const p = await fetchSiigoProductByCode(code);
+            if (p) encontrados.push(p);
+          } catch (e) {
+            console.log("[siigo][productos] Error consultando producto", code, e);
+          }
+        }
+        if (encontrados.length > 0) {
+          await upsertSiigoProducts(supabase, inv.company_id, encontrados);
+          const { data: recargado } = await supabase
+            .from("products")
+            .select("id, code, name, active, category_id, category, account_code, account_name")
+            .eq("company_id", inv.company_id)
+            .in("code", faltantes);
+          for (const p of recargado ?? []) porCodigo.set(String(p.code ?? "").trim(), p);
+        }
+      }
+
       type Renglon = {
         type: "Product" | "Account";
         code: string;
@@ -623,7 +658,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               const prod = porCodigo.get(productCode);
               if (!prod) {
                 throw new Error(
-                  `Renglón ${i + 1}: el producto ${productCode} no existe en los productos sincronizados desde Siigo. Sincronice los productos con Siigo antes de causar.`,
+                  `Renglón ${i + 1}: el producto ${productCode} no existe en Siigo. Debe sincronizar o crear el producto en Siigo antes de causar.`,
                 );
               }
               if (prod.active === false) {
@@ -809,99 +844,12 @@ export const siigoImportProducts = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }) => {
-    const { siigoGet } = await import("./siigo.server");
-    type P = {
-      id?: string;
-      code?: string | number;
-      name?: string;
-      type?: string;
-      active?: boolean;
-      account_group?: { id?: number; name?: string } | null;
-      accounting_account?: string | number | null;
-      account?: { code?: string | number; name?: string } | null;
-    };
-    const list: P[] = [];
-    for (let page = 1; page <= 20; page++) {
-      const res = await siigoGet<{ results?: P[]; pagination?: { total_results?: number } }>(
-        `/v1/products?page=${page}&page_size=100`,
-      );
-      const chunk = res.results ?? [];
-      list.push(...chunk);
-      if (chunk.length < 100) break;
-    }
-
-    const { data: puc } = await context.supabase
-      .from("puc_accounts")
-      .select("code, name")
-      .eq("company_id", data.companyId);
-    const cuentas = puc ?? [];
-    const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-
-    // Categorías existentes: el producto se enlaza por identificador, no solo por el nombre.
-    const { data: cats } = await context.supabase
-      .from("product_categories")
-      .select("id, name, kind")
-      .eq("company_id", data.companyId);
-    const categorias = new Map<string, string>();
-    for (const c of cats ?? []) categorias.set(norm(String(c.name ?? "")), c.id as string);
-    const nuevas = Array.from(
-      new Set(list.map((p) => (p.account_group?.name ?? "").trim()).filter((n2) => n2 && !categorias.has(norm(n2)))),
-    );
-    if (nuevas.length > 0) {
-      const { data: creadas } = await context.supabase
-        .from("product_categories")
-        .upsert(
-          nuevas.map((name) => ({ company_id: data.companyId, name, kind: "producto", active: true, source: "siigo" })),
-          { onConflict: "company_id,kind,name" },
-        )
-        .select("id, name");
-      for (const c of creadas ?? []) categorias.set(norm(String(c.name ?? "")), c.id as string);
-    }
-
-    const rows = list
-      .map((p) => {
-        const rawAccount = String(p.accounting_account ?? p.account?.code ?? "").replace(/\s+/g, "");
-        let account_code: string | null = rawAccount || null;
-        let account_name: string | null = p.account?.name ?? null;
-        if (!account_code && p.account_group?.name) {
-          const match = cuentas.find((c) => norm(c.name ?? "") === norm(p.account_group?.name ?? ""));
-          if (match) { account_code = match.code; account_name = match.name; }
-        }
-        if (account_code && !account_name) {
-          account_name = cuentas.find((c) => c.code === account_code)?.name ?? null;
-        }
-        return {
-          company_id: data.companyId,
-          code: String(p.code ?? p.id ?? "").trim(),
-          name: String(p.name ?? "").trim() || `Producto ${p.code ?? ""}`,
-          kind: String(p.type ?? "").toLowerCase().startsWith("serv") ? "servicio" : "producto",
-          category: p.account_group?.name ?? null,
-          category_id: p.account_group?.name ? (categorias.get(norm(p.account_group.name)) ?? null) : null,
-          account_code,
-          account_name,
-          active: p.active !== false,
-          source: "siigo",
-        };
-      })
-      .filter((r) => r.code);
-
-    if (rows.length === 0) return { imported: 0, skipped: 0 };
-
-    const { data: existing } = await context.supabase
-      .from("products")
-      .select("code, source")
-      .eq("company_id", data.companyId);
-    const protectedCodes = new Set((existing ?? []).filter((e) => e.source !== "siigo").map((e) => e.code));
-    const unicos = Array.from(new Map(rows.map((r) => [r.code, r])).values()).filter((r) => !protectedCodes.has(r.code));
-    if (unicos.length === 0) return { imported: 0, skipped: rows.length };
-
-    for (let i = 0; i < unicos.length; i += 500) {
-      const { error } = await context.supabase
-        .from("products")
-        .upsert(unicos.slice(i, i + 500), { onConflict: "company_id,code" });
-      if (error) throw new Error(error.message);
-    }
-    return { imported: unicos.length, skipped: rows.length - unicos.length };
+    const { fetchAllSiigoProducts, upsertSiigoProducts } = await import("./siigo-products.server");
+    const list = await fetchAllSiigoProducts();
+    // La sincronización siempre se ejecuta contra la empresa activa.
+    const stats = await upsertSiigoProducts(context.supabase, data.companyId, list);
+    console.log("[siigo][productos] Sincronización:", JSON.stringify(stats));
+    return stats;
   });
 
 /** Busca un producto en Siigo por código o nombre (para renglones de inventario). */
