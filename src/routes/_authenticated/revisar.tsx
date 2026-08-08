@@ -112,7 +112,7 @@ function Revisar() {
         company: company.data ?? null,
         lines: (ln.data ?? []) as unknown as LineRow[],
         centers: centers.data ?? [],
-        accounts: accounts.data ?? [],
+        accounts,
         learning: (learning.data ?? []) as unknown as LearningRule[],
       };
     },

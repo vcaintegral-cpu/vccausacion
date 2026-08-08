@@ -5,6 +5,7 @@ const PUC_PAGE_SIZE = 1000;
 
 /** Lee el PUC completo de una empresa; nunca usa una consulta parcial como fuente de validación. */
 export async function fetchCompanyPuc(companyId: string): Promise<PucAccount[]> {
+  if (!companyId) return [];
   const accounts: PucAccount[] = [];
   for (let from = 0; ; from += PUC_PAGE_SIZE) {
     const { data, error } = await supabase

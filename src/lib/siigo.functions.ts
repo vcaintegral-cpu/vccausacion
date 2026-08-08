@@ -152,9 +152,9 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
           if (!found.has(code)) found.set(code, { name, nature });
         }
       }
-      const total = res.pagination?.total_results ?? 0;
+      const total = res.pagination?.total_results;
       console.log("[siigo][puc] página", page, "comprobantes:", results.length, "| cuentas únicas acumuladas:", found.size);
-      if (results.length < pageSize || scanned >= total) break;
+      if (results.length < pageSize || (typeof total === "number" && total > 0 && scanned >= total)) break;
     }
 
     console.log("[siigo][puc] comprobantes revisados:", scanned, "| cuentas únicas encontradas:", found.size);
