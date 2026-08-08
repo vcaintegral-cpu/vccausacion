@@ -129,12 +129,15 @@ export type OperationalAccountContext = {
 };
 
 const siigoExists = (account: PucAccount | null) =>
-  !!account && (account.siigo_active === true || account.siigo_is_movement === true || !!account.siigo_id || !!account.siigo_code || account.is_movement === true);
+  !!account && (account.siigo_active != null || account.siigo_is_movement != null || !!account.siigo_id || !!account.siigo_code || !!account.siigo_seen_at);
+
+const isActive = (account: PucAccount) => account.siigo_active ?? account.excel_active ?? account.active !== false;
+const hasMovement = (account: PucAccount) => account.siigo_is_movement ?? account.is_movement !== false;
 
 const isOperational = (accounts: PucAccount[], account: PucAccount) => {
   const activeChildren = hijasActivas(accounts, account.code);
-  const active = account.siigo_active ?? account.active !== false;
-  const movement = account.siigo_is_movement ?? account.is_movement !== false;
+  const active = isActive(account);
+  const movement = hasMovement(account);
   return active && movement && activeChildren.length === 0;
 };
 
@@ -169,8 +172,8 @@ export function resolveOperationalAccount(
     return { ...base, result: "NO ENCONTRADA", message: `La cuenta ${requestedAccount} no aparece en el PUC completo de la empresa.` };
   }
 
-  const active = account ? (account.siigo_active ?? account.active !== false) : true;
-  const hasMovement = account ? (account.siigo_is_movement ?? account.is_movement !== false) : false;
+  const active = account ? isActive(account) : true;
+  const movement = account ? hasMovement(account) : false;
   const hasChildren = descendants.length > 0;
   const direct = account && isOperational(accounts, account) ? account : null;
   if (direct) {
@@ -180,7 +183,7 @@ export function resolveOperationalAccount(
       operational: direct,
       operationalAccount: direct.code,
       level: nivelDeCodigo(direct.code),
-      hasMovement: true,
+      hasMovement: movement,
       active,
       hasChildren: false,
       siigoExists: siigoExists(direct),
@@ -202,7 +205,7 @@ export function resolveOperationalAccount(
       candidates,
       operationalAccount: chosen.code,
       level: nivelDeCodigo(chosen.code),
-      hasMovement,
+      hasMovement: movement,
       active,
       hasChildren,
       siigoExists: siigoExists(chosen),
@@ -213,16 +216,16 @@ export function resolveOperationalAccount(
   }
   if (candidates.length > 1) {
     return {
-      ...base, account, candidates, active, hasMovement, hasChildren, siigoExists: siigoExists(account),
+      ...base, account, candidates, active, hasMovement: movement, hasChildren, siigoExists: siigoExists(account),
       result: "REQUIERE SELECCIÓN",
       message: `La cuenta ${requestedAccount} tiene varios auxiliares operativos. Seleccione el correspondiente al proveedor.`,
     };
   }
   if (!active && candidates.length === 0) {
-    return { ...base, account, active, hasMovement, hasChildren, siigoExists: siigoExists(account), result: "INACTIVA", message: `La cuenta ${requestedAccount} está inactiva y no tiene una cuenta auxiliar operativa.` };
+    return { ...base, account, active, hasMovement: movement, hasChildren, siigoExists: siigoExists(account), result: "INACTIVA", message: `La cuenta ${requestedAccount} está inactiva y no tiene una cuenta auxiliar operativa.` };
   }
   return {
-    ...base, account, candidates, active, hasMovement, hasChildren, siigoExists: siigoExists(account),
+    ...base, account, candidates, active, hasMovement: movement, hasChildren, siigoExists: siigoExists(account),
     result: "SIN MOVIMIENTO",
     message: "Esta cuenta existe en el PUC, pero actualmente no tiene movimiento en Siigo y no tiene una cuenta auxiliar operativa.",
   };
@@ -250,7 +253,7 @@ export const cuentaEnSiigo = (a: PucAccount | null) => !!(a && (a.siigo_id || a.
 const hijasActivas = (accounts: PucAccount[], code: string) => {
   const byCode = new Map(accounts.map((account) => [account.code, account]));
   return accounts.filter((account) => {
-    if (account.active === false || account.code === code) return false;
+    if (!isActive(account) || account.code === code) return false;
     let parent = account.parent_code ?? null;
     const visited = new Set<string>();
     while (parent && !visited.has(parent)) {
