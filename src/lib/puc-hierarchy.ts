@@ -88,14 +88,26 @@ export function auxiliaresDe(accounts: PucAccount[], code: string): PucAccount[]
     }
     return false;
   };
+  const tieneDescendientesActivos = (codeToCheck: string) =>
+    accounts.some((candidate) => candidate.code !== codeToCheck && perteneceADe(candidate, codeToCheck) && isActive(candidate));
+  const perteneceADe = (account: PucAccount, parentCode: string) => {
+    let parent = account.parent_code ?? null;
+    const visited = new Set<string>();
+    while (parent && !visited.has(parent)) {
+      if (parent === parentCode) return true;
+      visited.add(parent);
+      parent = byCode.get(parent)?.parent_code ?? null;
+    }
+    return false;
+  };
   return accounts
     .filter(
       (a) =>
         a.code.length > code.length &&
         perteneceA(a) &&
-        a.active !== false &&
-        a.is_movement !== false &&
-        !accounts.some((h) => h.code.length > a.code.length && h.code.startsWith(a.code) && h.active !== false),
+        isActive(a) &&
+        hasMovement(a) &&
+        !tieneDescendientesActivos(a.code),
     )
     .sort((a, b) => a.code.localeCompare(b.code));
 }
