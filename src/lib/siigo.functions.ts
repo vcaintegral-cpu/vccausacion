@@ -867,9 +867,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           label: "Retefuente",
           amount: Number(inv.retefuente ?? 0),
           accountPrefix: "2365",
-          // Siigo NO admite Retefuente dentro de retentions[] en /v1/purchases:
-          // sólo se refleja en el asiento contable (cuenta 2365xx) y en el neto.
-          enviarEnRetentions: false,
+          // Se envía con el ID REAL del impuesto en Siigo (nunca la cuenta PUC 2365xx).
+          enviarEnRetentions: true,
         },
         {
           kind: "reteiva",
@@ -1065,9 +1064,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
                 ));
           if (tax?.id == null || !esIdSiigoValido(tax.id, accountCode)) {
             throw new Error(
-              `No se encontró un ID de impuesto válido en Siigo para esta retención (${retention.label}` +
+              `Retención configurada pero no sincronizada con Siigo (${retention.label}` +
                 (configuredRate > 0 ? ` ${configuredRate}%` : "") +
-                `, cuenta ${accountCode}). Verifique la configuración de impuestos de la empresa.`,
+                `, cuenta ${accountCode}). Sincronice los impuestos desde Integraciones antes de causar.`,
             );
           }
           console.log("[siigo][retencion] ID desde /v1/taxes:", {
@@ -1127,6 +1126,31 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       }
 
       const esCredito = /cr[eé]d/i.test(String(inv.payment_form ?? ""));
+
+      // Validación bloqueante: toda retención con valor debe tener su ID real de Siigo.
+      if (retencionesPorTipo.length > 0) {
+        const sinId = retencionesTrace.filter((r) => !r.siigo_id);
+        if (sinId.length > 0 || retentionIds.length === 0) {
+          throw new Error(
+            "Retención configurada pero no sincronizada con Siigo. Sincronice los impuestos desde Integraciones antes de causar.",
+          );
+        }
+      }
+      console.log("[siigo][retenciones] Diagnóstico:", {
+        empresa: inv.company_id,
+        factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
+        subtotal,
+        iva,
+        retenciones: retencionesTrace.map((r) => ({
+          tipo: r.tipo,
+          tarifa: r.tarifa,
+          cuenta_contable: r.cuenta,
+          siigo_tax_id: r.siigo_id,
+          valor: r.valor,
+        })),
+        total_antes_de_retencion: totalFactura,
+        total_despues_de_retencion: netoAPagar,
+      });
       const fechaDoc = inv.issue_date ?? new Date().toISOString().slice(0, 10);
       const dueDate = esCredito ? (inv.due_date ?? fechaDoc) : fechaDoc;
       const payments = [{ id: paymentId, value: totalFactura, due_date: dueDate }];
