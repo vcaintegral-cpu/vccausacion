@@ -1176,6 +1176,72 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
   async function importar(file: File) {
     setBusy(true);
     try {
+      setValidacion(null);
+      // ---------- CAPA 1: historial ORIGINAL, fiel al Excel ----------
+      const original = await readRawHistory(file);
+      if (original.rows.length === 0) {
+        throw new Error("No se encontraron filas de movimiento en el archivo.");
+      }
+      const { data: authUser } = await supabase.auth.getUser();
+      const userId = authUser.user?.id;
+      if (!userId) throw new Error("Sesión no válida.");
+      // Un archivo nuevo reemplaza el historial anterior de la empresa.
+      const { error: delError } = await supabase.from("accounting_history").delete().eq("company_id", companyId);
+      if (delError) throw new Error(delError.message);
+
+      const rawPayload = original.rows.map((r) => ({
+        company_id: companyId,
+        imported_by: userId,
+        file_name: original.fileName,
+        period: original.period,
+        excel_row: r.excel_row,
+        account_code: r.account_code,
+        account_name: r.account_name,
+        provider_nit: r.provider_nit,
+        provider_name: r.provider_name,
+        branch: r.branch,
+        voucher: r.voucher,
+        sequence: r.sequence,
+        entry_date_text: r.entry_date_text,
+        description: r.description,
+        detail: r.detail,
+        cost_center: r.cost_center,
+        debit: r.debit,
+        credit: r.credit,
+        debit_text: r.debit_text,
+        credit_text: r.credit_text,
+        original_row_data: r.original_row_data,
+      }));
+      const rawKey = (r: (typeof rawPayload)[number]) => String(r.excel_row);
+      const rawResult = await runReliableImport({
+        module: "Historial contable (original)",
+        fileName: file.name,
+        user: authUser.user?.email ?? null,
+        found: original.rows.length,
+        rows: rawPayload,
+        invalidIssues: original.issues.map((i) => ({ row: i.row, key: String(i.row), message: i.message })),
+        duplicateCount: 0,
+        keyOf: rawKey,
+        rowNumberOf: (r) => r.excel_row,
+        saveBatch: async (rows) => {
+          const { error } = await supabase.from("accounting_history").insert(rows);
+          return { error };
+        },
+        verifyKeys: () => fetchAllKeys(async (from, to) => {
+          const { data, error } = await supabase.from("accounting_history").select("excel_row").eq("company_id", companyId).range(from, to);
+          if (error) return { keys: [], error: error.message };
+          return { keys: (data ?? []).map((r) => String(r.excel_row)) };
+        }),
+        onProgress: (p) => setProgreso(`Guardando historial original… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)} - ${fmt(p.to)} de ${fmt(p.total)}`),
+      });
+      setRaw(original);
+      setDetail(rawResult);
+      await qc.invalidateQueries({ queryKey: ["accounting_history"] });
+      if (rawResult.status === "COMPLETADA") toast.success(`Historial importado: ${fmt(rawResult.saved)} movimientos guardados.`);
+      else toast.warning("La importación del historial terminó con novedades. Revisa el detalle.");
+
+      // ---------- CAPA 2: análisis / aprendizaje IA (no altera la capa 1) ----------
+      setProgreso("Analizando patrones para la IA…");
       const sheet = await readSheet(file);
       if (!isSiigoAuxiliary(sheet)) {
         const keys = Object.keys(sheet[0] ?? {});
@@ -1190,7 +1256,8 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
       }
       const result = analyzeHistory(sheet);
       if (result.rules.length === 0) {
-        throw new Error("No se detectaron movimientos contables. Verifica que el archivo tenga columnas de cuenta, tercero y concepto.");
+        setAnalysis(null);
+        return;
       }
       const payload = result.rules.map((r) => ({
         company_id: companyId,
@@ -1218,7 +1285,7 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
       const existing = new Map(payload.filter((r) => existingKeys.has(keyOf(r))).map((r) => [keyOf(r), r]));
       const { data: auth } = await supabase.auth.getUser();
       const importResult = await runReliableImport({
-        module: "Historial contable", fileName: file.name, user: auth.user?.email ?? null,
+        module: "Aprendizaje IA", fileName: file.name, user: auth.user?.email ?? null,
         found: result.rowsRead, rows: payload, duplicateCount: 0, keyOf, existingByKey: existing,
         saveBatch: async (rows) => {
           // Sin restricción única compuesta, se actualizan coincidencias y se insertan únicamente reglas nuevas.
@@ -1238,17 +1305,13 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
           if (error) return { keys: [], error: error.message };
           return { keys: (data ?? []).map((r) => `${r.provider_nit ?? "-"}|${(r.concept ?? "").toLowerCase()}|${r.account_code}`) };
         }),
-        onProgress: (p) => setProgreso(`Importando historial contable… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)} - ${fmt(p.to)} de ${fmt(p.total)}`),
+        onProgress: (p) => setProgreso(`Generando aprendizaje IA… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)} - ${fmt(p.to)} de ${fmt(p.total)}`),
       });
       // Los movimientos se leen y procesan todos; las filas almacenadas son reglas consolidadas por proveedor/concepto/cuenta.
       importResult.found = result.rowsRead;
       importResult.processed = result.rowsRead;
       importResult.invalid = result.rowsSkipped;
-      setDetail(importResult);
       setAnalysis(result);
-      if (importResult.status === "COMPLETADA") toast.success("IMPORTACIÓN COMPLETADA");
-      else if (importResult.status === "COMPLETADA CON ERRORES") toast.warning("Importación completada con errores. Revisa el detalle.");
-      else toast.error("La importación del historial quedó incompleta. Revisa el detalle.");
       await qc.invalidateQueries({ queryKey: ["learning_rules"] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible analizar el historial.");
