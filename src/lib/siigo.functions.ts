@@ -1545,8 +1545,8 @@ export const siigoPurchaseCatalogDiagnostics = createServerFn({ method: "POST" }
   .handler(async () => {
     const { siigoGet } = await import("./siigo.server");
     const [taxes, paymentTypes] = await Promise.all([
-      siigoGet<unknown>("/v1/taxes"),
-      siigoGet<unknown>("/v1/payment-types?document_type=FC"),
+      siigoGet<Json>("/v1/taxes"),
+      siigoGet<Json>("/v1/payment-types?document_type=FC"),
     ]);
     return { taxes, paymentTypes };
   });
