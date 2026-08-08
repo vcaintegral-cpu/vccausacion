@@ -875,6 +875,29 @@ function Causar() {
       </Dialog>
 
       <div className="grid gap-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2 xl:grid-cols-4">
+        {empresaIncorrecta && (
+          <div className="sm:col-span-2 xl:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
+            <p className="font-semibold text-destructive">Esta factura no pertenece a la empresa seleccionada.</p>
+            <div className="mt-2 grid gap-1 sm:grid-cols-2">
+              <p>
+                Empresa seleccionada: <span className="font-medium">{empresaActiva?.name ?? "—"}</span> · NIT:{" "}
+                <span className="font-medium">{empresaActiva?.nit ?? "—"}</span>
+              </p>
+              <p>
+                Empresa que aparece en la factura: <span className="font-medium">{header.buyer_name || "—"}</span> · NIT:{" "}
+                <span className="font-medium">{header.buyer_nit || "—"}</span>
+              </p>
+            </div>
+            <p className="mt-2 text-muted-foreground">
+              Verifique que haya seleccionado la empresa correcta antes de continuar. No es posible aprobar ni enviar esta factura a Siigo.
+            </p>
+          </div>
+        )}
+        {chequeoEmpresa.status === "ok" && chequeoEmpresa.nameMismatch && (
+          <div className="sm:col-span-2 xl:col-span-4 rounded-md border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
+            El NIT del comprador coincide, pero la razón social de la factura ({header.buyer_name}) difiere de la empresa activa ({empresaActiva?.name}).
+          </div>
+        )}
         {field("Prefijo", "prefix")}
         {field("Número", "number")}
         {field("Fecha", "issue_date", "date")}
@@ -882,6 +905,8 @@ function Causar() {
         {field("NIT proveedor", "provider_nit")}
         {field("Proveedor", "provider_name")}
         {field("Ciudad", "provider_city")}
+        {field("NIT comprador", "buyer_nit")}
+        {field("Comprador", "buyer_name")}
         {field("CUFE", "cufe")}
         {field("IVA total", "iva", "number")}
         {field("Impoconsumo", "impoconsumo", "number")}
