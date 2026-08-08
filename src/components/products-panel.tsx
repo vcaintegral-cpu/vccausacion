@@ -201,16 +201,40 @@ export function ProductsPanel({ companyId }: { companyId: string }) {
       if (!window.confirm(`Se reemplazará el catálogo actual por ${unicos.length} producto(s)/servicio(s) del archivo. ¿Continuar?`)) return;
       const { error: delErr } = await supabase.from("products").delete().eq("company_id", companyId);
       if (delErr) throw new Error(`No fue posible reemplazar el catálogo actual: ${delErr.message}`);
-      for (let i = 0; i < unicos.length; i += 500) {
-        const { error } = await supabase.from("products").upsert(unicos.slice(i, i + 500), { onConflict: "company_id,code" });
-        if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ""}`);
+      // Lotes de MÁXIMO 500: se continúa automáticamente hasta procesar TODOS los registros.
+      const LOTE = 500;
+      const totalLotes = Math.ceil(unicos.length / LOTE);
+      let procesados = 0;
+      for (let i = 0; i < totalLotes; i++) {
+        const lote = unicos.slice(i * LOTE, (i + 1) * LOTE);
+        setProgreso(`Importando lote ${i + 1} de ${totalLotes} (${procesados + 1}–${procesados + lote.length} de ${unicos.length})…`);
+        const { error } = await supabase.from("products").upsert(lote, { onConflict: "company_id,code" });
+        if (error)
+          throw new Error(
+            `Lote ${i + 1} de ${totalLotes} (registros ${procesados + 1}–${procesados + lote.length}): ${error.message}${error.details ? ` — ${error.details}` : ""}`,
+          );
+        procesados += lote.length;
       }
-      toast.success(`Catálogo reemplazado: ${unicos.length} producto(s)/servicio(s) cargados desde Excel.`);
+      setProgreso("Verificando registros guardados…");
+      const { count } = await supabase
+        .from("products")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", companyId);
+      if ((count ?? 0) < unicos.length) {
+        toast.warning(
+          `Se procesaron ${procesados} de ${unicos.length} registros en ${totalLotes} lote(s), pero la base tiene ${count ?? 0}. Revise el archivo por códigos repetidos.`,
+        );
+      } else {
+        toast.success(
+          `Importación completada: ${procesados} de ${unicos.length} registros en ${totalLotes} lote(s) de máximo ${LOTE}. Guardados en la base: ${count ?? 0}.`,
+        );
+      }
       await refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible importar el archivo.");
     } finally {
       setBusy(null);
+      setProgreso(null);
     }
   }
 
