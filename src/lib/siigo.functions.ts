@@ -1435,6 +1435,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         },
         siigo_request: payloadEnviado,
         siigo_respuesta: res,
+        siigo_verificacion: verificacion,
         siigo_documento_id: siigoId,
         siigo_documento_numero: siigoNumber,
         retenciones_aplicadas_en_siigo: [...retencionesRespuesta, ...retencionesAplicadasEnRenglon],
