@@ -707,6 +707,7 @@ function Causar() {
       toast.error(Object.values(lineErrors)[0] ?? "Hay renglones sin cuenta contable.");
       return;
     }
+    if (erroresImpuestos.length > 0) { toast.error(erroresImpuestos[0]!); return; }
     if (Math.abs(t.diferencia) > 1) { toast.error("El comprobante está descuadrado."); return; }
     setSaving(true);
     try {
