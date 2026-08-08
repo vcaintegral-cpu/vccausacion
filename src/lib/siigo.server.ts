@@ -469,11 +469,11 @@ export function buildSiigoPurchasePayload(params: {
   paymentId: number | null;
   /** Total bruto de la compra (base + impuestos, antes de retenciones). */
   purchaseTotal: number;
-  /** Valor exigido por Siigo para conciliar payments con el total bruto. */
+  /** Valor NETO a pagar al proveedor (total − retenciones) que viaja en payments. */
   paymentValue: number;
   paymentDueDate: string | null;
-  /** Retenciones aplicadas al documento (ids de Siigo). */
-  retentionIds?: Array<number | string>;
+  /** Retenciones aplicadas al documento: ID REAL del impuesto en Siigo + valor. */
+  retentions?: Array<{ id: number | string; value: number }>;
 }) {
   const roundMoney = (value: number) => Math.round(Number(value) * 100) / 100;
   const total = roundMoney(params.purchaseTotal);
@@ -517,8 +517,12 @@ export function buildSiigoPurchasePayload(params: {
     ],
   };
   if (params.costCenterId != null) payload["cost_center"] = Number(params.costCenterId);
-  if (params.retentionIds && params.retentionIds.length > 0) {
-    payload["retentions"] = params.retentionIds.map((id) => ({ id: Number(id) }));
+  if (params.retentions && params.retentions.length > 0) {
+    // id = identificador del impuesto en Siigo (NUNCA la cuenta contable PUC).
+    payload["retentions"] = params.retentions.map((r) => ({
+      id: Number(r.id),
+      value: roundMoney(r.value),
+    }));
   }
   return payload;
 }
