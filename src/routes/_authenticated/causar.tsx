@@ -889,7 +889,7 @@ function Causar() {
       </Dialog>
 
       <div className="grid gap-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2 xl:grid-cols-4">
-        {empresaIncorrecta && (
+        {facturaConDatos && empresaIncorrecta && (
           <div className="sm:col-span-2 xl:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
             <p className="font-semibold uppercase text-destructive">Esta factura no pertenece a la empresa seleccionada</p>
             <div className="mt-2 grid gap-1 sm:grid-cols-2">
@@ -908,9 +908,9 @@ function Causar() {
             <p className="mt-1 font-medium text-destructive">No es posible guardar, aprobar ni causar esta factura.</p>
           </div>
         )}
-        {!empresaIncorrecta && bloqueoEmpresa && (
+        {!empresaIncorrecta && avisoEmpresa && (
           <div className="sm:col-span-2 xl:col-span-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
-            <p className="font-medium text-destructive">{bloqueoEmpresa}</p>
+            <p className="font-medium text-destructive">{avisoEmpresa}</p>
           </div>
         )}
         {chequeoEmpresa.status === "ok" && chequeoEmpresa.nameMismatch && (
