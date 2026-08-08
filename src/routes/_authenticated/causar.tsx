@@ -327,6 +327,25 @@ function Causar() {
   }, [lines, buscarProducto, resolverCuentaItem, config?.accounts]);
   const hayErroresDeCuenta = Object.keys(lineErrors).length > 0;
 
+  /** Validación contable del asiento: toda cuenta debe ser de movimiento, activa y estar en el PUC de la empresa. */
+  const validacionAsiento = useMemo(() => {
+    const puc = (config?.accounts ?? []) as PucAccount[];
+    const codes = [...new Set(journal.map((j) => j.account_code).filter(Boolean))];
+    return codes.map((code) => {
+      const cuenta = puc.find((a) => a.code === code) ?? null;
+      const check = puc.length > 0 ? validarCuenta(puc, code) : { ok: true, problema: null, cuenta };
+      return {
+        code,
+        movimiento: cuenta ? cuenta.is_movement !== false && !cuenta.has_children : true,
+        activa: cuenta ? cuenta.active !== false : true,
+        enSiigo: !!cuenta,
+        ok: check.ok,
+        problema: check.problema ?? "",
+      };
+    });
+  }, [journal, config?.accounts]);
+  const asientoInvalido = validacionAsiento.some((v) => !v.ok);
+
   // Validación determinística: el NIT del comprador de la factura debe ser el de la empresa activa.
   const empresaActiva = useMemo(() => (companies ?? []).find((c) => c.id === companyId) ?? null, [companies, companyId]);
   const chequeoEmpresa = useMemo(
@@ -1296,6 +1315,36 @@ function Causar() {
         </div>
       )}
 
+      {lines.length > 0 && journal.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className="border-b border-border px-5 py-3 text-sm font-semibold">Validación contable</div>
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40 text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="px-4 py-2 text-left font-medium">Cuenta</th>
+                <th className="px-4 py-2 text-left font-medium">Movimiento</th>
+                <th className="px-4 py-2 text-left font-medium">Activa</th>
+                <th className="px-4 py-2 text-left font-medium">Siigo</th>
+                <th className="px-4 py-2 text-left font-medium">Resultado</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {validacionAsiento.map((v) => (
+                <tr key={v.code}>
+                  <td className="px-4 py-1.5 font-mono text-xs">{v.code}</td>
+                  <td className="px-4 py-1.5 text-xs">{v.movimiento ? "Sí" : "No"}</td>
+                  <td className="px-4 py-1.5 text-xs">{v.activa ? "Sí" : "No"}</td>
+                  <td className="px-4 py-1.5 text-xs">{v.enSiigo ? "Sí" : "No"}</td>
+                  <td className={`px-4 py-1.5 text-xs ${v.ok ? "text-success" : "text-destructive"}`}>
+                    {v.ok ? "✓" : v.problema}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {lines.length > 0 && (
         <div className="flex flex-wrap gap-3">
           <Button
@@ -1308,7 +1357,7 @@ function Causar() {
           </Button>
           <Button
             onClick={() => guardar("aprobado")}
-            disabled={saving || hayErroresDeCuenta || !!bloqueoEmpresa}
+            disabled={saving || hayErroresDeCuenta || asientoInvalido || !!bloqueoEmpresa}
             title={bloqueoEmpresa ?? undefined}
           >
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Aprobar comprobante
