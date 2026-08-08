@@ -2,12 +2,11 @@ import { unzipSync } from "fflate";
 import { supabase } from "@/integrations/supabase/client";
 import { prepareInvoiceFile } from "@/lib/invoice-file";
 import type { ExtractedInvoice } from "@/lib/extract.functions";
-import { resolveProductAccount } from "@/lib/product-account";
+import { applyEngineToLines, emptyKnowledge, fetchCompanyKnowledge, type CompanyKnowledge } from "@/lib/causacion-engine";
 import { findExistingInvoice, mensajeDuplicado } from "@/lib/invoice-duplicates";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 import {
-  applyRulesToLines,
   buildJournal,
   computeRetenciones,
   type Line,
@@ -60,6 +59,8 @@ export type BulkConfig = {
     account_name: string | null;
   }[];
   categories: { id?: string | null; name: string; kind: string; account_code: string | null; account_name: string | null }[];
+  /** Conocimiento contable de la empresa (se lee una sola vez para todo el lote). */
+  knowledge?: CompanyKnowledge;
 };
 
 type ExtractFn = (args: { data: { fileName: string; mimeType: string } & Record<string, unknown> }) => Promise<unknown>;
@@ -73,6 +74,7 @@ export async function processInvoiceFile(params: {
   companyId: string;
   config: BulkConfig;
   extract: ExtractFn;
+  knowledge?: CompanyKnowledge;
 }): Promise<{ invoiceId: string; numero: string; total: number }> {
   const { file, companyId, config, extract } = params;
   const content = await prepareInvoiceFile(file);
