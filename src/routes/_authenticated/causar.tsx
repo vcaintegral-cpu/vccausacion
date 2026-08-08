@@ -967,7 +967,7 @@ function Causar() {
                 ? String(header.payment_form)
                 : "Crédito"
             }
-            onChange={(e) => setHeader({ ...header, payment_form: e.target.value })}
+            onChange={(e) => { setPlazoTocado(true); setHeader({ ...header, payment_form: e.target.value }); }}
           >
             {CREDIT_TERMS.map((t) => (
               <option key={t} value={t}>{t}</option>
