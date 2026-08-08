@@ -216,8 +216,14 @@ function Revisar() {
     const pucCodes = new Set((data?.accounts ?? []).map((a) => a.code));
     lines.forEach((l, i) => {
       if (!l.account_code) e.push(`Renglón ${i + 1}: falta la cuenta contable.`);
-      else if (pucCodes.size > 0 && !pucCodes.has(l.account_code)) e.push(`Renglón ${i + 1}: la cuenta ${l.account_code} no existe en el PUC de la empresa.`);
-      if (!ITEM_TYPES.includes(l.item_type as never)) e.push(`Renglón ${i + 1}: tipo de ítem inválido.`);
+      else {
+        const verificada = cuentasVerificadas[l.account_code];
+        // Solo se marca inexistente cuando la base confirmó que no está (company_id + código).
+        if (!pucCodes.has(l.account_code) && verificada && !verificada.exists) {
+          e.push(`Renglón ${i + 1}: la cuenta ${l.account_code} no existe en el PUC de la empresa.`);
+        }
+      }
+      if (!isValidItemType(l.item_type)) e.push(`Renglón ${i + 1}: tipo de ítem inválido.`);
     });
     if (!header.cost_center) e.push("Falta el centro de costo.");
     if (Number(header.iva) < 0) e.push("El IVA no puede ser negativo.");
@@ -225,7 +231,7 @@ function Revisar() {
     if (Math.abs(t.diferencia) > 1) e.push(`El comprobante está descuadrado por ${cop(t.diferencia)}.`);
     if (base <= 0) e.push("La base gravable debe ser mayor a cero.");
     return e;
-  }, [header, lines, data?.accounts, retenciones, t.diferencia, base]);
+  }, [header, lines, data?.accounts, cuentasVerificadas, retenciones, t.diferencia, base]);
 
   async function guardarCambios() {
     if (!header) return;
@@ -276,6 +282,18 @@ function Revisar() {
 
   async function causar() {
     if (!header) return;
+    // Diagnóstico: la validación usa exactamente las líneas visibles en pantalla.
+    lines.forEach((l, i) =>
+      console.log("VALIDACIÓN DE LÍNEA", {
+        line_index: i,
+        description: l.description,
+        item_type: l.item_type,
+        product_code: l.code,
+        account_code: l.account_code,
+        account_name: l.account_name,
+        cost_center: header.cost_center ?? null,
+      }),
+    );
     if (errores.length > 0) { toast.error("Corrige los errores antes de enviar la factura."); return; }
     setSending(true);
     try {
@@ -296,6 +314,21 @@ function Revisar() {
         }),
       );
       console.log("===============================================");
+      console.log("========== PAYLOAD CONTABLE FINAL ==========");
+      console.log("company_id:", header.company_id, "· proveedor:", header.provider_nit);
+      lines.forEach((l, i) =>
+        console.log(`LINEA ${i + 1}`, {
+          description: l.description,
+          item_type: l.item_type,
+          product_code: l.code,
+          account_code: l.account_code,
+          account_name: l.account_name,
+          cost_center: header.cost_center ?? null,
+          value: Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
+          iva: Number(l.iva || 0),
+        }),
+      );
+      console.log("============================================");
       const res = await sync({ data: { invoiceId: header.id } });
       if (!res.ok) { toast.error(res.error ?? "Siigo rechazó el comprobante."); return; }
       setOk({ number: res.siigoNumber, id: res.siigoId, date: res.syncedAt, url: res.documentUrl });
