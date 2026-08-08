@@ -588,7 +588,10 @@ export function buildSiigoPurchasePayload(params: {
   if (params.costCenterId != null) payload["cost_center"] = Number(params.costCenterId);
   if (params.retentions && params.retentions.length > 0) {
     // id = identificador del impuesto en Siigo (NUNCA la cuenta contable PUC).
-    payload["retentions"] = params.retentions.map((r) => ({ id: Number(r.id) }));
+    payload["retentions"] = params.retentions.map((r) => ({
+      id: Number(r.id),
+      value: roundMoney(r.value),
+    }));
   }
   return payload;
 }
