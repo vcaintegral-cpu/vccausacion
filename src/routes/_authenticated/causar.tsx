@@ -456,6 +456,33 @@ function Causar() {
     });
     return r;
   }, [lines, impuestosRet, lineTax]);
+
+  // IVA: la cuenta sale del registro exacto del impuesto elegido en cada renglón.
+  const ivaGroups = useMemo(
+    () =>
+      buildIvaGroups(
+        lines.map((l, i) => ({
+          tax: (findTaxById(impuestosIva as unknown as TaxRecord[], lineTax[i]?.iva) as TaxRecord | null),
+          amount: Number(l.iva || 0),
+        })),
+        (config?.accounts ?? []) as PucAccount[],
+      ),
+    [lines, impuestosIva, lineTax, config?.accounts],
+  );
+
+  // Errores de configuración de impuestos (IVA y retenciones) del renglón.
+  const erroresImpuestos = useMemo(() => {
+    const puc = (config?.accounts ?? []) as PucAccount[];
+    const out = [...ivaGroups.errors];
+    lines.forEach((l, i) => {
+      if (!Number(l.retention || 0)) return;
+      const tx = findTaxById(impuestosRet as unknown as TaxRecord[], lineTax[i]?.ret) as TaxRecord | null;
+      if (!tx) { out.push(`Renglón ${i + 1}: hay retención sin impuesto seleccionado.`); return; }
+      const r = resolveTaxAccount(tx, puc);
+      if (r.error && !out.includes(r.error)) out.push(r.error);
+    });
+    return out;
+  }, [ivaGroups.errors, lines, impuestosRet, lineTax, config?.accounts]);
   const journal = useMemo(
     () =>
       buildJournal({
