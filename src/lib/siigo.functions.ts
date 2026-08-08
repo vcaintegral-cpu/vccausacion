@@ -1340,22 +1340,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         metadata?: { created?: string };
         _links?: { self?: { href?: string } };
       };
-      let payloadEnviado: unknown = payload;
-      let res: SiigoPurchaseResponse;
-      try {
-        res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payload);
-      } catch (err) {
-        const detalle = err instanceof Error ? err.message : String(err);
-        // Algunas configuraciones de Siigo exigen que "total" ya venga neto de retenciones.
-        const conciliacion = /total|payment/i.test(detalle) && retencionesSiigo.length > 0;
-        if (!conciliacion) throw err;
-        console.warn("[siigo][causacion] Reintento con total neto por rechazo de conciliación:", detalle);
-        const payloadNeto = construirPayload(netoAPagar);
-        payloadEnviado = payloadNeto;
-        console.log("========== PAYLOAD SIIGO (reintento neto) ==========");
-        console.log(JSON.stringify(payloadNeto, null, 2));
-        res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadNeto);
-      }
+      const payloadEnviado: unknown = payload;
+      // NO se reintenta alterando el total de la compra: el total siempre es Subtotal + IVA.
+      const res: SiigoPurchaseResponse = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payload);
       console.log("[siigo][causacion] Respuesta completa de Siigo:", JSON.stringify(res, null, 2));
       // Verificación posterior: la retención debe quedar realmente aplicada en Siigo.
       const retencionesRespuesta = Array.isArray(res.retentions) ? res.retentions : [];
