@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 export type CostCenterSuggestion = {
   code: string;
   /** MANUAL | PROVEEDOR | HISTORIAL | REGLA */
-  origin: "MANUAL" | "PROVEEDOR" | "HISTORIAL" | "REGLA" | "NINGUNO";
+  origin: "MANUAL" | "PROVEEDOR" | "HISTORIAL" | "REGLA" | "EMPRESA" | "NINGUNO";
   detail: string;
 };
 
@@ -18,8 +18,9 @@ export async function suggestCostCenter(params: {
   providerNit: string | null | undefined;
 }): Promise<CostCenterSuggestion | null> {
   const { companyId, providerNit } = params;
-  if (!companyId || !providerNit) return null;
+  if (!companyId) return null;
 
+  if (providerNit) {
   // Historial: siempre por empresa + proveedor, nunca solo por nombre.
   const { data: previas } = await supabase
     .from("invoices")
@@ -62,6 +63,47 @@ export async function suggestCostCenter(params: {
       origin: "REGLA",
       detail: "Centro de costo sugerido por una regla contable del proveedor.",
     };
+  }
+
+  // Sin historial del proveedor: el centro de costo más usado por la empresa.
+  const { data: empresa } = await supabase
+    .from("invoices")
+    .select("cost_center")
+    .eq("company_id", companyId)
+    .not("cost_center", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  const usosEmpresa = new Map<string, number>();
+  for (const row of empresa ?? []) {
+    const code = String(row.cost_center ?? "").trim();
+    if (!code) continue;
+    usosEmpresa.set(code, (usosEmpresa.get(code) ?? 0) + 1);
+  }
+  if (usosEmpresa.size > 0) {
+    const [code, veces] = [...usosEmpresa.entries()].sort((a, b) => b[1] - a[1])[0]!;
+    return {
+      code,
+      origin: "EMPRESA",
+      detail: `Centro de costo más usado en la empresa (usado ${veces} vez/veces).`,
+    };
+  }
+
+  // Última opción: el único/primer centro de costo configurado en la empresa.
+  const { data: centros } = await supabase
+    .from("cost_centers")
+    .select("code")
+    .eq("company_id", companyId)
+    .order("code")
+    .limit(1);
+  const primero = String(centros?.[0]?.code ?? "").trim();
+  if (primero) {
+    return {
+      code: primero,
+      origin: "EMPRESA",
+      detail: "Centro de costo por defecto configurado en la empresa.",
+    };
+  }
 
   return null;
 }
