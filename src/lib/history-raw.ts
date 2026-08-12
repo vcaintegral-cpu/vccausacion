@@ -116,6 +116,17 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
     }
   }
   if (headerRow < 0) {
+    // Respaldo: primera fila con varias celdas que mencione la cuenta contable.
+    for (let i = 0; i < Math.min(text.length, 40); i += 1) {
+      const cells = (text[i] ?? []).map(norm).filter((c) => c !== "");
+      if (cells.length < 3) continue;
+      if (cells.some((c) => c.includes("codigo contable") || c === "cuenta" || c.includes("codigo cuenta"))) {
+        headerRow = i;
+        break;
+      }
+    }
+  }
+  if (headerRow < 0) {
     throw new Error(
       "No se encontró la fila de encabezados. Verifica que sea el reporte 'Movimiento auxiliar de cuenta contable por tercero'.",
     );
