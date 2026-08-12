@@ -65,7 +65,7 @@ export async function fetchCompanyKnowledge(companyId: string): Promise<CompanyK
         .eq("company_id", companyId)
         .order("created_at", { ascending: false })
         .range(from, to),
-    ),
+    , MAX_HISTORY),
     fetchAll<{ provider_nit: string | null; description: string | null; detail: string | null; account_code: string | null }>(
       (from, to) =>
         supabase
@@ -73,7 +73,9 @@ export async function fetchCompanyKnowledge(companyId: string): Promise<CompanyK
           .select("provider_nit, description, detail, account_code")
           .eq("company_id", companyId)
           .not("account_code", "is", null)
+          .order("imported_at", { ascending: false })
           .range(from, to),
+      MAX_HISTORY,
     ),
   ]);
 
