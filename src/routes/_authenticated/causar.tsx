@@ -144,21 +144,51 @@ function Causar() {
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,
     queryFn: async () => {
+      // Paginación sin tope: catálogos de cualquier tamaño (5.000, 10.000 o más registros).
+      const PAGE = 1000;
+      const fetchAll = async <T,>(
+        run: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+      ) => {
+        const out: T[] = [];
+        for (let from = 0; ; from += PAGE) {
+          const { data, error } = await run(from, from + PAGE - 1);
+          if (error) throw new Error(error.message);
+          const page = data ?? [];
+          out.push(...page);
+          if (page.length < PAGE) break;
+        }
+        return out;
+      };
       const [rules, taxes, centers, accounts, products, categories] = await Promise.all([
         supabase.from("accounting_rules").select("*").eq("company_id", companyId!),
         supabase.from("tax_rates").select("*").eq("company_id", companyId!),
         supabase.from("cost_centers").select("*").eq("company_id", companyId!).order("code"),
         fetchCompanyPuc(companyId!),
-        supabase.from("products").select("code, name, kind, category, category_id, account_code, account_name").eq("company_id", companyId!).eq("active", true).order("code").range(0, 19999),
-        supabase.from("product_categories").select("id, name, kind, account_code, account_name").eq("company_id", companyId!).eq("active", true).range(0, 19999),
+        fetchAll((from, to) =>
+          supabase
+            .from("products")
+            .select("code, name, kind, category, category_id, account_code, account_name")
+            .eq("company_id", companyId!)
+            .eq("active", true)
+            .order("code")
+            .range(from, to),
+        ),
+        fetchAll((from, to) =>
+          supabase
+            .from("product_categories")
+            .select("id, name, kind, account_code, account_name")
+            .eq("company_id", companyId!)
+            .eq("active", true)
+            .range(from, to),
+        ),
       ]);
       return {
         rules: (rules.data ?? []) as Rule[],
         taxes: (taxes.data ?? []) as TaxRate[],
         centers: centers.data ?? [],
         accounts,
-        products: products.data ?? [],
-        categories: categories.data ?? [],
+        products,
+        categories,
       };
     },
   });
