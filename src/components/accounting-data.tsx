@@ -742,8 +742,15 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
       const valid = parsed.filter((r) => r.code);
       if (valid.length === 0) throw new Error("No se encontraron centros de costo (columnas esperadas: Código, Nombre).");
       const unicos = Array.from(new Map(valid.map((r) => [r.code, r])).values());
-      if (!window.confirm(`Se encontraron ${fmt(sheet.length)} centros de costo. Se procesarán todos en lotes de 500 sin eliminar información existente. ¿Continuar?`)) return;
-      const existing = new Map<string, (typeof unicos)[number]>((rows ?? []).map((row) => [String(row['code']), {
+      if (!window.confirm(`Se encontraron ${fmt(sheet.length)} centros de costo. Se procesarán todos en lotes de 500. ¿Continuar?`)) return;
+      const reemplazar = window.confirm(
+        "¿Deseas REEMPLAZAR los centros de costo actuales de esta empresa?\n\nAceptar: se eliminan los existentes y queda solo el archivo nuevo.\nCancelar: se conservan y solo se agregan o actualizan.",
+      );
+      if (reemplazar) {
+        const { error: delError } = await supabase.from("cost_centers").delete().eq("company_id", companyId);
+        if (delError) throw new Error(`No fue posible eliminar los centros de costo actuales: ${delError.message}`);
+      }
+      const existing = new Map<string, (typeof unicos)[number]>((reemplazar ? [] : (rows ?? [])).map((row) => [String(row['code']), {
         rowNumber: 0,
         company_id: companyId,
         code: String(row['code']),
