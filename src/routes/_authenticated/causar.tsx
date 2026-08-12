@@ -15,6 +15,7 @@ import {
   applyEngineToLines,
   emptyKnowledge,
   fetchCompanyKnowledge,
+  knowledgeForProvider,
   registrarAprendizaje,
   type LineDecisions,
 } from "@/lib/causacion-engine";
@@ -29,7 +30,7 @@ import { suggestCostCenter } from "@/lib/cost-center";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
-import { expandInvoiceFiles, processInvoiceFile } from "@/lib/bulk-invoices";
+import { expandInvoiceFiles, processInvoiceFile, resetBulkBatch } from "@/lib/bulk-invoices";
 import { runInvoiceQueue, type QueueProgress } from "@/lib/bulk-queue";
 import {
   ESTADO_LABEL,
@@ -641,9 +642,12 @@ function Causar() {
         return prod ? { ...base, item_type: prod.kind ?? base.item_type } : base;
       });
       // Motor de causación: catálogo → aprendizaje → historial → reglas → PUC.
+      const conocimiento = companyId
+        ? await knowledgeForProvider(companyId, rest.provider_nit, knowledge ?? emptyKnowledge())
+        : (knowledge ?? emptyKnowledge());
       const motor = applyEngineToLines(conCatalogo, {
         providerNit: rest.provider_nit,
-        knowledge: knowledge ?? emptyKnowledge(),
+        knowledge: conocimiento,
         products: catalogo,
         categories: config?.categories ?? [],
         rules: config?.rules ?? [],
@@ -689,6 +693,8 @@ function Causar() {
     if (!companyId || bulkFiles.length === 0 || !config) return;
     setBulkRunning(true);
     setBulkProgress(null);
+    // Un lote nuevo: se reinicia el control de documentos repetidos (XML/PDF del mismo documento).
+    resetBulkBatch();
     // Cola en paralelo: varias facturas a la vez, con reintentos y progreso en vivo.
     const final = await runInvoiceQueue({
       items: bulkFiles,

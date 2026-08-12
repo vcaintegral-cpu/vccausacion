@@ -1126,6 +1126,24 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      history_provider_accounts: {
+        Args: { _company_id: string; _limit?: number; _nits: string[] }
+        Returns: {
+          account_code: string
+          concept: string
+          provider_nit: string
+          uses: number
+        }[]
+      }
+      history_top_accounts: {
+        Args: { _company_id: string; _limit?: number }
+        Returns: {
+          account_code: string
+          concept: string
+          provider_nit: string
+          uses: number
+        }[]
+      }
       is_company_member: { Args: { _company_id: string }; Returns: boolean }
     }
     Enums: {
