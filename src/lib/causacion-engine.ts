@@ -25,18 +25,24 @@ function similar(a?: string | null, b?: string | null) {
   return ta.filter((t) => tb.has(t)).length / ta.length;
 }
 
-/** Lee TODAS las filas de una consulta paginada (sin el límite de 1000 de la API). */
-async function fetchAll<T>(run: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>) {
+/** Lee filas paginadas (sin el límite de 1000 de la API), con tope opcional para no demorar la carga. */
+async function fetchAll<T>(
+  run: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  maxRows = Infinity,
+) {
   const out: T[] = [];
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await run(from, from + PAGE - 1);
     if (error) throw new Error(error.message);
     const page = data ?? [];
     out.push(...page);
-    if (page.length < PAGE) break;
+    if (page.length < PAGE || out.length >= maxRows) break;
   }
   return out;
 }
+
+/** Tope de eventos recientes usados para sugerir cuentas (suficiente para la frecuencia). */
+const MAX_HISTORY = 5000;
 
 export type CompanyKnowledge = {
   learning: LearningRule[];
