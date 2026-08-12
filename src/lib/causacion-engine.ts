@@ -259,9 +259,10 @@ export function resolveLineAccount(params: ResolveParams): AccountDecision {
   const cuentaMasUsada = (items: HistoryEvent[]) => {
     if (items.length === 0) return null;
     const counts = new Map<string, number>();
-    for (const i of items) counts.set(i.account_code, (counts.get(i.account_code) ?? 0) + 1);
+    for (const i of items) counts.set(i.account_code, (counts.get(i.account_code) ?? 0) + (i.weight ?? 1));
     const [code, count] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]!;
-    return { code, count, total: items.length };
+    const total = items.reduce((s, i) => s + (i.weight ?? 1), 0);
+    return { code, count, total };
   };
 
   if (nit) {
