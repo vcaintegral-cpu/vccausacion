@@ -41,8 +41,8 @@ async function fetchAll<T>(
   return out;
 }
 
-/** Sin tope: el historial se lee completo (5.000, 10.000 o más registros). */
-const MAX_HISTORY = Infinity;
+/** Tope de eventos de aprendizaje propios (tabla pequeña, siempre por empresa). */
+const MAX_EVENTS = 5000;
 
 export type CompanyKnowledge = {
   learning: LearningRule[];
@@ -51,10 +51,33 @@ export type CompanyKnowledge = {
 
 export const emptyKnowledge = (): CompanyKnowledge => ({ learning: [], history: [] });
 
-/** Conocimiento contable acumulado de la empresa: reglas aprendidas + historial real de causaciones. */
+type HistoryRow = { provider_nit: string | null; concept: string | null; account_code: string; uses: number };
+
+/** Llamada tipada a las funciones de resumen del histórico (no están en los tipos generados). */
+const rpc = supabase.rpc.bind(supabase) as unknown as (
+  fn: string,
+  args: Record<string, unknown>,
+) => PromiseLike<{ data: HistoryRow[] | null; error: { message: string } | null }>;
+
+const toEvents = (rows: HistoryRow[]): HistoryEvent[] =>
+  rows
+    .filter((r) => String(r.account_code ?? "").trim())
+    .map((r) => ({
+      provider_nit: r.provider_nit,
+      concept: r.concept,
+      account_code: String(r.account_code).trim(),
+      weight: Number(r.uses || 1),
+    }));
+
+/**
+ * Conocimiento contable base de la empresa: reglas aprendidas + eventos propios.
+ * NO lee el histórico contable completo (puede tener cientos de miles de filas y
+ * provocaba "canceling statement due to statement timeout"). El histórico se
+ * consulta después, resumido y solo para los proveedores de la factura.
+ */
 export async function fetchCompanyKnowledge(companyId: string): Promise<CompanyKnowledge> {
   if (!companyId) return emptyKnowledge();
-  const [learning, eventos, historico] = await Promise.all([
+  const [learning, eventos] = await Promise.all([
     fetchAll<LearningRule>((from, to) =>
       supabase.from("learning_rules").select("*").eq("company_id", companyId).eq("active", true).range(from, to),
     ),
@@ -66,32 +89,65 @@ export async function fetchCompanyKnowledge(companyId: string): Promise<CompanyK
           .eq("company_id", companyId)
           .order("created_at", { ascending: false })
           .range(from, to),
-      MAX_HISTORY,
-    ),
-    fetchAll<{ provider_nit: string | null; description: string | null; detail: string | null; account_code: string | null }>(
-      (from, to) =>
-        supabase
-          .from("accounting_history")
-          .select("provider_nit, description, detail, account_code")
-          .eq("company_id", companyId)
-          .not("account_code", "is", null)
-          .order("imported_at", { ascending: false })
-          .range(from, to),
-      MAX_HISTORY,
+      MAX_EVENTS,
     ),
   ]);
-
-  const history: HistoryEvent[] = [
-    ...eventos.map((e) => ({ provider_nit: e.provider_nit, concept: e.concept, account_code: e.account_code })),
-    ...historico
-      .filter((h) => String(h.account_code ?? "").trim())
-      .map((h) => ({
-        provider_nit: h.provider_nit,
-        concept: h.detail || h.description,
-        account_code: String(h.account_code).trim(),
-      })),
-  ];
+  const history: HistoryEvent[] = eventos.map((e) => ({
+    provider_nit: e.provider_nit,
+    concept: e.concept,
+    account_code: e.account_code,
+  }));
   return { learning, history };
+}
+
+// Caché en memoria del histórico resumido (por empresa y proveedor), con
+// deduplicación de peticiones en curso: 100 facturas del mismo proveedor
+// hacen UNA sola consulta.
+const historyCache = new Map<string, Promise<HistoryEvent[]>>();
+
+/** Histórico resumido del proveedor (agrupado por concepto y cuenta) más las cuentas más usadas de la empresa. */
+export function fetchProviderHistory(companyId: string, providerNit?: string | null): Promise<HistoryEvent[]> {
+  const nit = (providerNit ?? "").trim();
+  const key = `${companyId}|${nit}`;
+  const cached = historyCache.get(key);
+  if (cached) return cached;
+  const run = (async () => {
+    try {
+      if (nit) {
+        const { data, error } = await rpc("history_provider_accounts", {
+          _company_id: companyId,
+          _nits: [nit],
+          _limit: 500,
+        });
+        if (error) throw new Error(error.message);
+        const rows = toEvents(data ?? []);
+        if (rows.length > 0) return rows;
+      }
+      const { data, error } = await rpc("history_top_accounts", { _company_id: companyId, _limit: 300 });
+      if (error) throw new Error(error.message);
+      return toEvents(data ?? []);
+    } catch {
+      // El histórico es una ayuda, no un requisito: si falla, la causación continúa.
+      return [];
+    }
+  })();
+  historyCache.set(key, run);
+  return run;
+}
+
+/** Conocimiento de la empresa enriquecido con el histórico del proveedor de la factura. */
+export async function knowledgeForProvider(
+  companyId: string,
+  providerNit: string | null | undefined,
+  base: CompanyKnowledge,
+): Promise<CompanyKnowledge> {
+  const history = await fetchProviderHistory(companyId, providerNit);
+  return { learning: base.learning, history: [...base.history, ...history] };
+}
+
+/** Limpia la caché del histórico (por ejemplo tras importar movimientos nuevos). */
+export function clearHistoryCache() {
+  historyCache.clear();
 }
 
 export type Confianza = "ALTA" | "MEDIA" | "BAJA";
