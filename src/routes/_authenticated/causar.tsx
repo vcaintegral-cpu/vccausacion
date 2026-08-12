@@ -693,6 +693,8 @@ function Causar() {
     if (!companyId || bulkFiles.length === 0 || !config) return;
     setBulkRunning(true);
     setBulkProgress(null);
+    // Un lote nuevo: se reinicia el control de documentos repetidos (XML/PDF del mismo documento).
+    resetBulkBatch();
     // Cola en paralelo: varias facturas a la vez, con reintentos y progreso en vivo.
     const final = await runInvoiceQueue({
       items: bulkFiles,
