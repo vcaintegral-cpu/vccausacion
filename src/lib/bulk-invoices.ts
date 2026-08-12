@@ -295,5 +295,9 @@ export async function processInvoiceFile(params: {
     invoiceId: inv.id as string,
     numero: [header.prefix, header.number].filter(Boolean).join("-") || file.name,
     total,
+    score,
+    // 95% o más: automática. 80–94%: sugerida y marcada para revisión. Menos de 80%: revisión obligatoria.
+    needsReview: score < 0.95,
+    reason,
   };
 }
