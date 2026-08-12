@@ -980,8 +980,15 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
       const valid = parsed.filter((r) => r.name);
       if (valid.length === 0) throw new Error("No se encontraron impuestos (columnas esperadas: Tipo, Nombre, Tarifa).");
       const unicos = Array.from(new Map(valid.map((r) => [`${r.kind}|${r.name}`, r])).values());
-      if (!window.confirm(`Se encontraron ${fmt(sheet.length)} impuestos o retenciones. Se procesarán todos en lotes de 500 sin eliminar información existente. ¿Continuar?`)) return;
-      const existing = new Map<string, (typeof unicos)[number]>((rows ?? []).map((row) => [`${String(row['kind'])}|${String(row['name'])}`, {
+      if (!window.confirm(`Se encontraron ${fmt(sheet.length)} impuestos o retenciones. Se procesarán todos en lotes de 500. ¿Continuar?`)) return;
+      const reemplazar = window.confirm(
+        "¿Deseas REEMPLAZAR los impuestos y retenciones actuales de esta empresa?\n\nAceptar: se eliminan los existentes y queda solo el archivo nuevo.\nCancelar: se conservan y solo se agregan o actualizan.",
+      );
+      if (reemplazar) {
+        const { error: delError } = await supabase.from("tax_rates").delete().eq("company_id", companyId);
+        if (delError) throw new Error(`No fue posible eliminar los impuestos actuales: ${delError.message}`);
+      }
+      const existing = new Map<string, (typeof unicos)[number]>((reemplazar ? [] : (rows ?? [])).map((row) => [`${String(row['kind'])}|${String(row['name'])}`, {
         rowNumber: 0,
         company_id: companyId,
         kind: String(row['kind']),
