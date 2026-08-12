@@ -100,9 +100,10 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
   const allNames = Object.values(HEADER_KEYS).flat().map(norm);
   let headerRow = -1;
   let bestScore = 0;
-  for (let i = 0; i < Math.min(text.length, 40); i += 1) {
+  const scanLimit = Math.min(text.length, 200);
+  for (let i = 0; i < scanLimit; i += 1) {
     const cells = (text[i] ?? []).map(norm).filter((c) => c !== "");
-    if (cells.length < 3) continue;
+    if (cells.length < 2) continue;
     let score = 0;
     for (const group of Object.values(HEADER_KEYS)) {
       const names = group.map(norm);
@@ -110,19 +111,35 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
     }
     // Penaliza filas de datos: celdas que no parecen títulos.
     const titles = cells.filter((c) => allNames.some((n) => c === n || c.includes(n))).length;
-    if (score > bestScore && titles >= 3) {
+    if (score > bestScore && titles >= 2) {
       bestScore = score;
       headerRow = i;
     }
   }
   if (headerRow < 0) {
-    // Respaldo: primera fila con varias celdas que mencione la cuenta contable.
-    for (let i = 0; i < Math.min(text.length, 40); i += 1) {
+    // Respaldo 1: primera fila con varias celdas que mencione la cuenta contable.
+    for (let i = 0; i < scanLimit; i += 1) {
       const cells = (text[i] ?? []).map(norm).filter((c) => c !== "");
-      if (cells.length < 3) continue;
+      if (cells.length < 2) continue;
       if (cells.some((c) => c.includes("codigo contable") || c === "cuenta" || c.includes("codigo cuenta"))) {
         headerRow = i;
         break;
+      }
+    }
+  }
+  if (headerRow < 0) {
+    // Respaldo 2: la fila con más columnas de texto antes de que empiecen los datos
+    // numéricos. Cubre exportaciones con títulos distintos a los conocidos.
+    let widest = 0;
+    for (let i = 0; i < scanLimit; i += 1) {
+      const cells = (text[i] ?? []).map((c) => (c ?? "").trim());
+      const filled = cells.filter((c) => c !== "");
+      if (filled.length < 4) continue;
+      const numeric = filled.filter((c) => /^[\d.,()$ -]+$/.test(c)).length;
+      if (numeric > filled.length / 2) continue; // parece fila de datos
+      if (filled.length > widest) {
+        widest = filled.length;
+        headerRow = i;
       }
     }
   }
