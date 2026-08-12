@@ -6,6 +6,8 @@ export type PreparedInvoiceFile = {
 
 const MAX_PDF_PAGES = 8;
 const MAX_RENDER_WIDTH = 1800;
+/** Mínimo de caracteres de la capa de texto para considerar que el PDF es digital (sin OCR). */
+const MIN_DIGITAL_TEXT = 350;
 
 export class InvoicePdfPasswordError extends Error {
   readonly incorrect: boolean;
@@ -46,6 +48,27 @@ export async function prepareInvoiceFile(file: File, password?: string): Promise
     throw error;
   }
   const pageCount = Math.min(pdf.numPages, MAX_PDF_PAGES);
+
+  // 1) Si el PDF ya trae texto digital, se lee directamente: no se renderiza ni se usa OCR/visión.
+  let digital = "";
+  try {
+    for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      digital += `${content.items
+        .map((i) => (typeof (i as { str?: string }).str === "string" ? (i as { str: string }).str : ""))
+        .join(" ")}\n`;
+      page.cleanup();
+    }
+  } catch {
+    digital = "";
+  }
+  if (digital.replace(/\s+/g, " ").trim().length >= MIN_DIGITAL_TEXT) {
+    await loadingTask.destroy();
+    return { text: digital.replace(/[ \t]+/g, " ").trim() };
+  }
+
+  // 2) PDF escaneado: se renderizan las páginas para que la IA las lea como imagen.
   const images: Array<{ dataUrl: string; mimeType: string }> = [];
 
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
