@@ -30,6 +30,7 @@ import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validat
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { expandInvoiceFiles, processInvoiceFile } from "@/lib/bulk-invoices";
+import { runInvoiceQueue, type QueueProgress } from "@/lib/bulk-queue";
 import {
   ESTADO_LABEL,
   estadoUnico,
@@ -119,7 +120,7 @@ function Causar() {
   const bulkRef = useRef<HTMLInputElement>(null);
   const [bulkFiles, setBulkFiles] = useState<File[]>([]);
   const [bulkRunning, setBulkRunning] = useState(false);
-  const [bulkResults, setBulkResults] = useState<{ name: string; ok: boolean; detail: string }[]>([]);
+  const [bulkProgress, setBulkProgress] = useState<QueueProgress | null>(null);
   // Impuesto/retención elegido por renglón (índice -> ids)
   const [lineTax, setLineTax] = useState<Record<number, { iva?: string | undefined; ret?: string | undefined }>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -672,7 +673,7 @@ function Causar() {
   }
 
   async function seleccionarMasivo(selected: FileList | null) {
-    setBulkResults([]);
+    setBulkProgress(null);
     if (!selected || selected.length === 0) { setBulkFiles([]); return; }
     try {
       const expanded = await expandInvoiceFiles(Array.from(selected));
@@ -687,10 +688,14 @@ function Causar() {
   async function procesarMasivo() {
     if (!companyId || bulkFiles.length === 0 || !config) return;
     setBulkRunning(true);
-    setBulkResults([]);
-    let ok = 0;
-    for (const f of bulkFiles) {
-      try {
+    setBulkProgress(null);
+    // Cola en paralelo: varias facturas a la vez, con reintentos y progreso en vivo.
+    const final = await runInvoiceQueue({
+      items: bulkFiles,
+      nameOf: (f) => f.name,
+      concurrency: 6,
+      onProgress: setBulkProgress,
+      run: async (f) => {
         const r = await processInvoiceFile({
           file: f,
           companyId,
@@ -698,17 +703,11 @@ function Causar() {
           extract: extract as never,
           ...(knowledge ? { knowledge } : {}),
         });
-        ok += 1;
-        setBulkResults((p) => [...p, { name: f.name, ok: true, detail: `${r.numero} · ${cop(r.total)}` }]);
-      } catch (err) {
-        setBulkResults((p) => [
-          ...p,
-          { name: f.name, ok: false, detail: err instanceof Error ? err.message : "Error al procesar" },
-        ]);
-      }
-    }
+        return { ...r, numero: `${r.numero} · ${cop(r.total)}` };
+      },
+    });
     setBulkRunning(false);
-    toast.success(`${ok} de ${bulkFiles.length} facturas causadas como borrador.`);
+    toast.success(`${final.done} de ${final.total} facturas causadas como borrador.`);
   }
 
   /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y la cuenta de su categoría. */
