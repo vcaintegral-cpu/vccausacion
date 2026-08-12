@@ -19,9 +19,13 @@ export type SiigoStatus = {
 
 export const siigoStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async (): Promise<SiigoStatus> => {
-    const { siigoConfig, siigoGet, loadSiigoOverrides } = await import("./siigo.server");
-    await loadSiigoOverrides(true);
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data }): Promise<SiigoStatus> => {
+    const { siigoConfig, siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId, true);
     const cfg = siigoConfig();
     const checkedAt = new Date().toISOString();
     if (cfg.missing.length > 0) {
@@ -32,7 +36,7 @@ export const siigoStatus = createServerFn({ method: "POST" })
         partnerId: cfg.partnerId || null,
         missing: cfg.missing,
         warnings: cfg.warnings,
-        error: `Faltan variables de entorno: ${cfg.missing.join(", ")}.`,
+        error: `Esta empresa aún no tiene conexión con Siigo (${cfg.missing.join(", ")}).`,
         checkedAt,
       };
     }
@@ -71,7 +75,8 @@ export const siigoImportProviders = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }) => {
-    const { siigoGet } = await import("./siigo.server");
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     type Customer = {
       identification?: string;
       name?: string[] | string;
@@ -107,7 +112,8 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }) => {
-    const { siigoGet } = await import("./siigo.server");
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     // Verificado contra la API real de Siigo (agosto 2026):
     //   /v1/accounts, /v1/chart-of-accounts, /v1/accounting-accounts... -> 404
     //   /v1/account-groups -> grupos de inventario (id/name/active), NO son cuentas del PUC
