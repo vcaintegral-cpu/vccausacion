@@ -138,9 +138,11 @@ function Causar() {
     if (term !== header.payment_form) setHeader((h) => ({ ...h, payment_form: term }));
   }, [header.issue_date, header.due_date, header.payment_form, plazoTocado]);
 
-  const { data: config } = useQuery({
+  const { data: config, isLoading: cargandoConfig } = useQuery({
     queryKey: ["config", companyId],
     enabled: !!companyId,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
     queryFn: async () => {
       const [rules, taxes, centers, accounts, products, categories] = await Promise.all([
         supabase.from("accounting_rules").select("*").eq("company_id", companyId!),
@@ -165,6 +167,8 @@ function Causar() {
   const { data: knowledge } = useQuery({
     queryKey: ["knowledge", companyId],
     enabled: !!companyId,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
     queryFn: () => fetchCompanyKnowledge(companyId!),
   });
 
