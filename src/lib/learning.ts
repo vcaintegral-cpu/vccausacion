@@ -25,7 +25,13 @@ export type LearningRule = {
   last_used_at?: string | null;
 };
 
-export type HistoryEvent = { provider_nit: string | null; concept: string | null; account_code: string };
+export type HistoryEvent = {
+  provider_nit: string | null;
+  concept: string | null;
+  account_code: string;
+  /** Número de movimientos que representa este registro (histórico ya agrupado). */
+  weight?: number;
+};
 
 export type Suggestion = {
   code: string;
@@ -175,7 +181,7 @@ export function suggestSmart(params: {
 function topAccount(items: HistoryEvent[]) {
   if (items.length === 0) return null;
   const counts = new Map<string, number>();
-  for (const i of items) counts.set(i.account_code, (counts.get(i.account_code) ?? 0) + 1);
+  for (const i of items) counts.set(i.account_code, (counts.get(i.account_code) ?? 0) + (i.weight ?? 1));
   const [code, count] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]!;
   return { code, count };
 }
