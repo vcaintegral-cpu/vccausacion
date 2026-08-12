@@ -298,7 +298,8 @@ export const siigoImportCostCenters = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }) => {
-    const { siigoGet } = await import("./siigo.server");
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     type CC = { id?: number | string; code?: string | number; name?: string; active?: boolean };
     const res = await siigoGet<CC[] | { results?: CC[] }>("/v1/cost-centers");
     const list = Array.isArray(res) ? res : (res.results ?? []);
@@ -335,7 +336,8 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }) => {
-    const { siigoGet } = await import("./siigo.server");
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     type Tax = {
       id?: number | string;
       name?: string;
@@ -475,8 +477,13 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
 
 export const siigoListPurchases = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async (): Promise<SiigoPurchase[]> => {
-    const { siigoGet } = await import("./siigo.server");
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data }): Promise<SiigoPurchase[]> => {
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     type P = {
       id?: string;
       name?: string;
