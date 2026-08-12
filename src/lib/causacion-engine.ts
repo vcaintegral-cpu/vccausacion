@@ -41,8 +41,8 @@ async function fetchAll<T>(
   return out;
 }
 
-/** Tope de eventos recientes usados para sugerir cuentas (suficiente para la frecuencia). */
-const MAX_HISTORY = 5000;
+/** Sin tope: el historial se lee completo (5.000, 10.000 o más registros). */
+const MAX_HISTORY = Infinity;
 
 export type CompanyKnowledge = {
   learning: LearningRule[];
