@@ -70,8 +70,9 @@ function Integraciones() {
   const [form, setForm] = useState({ username: "", accessKey: "", partnerId: "" });
 
   const status = useQuery({
-    queryKey: ["siigo-status"],
-    queryFn: () => checkStatus({ data: undefined as never }),
+    queryKey: ["siigo-status", companyId],
+    enabled: !!companyId,
+    queryFn: () => checkStatus({ data: { companyId: companyId! } }),
   });
 
   const provs = useMutation({
@@ -106,7 +107,7 @@ function Integraciones() {
     onError: (e: Error) => toast.error(e.message),
   });
   const compras = useMutation({
-    mutationFn: () => listPurchases({ data: undefined as never }),
+    mutationFn: () => listPurchases({ data: { companyId: companyId! } }),
     onSuccess: (r) => {
       setPurchases(r);
       toast.success(`${r.length} facturas de compra traídas de Siigo.`);
@@ -114,7 +115,7 @@ function Integraciones() {
     onError: (e: Error) => toast.error(e.message),
   });
   const guardar = useMutation({
-    mutationFn: () => saveCreds({ data: form }),
+    mutationFn: () => saveCreds({ data: { ...form, companyId: companyId! } }),
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Credenciales guardadas y conexión verificada.");
