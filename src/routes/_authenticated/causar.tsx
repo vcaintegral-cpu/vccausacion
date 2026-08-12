@@ -992,15 +992,19 @@ function Causar() {
               ref={bulkRef}
               type="file"
               multiple
-              accept=".zip,.pdf,.xml,.jpg,.jpeg,.png,application/zip,application/pdf,text/xml,image/*"
               onChange={(e) => void seleccionarMasivo(e.target.files)}
             />
           </div>
-          <Button onClick={() => void procesarMasivo()} disabled={bulkRunning || bulkFiles.length === 0 || !companyId}>
+          <Button
+            onClick={() => void procesarMasivo()}
+            disabled={bulkRunning || bulkFiles.length === 0 || !companyId || cargandoConfig || !config}
+          >
             {bulkRunning ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
             {bulkRunning
               ? `Procesando ${bulkResults.length + 1} de ${bulkFiles.length}…`
-              : `Procesar ${bulkFiles.length || ""} facturas`}
+              : cargandoConfig
+                ? "Cargando parámetros contables…"
+                : `Procesar ${bulkFiles.length || ""} facturas`}
           </Button>
         </div>
         {bulkFiles.length > 0 ? (
