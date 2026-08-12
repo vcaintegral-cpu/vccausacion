@@ -799,6 +799,14 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
     await refresh();
   }
 
+  async function eliminar(id: string, code: string) {
+    if (!window.confirm(`¿Eliminar el centro de costo ${code}? Esta acción no se puede deshacer.`)) return;
+    const { error } = await supabase.from("cost_centers").delete().eq("id", id).eq("company_id", companyId);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Centro de costo eliminado.");
+    await refresh();
+  }
+
   return (
     <div className="space-y-4">
       <Toolbar>
@@ -825,7 +833,7 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
       <div className="overflow-x-auto rounded-lg border border-border bg-card">
         <table className="w-full text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-            <tr><th className="px-4 py-2 font-medium">Código</th><th className="px-4 py-2 font-medium">Nombre</th><th className="px-4 py-2 font-medium">Origen</th></tr>
+            <tr><th className="px-4 py-2 font-medium">Código</th><th className="px-4 py-2 font-medium">Nombre</th><th className="px-4 py-2 font-medium">Origen</th><th className="px-4 py-2 font-medium text-right">Acciones</th></tr>
           </thead>
           <tbody className="divide-y divide-border">
             {(rows ?? []).map((r) => (
@@ -833,10 +841,22 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
                 <td className="px-4 py-2">{String(r['code'])}</td>
                 <td className="px-4 py-2">{String(r['name'])}</td>
                 <td className="px-4 py-2"><SourceTag source={r['source'] as string} /></td>
+                <td className="px-4 py-2 text-right">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => void eliminar(String(r['id']), String(r['code']))}
+                    title="Eliminar centro de costo"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </td>
               </tr>
             ))}
             {(rows ?? []).length === 0 && (
-              <tr><td colSpan={3} className="px-4 py-8 text-center text-sm text-muted-foreground">Sin centros de costo.</td></tr>
+              <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">Sin centros de costo.</td></tr>
             )}
           </tbody>
         </table>
