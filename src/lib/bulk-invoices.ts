@@ -14,14 +14,11 @@ import {
   type TaxRate,
 } from "@/lib/accounting";
 
-const ALLOWED = /\.(pdf|xml|jpe?g|png)$/i;
+const ALLOWED = /\.pdf$/i;
 
 const mimeFor = (name: string) => {
   const ext = name.toLowerCase().split(".").pop() ?? "";
   if (ext === "pdf") return "application/pdf";
-  if (ext === "xml") return "text/xml";
-  if (ext === "png") return "image/png";
-  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
   return "application/octet-stream";
 };
 
