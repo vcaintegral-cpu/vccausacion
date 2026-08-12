@@ -1333,9 +1333,12 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
           keys.some((x) => x.includes(k)),
         );
         if (!generico) {
-          throw new Error(
-            "El archivo no corresponde al reporte 'Movimiento auxiliar de cuenta contable por tercero' de Siigo. Verifica que exportaste el reporte correcto.",
-          );
+          // La capa original ya fue validada y almacenada. Un formato de títulos
+          // no reconocido solo impide generar reglas automáticas; nunca debe
+          // cancelar ni presentar como fallida la importación del historial.
+          setAnalysis(null);
+          toast.warning("El historial fue importado correctamente, pero no se generaron reglas automáticas para este formato de columnas.");
+          return;
         }
       }
       const result = analyzeHistory(sheet);
