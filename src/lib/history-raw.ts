@@ -93,13 +93,37 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
   const text = matrix.text;
   if (text.length === 0) throw new Error("El archivo está vacío.");
 
-  // Fila de encabezados: la que contiene el código contable y el comprobante.
+  // Fila de encabezados: la que reconoce MÁS columnas del reporte. Los informes de
+  // Siigo traen líneas de agrupación ("Código contable: 1105…") que antes se
+  // confundían con el encabezado y dejaban una sola columna, perdiendo el nombre
+  // de la cuenta, el tercero y los valores.
+  const allNames = Object.values(HEADER_KEYS).flat().map(norm);
   let headerRow = -1;
-  for (let i = 0; i < Math.min(text.length, 30); i += 1) {
-    const cells = (text[i] ?? []).map(norm);
-    if (cells.some((c) => c.includes("codigo contable") || c === "cuenta" || c.includes("codigo cuenta"))) {
+  let bestScore = 0;
+  for (let i = 0; i < Math.min(text.length, 40); i += 1) {
+    const cells = (text[i] ?? []).map(norm).filter((c) => c !== "");
+    if (cells.length < 3) continue;
+    let score = 0;
+    for (const group of Object.values(HEADER_KEYS)) {
+      const names = group.map(norm);
+      if (cells.some((c) => names.some((n) => c === n || c.includes(n)))) score += 1;
+    }
+    // Penaliza filas de datos: celdas que no parecen títulos.
+    const titles = cells.filter((c) => allNames.some((n) => c === n || c.includes(n))).length;
+    if (score > bestScore && titles >= 3) {
+      bestScore = score;
       headerRow = i;
-      break;
+    }
+  }
+  if (headerRow < 0) {
+    // Respaldo: primera fila con varias celdas que mencione la cuenta contable.
+    for (let i = 0; i < Math.min(text.length, 40); i += 1) {
+      const cells = (text[i] ?? []).map(norm).filter((c) => c !== "");
+      if (cells.length < 3) continue;
+      if (cells.some((c) => c.includes("codigo contable") || c === "cuenta" || c.includes("codigo cuenta"))) {
+        headerRow = i;
+        break;
+      }
     }
   }
   if (headerRow < 0) {
@@ -108,7 +132,11 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
     );
   }
 
-  const headers = (text[headerRow] ?? []).map((h, i) => (h.trim() ? h.trim() : `Columna ${i + 1}`));
+  const width = Math.max(...text.map((r) => r?.length ?? 0), (text[headerRow] ?? []).length);
+  const headers = Array.from({ length: width }, (_, i) => {
+    const value = (text[headerRow]?.[i] ?? "").trim();
+    return value ? value : `Columna ${i + 1}`;
+  });
   const idx = Object.fromEntries(
     Object.entries(HEADER_KEYS).map(([field, names]) => [field, findIndex(headers, names)]),
   ) as Record<keyof typeof HEADER_KEYS, number>;
