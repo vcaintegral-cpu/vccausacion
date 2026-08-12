@@ -1051,6 +1051,24 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
     await refresh();
   }
 
+  async function eliminar(id: string, nombre: string) {
+    if (!window.confirm(`¿Eliminar el impuesto o retención "${nombre}"? Esta acción no se puede deshacer.`)) return;
+    const { error } = await supabase.from("tax_rates").delete().eq("id", id).eq("company_id", companyId);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Impuesto eliminado.");
+    await refresh();
+  }
+
+  async function eliminarSiigo() {
+    if (!window.confirm("¿Eliminar TODOS los impuestos importados desde Siigo en esta empresa? Los creados manualmente o por Excel se conservan.")) return;
+    setBusy("limpiar");
+    const { error } = await supabase.from("tax_rates").delete().eq("company_id", companyId).eq("source", "siigo");
+    setBusy(null);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Impuestos importados desde Siigo eliminados.");
+    await refresh();
+  }
+
   return (
     <div className="space-y-4">
       <Toolbar>
@@ -1058,6 +1076,9 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
           <RefreshCw className={`size-4 ${busy === "siigo" ? "animate-spin" : ""}`} /> Sincronizar desde Siigo
         </Button>
         <FileButton label="Importar Excel" onFile={importar} busy={busy !== null} />
+        <Button variant="outline" onClick={eliminarSiigo} disabled={busy !== null}>
+          <Trash2 className="size-4" /> Borrar importados de Siigo
+        </Button>
       </Toolbar>
       {progreso ? <p className="rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p> : null}
       <ImportDetailPanel detail={detail} />
@@ -1077,7 +1098,7 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
             <tr>
               <th className="px-4 py-2 font-medium">Tipo</th><th className="px-4 py-2 font-medium">Nombre</th>
               <th className="px-4 py-2 font-medium">Tarifa</th><th className="px-4 py-2 font-medium">Cuenta</th>
-              <th className="px-4 py-2 font-medium">Origen</th>
+              <th className="px-4 py-2 font-medium">Origen</th><th className="px-4 py-2 font-medium text-right">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -1094,10 +1115,22 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
                   />
                 </td>
                 <td className="px-4 py-2"><SourceTag source={r['source'] as string} /></td>
+                <td className="px-4 py-2 text-right">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => void eliminar(String(r['id']), String(r['name']))}
+                    title="Eliminar impuesto"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </td>
               </tr>
             ))}
             {(rows ?? []).length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">Sin impuestos.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">Sin impuestos.</td></tr>
             )}
           </tbody>
         </table>
