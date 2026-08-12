@@ -100,7 +100,10 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
   const allNames = Object.values(HEADER_KEYS).flat().map(norm);
   let headerRow = -1;
   let bestScore = 0;
-  const scanLimit = Math.min(text.length, 200);
+  // Algunos libros exportados incluyen portadas, filtros o bloques previos muy
+  // largos. Se recorre la hoja completa: es una operación local y evita imponer
+  // un límite artificial a la ubicación del encabezado.
+  const scanLimit = text.length;
   for (let i = 0; i < scanLimit; i += 1) {
     const cells = (text[i] ?? []).map(norm).filter((c) => c !== "");
     if (cells.length < 2) continue;
@@ -144,9 +147,18 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
     }
   }
   if (headerRow < 0) {
-    throw new Error(
-      "No se encontró la fila de encabezados. Verifica que sea el reporte 'Movimiento auxiliar de cuenta contable por tercero'.",
-    );
+    // Último respaldo no bloqueante: acepta la fila tabular más ancha. La
+    // validación posterior determinará si contiene movimientos. Esto permite
+    // importar variantes legítimas del mismo reporte con títulos personalizados.
+    let widest = 0;
+    for (let i = 0; i < text.length; i += 1) {
+      const filled = (text[i] ?? []).filter((cell) => String(cell ?? "").trim() !== "").length;
+      if (filled > widest) {
+        widest = filled;
+        headerRow = i;
+      }
+    }
+    if (headerRow < 0 || widest < 2) throw new Error("El archivo no contiene una tabla de datos legible.");
   }
 
   const width = Math.max(...text.map((r) => r?.length ?? 0), (text[headerRow] ?? []).length);
