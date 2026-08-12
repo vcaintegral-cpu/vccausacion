@@ -58,14 +58,16 @@ export async function fetchCompanyKnowledge(companyId: string): Promise<CompanyK
     fetchAll<LearningRule>((from, to) =>
       supabase.from("learning_rules").select("*").eq("company_id", companyId).eq("active", true).range(from, to),
     ),
-    fetchAll<{ provider_nit: string | null; concept: string | null; account_code: string }>((from, to) =>
-      supabase
-        .from("learning_events")
-        .select("provider_nit, concept, account_code")
-        .eq("company_id", companyId)
-        .order("created_at", { ascending: false })
-        .range(from, to),
-    , MAX_HISTORY),
+    fetchAll<{ provider_nit: string | null; concept: string | null; account_code: string }>(
+      (from, to) =>
+        supabase
+          .from("learning_events")
+          .select("provider_nit, concept, account_code")
+          .eq("company_id", companyId)
+          .order("created_at", { ascending: false })
+          .range(from, to),
+      MAX_HISTORY,
+    ),
     fetchAll<{ provider_nit: string | null; description: string | null; detail: string | null; account_code: string | null }>(
       (from, to) =>
         supabase
