@@ -34,7 +34,8 @@ export type QueueProgress = {
   etaMs: number | null;
 };
 
-const TRANSIENT = /(429|límite de solicitudes|temporal|timeout|network|fetch failed|502|503|504|socket)/i;
+const TRANSIENT =
+  /(429|límite de solicitudes|temporal|timeout|canceling statement|statement timeout|57014|network|fetch failed|502|503|504|socket)/i;
 
 /** Un error temporal se reintenta; un error de negocio (duplicado, empresa) no. */
 export const isTransient = (error: unknown) =>
