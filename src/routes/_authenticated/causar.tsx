@@ -30,6 +30,7 @@ import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validat
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { expandInvoiceFiles, processInvoiceFile } from "@/lib/bulk-invoices";
+import { runInvoiceQueue, type QueueProgress } from "@/lib/bulk-queue";
 import {
   ESTADO_LABEL,
   estadoUnico,
@@ -119,7 +120,7 @@ function Causar() {
   const bulkRef = useRef<HTMLInputElement>(null);
   const [bulkFiles, setBulkFiles] = useState<File[]>([]);
   const [bulkRunning, setBulkRunning] = useState(false);
-  const [bulkResults, setBulkResults] = useState<{ name: string; ok: boolean; detail: string }[]>([]);
+  const [bulkProgress, setBulkProgress] = useState<QueueProgress | null>(null);
   // Impuesto/retención elegido por renglón (índice -> ids)
   const [lineTax, setLineTax] = useState<Record<number, { iva?: string | undefined; ret?: string | undefined }>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -672,7 +673,7 @@ function Causar() {
   }
 
   async function seleccionarMasivo(selected: FileList | null) {
-    setBulkResults([]);
+    setBulkProgress(null);
     if (!selected || selected.length === 0) { setBulkFiles([]); return; }
     try {
       const expanded = await expandInvoiceFiles(Array.from(selected));
@@ -687,10 +688,14 @@ function Causar() {
   async function procesarMasivo() {
     if (!companyId || bulkFiles.length === 0 || !config) return;
     setBulkRunning(true);
-    setBulkResults([]);
-    let ok = 0;
-    for (const f of bulkFiles) {
-      try {
+    setBulkProgress(null);
+    // Cola en paralelo: varias facturas a la vez, con reintentos y progreso en vivo.
+    const final = await runInvoiceQueue({
+      items: bulkFiles,
+      nameOf: (f) => f.name,
+      concurrency: 6,
+      onProgress: setBulkProgress,
+      run: async (f) => {
         const r = await processInvoiceFile({
           file: f,
           companyId,
@@ -698,17 +703,11 @@ function Causar() {
           extract: extract as never,
           ...(knowledge ? { knowledge } : {}),
         });
-        ok += 1;
-        setBulkResults((p) => [...p, { name: f.name, ok: true, detail: `${r.numero} · ${cop(r.total)}` }]);
-      } catch (err) {
-        setBulkResults((p) => [
-          ...p,
-          { name: f.name, ok: false, detail: err instanceof Error ? err.message : "Error al procesar" },
-        ]);
-      }
-    }
+        return { ...r, numero: `${r.numero} · ${cop(r.total)}` };
+      },
+    });
     setBulkRunning(false);
-    toast.success(`${ok} de ${bulkFiles.length} facturas causadas como borrador.`);
+    toast.success(`${final.done} de ${final.total} facturas causadas como borrador.`);
   }
 
   /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y la cuenta de su categoría. */
@@ -1031,7 +1030,7 @@ function Causar() {
           >
             {bulkRunning ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
             {bulkRunning
-              ? `Procesando ${bulkResults.length + 1} de ${bulkFiles.length}…`
+              ? `Procesando ${(bulkProgress?.done ?? 0) + (bulkProgress?.failed ?? 0)} de ${bulkFiles.length}…`
               : cargandoConfig
                 ? "Cargando parámetros contables…"
                 : `Procesar ${bulkFiles.length || ""} facturas`}
@@ -1039,27 +1038,64 @@ function Causar() {
         </div>
         {bulkFiles.length > 0 ? (
           <p className="text-xs text-muted-foreground">
-            {bulkFiles.length} factura(s) detectada(s). {bulkResults.length > 0 ? `${bulkResults.length} procesada(s).` : ""}
+            {bulkFiles.length} factura(s) detectada(s). Se procesan hasta 6 al mismo tiempo.
           </p>
         ) : null}
-        {bulkResults.length > 0 ? (
+        {bulkProgress ? (
+          <>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                ["Total", String(bulkProgress.total)],
+                ["Procesadas", String(bulkProgress.done)],
+                ["En proceso", String(bulkProgress.running)],
+                ["Pendientes", String(bulkProgress.pending)],
+                ["Con error", String(bulkProgress.failed)],
+                ["Automáticas", String(bulkProgress.auto)],
+                ["Requieren revisión", String(bulkProgress.review)],
+                [
+                  "Tiempo",
+                  `${Math.round(bulkProgress.elapsedMs / 1000)}s${
+                    bulkProgress.etaMs !== null && bulkProgress.pending + bulkProgress.running > 0
+                      ? ` · faltan ~${Math.round(bulkProgress.etaMs / 1000)}s`
+                      : ""
+                  }`,
+                ],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-md border border-border p-2">
+                  <p className="text-[11px] text-muted-foreground">{label}</p>
+                  <p className="text-sm font-semibold">{value}</p>
+                </div>
+              ))}
+            </div>
           <ul className="max-h-64 space-y-1 overflow-auto rounded-md border border-border p-2">
-            {bulkResults.map((r, i) => (
-              <li key={`${r.name}-${i}`} className="flex items-start gap-2 text-xs">
-                {r.ok ? (
+            {bulkProgress.jobs.map((j) => (
+              <li key={j.id} className="flex items-start gap-2 text-xs">
+                {j.state === "listo" ? (
                   <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />
-                ) : (
+                ) : j.state === "error" ? (
                   <XCircle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+                ) : j.state === "procesando" ? (
+                  <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                ) : (
+                  <Layers className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                 )}
-                <span className="truncate font-medium">{r.name}</span>
-                <span className="text-muted-foreground">{r.detail}</span>
+                <span className="truncate font-medium">{j.name}</span>
+                <span className="text-muted-foreground">
+                  {j.detail || (j.state === "pendiente" ? "En cola" : "Leyendo…")}
+                </span>
+                {j.result ? (
+                  <span className={j.result.needsReview ? "text-warning" : "text-success"}>
+                    {j.result.needsReview ? "Revisar" : "Automática"} · {Math.round(j.result.score * 100)}%
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>
+          </>
         ) : null}
-        {bulkResults.some((r) => r.ok) ? (
+        {bulkProgress && bulkProgress.done > 0 ? (
           <Button variant="outline" onClick={() => navigate({ to: "/facturas" })}>
-            Ver facturas causadas
+            Revisar facturas terminadas
           </Button>
         ) : null}
       </div>

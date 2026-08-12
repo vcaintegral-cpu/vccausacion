@@ -65,6 +65,18 @@ export type BulkConfig = {
 
 type ExtractFn = (args: { data: { fileName: string; mimeType: string } & Record<string, unknown> }) => Promise<unknown>;
 
+/** Caché de extracciones ya realizadas (por huella del archivo) para no volver a llamar a la IA. */
+const extraccionCache = new Map<string, ExtractedInvoice>();
+
+async function fileFingerprint(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (globalThis.crypto?.subtle) {
+    const hash = await crypto.subtle.digest("SHA-256", bytes);
+    return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  return `${file.name}:${file.size}`;
+}
+
 const norm = (s?: string | null) =>
   (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
@@ -75,12 +87,18 @@ export async function processInvoiceFile(params: {
   config: BulkConfig;
   extract: ExtractFn;
   knowledge?: CompanyKnowledge;
-}): Promise<{ invoiceId: string; numero: string; total: number }> {
+}): Promise<{ invoiceId: string; numero: string; total: number; score: number; needsReview: boolean; reason: string }> {
   const { file, companyId, config, extract } = params;
-  const content = await prepareInvoiceFile(file);
-  const data = (await extract({
-    data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
-  })) as ExtractedInvoice;
+  const huella = await fileFingerprint(file);
+  let data = extraccionCache.get(huella);
+  if (!data) {
+    // Lectura optimizada: XML y PDF con texto digital no pasan por OCR/visión.
+    const content = await prepareInvoiceFile(file);
+    data = (await extract({
+      data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
+    })) as ExtractedInvoice;
+    extraccionCache.set(huella, data);
+  }
   const { lines: extracted, ...header } = data;
 
   // Cada factura del ZIP se valida individualmente: si el NIT del comprador no es el de la
@@ -131,7 +149,7 @@ export async function processInvoiceFile(params: {
 
   // Mismo motor inteligente que la causación individual.
   const conocimiento = params.knowledge ?? config.knowledge ?? (await fetchCompanyKnowledge(companyId)) ?? emptyKnowledge();
-  const { lines } = applyEngineToLines(conCatalogo, {
+  const { lines, decisions } = applyEngineToLines(conCatalogo, {
     providerNit: header.provider_nit,
     knowledge: conocimiento,
     products: config.products,
@@ -140,6 +158,11 @@ export async function processInvoiceFile(params: {
     puc: config.accounts,
     provider,
   });
+  // Nivel de confianza del lote: manda la decisión más débil de la factura.
+  const tomadas = Object.values(decisions);
+  const peor = tomadas.sort((a, b) => a.score - b.score)[0];
+  const score = tomadas.length === 0 ? 1 : (peor?.score ?? 0);
+  const reason = tomadas.length === 0 ? "Cuentas tomadas del catálogo o del borrador." : (peor?.reason ?? "");
   const baseGravable = lines.reduce(
     (s, l) => s + Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
     0,
@@ -272,5 +295,9 @@ export async function processInvoiceFile(params: {
     invoiceId: inv.id as string,
     numero: [header.prefix, header.number].filter(Boolean).join("-") || file.name,
     total,
+    score,
+    // 95% o más: automática. 80–94%: sugerida y marcada para revisión. Menos de 80%: revisión obligatoria.
+    needsReview: score < 0.95,
+    reason,
   };
 }
