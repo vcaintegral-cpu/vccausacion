@@ -1730,6 +1730,8 @@ export const siigoImportProducts = createServerFn({ method: "POST" })
   })
   .handler(async ({ data, context }) => {
     const { fetchAllSiigoProducts, upsertSiigoProducts } = await import("./siigo-products.server");
+    const { siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     const list = await fetchAllSiigoProducts();
     // La sincronización siempre se ejecuta contra la empresa activa.
     const stats = await upsertSiigoProducts(context.supabase, data.companyId, list);
@@ -1740,12 +1742,14 @@ export const siigoImportProducts = createServerFn({ method: "POST" })
 /** Busca un producto en Siigo por código o nombre (para renglones de inventario). */
 export const siigoFindProduct = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { query: string }) => {
+  .inputValidator((input: { query: string; companyId: string }) => {
     if (!input?.query) throw new Error("query requerido");
+    if (!input?.companyId) throw new Error("companyId requerido");
     return input;
   })
   .handler(async ({ data }): Promise<SiigoProduct[]> => {
-    const { siigoGet } = await import("./siigo.server");
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     type P = { id?: string; code?: string; name?: string };
     const res = await siigoGet<{ results?: P[] }>(`/v1/products?page_size=25&code=${encodeURIComponent(data.query)}`);
     const results = res.results ?? [];
@@ -1759,8 +1763,13 @@ export const siigoFindProduct = createServerFn({ method: "POST" })
 /** Diagnóstico autenticado de catálogos que intervienen en Facturas de Compra. */
 export const siigoPurchaseCatalogDiagnostics = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async () => {
-    const { siigoGet } = await import("./siigo.server");
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data }) => {
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     const [taxes, paymentTypes, purchases] = await Promise.all([
       siigoGet<Json>("/v1/taxes"),
       siigoGet<Json>("/v1/payment-types?document_type=FC"),
@@ -1772,12 +1781,14 @@ export const siigoPurchaseCatalogDiagnostics = createServerFn({ method: "POST" }
 /** Crea un producto en Siigo. Solo se ejecuta con autorización explícita del usuario. */
 export const siigoCreateProduct = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { code: string; name: string; accountGroup?: number }) => {
+  .inputValidator((input: { code: string; name: string; accountGroup?: number; companyId: string }) => {
     if (!input?.code || !input?.name) throw new Error("code y name requeridos");
+    if (!input?.companyId) throw new Error("companyId requerido");
     return input;
   })
   .handler(async ({ data }): Promise<SiigoProduct> => {
-    const { siigoGet, siigoPost } = await import("./siigo.server");
+    const { siigoGet, siigoPost, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     let group = data.accountGroup;
     if (!group) {
       const groups = await siigoGet<{ id?: number; active?: boolean }[]>("/v1/account-groups");
@@ -1800,10 +1811,12 @@ export const siigoCreateProduct = createServerFn({ method: "POST" })
 
 export const siigoSaveCredentials = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { username: string; accessKey: string; partnerId: string }) => {
+  .inputValidator((input: { username: string; accessKey: string; partnerId: string; companyId: string }) => {
+    if (!input?.companyId) throw new Error("Selecciona la empresa antes de guardar la conexión.");
     if (!input?.username?.trim()) throw new Error("El usuario API es obligatorio.");
     if (!input?.accessKey?.trim()) throw new Error("La clave de API (Access Key) es obligatoria.");
     return {
+      companyId: input.companyId,
       username: input.username.trim(),
       accessKey: input.accessKey.trim(),
       partnerId: (input.partnerId ?? "").trim(),
