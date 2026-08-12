@@ -100,9 +100,10 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
   const allNames = Object.values(HEADER_KEYS).flat().map(norm);
   let headerRow = -1;
   let bestScore = 0;
-  for (let i = 0; i < Math.min(text.length, 40); i += 1) {
+  const scanLimit = Math.min(text.length, 200);
+  for (let i = 0; i < scanLimit; i += 1) {
     const cells = (text[i] ?? []).map(norm).filter((c) => c !== "");
-    if (cells.length < 3) continue;
+    if (cells.length < 2) continue;
     let score = 0;
     for (const group of Object.values(HEADER_KEYS)) {
       const names = group.map(norm);
@@ -110,19 +111,35 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
     }
     // Penaliza filas de datos: celdas que no parecen títulos.
     const titles = cells.filter((c) => allNames.some((n) => c === n || c.includes(n))).length;
-    if (score > bestScore && titles >= 3) {
+    if (score > bestScore && titles >= 2) {
       bestScore = score;
       headerRow = i;
     }
   }
   if (headerRow < 0) {
-    // Respaldo: primera fila con varias celdas que mencione la cuenta contable.
-    for (let i = 0; i < Math.min(text.length, 40); i += 1) {
+    // Respaldo 1: primera fila con varias celdas que mencione la cuenta contable.
+    for (let i = 0; i < scanLimit; i += 1) {
       const cells = (text[i] ?? []).map(norm).filter((c) => c !== "");
-      if (cells.length < 3) continue;
+      if (cells.length < 2) continue;
       if (cells.some((c) => c.includes("codigo contable") || c === "cuenta" || c.includes("codigo cuenta"))) {
         headerRow = i;
         break;
+      }
+    }
+  }
+  if (headerRow < 0) {
+    // Respaldo 2: la fila con más columnas de texto antes de que empiecen los datos
+    // numéricos. Cubre exportaciones con títulos distintos a los conocidos.
+    let widest = 0;
+    for (let i = 0; i < scanLimit; i += 1) {
+      const cells = (text[i] ?? []).map((c) => (c ?? "").trim());
+      const filled = cells.filter((c) => c !== "");
+      if (filled.length < 4) continue;
+      const numeric = filled.filter((c) => /^[\d.,()$ -]+$/.test(c)).length;
+      if (numeric > filled.length / 2) continue; // parece fila de datos
+      if (filled.length > widest) {
+        widest = filled.length;
+        headerRow = i;
       }
     }
   }
@@ -152,6 +169,10 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
   const issues: { row: number; message: string }[] = [];
   let groupRows = 0;
   let emptyRows = 0;
+  // El informe agrupa por cuenta: "Código contable: 5135 GASTOS…". Se conserva
+  // el último código visto para las filas de movimiento que no lo repiten.
+  let currentCode: string | null = null;
+  let currentName: string | null = null;
 
   for (let i = headerRow + 1; i < text.length; i += 1) {
     const cells = text[i] ?? [];
@@ -163,10 +184,27 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
       continue;
     }
     const codeCell = (cells[idx.account_code >= 0 ? idx.account_code : 0] ?? "").trim();
-    if (!/^\d[\d.]*$/.test(codeCell)) {
-      // Filas de agrupación del informe ("Cuenta contable: …", "Nombre del tercero: …").
-      groupRows += 1;
-      continue;
+    const isCode = /^\d[\d.]*$/.test(codeCell);
+    if (!isCode) {
+      const joined = cells.map((c) => (c ?? "").trim()).filter(Boolean).join(" ");
+      const group = joined.match(/(?:codigo|código)\s+contable\s*:?\s*(\d[\d.]*)\s*(.*)$/i);
+      if (group) {
+        currentCode = group[1] ?? currentCode;
+        currentName = (group[2] ?? "").trim() || currentName;
+      }
+      // ¿Es una fila de movimiento aunque no repita la cuenta?
+      const hasMovement =
+        (idx.entry_date_text >= 0 && (cells[idx.entry_date_text] ?? "").trim() !== "") ||
+        (idx.voucher >= 0 && (cells[idx.voucher] ?? "").trim() !== "") ||
+        (idx.debit_text >= 0 && (cells[idx.debit_text] ?? "").trim() !== "") ||
+        (idx.credit_text >= 0 && (cells[idx.credit_text] ?? "").trim() !== "");
+      if (!(hasMovement && currentCode)) {
+        // Filas de agrupación del informe ("Cuenta contable: …", "Nombre del tercero: …").
+        groupRows += 1;
+        continue;
+      }
+    } else {
+      currentCode = codeCell;
     }
 
     const cell = (field: keyof typeof HEADER_KEYS) => {
@@ -183,8 +221,8 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
     const creditText = cell("credit_text");
     const row: RawHistoryRow = {
       excel_row: excelRow,
-      account_code: blank(codeCell),
-      account_name: blank(cell("account_name")),
+      account_code: isCode ? blank(codeCell) : currentCode,
+      account_name: blank(cell("account_name")) ?? currentName,
       provider_nit: blank(cell("provider_nit")),
       provider_name: blank(cell("provider_name")),
       branch: blank(cell("branch")),
