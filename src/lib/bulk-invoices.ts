@@ -2,7 +2,13 @@ import { unzipSync } from "fflate";
 import { supabase } from "@/integrations/supabase/client";
 import { prepareInvoiceFile } from "@/lib/invoice-file";
 import type { ExtractedInvoice } from "@/lib/extract.functions";
-import { applyEngineToLines, emptyKnowledge, fetchCompanyKnowledge, type CompanyKnowledge } from "@/lib/causacion-engine";
+import {
+  applyEngineToLines,
+  emptyKnowledge,
+  fetchCompanyKnowledge,
+  knowledgeForProvider,
+  type CompanyKnowledge,
+} from "@/lib/causacion-engine";
 import { findExistingInvoice, mensajeDuplicado } from "@/lib/invoice-duplicates";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
@@ -65,6 +71,25 @@ type ExtractFn = (args: { data: { fileName: string; mimeType: string } & Record<
 /** Caché de extracciones ya realizadas (por huella del archivo) para no volver a llamar a la IA. */
 const extraccionCache = new Map<string, ExtractedInvoice>();
 
+/**
+ * Documentos ya tomados en este lote (CUFE, o NIT + prefijo + número): evita que
+ * el mismo documento en dos archivos distintos (XML y PDF) se procese dos veces.
+ */
+const documentosDelLote = new Set<string>();
+
+/** Reinicia el control de duplicados dentro de un lote. Llamar antes de procesar un ZIP. */
+export function resetBulkBatch() {
+  documentosDelLote.clear();
+}
+
+const claveDocumento = (h: { cufe?: string | null; provider_nit?: string | null; prefix?: string | null; number?: string | null }) => {
+  const cufe = (h.cufe ?? "").trim().toLowerCase();
+  if (cufe) return `cufe:${cufe}`;
+  const numero = (h.number ?? "").trim();
+  if (!numero) return "";
+  return `num:${(h.provider_nit ?? "").trim()}|${(h.prefix ?? "").trim()}|${numero}`.toLowerCase();
+};
+
 async function fileFingerprint(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (globalThis.crypto?.subtle) {
@@ -107,6 +132,15 @@ export async function processInvoiceFile(params: {
   );
   if (bloqueo) throw new Error(bloqueo);
 
+  // Mismo documento en dos archivos del ZIP: se procesa una sola vez.
+  const clave = claveDocumento(header);
+  if (clave) {
+    if (documentosDelLote.has(clave)) {
+      throw new Error("Documento repetido dentro del comprimido: ya se procesó desde otro archivo.");
+    }
+    documentosDelLote.add(clave);
+  }
+
   // Control de duplicados por empresa: CUFE, o NIT + prefijo + número.
   const existente = await findExistingInvoice(companyId, {
     cufe: header.cufe,
@@ -145,7 +179,9 @@ export async function processInvoiceFile(params: {
   });
 
   // Mismo motor inteligente que la causación individual.
-  const conocimiento = params.knowledge ?? config.knowledge ?? (await fetchCompanyKnowledge(companyId)) ?? emptyKnowledge();
+  // Conocimiento base (reglas) + histórico resumido del proveedor de ESTA factura.
+  const base = params.knowledge ?? config.knowledge ?? (await fetchCompanyKnowledge(companyId)) ?? emptyKnowledge();
+  const conocimiento = await knowledgeForProvider(companyId, header.provider_nit, base);
   const { lines, decisions } = applyEngineToLines(conCatalogo, {
     providerNit: header.provider_nit,
     knowledge: conocimiento,
