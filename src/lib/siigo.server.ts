@@ -4,23 +4,51 @@
 
 const SIIGO_BASE = "https://api.siigo.com";
 
-let cached: { token: string; exp: number } | null = null;
+type SiigoCreds = { username: string; accessKey: string; partnerId: string };
 
-/** Credenciales guardadas por el usuario desde la app (tienen prioridad sobre las variables de entorno). */
-let overrides: { username: string; accessKey: string; partnerId: string } | null = null;
-let overridesLoaded = false;
+/**
+ * Las credenciales de Siigo son POR EMPRESA: cada empresa guarda su propio
+ * usuario API y Access Key, de modo que una sincronización nunca trae el
+ * catálogo (impuestos, centros de costo, PUC) de otra empresa.
+ * Cada fila de `siigo_credentials` usa el id de la empresa como identificador.
+ */
+const tokens = new Map<string, { token: string; exp: number }>();
+const credentials = new Map<string, SiigoCreds | null>();
+
+/** Empresa activa para las llamadas a Siigo del proceso en curso. */
+let currentCompanyId: string | null = null;
+
+function companyKey(): string {
+  if (!currentCompanyId) {
+    throw new SiigoError({
+      status: 0,
+      url: `${SIIGO_BASE}/auth`,
+      body: "",
+      message: "No hay empresa activa para conectarse a Siigo. Selecciona la empresa e inténtalo de nuevo.",
+    });
+  }
+  return currentCompanyId;
+}
+
+/** Selecciona la empresa cuyas credenciales de Siigo se usarán y las carga. */
+export async function siigoUseCompany(companyId: string, force = false) {
+  if (!companyId) throw new Error("companyId requerido para conectarse a Siigo.");
+  currentCompanyId = companyId;
+  return loadSiigoOverrides(force);
+}
 
 export async function loadSiigoOverrides(force = false) {
-  if (overridesLoaded && !force) return overrides;
-  overridesLoaded = true;
+  const key = companyKey();
+  if (!force && credentials.has(key)) return credentials.get(key) ?? null;
+  let creds: SiigoCreds | null = null;
   try {
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data } = await supabaseAdmin
       .from("siigo_credentials")
       .select("username, access_key, partner_id")
-      .eq("id", "default")
+      .eq("id", key)
       .maybeSingle();
-    overrides = data
+    creds = data
       ? {
           username: (data.username ?? "").trim(),
           accessKey: (data.access_key ?? "").trim(),
@@ -29,16 +57,18 @@ export async function loadSiigoOverrides(force = false) {
       : null;
   } catch (e) {
     console.error("[siigo] no se pudieron cargar credenciales guardadas:", e);
-    overrides = null;
+    creds = null;
   }
-  return overrides;
+  credentials.set(key, creds);
+  return creds;
 }
 
-export async function saveSiigoOverrides(input: { username: string; accessKey: string; partnerId: string }) {
+export async function saveSiigoOverrides(input: SiigoCreds & { companyId: string }) {
+  if (!input.companyId) throw new Error("companyId requerido para guardar las credenciales de Siigo.");
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   const { error } = await supabaseAdmin.from("siigo_credentials").upsert(
     {
-      id: "default",
+      id: input.companyId,
       username: input.username.trim(),
       access_key: input.accessKey.trim(),
       partner_id: input.partnerId.trim() || null,
@@ -47,12 +77,12 @@ export async function saveSiigoOverrides(input: { username: string; accessKey: s
     { onConflict: "id" },
   );
   if (error) throw new Error(error.message);
-  overrides = {
+  currentCompanyId = input.companyId;
+  credentials.set(input.companyId, {
     username: input.username.trim(),
     accessKey: input.accessKey.trim(),
     partnerId: input.partnerId.trim(),
-  };
-  overridesLoaded = true;
+  });
   siigoResetTokenCache();
 }
 
@@ -66,19 +96,21 @@ export type SiigoConfig = {
 };
 
 export function siigoConfig(): SiigoConfig {
-  const username = (overrides?.username || process.env["SIIGO_USERNAME"] || "").trim();
-  const accessKey = (overrides?.accessKey || process.env["SIIGO_ACCESS_KEY"] || "").trim();
-  // Sin valor por defecto. Es opcional: si no existe, no se envía el header Partner-Id.
-  const partnerId = (overrides?.partnerId || process.env["SIIGO_PARTNER_ID"] || "").trim();
+  // Nunca se usan credenciales globales ni variables de entorno: cada empresa
+  // debe tener su propia conexión configurada en Integraciones.
+  const creds = credentials.get(companyKey()) ?? null;
+  const username = (creds?.username ?? "").trim();
+  const accessKey = (creds?.accessKey ?? "").trim();
+  const partnerId = (creds?.partnerId ?? "").trim();
 
   const missing: string[] = [];
-  if (!username) missing.push("SIIGO_USERNAME");
-  if (!accessKey) missing.push("SIIGO_ACCESS_KEY");
+  if (!username) missing.push("Usuario API de Siigo");
+  if (!accessKey) missing.push("Access Key de Siigo");
 
   const warnings: string[] = [];
   if (!partnerId) {
     warnings.push(
-      "SIIGO_PARTNER_ID no está configurado: se omite el header Partner-Id. Puedes configurarlo más adelante.",
+      "El Partner-Id no está configurado para esta empresa: se omite ese encabezado. Puedes configurarlo más adelante.",
     );
   }
 
@@ -109,10 +141,12 @@ function logHeaders(headers: Record<string, string>) {
 }
 
 export function siigoResetTokenCache() {
-  cached = null;
+  if (currentCompanyId) tokens.delete(currentCompanyId);
+  else tokens.clear();
 }
 
 export async function siigoToken(): Promise<string> {
+  const key = companyKey();
   await loadSiigoOverrides();
   const { username, accessKey, partnerId, missing } = siigoConfig();
   if (missing.length > 0) {
@@ -120,11 +154,12 @@ export async function siigoToken(): Promise<string> {
       status: 0,
       url: `${SIIGO_BASE}/auth`,
       body: "",
-      message: `Faltan variables de entorno de Siigo: ${missing.join(", ")}. Configúralas antes de conectar.`,
+      message: `Esta empresa no tiene configurada la conexión con Siigo (${missing.join(", ")}). Ve a Integraciones y guarda las credenciales de esta empresa.`,
     });
   }
 
   const now = Date.now();
+  const cached = tokens.get(key);
   if (cached && cached.exp > now + 30_000) return cached.token;
 
   const url = `${SIIGO_BASE}/auth`;
@@ -164,7 +199,7 @@ export async function siigoToken(): Promise<string> {
     throw new SiigoError({ status: res.status, url, body: text, message: `Siigo no devolvió access_token: ${text}` });
   }
 
-  cached = { token: json.access_token, exp: now + (json.expires_in ?? 3600) * 1000 };
+  tokens.set(key, { token: json.access_token, exp: now + (json.expires_in ?? 3600) * 1000 });
   return json.access_token;
 }
 

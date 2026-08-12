@@ -431,7 +431,7 @@ function Revisar() {
     const query = l.code || l.description || "";
     setInventario({ index, query, results: null, busy: true });
     try {
-      const results = await findProduct({ data: { query } });
+      const results = await findProduct({ data: { query, companyId: header?.company_id ?? companyId ?? "" } });
       setInventario({ index, query, results, busy: false });
     } catch (err) {
       setInventario({ index, query, results: [], busy: false });
@@ -446,7 +446,11 @@ function Revisar() {
     setInventario({ ...inventario, busy: true });
     try {
       const p = await createProduct({
-        data: { code: l.code || (l.description ?? "ITEM").slice(0, 20).toUpperCase().replace(/\s+/g, "-"), name: l.description || "Producto" },
+        data: {
+          code: l.code || (l.description ?? "ITEM").slice(0, 20).toUpperCase().replace(/\s+/g, "-"),
+          name: l.description || "Producto",
+          companyId: header?.company_id ?? companyId ?? "",
+        },
       });
       setLines((prev) => prev.map((x, i) => (i === inventario.index ? { ...x, code: p.code } : x)));
       toast.success(`Producto creado en Siigo con el código ${p.code}.`);

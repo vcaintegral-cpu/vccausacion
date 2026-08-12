@@ -19,9 +19,13 @@ export type SiigoStatus = {
 
 export const siigoStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async (): Promise<SiigoStatus> => {
-    const { siigoConfig, siigoGet, loadSiigoOverrides } = await import("./siigo.server");
-    await loadSiigoOverrides(true);
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data }): Promise<SiigoStatus> => {
+    const { siigoConfig, siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId, true);
     const cfg = siigoConfig();
     const checkedAt = new Date().toISOString();
     if (cfg.missing.length > 0) {
@@ -32,7 +36,7 @@ export const siigoStatus = createServerFn({ method: "POST" })
         partnerId: cfg.partnerId || null,
         missing: cfg.missing,
         warnings: cfg.warnings,
-        error: `Faltan variables de entorno: ${cfg.missing.join(", ")}.`,
+        error: `Esta empresa aún no tiene conexión con Siigo (${cfg.missing.join(", ")}).`,
         checkedAt,
       };
     }
@@ -71,7 +75,8 @@ export const siigoImportProviders = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }) => {
-    const { siigoGet } = await import("./siigo.server");
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     type Customer = {
       identification?: string;
       name?: string[] | string;
@@ -107,7 +112,8 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }) => {
-    const { siigoGet } = await import("./siigo.server");
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     // Verificado contra la API real de Siigo (agosto 2026):
     //   /v1/accounts, /v1/chart-of-accounts, /v1/accounting-accounts... -> 404
     //   /v1/account-groups -> grupos de inventario (id/name/active), NO son cuentas del PUC
@@ -292,7 +298,8 @@ export const siigoImportCostCenters = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }) => {
-    const { siigoGet } = await import("./siigo.server");
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     type CC = { id?: number | string; code?: string | number; name?: string; active?: boolean };
     const res = await siigoGet<CC[] | { results?: CC[] }>("/v1/cost-centers");
     const list = Array.isArray(res) ? res : (res.results ?? []);
@@ -329,7 +336,8 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }) => {
-    const { siigoGet } = await import("./siigo.server");
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     type Tax = {
       id?: number | string;
       name?: string;
@@ -469,8 +477,13 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
 
 export const siigoListPurchases = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async (): Promise<SiigoPurchase[]> => {
-    const { siigoGet } = await import("./siigo.server");
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data }): Promise<SiigoPurchase[]> => {
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     type P = {
       id?: string;
       name?: string;
@@ -554,6 +567,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       siigoCostCenterId,
       calculateSiigoPurchaseTotals,
       buildSiigoPurchasePayload,
+      siigoUseCompany,
     } = await import("./siigo.server");
     const supabase = context.supabase;
 
@@ -565,6 +579,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       .eq("id", data.invoiceId)
       .single();
     if (invErr || !inv) throw new Error(invErr?.message ?? "Factura no encontrada.");
+
+    // La conexión de Siigo se resuelve con las credenciales de la empresa dueña de la factura.
+    await siigoUseCompany(inv.company_id);
 
     // Barrera de seguridad: la factura solo puede causarse en la empresa cuyo NIT coincide
     // con el NIT del comprador/adquiriente de la factura.
@@ -1717,6 +1734,8 @@ export const siigoImportProducts = createServerFn({ method: "POST" })
   })
   .handler(async ({ data, context }) => {
     const { fetchAllSiigoProducts, upsertSiigoProducts } = await import("./siigo-products.server");
+    const { siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     const list = await fetchAllSiigoProducts();
     // La sincronización siempre se ejecuta contra la empresa activa.
     const stats = await upsertSiigoProducts(context.supabase, data.companyId, list);
@@ -1727,12 +1746,14 @@ export const siigoImportProducts = createServerFn({ method: "POST" })
 /** Busca un producto en Siigo por código o nombre (para renglones de inventario). */
 export const siigoFindProduct = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { query: string }) => {
+  .inputValidator((input: { query: string; companyId: string }) => {
     if (!input?.query) throw new Error("query requerido");
+    if (!input?.companyId) throw new Error("companyId requerido");
     return input;
   })
   .handler(async ({ data }): Promise<SiigoProduct[]> => {
-    const { siigoGet } = await import("./siigo.server");
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     type P = { id?: string; code?: string; name?: string };
     const res = await siigoGet<{ results?: P[] }>(`/v1/products?page_size=25&code=${encodeURIComponent(data.query)}`);
     const results = res.results ?? [];
@@ -1746,8 +1767,13 @@ export const siigoFindProduct = createServerFn({ method: "POST" })
 /** Diagnóstico autenticado de catálogos que intervienen en Facturas de Compra. */
 export const siigoPurchaseCatalogDiagnostics = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async () => {
-    const { siigoGet } = await import("./siigo.server");
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data }) => {
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     const [taxes, paymentTypes, purchases] = await Promise.all([
       siigoGet<Json>("/v1/taxes"),
       siigoGet<Json>("/v1/payment-types?document_type=FC"),
@@ -1759,12 +1785,14 @@ export const siigoPurchaseCatalogDiagnostics = createServerFn({ method: "POST" }
 /** Crea un producto en Siigo. Solo se ejecuta con autorización explícita del usuario. */
 export const siigoCreateProduct = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { code: string; name: string; accountGroup?: number }) => {
+  .inputValidator((input: { code: string; name: string; accountGroup?: number; companyId: string }) => {
     if (!input?.code || !input?.name) throw new Error("code y name requeridos");
+    if (!input?.companyId) throw new Error("companyId requerido");
     return input;
   })
   .handler(async ({ data }): Promise<SiigoProduct> => {
-    const { siigoGet, siigoPost } = await import("./siigo.server");
+    const { siigoGet, siigoPost, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
     let group = data.accountGroup;
     if (!group) {
       const groups = await siigoGet<{ id?: number; active?: boolean }[]>("/v1/account-groups");
@@ -1787,10 +1815,12 @@ export const siigoCreateProduct = createServerFn({ method: "POST" })
 
 export const siigoSaveCredentials = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { username: string; accessKey: string; partnerId: string }) => {
+  .inputValidator((input: { username: string; accessKey: string; partnerId: string; companyId: string }) => {
+    if (!input?.companyId) throw new Error("Selecciona la empresa antes de guardar la conexión.");
     if (!input?.username?.trim()) throw new Error("El usuario API es obligatorio.");
     if (!input?.accessKey?.trim()) throw new Error("La clave de API (Access Key) es obligatoria.");
     return {
+      companyId: input.companyId,
       username: input.username.trim(),
       accessKey: input.accessKey.trim(),
       partnerId: (input.partnerId ?? "").trim(),
