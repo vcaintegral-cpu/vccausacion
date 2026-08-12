@@ -189,7 +189,7 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
       const joined = cells.map((c) => (c ?? "").trim()).filter(Boolean).join(" ");
       const group = joined.match(/(?:codigo|código)\s+contable\s*:?\s*(\d[\d.]*)\s*(.*)$/i);
       if (group) {
-        currentCode = group[1];
+        currentCode = group[1] ?? currentCode;
         currentName = (group[2] ?? "").trim() || currentName;
       }
       // ¿Es una fila de movimiento aunque no repita la cuenta?
