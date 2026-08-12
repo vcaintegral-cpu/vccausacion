@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Download, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
+import { Download, Plus, RefreshCw, Search, Trash2, Upload, X } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -742,8 +742,15 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
       const valid = parsed.filter((r) => r.code);
       if (valid.length === 0) throw new Error("No se encontraron centros de costo (columnas esperadas: Código, Nombre).");
       const unicos = Array.from(new Map(valid.map((r) => [r.code, r])).values());
-      if (!window.confirm(`Se encontraron ${fmt(sheet.length)} centros de costo. Se procesarán todos en lotes de 500 sin eliminar información existente. ¿Continuar?`)) return;
-      const existing = new Map<string, (typeof unicos)[number]>((rows ?? []).map((row) => [String(row['code']), {
+      if (!window.confirm(`Se encontraron ${fmt(sheet.length)} centros de costo. Se procesarán todos en lotes de 500. ¿Continuar?`)) return;
+      const reemplazar = window.confirm(
+        "¿Deseas REEMPLAZAR los centros de costo actuales de esta empresa?\n\nAceptar: se eliminan los existentes y queda solo el archivo nuevo.\nCancelar: se conservan y solo se agregan o actualizan.",
+      );
+      if (reemplazar) {
+        const { error: delError } = await supabase.from("cost_centers").delete().eq("company_id", companyId);
+        if (delError) throw new Error(`No fue posible eliminar los centros de costo actuales: ${delError.message}`);
+      }
+      const existing = new Map<string, (typeof unicos)[number]>((reemplazar ? [] : (rows ?? [])).map((row) => [String(row['code']), {
         rowNumber: 0,
         company_id: companyId,
         code: String(row['code']),
@@ -792,6 +799,14 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
     await refresh();
   }
 
+  async function eliminar(id: string, code: string) {
+    if (!window.confirm(`¿Eliminar el centro de costo ${code}? Esta acción no se puede deshacer.`)) return;
+    const { error } = await supabase.from("cost_centers").delete().eq("id", id).eq("company_id", companyId);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Centro de costo eliminado.");
+    await refresh();
+  }
+
   return (
     <div className="space-y-4">
       <Toolbar>
@@ -818,7 +833,7 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
       <div className="overflow-x-auto rounded-lg border border-border bg-card">
         <table className="w-full text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-            <tr><th className="px-4 py-2 font-medium">Código</th><th className="px-4 py-2 font-medium">Nombre</th><th className="px-4 py-2 font-medium">Origen</th></tr>
+            <tr><th className="px-4 py-2 font-medium">Código</th><th className="px-4 py-2 font-medium">Nombre</th><th className="px-4 py-2 font-medium">Origen</th><th className="px-4 py-2 font-medium text-right">Acciones</th></tr>
           </thead>
           <tbody className="divide-y divide-border">
             {(rows ?? []).map((r) => (
@@ -826,10 +841,22 @@ export function CostCentersPanel({ companyId }: { companyId: string }) {
                 <td className="px-4 py-2">{String(r['code'])}</td>
                 <td className="px-4 py-2">{String(r['name'])}</td>
                 <td className="px-4 py-2"><SourceTag source={r['source'] as string} /></td>
+                <td className="px-4 py-2 text-right">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => void eliminar(String(r['id']), String(r['code']))}
+                    title="Eliminar centro de costo"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </td>
               </tr>
             ))}
             {(rows ?? []).length === 0 && (
-              <tr><td colSpan={3} className="px-4 py-8 text-center text-sm text-muted-foreground">Sin centros de costo.</td></tr>
+              <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">Sin centros de costo.</td></tr>
             )}
           </tbody>
         </table>
@@ -953,8 +980,15 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
       const valid = parsed.filter((r) => r.name);
       if (valid.length === 0) throw new Error("No se encontraron impuestos (columnas esperadas: Tipo, Nombre, Tarifa).");
       const unicos = Array.from(new Map(valid.map((r) => [`${r.kind}|${r.name}`, r])).values());
-      if (!window.confirm(`Se encontraron ${fmt(sheet.length)} impuestos o retenciones. Se procesarán todos en lotes de 500 sin eliminar información existente. ¿Continuar?`)) return;
-      const existing = new Map<string, (typeof unicos)[number]>((rows ?? []).map((row) => [`${String(row['kind'])}|${String(row['name'])}`, {
+      if (!window.confirm(`Se encontraron ${fmt(sheet.length)} impuestos o retenciones. Se procesarán todos en lotes de 500. ¿Continuar?`)) return;
+      const reemplazar = window.confirm(
+        "¿Deseas REEMPLAZAR los impuestos y retenciones actuales de esta empresa?\n\nAceptar: se eliminan los existentes y queda solo el archivo nuevo.\nCancelar: se conservan y solo se agregan o actualizan.",
+      );
+      if (reemplazar) {
+        const { error: delError } = await supabase.from("tax_rates").delete().eq("company_id", companyId);
+        if (delError) throw new Error(`No fue posible eliminar los impuestos actuales: ${delError.message}`);
+      }
+      const existing = new Map<string, (typeof unicos)[number]>((reemplazar ? [] : (rows ?? [])).map((row) => [`${String(row['kind'])}|${String(row['name'])}`, {
         rowNumber: 0,
         company_id: companyId,
         kind: String(row['kind']),
@@ -1017,6 +1051,24 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
     await refresh();
   }
 
+  async function eliminar(id: string, nombre: string) {
+    if (!window.confirm(`¿Eliminar el impuesto o retención "${nombre}"? Esta acción no se puede deshacer.`)) return;
+    const { error } = await supabase.from("tax_rates").delete().eq("id", id).eq("company_id", companyId);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Impuesto eliminado.");
+    await refresh();
+  }
+
+  async function eliminarSiigo() {
+    if (!window.confirm("¿Eliminar TODOS los impuestos importados desde Siigo en esta empresa? Los creados manualmente o por Excel se conservan.")) return;
+    setBusy("limpiar");
+    const { error } = await supabase.from("tax_rates").delete().eq("company_id", companyId).eq("source", "siigo");
+    setBusy(null);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Impuestos importados desde Siigo eliminados.");
+    await refresh();
+  }
+
   return (
     <div className="space-y-4">
       <Toolbar>
@@ -1024,6 +1076,9 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
           <RefreshCw className={`size-4 ${busy === "siigo" ? "animate-spin" : ""}`} /> Sincronizar desde Siigo
         </Button>
         <FileButton label="Importar Excel" onFile={importar} busy={busy !== null} />
+        <Button variant="outline" onClick={eliminarSiigo} disabled={busy !== null}>
+          <Trash2 className="size-4" /> Borrar importados de Siigo
+        </Button>
       </Toolbar>
       {progreso ? <p className="rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p> : null}
       <ImportDetailPanel detail={detail} />
@@ -1043,7 +1098,7 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
             <tr>
               <th className="px-4 py-2 font-medium">Tipo</th><th className="px-4 py-2 font-medium">Nombre</th>
               <th className="px-4 py-2 font-medium">Tarifa</th><th className="px-4 py-2 font-medium">Cuenta</th>
-              <th className="px-4 py-2 font-medium">Origen</th>
+              <th className="px-4 py-2 font-medium">Origen</th><th className="px-4 py-2 font-medium text-right">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -1060,10 +1115,22 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
                   />
                 </td>
                 <td className="px-4 py-2"><SourceTag source={r['source'] as string} /></td>
+                <td className="px-4 py-2 text-right">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => void eliminar(String(r['id']), String(r['name']))}
+                    title="Eliminar impuesto"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </td>
               </tr>
             ))}
             {(rows ?? []).length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-muted-foreground">Sin impuestos.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">Sin impuestos.</td></tr>
             )}
           </tbody>
         </table>
