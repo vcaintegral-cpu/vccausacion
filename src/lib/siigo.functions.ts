@@ -567,6 +567,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       siigoCostCenterId,
       calculateSiigoPurchaseTotals,
       buildSiigoPurchasePayload,
+      siigoUseCompany,
     } = await import("./siigo.server");
     const supabase = context.supabase;
 
@@ -578,6 +579,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       .eq("id", data.invoiceId)
       .single();
     if (invErr || !inv) throw new Error(invErr?.message ?? "Factura no encontrada.");
+
+    // La conexión de Siigo se resuelve con las credenciales de la empresa dueña de la factura.
+    await siigoUseCompany(inv.company_id);
 
     // Barrera de seguridad: la factura solo puede causarse en la empresa cuyo NIT coincide
     // con el NIT del comprador/adquiriente de la factura.
