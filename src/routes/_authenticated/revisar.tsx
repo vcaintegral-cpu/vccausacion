@@ -10,6 +10,7 @@ import { fetchCompanyPuc } from "@/lib/puc-data";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 import { useActiveCompany } from "@/lib/active-company";
 import { buildJournal, totals, type JournalLine, type Retenciones } from "@/lib/accounting";
+import { applyPucToPayable, learnPayableAccount, usePayableAccount } from "@/lib/payable-account";
 import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
 import { type LearningRule } from "@/lib/learning";
 import { ITEM_TYPES, isValidItemType, normalizeItemType } from "@/lib/item-type";
@@ -231,6 +232,12 @@ function Revisar() {
     return out;
   }, [ivaGroups.errors, lines, impuestosRet, puc]);
 
+  // Contrapartida: obligación por pagar de esta empresa con este proveedor.
+  const { data: payableBase } = usePayableAccount(companyId, header?.provider_nit);
+  const payable = useMemo(
+    () => (payableBase ? applyPucToPayable(payableBase, puc) : null),
+    [payableBase, puc],
+  );
   const journal: JournalLine[] = useMemo(
     () =>
       buildJournal({
@@ -251,8 +258,9 @@ function Revisar() {
         retenciones,
         costCenter: costCenterForCompany(costPolicy ?? null, header?.cost_center),
         ivaDetalle: ivaGroups.groups,
+        payableAccount: payable,
       }),
-    [lines, header?.iva, header?.impoconsumo, header?.cost_center, retenciones, ivaGroups, costPolicy],
+    [lines, header?.iva, header?.impoconsumo, header?.cost_center, retenciones, ivaGroups, costPolicy, payable],
   );
   const operationalJournal = useMemo(() => {
     const puc = (data?.accounts ?? []) as PucAccount[];
@@ -427,6 +435,8 @@ function Revisar() {
       console.log("============================================");
       const res = await sync({ data: { invoiceId: header.id } });
       if (!res.ok) { toast.error(res.error ?? "Siigo rechazó el comprobante."); return; }
+      // Aprendizaje: la cuenta por pagar aprobada queda asociada al proveedor DENTRO de esta empresa.
+      await learnPayableAccount(header.company_id, header.provider_nit, payable?.code);
       setOk({ number: res.siigoNumber, id: res.siigoId, date: res.syncedAt, url: res.documentUrl });
       toast.success(res.error ?? "Factura sincronizada correctamente.");
       await queryClient.invalidateQueries({ queryKey: ["invoices", companyId] });
