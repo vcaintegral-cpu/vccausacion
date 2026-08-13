@@ -202,20 +202,17 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               break;
             } catch (error) {
               const message = error instanceof Error ? error.message : "Error al procesar";
-              if (attempt < MAX_ATTEMPTS && isTransient(error)) {
-                patchItem(item.id, { stage: `reintento ${attempt}`, error_message: message });
-                await sleep(800 * attempt);
-                continue;
-              }
               const duplicado = /duplicad|ya fue causada|ya existe|repetido/i.test(message);
               const staged = error instanceof BulkInvoiceStageError ? error : null;
               const trace = staged?.trace;
               const storageError = /ERROR_STORAGE|ERROR_ARCHIVO|ERROR_PDF_INVALIDO/.test(message);
+              const stage = staged?.stage ?? (storageError ? "download_pdf" : "process_invoice");
+              const code = errorCode(stage, message);
               const patch: Partial<BulkItem> = {
                 status: staged?.requiresReview ? "requires_review" : duplicado ? "duplicate" : "error",
-                stage: staged?.stage ?? (storageError ? "recuperando_pdf" : "error"),
+                stage,
                 error_message: message,
-                user_message: mensajeUsuario(item.file_name, message),
+                user_message: `Etapa: ${stage} · Código: ${code} · ${mensajeUsuario(item.file_name, message)} · ${message}`,
                 ...(storageError ? { download_status: "ERROR", content_status: "ERROR" } : {}),
                 ...(trace ? {
                   provider_name: trace.providerName,
