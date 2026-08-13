@@ -21,6 +21,16 @@ import {
   type LineDecisions,
 } from "@/lib/causacion-engine";
 import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
+import {
+  applyIvaTreatment,
+  fetchIvaEvidence,
+  IVA_TREATMENT_LABEL,
+  learnIvaTreatment,
+  resolveIvaTreatment,
+  useIvaConfig,
+  type IvaTreatment,
+  type IvaTreatmentDecision,
+} from "@/lib/iva-treatment";
 import { AccountCombobox } from "@/components/account-combobox";
 import { CUENTA_PADRE_MSG, resolveOperationalAccount, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
 import { costCentersEnabled, costCenterForCompany, useCostCenterPolicy, validateCostCenter } from "@/lib/cost-center-config";
