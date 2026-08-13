@@ -133,6 +133,16 @@ function technicalError(error: unknown): TechnicalError {
   };
 }
 
+function technicalErrorCode(message: string, stage: string, duplicate: boolean) {
+  if (duplicate) return "DUPLICATE";
+  if (/detached ArrayBuffer/i.test(message)) return "DETACHED_ARRAY_BUFFER";
+  if (/ERROR_STORAGE/i.test(message)) return "STORAGE_DOWNLOAD_ERROR";
+  if (/ERROR_ARCHIVO_NO_ENCONTRADO/i.test(message)) return "STORAGE_PATH_MISSING";
+  if (/ERROR_ARCHIVO_VACIO/i.test(message)) return "EMPTY_FILE";
+  if (/ERROR_PDF_INVALIDO/i.test(message)) return "INVALID_PDF_SIGNATURE";
+  return stage.toUpperCase();
+}
+
 async function updateJob(id: string, patch: Record<string, unknown>) {
   await serviceClient().from("processing_jobs").update(patch).eq("id", id);
 }
@@ -289,6 +299,7 @@ async function failJob(job: JobRow, error: unknown) {
   const stage = error instanceof BulkInvoiceStageError ? error.stage : "processing";
   const requiereRevision = error instanceof BulkInvoiceStageError && error.requiresReview;
   const retryable = !duplicado && !requiereRevision && stage !== "validating_company";
+  const code = technicalErrorCode(message, stage, duplicado);
 
   console.error("processing_job_failed", {
     upload_id: job.upload_id,
@@ -309,7 +320,7 @@ async function failJob(job: JobRow, error: unknown) {
     status: duplicado ? "duplicate" : requiereRevision ? "requires_review" : "error",
     stage,
     error_message: message.slice(0, 1000),
-    user_message: mensajeUsuario(job.file_name, message),
+    user_message: `Etapa: ${stage} · Código: ${code} · ${mensajeUsuario(job.file_name, message)}`,
     retryable,
     ...(error instanceof BulkInvoiceStageError && error.trace
       ? {
@@ -327,13 +338,13 @@ async function failJob(job: JobRow, error: unknown) {
     // Un duplicado o un rechazo de negocio no se reintenta.
     status: duplicado ? "duplicate" : agotado || duplicado || stage === "validating_company" ? "error" : "pending",
     processing_stage: stage,
-    error_code: duplicado ? "DUPLICATE" : stage.toUpperCase(),
+    error_code: code,
     error_message: message.slice(0, 1000),
     error_stage: stage,
     error_stack: detail.stack?.slice(0, 8000) ?? null,
     http_status: detail.httpStatus,
     retryable,
-    user_message: mensajeUsuario(job.file_name, message),
+    user_message: `Etapa: ${stage} · Código: ${code} · ${mensajeUsuario(job.file_name, message)}`,
     locked_at: null,
     locked_by: null,
     lease_until: null,
