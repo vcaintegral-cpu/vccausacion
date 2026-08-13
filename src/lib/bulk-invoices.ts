@@ -132,7 +132,7 @@ export type InvoiceReadTrace = {
 
 export class BulkInvoiceStageError extends Error {
   readonly stage: "reading" | "extracting_data" | "validating_company";
-  readonly trace?: InvoiceReadTrace;
+  readonly trace: InvoiceReadTrace | undefined;
   readonly requiresReview: boolean;
 
   constructor(message: string, stage: BulkInvoiceStageError["stage"], trace?: InvoiceReadTrace, requiresReview = false) {
