@@ -254,6 +254,7 @@ export type Database = {
           id: string
           name: string
           nit: string | null
+          uses_cost_centers: boolean | null
         }
         Insert: {
           auto_learning?: boolean
@@ -263,6 +264,7 @@ export type Database = {
           id?: string
           name: string
           nit?: string | null
+          uses_cost_centers?: boolean | null
         }
         Update: {
           auto_learning?: boolean
@@ -272,6 +274,7 @@ export type Database = {
           id?: string
           name?: string
           nit?: string | null
+          uses_cost_centers?: boolean | null
         }
         Relationships: []
       }
@@ -978,6 +981,7 @@ export type Database = {
           name: string
           nature: string
           parent_code: string | null
+          requires_cost_center: boolean
           siigo_active: boolean | null
           siigo_code: string | null
           siigo_id: string | null
@@ -999,6 +1003,7 @@ export type Database = {
           name: string
           nature?: string
           parent_code?: string | null
+          requires_cost_center?: boolean
           siigo_active?: boolean | null
           siigo_code?: string | null
           siigo_id?: string | null
@@ -1020,6 +1025,7 @@ export type Database = {
           name?: string
           nature?: string
           parent_code?: string | null
+          requires_cost_center?: boolean
           siigo_active?: boolean | null
           siigo_code?: string | null
           siigo_id?: string | null

@@ -15,6 +15,8 @@ export type PucAccount = {
   siigo_active?: boolean | null;
   siigo_is_movement?: boolean | null;
   siigo_seen_at?: string | null;
+  /** Nivel 2 de la configuración: esta cuenta exige centro de costo. */
+  requires_cost_center?: boolean | null;
 };
 
 export const NIVELES = ["clase", "grupo", "cuenta", "subcuenta", "auxiliar"] as const;

@@ -170,7 +170,7 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
     for (let from = 0; ; from += 1000) {
       const { data: page, error: existingError } = await context.supabase
         .from("puc_accounts")
-        .select("id,company_id,code,name,nature,active,source,level,parent_code,has_children,is_movement,excel_active,siigo_id,siigo_code,synced_at,siigo_active,siigo_is_movement,siigo_seen_at,created_at")
+        .select("id,company_id,code,name,nature,active,source,level,parent_code,has_children,is_movement,excel_active,siigo_id,siigo_code,synced_at,siigo_active,siigo_is_movement,siigo_seen_at,created_at,requires_cost_center")
         .eq("company_id", data.companyId)
         .order("code")
         .range(from, from + 999);
@@ -1024,11 +1024,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
       if (items.length === 0) throw new Error("La factura no tiene renglones de gasto/costo para enviar a Siigo.");
 
-      // Centro de costo: se envía el ID real de Siigo, nunca el nombre ni el código interno.
-      const costCenterId = await siigoCostCenterId(inv.cost_center);
-      if (inv.cost_center && costCenterId == null) {
+      // Centro de costo: solo se envía si la empresa los maneja. Si no, se omite el campo.
+      const usaCentros = (empresa as { uses_cost_centers?: boolean | null } | null)?.uses_cost_centers === true;
+      const centroEmpresa = usaCentros ? inv.cost_center : null;
+      const costCenterId = usaCentros ? await siigoCostCenterId(centroEmpresa) : null;
+      if (centroEmpresa && costCenterId == null) {
         throw new Error(
-          `El centro de costo "${inv.cost_center}" no existe o no está activo en Siigo. Verifícalo antes de causar.`,
+          `El centro de costo "${centroEmpresa}" no existe o no está activo en Siigo. Verifícalo antes de causar.`,
         );
       }
 
@@ -1662,7 +1664,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         })),
         iva: { siigo_id: ivaTaxId != null ? String(ivaTaxId) : null, nombre: ivaTaxName, tarifa: ivaTaxRate, valor: iva },
         retenciones: retencionesTrace,
-        centro_costo: { nombre: inv.cost_center ?? null, siigo_id: costCenterId ?? null },
+        centro_costo: { nombre: centroEmpresa ?? null, siigo_id: costCenterId ?? null },
         valores: {
           subtotal,
           iva,

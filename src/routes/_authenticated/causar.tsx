@@ -22,6 +22,7 @@ import {
 import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
 import { AccountCombobox } from "@/components/account-combobox";
 import { CUENTA_PADRE_MSG, resolveOperationalAccount, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
+import { costCentersEnabled, costCenterForCompany, useCostCenterPolicy, validateCostCenter } from "@/lib/cost-center-config";
 import { fetchCompanyPuc } from "@/lib/puc-data";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { BulkApply } from "@/components/bulk-apply";
@@ -536,6 +537,20 @@ function Causar() {
     });
     return out;
   }, [ivaGroups.errors, lines, impuestosRet, lineTax, config?.accounts]);
+
+  // Centros de costo: dependen de la configuración de la empresa y de la cuenta contable.
+  const { data: costPolicy } = useCostCenterPolicy(companyId);
+  const usaCentros = costCentersEnabled(costPolicy ?? null);
+  const erroresCentro = useMemo(
+    () =>
+      validateCostCenter({
+        policy: costPolicy ?? null,
+        accounts: (config?.accounts ?? []) as PucAccount[],
+        costCenter: header.cost_center,
+        lines,
+      }),
+    [costPolicy, config?.accounts, header.cost_center, lines],
+  );
   const journal = useMemo(
     () =>
       buildJournal({
@@ -543,10 +558,10 @@ function Causar() {
         iva: ivaTotal,
         impoconsumo: Number(header.impoconsumo || 0),
         retenciones,
-        costCenter: header.cost_center,
+        costCenter: costCenterForCompany(costPolicy ?? null, header.cost_center),
         ivaDetalle: ivaGroups.groups,
       }),
-    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaGroups],
+    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaGroups, costPolicy],
   );
   const operationalJournal = useMemo(() => {
     const puc = (config?.accounts ?? []) as PucAccount[];
@@ -751,7 +766,7 @@ function Causar() {
       concept: line?.description || null,
       account_code: recordar.code,
       account_name: recordar.name,
-      cost_center: header.cost_center || null,
+      cost_center: costCenterForCompany(costPolicy ?? null, header.cost_center),
       iva: Number(line?.iva ?? 0),
       item_type: normalizeItemType(line?.item_type),
     });
@@ -773,6 +788,7 @@ function Causar() {
       return;
     }
     if (erroresImpuestos.length > 0) { toast.error(erroresImpuestos[0]!); return; }
+    if (status === "aprobado" && erroresCentro.length > 0) { toast.error(erroresCentro[0]!); return; }
     if (Math.abs(t.diferencia) > 1) { toast.error("El comprobante está descuadrado."); return; }
     setSaving(true);
     try {
@@ -829,7 +845,7 @@ function Causar() {
           payment_form: header.payment_form,
           payment_method: header.payment_method,
           currency: header.currency || "COP",
-          cost_center: header.cost_center,
+          cost_center: costCenterForCompany(costPolicy ?? null, header.cost_center),
           notes: header.notes,
           subtotal: baseGravable,
           discount: Number(header.discount || 0),
@@ -921,7 +937,7 @@ function Causar() {
             account_name: j.account_name,
             debit: j.debit,
             credit: j.credit,
-            cost_center: j.cost_center ?? null,
+            cost_center: usaCentros ? (j.cost_center ?? null) : null,
             position: i,
           })),
         ),
@@ -935,7 +951,7 @@ function Causar() {
           userId,
           providerNit: header.provider_nit,
           providerName: header.provider_name,
-          costCenter: header.cost_center,
+          costCenter: costCenterForCompany(costPolicy ?? null, header.cost_center),
           lines,
           decisions: decisiones,
           puc: (config?.accounts ?? []) as PucAccount[],
@@ -1197,6 +1213,7 @@ function Causar() {
             ))}
           </select>
         </div>
+        {usaCentros && (
         <div className="space-y-1.5">
           <Label className="text-xs">Centro de costo</Label>
           <select
@@ -1214,7 +1231,11 @@ function Causar() {
           {centroSugerido && !centroTocado && (
             <p className="text-xs text-muted-foreground">{centroSugerido}</p>
           )}
+          {erroresCentro.map((e, i) => (
+            <p key={i} className="text-xs text-destructive">{e}</p>
+          ))}
         </div>
+        )}
         <div className="space-y-1.5 sm:col-span-2 xl:col-span-4">
           <Label className="text-xs">Notas</Label>
           <Textarea rows={2} value={header.notes ?? ""} onChange={(e) => setHeader({ ...header, notes: e.target.value })} />
@@ -1581,7 +1602,7 @@ function Causar() {
           </Button>
           <Button
             onClick={() => guardar("aprobado")}
-            disabled={saving || hayErroresDeCuenta || asientoInvalido || !!bloqueoEmpresa}
+            disabled={saving || hayErroresDeCuenta || asientoInvalido || !!bloqueoEmpresa || erroresCentro.length > 0}
             title={bloqueoEmpresa ?? undefined}
           >
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Aprobar comprobante

@@ -556,6 +556,13 @@ export function PucPanel({ companyId }: { companyId: string }) {
     await refresh();
   }
 
+  /** Nivel 2 de la configuración de centros de costo: por cuenta contable. */
+  async function alternarCentro(id: string, requires: boolean) {
+    const { error } = await supabase.from("puc_accounts").update({ requires_cost_center: requires }).eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    await refresh();
+  }
+
   function exportar() {
     downloadSheet(
       (rows ?? []).map((r) => ({
@@ -655,6 +662,7 @@ export function PucPanel({ companyId }: { companyId: string }) {
               <th className="px-4 py-2 font-medium">Naturaleza</th>
               <th className="px-4 py-2 font-medium">Origen</th>
               <th className="px-4 py-2 font-medium">Activa</th>
+              <th className="px-4 py-2 font-medium">Requiere centro de costo</th>
               <th className="px-4 py-2" />
             </tr>
           </thead>
@@ -677,6 +685,9 @@ export function PucPanel({ companyId }: { companyId: string }) {
                   <td className="px-4 py-2">
                     <Switch checked={r['active'] !== false} onCheckedChange={(v) => alternar(id, v)} />
                   </td>
+                  <td className="px-4 py-2">
+                    <Switch checked={r['requires_cost_center'] === true} onCheckedChange={(v) => alternarCentro(id, v)} />
+                  </td>
                   <td className="px-4 py-2 text-right">
                     {draft ? (
                       <Button size="sm" onClick={() => guardar(id)}>Guardar</Button>
@@ -694,7 +705,7 @@ export function PucPanel({ companyId }: { companyId: string }) {
               );
             })}
             {visibles.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-muted-foreground">Sin cuentas registradas.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">Sin cuentas registradas.</td></tr>
             )}
           </tbody>
         </table>

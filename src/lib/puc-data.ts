@@ -10,7 +10,7 @@ export async function fetchCompanyPuc(companyId: string): Promise<PucAccount[]> 
   for (let from = 0; ; from += PUC_PAGE_SIZE) {
     const { data, error } = await supabase
       .from("puc_accounts")
-      .select("code, name, active, level, parent_code, has_children, is_movement, source, siigo_id, siigo_code, synced_at, excel_active, siigo_active, siigo_is_movement, siigo_seen_at")
+      .select("code, name, active, level, parent_code, has_children, is_movement, source, siigo_id, siigo_code, synced_at, excel_active, siigo_active, siigo_is_movement, siigo_seen_at, requires_cost_center")
       .eq("company_id", companyId)
       .order("code")
       .range(from, from + PUC_PAGE_SIZE - 1);
