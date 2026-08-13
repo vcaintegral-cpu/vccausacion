@@ -1,7 +1,7 @@
 // Carga masiva de facturas desde un comprimido .zip, con persistencia total:
 // el ZIP y cada PDF quedan en Storage, cada PDF es una tarea en base de datos
 // y el proceso puede reanudarse aunque se cierre el navegador.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { CheckCircle2, Download, Layers, Loader2, RefreshCw, Sparkles, Trash2, XCircle } from "lucide-react";
@@ -11,15 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cop, fechaHora } from "@/lib/format";
-import { diagnoseItem, errorCode, type BulkDiagnosis } from "@/lib/bulk-diagnostics";
-import {
-  BulkInvoiceStageError,
-  processInvoiceFile,
-  readZipContents,
-  resetBulkBatch,
-  type BulkConfig,
-  type InvoiceReadTrace,
-} from "@/lib/bulk-invoices";
+import { diagnoseItem, type BulkDiagnosis } from "@/lib/bulk-diagnostics";
+import { readZipContents, type BulkConfig } from "@/lib/bulk-invoices";
 import {
   retryBulkItems,
   startBackgroundUpload,
@@ -31,15 +24,11 @@ import {
   createUpload,
   deleteUpload,
   existingFingerprints,
-  fileFromStorage,
   insertItems,
   ITEM_LABEL,
   listItems,
   listUploads,
-  mensajeUsuario,
-  refreshUploadCounters,
   sha256,
-  updateItem,
   updateUpload,
   UPLOAD_LABEL,
   type BulkItem,
