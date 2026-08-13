@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CheckCircle2, Download, Layers, Loader2, RefreshCw, Sparkles, XCircle } from "lucide-react";
+import { CheckCircle2, Download, Layers, Loader2, RefreshCw, Sparkles, Trash2, XCircle } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import type { CompanyKnowledge } from "@/lib/causacion-engine";
 import {
   ACTIVE_STATUSES,
   createUpload,
+  deleteUpload,
   existingFingerprints,
   fileFromStorage,
   insertItems,
@@ -59,6 +60,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   const [upload, setUpload] = useState<BulkUpload | null>(null);
   const [items, setItems] = useState<BulkItem[]>([]);
   const [running, setRunning] = useState(false);
+  const [forzar, setForzar] = useState(false);
   const started = useRef<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -298,7 +300,9 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       for (const file of pdfs) {
         prepared.push({ file, hash: await sha256(new Uint8Array(await file.arrayBuffer())) });
       }
-      const previos = await existingFingerprints(companyId, prepared.map((p) => p.hash));
+      const previos = forzar
+        ? new Set<string>()
+        : await existingFingerprints(companyId, prepared.map((p) => p.hash));
       const vistos = new Set<string>();
 
       const rows: Array<Partial<BulkItem>> = [];
