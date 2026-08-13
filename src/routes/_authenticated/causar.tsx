@@ -1602,7 +1602,7 @@ function Causar() {
           </Button>
           <Button
             onClick={() => guardar("aprobado")}
-            disabled={saving || hayErroresDeCuenta || asientoInvalido || !!bloqueoEmpresa}
+            disabled={saving || hayErroresDeCuenta || asientoInvalido || !!bloqueoEmpresa || erroresCentro.length > 0}
             title={bloqueoEmpresa ?? undefined}
           >
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Aprobar comprobante
