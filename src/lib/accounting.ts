@@ -77,6 +77,17 @@ export function applyRulesToLines(lines: Line[], rules: Rule[], provider?: Provi
   });
 }
 
+/** Prefijos que NUNCA pueden ser la contrapartida de la obligación (retenciones e impuestos). */
+const PAYABLE_PROHIBIDOS = ["2365", "2367", "2368", "2404", "2408"];
+
+/** ¿El código es una cuenta por pagar válida (proveedores 22 u otros pasivos 23)? */
+export function isPayableCode(code?: string | null): boolean {
+  const c = String(code ?? "").trim();
+  if (!/^\d+$/.test(c)) return false;
+  if (!(c.startsWith("22") || c.startsWith("23"))) return false;
+  return !PAYABLE_PROHIBIDOS.some((p) => c.startsWith(p));
+}
+
 export type Retenciones = {
   retefuente: number;
   reteiva: number;

@@ -6,17 +6,9 @@ import { useQuery } from "@tanstack/react-query";
 
 import { supabase } from "@/integrations/supabase/client";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
+import { isPayableCode } from "@/lib/accounting";
 
-/** Prefijos que NUNCA pueden ser la contrapartida (retenciones e impuestos). */
-const PROHIBIDOS = ["2365", "2367", "2368", "2404", "2408"];
-
-/** ¿El código corresponde a una cuenta por pagar válida (proveedores u otros pasivos)? */
-export function isPayableCode(code?: string | null): boolean {
-  const c = String(code ?? "").trim();
-  if (!/^\d+$/.test(c)) return false;
-  if (!(c.startsWith("22") || c.startsWith("23"))) return false;
-  return !PROHIBIDOS.some((p) => c.startsWith(p));
-}
+export { isPayableCode };
 
 export type PayableOrigin =
   | "APRENDIZAJE"       // cuenta confirmada por el usuario para ese proveedor en esta empresa
