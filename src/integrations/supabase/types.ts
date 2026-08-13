@@ -377,11 +377,14 @@ export type Database = {
       }
       bulk_uploads: {
         Row: {
+          attempt_count: number
           company_id: string
           created_at: string
           created_by: string
+          error_code: string | null
           error_count: number
           error_message: string | null
+          error_stage: string | null
           file_name: string
           files_found: number
           finished_at: string | null
@@ -396,11 +399,14 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          attempt_count?: number
           company_id: string
           created_at?: string
           created_by?: string
+          error_code?: string | null
           error_count?: number
           error_message?: string | null
+          error_stage?: string | null
           file_name: string
           files_found?: number
           finished_at?: string | null
@@ -415,11 +421,14 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          attempt_count?: number
           company_id?: string
           created_at?: string
           created_by?: string
+          error_code?: string | null
           error_count?: number
           error_message?: string | null
+          error_stage?: string | null
           file_name?: string
           files_found?: number
           finished_at?: string | null
@@ -987,6 +996,7 @@ export type Database = {
           invoice_id: string | null
           item_id: string | null
           job_type: string
+          lease_until: string | null
           locked_at: string | null
           locked_by: string | null
           max_attempts: number
@@ -1015,6 +1025,7 @@ export type Database = {
           invoice_id?: string | null
           item_id?: string | null
           job_type?: string
+          lease_until?: string | null
           locked_at?: string | null
           locked_by?: string | null
           max_attempts?: number
@@ -1043,6 +1054,7 @@ export type Database = {
           invoice_id?: string | null
           item_id?: string | null
           job_type?: string
+          lease_until?: string | null
           locked_at?: string | null
           locked_by?: string | null
           max_attempts?: number
@@ -1463,6 +1475,7 @@ export type Database = {
           invoice_id: string | null
           item_id: string | null
           job_type: string
+          lease_until: string | null
           locked_at: string | null
           locked_by: string | null
           max_attempts: number

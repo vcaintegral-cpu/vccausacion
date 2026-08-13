@@ -126,6 +126,10 @@ async function updateItem(id: string | null, patch: Record<string, unknown>) {
 async function refreshUpload(uploadId: string | null) {
   if (!uploadId) return;
   const db = serviceClient();
+  const { data: upRow } = await db.from("bulk_uploads").select("status").eq("id", uploadId).limit(1);
+  const actual = ((upRow ?? []) as Array<{ status: string }>)[0]?.status;
+  // Una carga cancelada por el usuario no vuelve a activarse sola.
+  if (actual === "cancelled") return;
   const { data } = await db.from("bulk_upload_items").select("status").eq("upload_id", uploadId);
   const rows = (data ?? []) as Array<{ status: string }>;
   const processed = rows.filter((r) => r.status === "completed").length;
@@ -138,6 +142,7 @@ async function refreshUpload(uploadId: string | null) {
       error_count: errors,
       status: pending > 0 ? "processing" : errors > 0 ? "completed_with_errors" : "completed",
       finished_at: pending > 0 ? null : new Date().toISOString(),
+      ...(pending > 0 ? { error_code: null, error_message: null, error_stage: null } : {}),
     })
     .eq("id", uploadId);
 }
@@ -181,6 +186,7 @@ async function runDocumentJob(job: JobRow) {
       processing_stage: "requiere_ocr",
       locked_at: null,
       locked_by: null,
+      lease_until: null,
       user_message: "El PDF no tiene texto digital: se leerá con OCR al abrir el módulo de causación.",
     });
     await updateItem(job.item_id, {
@@ -249,6 +255,7 @@ async function runDocumentJob(job: JobRow) {
     completed_at: new Date().toISOString(),
     locked_at: null,
     locked_by: null,
+    lease_until: null,
   });
 }
 
@@ -285,6 +292,7 @@ async function failJob(job: JobRow, error: unknown) {
     user_message: mensajeUsuario(job.file_name, message),
     locked_at: null,
     locked_by: null,
+    lease_until: null,
     completed_at: new Date().toISOString(),
   });
 }
