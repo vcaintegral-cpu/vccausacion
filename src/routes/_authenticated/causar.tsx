@@ -31,8 +31,7 @@ import { suggestCostCenter } from "@/lib/cost-center";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
-import { expandInvoiceFiles, processInvoiceFile, resetBulkBatch } from "@/lib/bulk-invoices";
-import { runInvoiceQueue, type QueueProgress } from "@/lib/bulk-queue";
+import { BulkZipProcessor } from "@/components/bulk-zip-processor";
 import {
   ESTADO_LABEL,
   estadoUnico,
