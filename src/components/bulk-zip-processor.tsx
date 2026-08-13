@@ -21,7 +21,7 @@ import {
   type InvoiceReadTrace,
 } from "@/lib/bulk-invoices";
 import type { CompanyKnowledge } from "@/lib/causacion-engine";
-import { createJobs, kickWorker } from "@/lib/jobs-store";
+import { createJobs, ensureUploadJobs, kickWorker } from "@/lib/jobs-store";
 import {
   ACTIVE_STATUSES,
   createUpload,
@@ -34,6 +34,7 @@ import {
   listUploads,
   mensajeUsuario,
   refreshUploadCounters,
+  RESUMABLE_STATUSES,
   sha256,
   updateItem,
   updateUpload,
