@@ -355,13 +355,20 @@ export async function processInvoiceFile(params: {
     retenciones,
     costCenter: centroFactura,
   });
+  const unresolvedAccounts: string[] = [];
   const operationalJournal = journal.map((line) => {
     // Renglones sin cuenta (por ejemplo el IVA aún sin impuesto seleccionado) se guardan
     // tal cual: el borrador exige elegir el impuesto exacto antes de causar.
     if (!line.account_code) return line;
     const resolution = resolveOperationalAccount(config.accounts, line.account_code);
     if (!resolution.valid || !resolution.operationalAccount) {
-      throw new Error(resolution.message ?? `La cuenta ${line.account_code} no es operativa en Siigo.`);
+      // Igual que en la causación individual: una cuenta padre o ambigua no impide
+      // guardar el borrador. Se conserva para que el usuario seleccione el auxiliar
+      // exacto durante la revisión; únicamente la aprobación/exportación la bloquea.
+      unresolvedAccounts.push(
+        resolution.message ?? `La cuenta ${line.account_code} requiere revisión antes de aprobar.`,
+      );
+      return line;
     }
     return {
       ...line,
@@ -482,8 +489,10 @@ export async function processInvoiceFile(params: {
     total,
     score,
     // 95% o más: automática. 80–94%: sugerida y marcada para revisión. Menos de 80%: revisión obligatoria.
-    needsReview: score < 0.95,
-    reason,
+    needsReview: score < 0.95 || unresolvedAccounts.length > 0,
+    reason: unresolvedAccounts.length > 0
+      ? `${reason}${reason ? " " : ""}${unresolvedAccounts.join(" ")}`
+      : reason,
     providerName: header.provider_name ?? null,
     providerNit: header.provider_nit ?? null,
     buyerName: header.buyer_name ?? null,
