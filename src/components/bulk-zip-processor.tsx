@@ -12,7 +12,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cop, fechaHora } from "@/lib/format";
 import { isTransient } from "@/lib/bulk-queue";
-import { processInvoiceFile, readZipContents, resetBulkBatch, type BulkConfig } from "@/lib/bulk-invoices";
+import {
+  BulkInvoiceStageError,
+  processInvoiceFile,
+  readZipContents,
+  resetBulkBatch,
+  type BulkConfig,
+  type InvoiceReadTrace,
+} from "@/lib/bulk-invoices";
 import type { CompanyKnowledge } from "@/lib/causacion-engine";
 import {
   ACTIVE_STATUSES,
@@ -53,8 +60,6 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   const [items, setItems] = useState<BulkItem[]>([]);
   const [running, setRunning] = useState(false);
   const started = useRef<number>(0);
-  // Archivos en memoria de esta sesión (evita descargar de nuevo desde Storage).
-  const cache = useRef(new Map<string, File>());
   const inputRef = useRef<HTMLInputElement>(null);
 
   const historial = useQuery({
@@ -86,9 +91,12 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     const done = items.filter((i) => i.status === "completed").length;
     const failed = items.filter((i) => i.status === "error").length;
     const dup = items.filter((i) => i.status === "duplicate").length;
-    const active = items.filter((i) => i.status === "reading" || i.status === "processing").length;
-    const pending = total - done - failed - dup - active;
-    const terminados = done + failed + dup;
+    const active = items.filter((i) =>
+      ["downloading", "reading", "ocr", "extracting_data", "validating_company", "ready_for_accounting", "processing"].includes(i.status),
+    ).length;
+    const review = items.filter((i) => i.status === "requires_review").length;
+    const pending = total - done - failed - dup - review - active;
+    const terminados = done + failed + dup + review;
     const elapsed = started.current ? Date.now() - started.current : 0;
     const eta = running && terminados > 0 ? Math.round((elapsed / terminados) * (total - terminados)) : null;
     return {
@@ -98,9 +106,9 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       dup,
       active,
       pending,
-      percent: total ? Math.round(((done + failed + dup) / total) * 100) : 0,
+      percent: total ? Math.round(((done + failed + dup + review) / total) * 100) : 0,
       eta,
-      review: items.filter((i) => i.status === "completed" && i.needs_review).length,
+      review: review + items.filter((i) => i.status === "completed" && i.needs_review).length,
     };
   }, [items, running]);
 
@@ -128,21 +136,45 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
           if (index >= targets.length) return;
           const item = targets[index]!;
           for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-            patchItem(item.id, { status: "reading", attempts: attempt, stage: "lectura" });
-            await updateItem(item.id, { status: "reading", attempts: attempt, stage: "lectura" });
+            patchItem(item.id, { status: "downloading", attempts: attempt, stage: "recuperando_pdf" });
+            await updateItem(item.id, { status: "downloading", attempts: attempt, stage: "recuperando_pdf" });
             try {
-              const file =
-                cache.current.get(item.id) ??
-                (item.storage_path ? await fileFromStorage(item.storage_path, item.file_name) : null);
-              if (!file) throw new Error("El archivo del documento no está disponible.");
-              cache.current.set(item.id, file);
-              patchItem(item.id, { status: "processing", stage: "ia" });
+              if (!item.storage_path) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene storage_path.");
+              const stored = await fileFromStorage(item.storage_path, item.file_name, item.storage_bucket ?? "facturas");
+              const storagePatch: Partial<BulkItem> = {
+                download_status: "OK",
+                stored_size_bytes: stored.size,
+                mime_type: stored.mimeType,
+                content_status: "OK",
+              };
+              patchItem(item.id, storagePatch);
+              await updateItem(item.id, storagePatch);
+              const saveTrace = async (stage: string, trace?: InvoiceReadTrace) => {
+                const status = stage as BulkItem["status"];
+                const tracePatch: Partial<BulkItem> = {
+                  status,
+                  stage,
+                  ...(trace ? {
+                    provider_name: trace.providerName,
+                    provider_nit: trace.providerNit,
+                    buyer_name: trace.buyerName,
+                    buyer_nit: trace.buyerNit,
+                    invoice_number: trace.invoiceNumber,
+                    issue_date: trace.issueDate,
+                    extracted_text: trace.text,
+                    read_status: trace.readMode === "texto" ? "Leída (texto)" : "Leída (imagen)",
+                  } : {}),
+                };
+                patchItem(item.id, tracePatch);
+                await updateItem(item.id, tracePatch);
+              };
               const result = await processInvoiceFile({
-                file,
+                file: stored.file,
                 companyId,
                 config,
                 extract: extract as never,
                 storagePath: item.storage_path,
+                onStage: saveTrace,
                 ...(knowledge ? { knowledge } : {}),
               });
               const patch: Partial<BulkItem> = {
@@ -173,11 +205,26 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                 continue;
               }
               const duplicado = /duplicad|ya fue causada|ya existe|repetido/i.test(message);
+              const staged = error instanceof BulkInvoiceStageError ? error : null;
+              const trace = staged?.trace;
+              const storageError = /ERROR_STORAGE|ERROR_ARCHIVO|ERROR_PDF_INVALIDO/.test(message);
               const patch: Partial<BulkItem> = {
-                status: duplicado ? "duplicate" : "error",
-                stage: "error",
+                status: staged?.requiresReview ? "requires_review" : duplicado ? "duplicate" : "error",
+                stage: staged?.stage ?? (storageError ? "recuperando_pdf" : "error"),
                 error_message: message,
                 user_message: mensajeUsuario(item.file_name, message),
+                ...(storageError ? { download_status: "ERROR", content_status: "ERROR" } : {}),
+                ...(trace ? {
+                  provider_name: trace.providerName,
+                  provider_nit: trace.providerNit,
+                  buyer_name: trace.buyerName,
+                  buyer_nit: trace.buyerNit,
+                  invoice_number: trace.invoiceNumber,
+                  issue_date: trace.issueDate,
+                  extracted_text: trace.text,
+                  read_status: trace.readMode === "texto" ? "Leída (texto)" : "Leída (imagen)",
+                  company_validation: staged?.requiresReview ? "REQUIERE_REVISION" : "ERROR",
+                } : {}),
               };
               patchItem(item.id, patch);
               await updateItem(item.id, patch);
@@ -192,7 +239,14 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       const rows = await listItems(uploadRow.id);
       setItems(rows);
       const status = await refreshUploadCounters(uploadRow.id, rows);
-      setUpload({ ...uploadRow, status });
+      setUpload({
+        ...uploadRow,
+        status,
+        files_found: Math.max(uploadRow.files_found, rows.length),
+        pdf_found: Math.max(uploadRow.pdf_found, rows.length),
+        processed_count: rows.filter((r) => r.status === "completed").length,
+        error_count: rows.filter((r) => r.status === "error").length,
+      });
       setRunning(false);
       void historial.refetch();
       onFinished?.();
@@ -276,10 +330,6 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       }
 
       const created = await insertItems(rows);
-      created.forEach((item, i) => {
-        const f = files[i];
-        if (f) cache.current.set(item.id, f);
-      });
       setItems(created);
       await updateUpload(row.id, {
         status: "processing",
@@ -290,7 +340,19 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       setBusy("");
       setSelected([]);
       if (inputRef.current) inputRef.current.value = "";
-      await runItems(row, created.filter((i) => i.status === "pending"));
+      const pending = created.filter((i) => i.status === "pending");
+      if (pending[0]) {
+        await runItems({ ...row, files_found: filesFound, pdf_found: pdfs.length, skipped_files: skipped.length }, [pending[0]]);
+        const first = (await listItems(row.id)).find((i) => i.id === pending[0]?.id);
+        if (!first || first.status !== "completed") {
+          toast.error(`La prueba del primer PDF falló en: ${first?.stage ?? "lectura"}. No se procesaron los demás documentos.`);
+          return;
+        }
+      }
+      await runItems(
+        { ...row, files_found: filesFound, pdf_found: pdfs.length, skipped_files: skipped.length },
+        pending.slice(1),
+      );
     } catch (error) {
       setBusy("");
       const message = error instanceof Error ? error.message : "No fue posible iniciar el procesamiento.";
@@ -310,8 +372,16 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     if (!upload) return;
     const rows = await listItems(upload.id);
     setItems(rows);
-    // Solo los documentos con error: los completados nunca se vuelven a causar.
-    await runItems(upload, rows.filter((i) => i.status === "error"));
+    const failed = rows.filter((i) => i.status !== "completed" && i.status !== "duplicate");
+    const first = failed[0];
+    if (!first) return;
+    await runItems(upload, [first]);
+    const tested = (await listItems(upload.id)).find((i) => i.id === first.id);
+    if (!tested || tested.status !== "completed") {
+      toast.error(`La prueba del primer PDF falló en: ${tested?.stage ?? "lectura"}. No se procesaron los demás documentos.`);
+      return;
+    }
+    await runItems(upload, failed.slice(1));
   }
 
   async function abrirProceso(u: BulkUpload) {
@@ -401,9 +471,9 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                   <RefreshCw className="size-4" /> Continuar procesamiento
                 </Button>
               ) : null}
-              {!running && stats.failed > 0 ? (
+              {!running && stats.failed + stats.review + stats.active > 0 ? (
                 <Button size="sm" variant="outline" onClick={() => void reintentarErrores()}>
-                  <RefreshCw className="size-4" /> Reintentar errores ({stats.failed})
+                  <RefreshCw className="size-4" /> Reintentar pendientes ({stats.failed + stats.review + stats.active})
                 </Button>
               ) : null}
               {stats.total > 0 ? (
@@ -417,7 +487,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
           <div>
             <div className="mb-1 flex justify-between text-xs text-muted-foreground">
               <span>
-                {stats.done + stats.failed + stats.dup} de {stats.total}
+                {stats.done + stats.failed + stats.dup + stats.review} de {stats.total}
               </span>
               <span>
                 {stats.percent}%
@@ -464,7 +534,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                 <span className="flex-1 truncate text-muted-foreground">
                   {i.status === "completed"
                     ? `${i.invoice_number ?? ""} · ${cop(Number(i.invoice_total ?? 0))}`
-                    : (i.user_message ?? "")}
+                    : `${ITEM_LABEL[i.status]}${i.stage ? ` · ${i.stage.replaceAll("_", " ")}` : ""}${i.user_message ? ` · ${i.user_message}` : ""}`}
                 </span>
                 {i.status === "completed" ? (
                   <span className={i.needs_review ? "text-warning" : "text-success"}>
@@ -498,7 +568,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                         <td className="px-2 py-1">{i.buyer_nit ?? "—"}</td>
                         <td className="px-2 py-1">{i.invoice_number ?? "—"}</td>
                         <td className="px-2 py-1">
-                          {i.status === "completed" ? (i.read_status ?? "Leída") : ITEM_LABEL[i.status]}
+                           {i.status === "completed" ? (i.read_status ?? "Leída") : `${ITEM_LABEL[i.status]} · ${(i.stage ?? "sin etapa").replaceAll("_", " ")}`}
                         </td>
                       </tr>
                     ))}

@@ -251,8 +251,12 @@ export type Database = {
           buyer_name: string | null
           buyer_nit: string | null
           company_id: string
+          company_validation: string | null
+          content_status: string | null
           created_at: string
+          download_status: string | null
           error_message: string | null
+          extracted_text: string | null
           file_name: string
           fingerprint: string | null
           id: string
@@ -260,6 +264,7 @@ export type Database = {
           invoice_number: string | null
           invoice_total: number | null
           issue_date: string | null
+          mime_type: string | null
           needs_review: boolean
           position: number
           provider_name: string | null
@@ -269,7 +274,9 @@ export type Database = {
           size_bytes: number
           stage: string | null
           status: string
+          storage_bucket: string
           storage_path: string | null
+          stored_size_bytes: number | null
           updated_at: string
           upload_id: string
           user_message: string | null
@@ -279,8 +286,12 @@ export type Database = {
           buyer_name?: string | null
           buyer_nit?: string | null
           company_id: string
+          company_validation?: string | null
+          content_status?: string | null
           created_at?: string
+          download_status?: string | null
           error_message?: string | null
+          extracted_text?: string | null
           file_name: string
           fingerprint?: string | null
           id?: string
@@ -288,6 +299,7 @@ export type Database = {
           invoice_number?: string | null
           invoice_total?: number | null
           issue_date?: string | null
+          mime_type?: string | null
           needs_review?: boolean
           position?: number
           provider_name?: string | null
@@ -297,7 +309,9 @@ export type Database = {
           size_bytes?: number
           stage?: string | null
           status?: string
+          storage_bucket?: string
           storage_path?: string | null
+          stored_size_bytes?: number | null
           updated_at?: string
           upload_id: string
           user_message?: string | null
@@ -307,8 +321,12 @@ export type Database = {
           buyer_name?: string | null
           buyer_nit?: string | null
           company_id?: string
+          company_validation?: string | null
+          content_status?: string | null
           created_at?: string
+          download_status?: string | null
           error_message?: string | null
+          extracted_text?: string | null
           file_name?: string
           fingerprint?: string | null
           id?: string
@@ -316,6 +334,7 @@ export type Database = {
           invoice_number?: string | null
           invoice_total?: number | null
           issue_date?: string | null
+          mime_type?: string | null
           needs_review?: boolean
           position?: number
           provider_name?: string | null
@@ -325,7 +344,9 @@ export type Database = {
           size_bytes?: number
           stage?: string | null
           status?: string
+          storage_bucket?: string
           storage_path?: string | null
+          stored_size_bytes?: number | null
           updated_at?: string
           upload_id?: string
           user_message?: string | null
