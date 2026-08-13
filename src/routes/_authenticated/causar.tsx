@@ -686,45 +686,6 @@ function Causar() {
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
-  async function seleccionarMasivo(selected: FileList | null) {
-    setBulkProgress(null);
-    if (!selected || selected.length === 0) { setBulkFiles([]); return; }
-    try {
-      const expanded = await expandInvoiceFiles(Array.from(selected));
-      setBulkFiles(expanded);
-      if (expanded.length === 0) toast.error("El archivo no contiene facturas PDF, XML, JPG o PNG.");
-    } catch {
-      toast.error("No fue posible abrir el archivo comprimido.");
-      setBulkFiles([]);
-    }
-  }
-
-  async function procesarMasivo() {
-    if (!companyId || bulkFiles.length === 0 || !config) return;
-    setBulkRunning(true);
-    setBulkProgress(null);
-    // Un lote nuevo: se reinicia el control de documentos repetidos (XML/PDF del mismo documento).
-    resetBulkBatch();
-    // Cola en paralelo: varias facturas a la vez, con reintentos y progreso en vivo.
-    const final = await runInvoiceQueue({
-      items: bulkFiles,
-      nameOf: (f) => f.name,
-      concurrency: 6,
-      onProgress: setBulkProgress,
-      run: async (f) => {
-        const r = await processInvoiceFile({
-          file: f,
-          companyId,
-          config: config as never,
-          extract: extract as never,
-          ...(knowledge ? { knowledge } : {}),
-        });
-        return { ...r, numero: `${r.numero} · ${cop(r.total)}` };
-      },
-    });
-    setBulkRunning(false);
-    toast.success(`${final.done} de ${final.total} facturas causadas como borrador.`);
-  }
 
   /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y la cuenta de su categoría. */
   function elegirProducto(i: number, p: ProductOption) {
