@@ -20,12 +20,17 @@ import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy"
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
-*** placeholder
   computeRetenciones,
   type Line,
   type Rule,
   type TaxRate,
 } from "@/lib/accounting";
+import {
+  applyIvaTreatment,
+  fetchIvaConfig,
+  fetchIvaEvidence,
+  resolveIvaTreatment,
+} from "@/lib/iva-treatment";
 
 const ALLOWED = /\.pdf$/i;
 const IS_ZIP = (name: string, type = "") => /\.zip$/i.test(name) || type.includes("zip");
