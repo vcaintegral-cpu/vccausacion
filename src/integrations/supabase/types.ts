@@ -270,6 +270,7 @@ export type Database = {
           provider_name: string | null
           provider_nit: string | null
           read_status: string | null
+          retryable: boolean
           score: number | null
           size_bytes: number
           stage: string | null
@@ -305,6 +306,7 @@ export type Database = {
           provider_name?: string | null
           provider_nit?: string | null
           read_status?: string | null
+          retryable?: boolean
           score?: number | null
           size_bytes?: number
           stage?: string | null
@@ -340,6 +342,7 @@ export type Database = {
           provider_name?: string | null
           provider_nit?: string | null
           read_status?: string | null
+          retryable?: boolean
           score?: number | null
           size_bytes?: number
           stage?: string | null
@@ -377,11 +380,14 @@ export type Database = {
       }
       bulk_uploads: {
         Row: {
+          attempt_count: number
           company_id: string
           created_at: string
           created_by: string
+          error_code: string | null
           error_count: number
           error_message: string | null
+          error_stage: string | null
           file_name: string
           files_found: number
           finished_at: string | null
@@ -396,11 +402,14 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          attempt_count?: number
           company_id: string
           created_at?: string
           created_by?: string
+          error_code?: string | null
           error_count?: number
           error_message?: string | null
+          error_stage?: string | null
           file_name: string
           files_found?: number
           finished_at?: string | null
@@ -415,11 +424,14 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          attempt_count?: number
           company_id?: string
           created_at?: string
           created_by?: string
+          error_code?: string | null
           error_count?: number
           error_message?: string | null
+          error_stage?: string | null
           file_name?: string
           files_found?: number
           finished_at?: string | null
@@ -972,6 +984,137 @@ export type Database = {
           },
         ]
       }
+      processing_jobs: {
+        Row: {
+          ai_result: Json | null
+          attempt_count: number
+          company_id: string
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          error_code: string | null
+          error_message: string | null
+          error_stack: string | null
+          error_stage: string | null
+          file_name: string
+          http_status: number | null
+          id: string
+          invoice_id: string | null
+          item_id: string | null
+          job_type: string
+          lease_until: string | null
+          locked_at: string | null
+          locked_by: string | null
+          max_attempts: number
+          payload: Json | null
+          priority: number
+          processing_stage: string | null
+          retryable: boolean
+          started_at: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+          updated_at: string
+          upload_id: string | null
+          user_message: string | null
+        }
+        Insert: {
+          ai_result?: Json | null
+          attempt_count?: number
+          company_id: string
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          error_code?: string | null
+          error_message?: string | null
+          error_stack?: string | null
+          error_stage?: string | null
+          file_name?: string
+          http_status?: number | null
+          id?: string
+          invoice_id?: string | null
+          item_id?: string | null
+          job_type?: string
+          lease_until?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          max_attempts?: number
+          payload?: Json | null
+          priority?: number
+          processing_stage?: string | null
+          retryable?: boolean
+          started_at?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          updated_at?: string
+          upload_id?: string | null
+          user_message?: string | null
+        }
+        Update: {
+          ai_result?: Json | null
+          attempt_count?: number
+          company_id?: string
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          error_code?: string | null
+          error_message?: string | null
+          error_stack?: string | null
+          error_stage?: string | null
+          file_name?: string
+          http_status?: number | null
+          id?: string
+          invoice_id?: string | null
+          item_id?: string | null
+          job_type?: string
+          lease_until?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          max_attempts?: number
+          payload?: Json | null
+          priority?: number
+          processing_stage?: string | null
+          retryable?: boolean
+          started_at?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          updated_at?: string
+          upload_id?: string | null
+          user_message?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "processing_jobs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "processing_jobs_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "processing_jobs_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "bulk_upload_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "processing_jobs_upload_id_fkey"
+            columns: ["upload_id"]
+            isOneToOne: false
+            referencedRelation: "bulk_uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       product_categories: {
         Row: {
           account_code: string | null
@@ -1330,6 +1473,49 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      cancel_upload_jobs: { Args: { _upload_id: string }; Returns: number }
+      claim_jobs: {
+        Args: { _job_type?: string; _limit?: number; _worker_id: string }
+        Returns: {
+          ai_result: Json | null
+          attempt_count: number
+          company_id: string
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          error_code: string | null
+          error_message: string | null
+          error_stack: string | null
+          error_stage: string | null
+          file_name: string
+          http_status: number | null
+          id: string
+          invoice_id: string | null
+          item_id: string | null
+          job_type: string
+          lease_until: string | null
+          locked_at: string | null
+          locked_by: string | null
+          max_attempts: number
+          payload: Json | null
+          priority: number
+          processing_stage: string | null
+          retryable: boolean
+          started_at: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+          updated_at: string
+          upload_id: string | null
+          user_message: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "processing_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       history_provider_accounts: {
         Args: { _company_id: string; _limit?: number; _nits: string[] }
         Returns: {
@@ -1349,6 +1535,11 @@ export type Database = {
         }[]
       }
       is_company_member: { Args: { _company_id: string }; Returns: boolean }
+      release_stale_jobs: { Args: { _minutes?: number }; Returns: number }
+      resume_upload_jobs: {
+        Args: { _include_errors?: boolean; _upload_id: string }
+        Returns: number
+      }
     }
     Enums: {
       [_ in never]: never
