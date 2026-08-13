@@ -9,10 +9,10 @@ import { Button } from "@/components/ui/button";
 import { fechaHora } from "@/lib/format";
 import {
   cancelUpload,
+  ensureUploadJobs,
   JOB_LABEL,
   kickWorker,
   listJobs,
-  resumeUpload,
   retryJob,
   summarize,
   type ProcessingJob,
@@ -108,13 +108,17 @@ function Procesos() {
       ) : (
         [...lotes.entries()].map(([uploadId, lote]) => {
           const activos = lote.filter((j) => ACTIVOS.includes(j.status)).length;
-          const hechos = lote.length - activos;
+          const pendientes = lote.filter((j) => j.status === "pending" || j.status === "needs_ocr").length;
+          const errores = lote.filter((j) => j.status === "error").length;
+          const hechos = lote.length - activos - pendientes;
+          const nombre = lote[0]?.file_name ?? "";
           return (
             <section key={uploadId} className="space-y-3 rounded-lg border bg-card p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-sm font-medium">
-                    Lote {uploadId.slice(0, 8)} · {hechos}/{lote.length} terminados
+                    {uploadId === "sueltos" ? "Documentos sueltos" : `Lote ${uploadId.slice(0, 8)}`}
+                    {nombre ? ` · ${nombre}` : ""} · {hechos}/{lote.length} terminados · {pendientes} pendientes · {errores} con error
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {activos > 0 ? (
@@ -122,7 +126,9 @@ function Procesos() {
                         <Loader2 className="size-3 animate-spin" /> {activos} en proceso
                       </span>
                     ) : (
-                      "Sin trabajos activos"
+                      pendientes > 0
+                        ? "En espera de un worker: puedes reanudar este lote sin afectar a los demás."
+                        : "Sin trabajos activos"
                     )}
                   </p>
                 </div>
@@ -131,7 +137,14 @@ function Procesos() {
                     <Button variant="outline" size="sm" onClick={() => void accion(() => cancelUpload(uploadId), "Lote cancelado.")}>
                       <StopCircle className="size-4" /> Cancelar
                     </Button>
-                    <Button size="sm" onClick={() => void accion(() => resumeUpload(uploadId, true), "Lote reanudado.")}>
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        void accion(async () => {
+                          await ensureUploadJobs(uploadId, true);
+                        }, "Lote reanudado.")
+                      }
+                    >
                       <PlayCircle className="size-4" /> Reanudar
                     </Button>
                   </div>
