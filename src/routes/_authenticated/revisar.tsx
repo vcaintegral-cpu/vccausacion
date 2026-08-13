@@ -215,6 +215,10 @@ function Revisar() {
     [lines, impuestosIva, puc],
   );
 
+  // Centros de costo condicionales por empresa y por cuenta contable.
+  const { data: costPolicy } = useCostCenterPolicy(companyId);
+  const usaCentros = costCentersEnabled(costPolicy ?? null);
+
   const erroresImpuestos = useMemo(() => {
     const out = [...ivaGroups.errors];
     lines.forEach((l, i) => {
@@ -258,10 +262,6 @@ function Revisar() {
     });
   }, [journal, data?.accounts]);
   const t = totals(operationalJournal);
-
-  // Centros de costo condicionales por empresa y por cuenta contable.
-  const { data: costPolicy } = useCostCenterPolicy(companyId);
-  const usaCentros = costCentersEnabled(costPolicy ?? null);
 
   const errores = useMemo(() => {
     const e: string[] = [];
