@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { createCompanyWithDefaults } from "@/lib/seed";
 import { setActiveCompany, useActiveCompany } from "@/lib/active-company";
 import { clearCostCenterPolicyCache } from "@/lib/cost-center-config";
+import { clearPayableCache, isPayableCode } from "@/lib/payable-account";
 import { useCompanies } from "@/components/app-shell";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
@@ -76,6 +77,63 @@ function CostCenterConfig({ company }: { company: { id: string; uses_cost_center
           </span>
         </p>
       )}
+    </div>
+  );
+}
+
+/** Cuenta genérica de cuentas por pagar de la empresa (se usa solo si el proveedor no tiene histórico). */
+function PayableAccountConfig({ company }: { company: { id: string; default_payable_account?: string | null } }) {
+  const queryClient = useQueryClient();
+  const guardado = (company.default_payable_account ?? "") as string;
+  const [valor, setValor] = useState(guardado);
+  const [saving, setSaving] = useState(false);
+  const valido = valor.trim() === "" || isPayableCode(valor);
+
+  async function guardar() {
+    if (!valido) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from("companies")
+        .update({ default_payable_account: valor.trim() || null })
+        .eq("id", company.id);
+      if (error) throw error;
+      clearPayableCache(company.id);
+      await queryClient.invalidateQueries({ queryKey: ["companies"] });
+      await queryClient.invalidateQueries({ queryKey: ["payable-account"] });
+      toast.success("Cuenta genérica de cuentas por pagar actualizada.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No fue posible guardar la cuenta.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-border bg-muted/30 p-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Cuenta por pagar</p>
+      <div className="mt-2 flex flex-wrap items-end gap-2">
+        <div className="space-y-1.5">
+          <Label htmlFor={`pay-${company.id}`} className="text-xs">
+            Cuenta genérica de cuentas por pagar
+          </Label>
+          <Input
+            id={`pay-${company.id}`}
+            className="w-40 font-mono"
+            placeholder="220505"
+            value={valor}
+            onChange={(e) => setValor(e.target.value)}
+          />
+        </div>
+        <Button size="sm" disabled={saving || !valido || valor === guardado} onClick={() => void guardar()}>
+          Guardar
+        </Button>
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Solo se usa cuando el proveedor no tiene histórico en esta empresa. Debe ser una cuenta de pasivo de los
+        grupos 22 o 23 (nunca bancos, caja, impuestos ni retenciones).
+      </p>
+      {!valido && <p className="mt-1 text-xs text-destructive">La cuenta debe empezar por 22 o 23 y no ser de impuestos ni retenciones.</p>}
     </div>
   );
 }
@@ -183,6 +241,7 @@ function Empresas() {
             </div>
             </div>
             <CostCenterConfig company={c} />
+            <PayableAccountConfig company={c} />
           </li>
         ))}
         {(companies ?? []).length === 0 && (
