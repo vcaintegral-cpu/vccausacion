@@ -66,18 +66,88 @@ export type JobRowInsert = {
   priority?: number;
 };
 
-/** Crea un trabajo independiente por cada PDF del comprimido. */
+/** Prioridad de la cola: menor número = se atiende antes. */
+export const JOB_PRIORITY = { high: 1, normal: 5, low: 9 } as const;
+
+/**
+ * Crea un trabajo independiente por cada documento, sin duplicar los que ya existen.
+ * Se evita ON CONFLICT: la comprobación previa por item_id hace la operación idempotente
+ * y un fallo puntual de un lote nunca detiene a las demás cargas.
+ */
 export async function createJobs(rows: JobRowInsert[]) {
-  if (rows.length === 0) return;
-  for (let i = 0; i < rows.length; i += 200) {
-    const { error } = await supabase
+  if (rows.length === 0) return 0;
+  const ids = rows.map((r) => r.item_id);
+  const existentes = new Set<string>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await supabase
       .from("processing_jobs")
-      .upsert(rows.slice(i, i + 200).map((r) => ({ job_type: "document_processing", ...r })) as never, {
-        onConflict: "item_id,job_type",
-        ignoreDuplicates: true,
-      });
-    if (error) throw new Error(error.message);
+      .select("item_id")
+      .in("item_id", ids.slice(i, i + 200));
+    for (const row of data ?? []) {
+      const id = (row as { item_id: string | null }).item_id;
+      if (id) existentes.add(id);
+    }
   }
+  const nuevos = rows
+    .filter((r) => !existentes.has(r.item_id))
+    .map((r) => ({ job_type: "document_processing", priority: JOB_PRIORITY.normal, ...r }));
+  let creados = 0;
+  for (let i = 0; i < nuevos.length; i += 200) {
+    const lote = nuevos.slice(i, i + 200);
+    const { error } = await supabase.from("processing_jobs").insert(lote as never);
+    if (error) {
+      // Un choque con un trabajo creado en paralelo no es un fallo de la carga.
+      if (!/duplicate key|already exists/i.test(error.message)) throw new Error(error.message);
+      continue;
+    }
+    creados += lote.length;
+  }
+  return creados;
+}
+
+/**
+ * Reanuda una carga sin volver a subir el ZIP: crea los trabajos que falten para
+ * los documentos pendientes y reencola los que quedaron abandonados o con error.
+ * Solo afecta al upload indicado; las demás cargas siguen su curso.
+ */
+export async function ensureUploadJobs(uploadId: string, incluirErrores = true) {
+  const { data: items, error } = await supabase
+    .from("bulk_upload_items")
+    .select("id, company_id, file_name, storage_bucket, storage_path, status")
+    .eq("upload_id", uploadId);
+  if (error) throw new Error(error.message);
+
+  const rows = (items ?? []) as unknown as Array<{
+    id: string;
+    company_id: string;
+    file_name: string;
+    storage_bucket: string | null;
+    storage_path: string | null;
+    status: string;
+  }>;
+  const recuperables = rows.filter(
+    (i) =>
+      i.storage_path &&
+      (["pending", "downloading", "reading", "ocr", "extracting_data", "validating_company", "ready_for_accounting", "processing"].includes(
+        i.status,
+      ) ||
+        (incluirErrores && i.status === "error")),
+  );
+
+  const creados = await createJobs(
+    recuperables.map((i) => ({
+      company_id: i.company_id,
+      upload_id: uploadId,
+      item_id: i.id,
+      file_name: i.file_name,
+      storage_bucket: i.storage_bucket ?? "facturas",
+      storage_path: i.storage_path,
+    })),
+  );
+
+  // Reencola los trabajos ya existentes de ESTA carga que quedaron detenidos.
+  await resumeUpload(uploadId, incluirErrores);
+  return { creados, recuperables: recuperables.length };
 }
 
 /** Despierta al worker del backend (no mantiene vivo el proceso: solo lo arranca). */
