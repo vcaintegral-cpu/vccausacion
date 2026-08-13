@@ -21,7 +21,7 @@ import {
   type InvoiceReadTrace,
 } from "@/lib/bulk-invoices";
 import type { CompanyKnowledge } from "@/lib/causacion-engine";
-import { createJobs, ensureUploadJobs, kickWorker } from "@/lib/jobs-store";
+import { createJobs, ensureUploadJobs, kickWorker, retryUploadErrors } from "@/lib/jobs-store";
 import {
   ACTIVE_STATUSES,
   createUpload,
@@ -117,6 +117,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       ["downloading", "reading", "ocr", "extracting_data", "validating_company", "ready_for_accounting", "processing"].includes(i.status),
     ).length;
     const review = items.filter((i) => i.status === "requires_review").length;
+    const retryableErrors = items.filter((i) => i.status === "error" && i.retryable === true).length;
     const pending = total - done - failed - dup - review - active;
     const terminados = done + failed + dup + review;
     const elapsed = started.current ? Date.now() - started.current : 0;
@@ -131,6 +132,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       percent: total ? Math.round(((done + failed + dup + review) / total) * 100) : 0,
       eta,
       review: review + items.filter((i) => i.status === "completed" && i.needs_review).length,
+      retryableErrors,
     };
   }, [items, running]);
 
@@ -465,18 +467,22 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
 
   async function reintentarErrores() {
     if (!upload) return;
-    const rows = await listItems(upload.id);
-    setItems(rows);
-    const failed = rows.filter((i) => i.status !== "completed" && i.status !== "duplicate");
-    const first = failed[0];
-    if (!first) return;
-    await runItems(upload, [first]);
-    const tested = (await listItems(upload.id)).find((i) => i.id === first.id);
-    if (!tested || tested.status !== "completed") {
-      toast.error(`La prueba del primer PDF falló en: ${tested?.stage ?? "lectura"}. No se procesaron los demás documentos.`);
-      return;
+    setBusy("Reencolando errores…");
+    try {
+      const count = await retryUploadErrors(upload.id);
+      if (count === 0) {
+        toast.error("No hay errores marcados como reintentables.");
+        return;
+      }
+      await updateUpload(upload.id, { status: "processing", finished_at: null });
+      setItems(await listItems(upload.id));
+      setUpload({ ...upload, status: "processing" });
+      toast.success(`${count} errores reencolados sin duplicar documentos ni trabajos.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible reintentar los errores.");
+    } finally {
+      setBusy("");
     }
-    await runItems(upload, failed.slice(1));
   }
 
   async function abrirProceso(u: BulkUpload) {
@@ -615,9 +621,9 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                   <RefreshCw className="size-4" /> Continuar procesamiento
                 </Button>
               ) : null}
-              {!running && stats.failed + stats.review + stats.active > 0 ? (
+              {!running && stats.retryableErrors > 0 ? (
                 <Button size="sm" variant="outline" onClick={() => void reintentarErrores()}>
-                  <RefreshCw className="size-4" /> Reintentar pendientes ({stats.failed + stats.review + stats.active})
+                  <RefreshCw className="size-4" /> Reintentar errores ({stats.retryableErrors})
                 </Button>
               ) : null}
               {stats.total > 0 ? (
