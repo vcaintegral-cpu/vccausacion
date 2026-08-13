@@ -21,6 +21,16 @@ import {
   type LineDecisions,
 } from "@/lib/causacion-engine";
 import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
+import {
+  applyIvaTreatment,
+  fetchIvaEvidence,
+  IVA_TREATMENT_LABEL,
+  learnIvaTreatment,
+  resolveIvaTreatment,
+  useIvaConfig,
+  type IvaTreatment,
+  type IvaTreatmentDecision,
+} from "@/lib/iva-treatment";
 import { AccountCombobox } from "@/components/account-combobox";
 import { CUENTA_PADRE_MSG, resolveOperationalAccount, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
 import { costCentersEnabled, costCenterForCompany, useCostCenterPolicy, validateCostCenter } from "@/lib/cost-center-config";
@@ -33,6 +43,7 @@ import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validat
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { BulkZipProcessor } from "@/components/bulk-zip-processor";
+import { IvaTreatmentPanel } from "@/components/iva-treatment-panel";
 import {
   ESTADO_LABEL,
   estadoUnico,
@@ -536,6 +547,46 @@ function Causar() {
 
   // Centros de costo: dependen de la configuración de la empresa y de la cuenta contable.
   const { data: costPolicy } = useCostCenterPolicy(companyId);
+
+  // Tratamiento contable del IVA: descontable, mayor valor del gasto o mayor valor del costo.
+  // No cambia el cálculo del IVA (módulo de impuestos), solo la cuenta donde se contabiliza.
+  const { data: ivaConfig } = useIvaConfig(companyId);
+  const { data: ivaEvidence } = useQuery({
+    queryKey: ["iva-evidence", companyId, header.provider_nit ?? ""],
+    enabled: !!companyId,
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => fetchIvaEvidence(companyId!, header.provider_nit),
+  });
+  const [ivaOverride, setIvaOverride] = useState<{ treatment: IvaTreatment; account: string } | null>(null);
+  const ivaDecision = useMemo<IvaTreatmentDecision | null>(() => {
+    if (!ivaConfig || !ivaEvidence) return null;
+    return resolveIvaTreatment({
+      config: ivaConfig,
+      evidence: ivaEvidence,
+      providerNit: header.provider_nit,
+      expenseAccounts: [...new Set(lines.map((l) => String(l.account_code ?? "").trim()).filter(Boolean))],
+      concepts: lines.map((l) => l.description ?? ""),
+      puc: (config?.accounts ?? []) as PucAccount[],
+      taxAccount: ivaGroups.groups[0]?.account_code ?? null,
+    });
+  }, [ivaConfig, ivaEvidence, header.provider_nit, lines, config?.accounts, ivaGroups.groups]);
+  const ivaFinal = useMemo<IvaTreatmentDecision | null>(() => {
+    if (!ivaDecision) return null;
+    if (!ivaOverride) return ivaDecision;
+    const puc = (config?.accounts ?? []) as PucAccount[];
+    return {
+      ...ivaDecision,
+      treatment: ivaOverride.treatment,
+      account: ivaOverride.account,
+      accountName: puc.find((p) => p.code === ivaOverride.account)?.name ?? "",
+      origin: "CORRECCION",
+      reason: "Tratamiento del IVA corregido manualmente en esta factura.",
+      confidence: 1,
+      warning: null,
+    };
+  }, [ivaDecision, ivaOverride, config?.accounts]);
+  const ivaDetalle = useMemo(() => applyIvaTreatment(ivaGroups.groups, ivaFinal), [ivaGroups.groups, ivaFinal]);
+
   const usaCentros = costCentersEnabled(costPolicy ?? null);
   const erroresCentro = useMemo(
     () =>
@@ -561,10 +612,10 @@ function Causar() {
         impoconsumo: Number(header.impoconsumo || 0),
         retenciones,
         costCenter: costCenterForCompany(costPolicy ?? null, header.cost_center),
-        ivaDetalle: ivaGroups.groups,
+        ivaDetalle: ivaDetalle,
         payableAccount: payable,
       }),
-    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaGroups, costPolicy, payable],
+    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaDetalle, costPolicy, payable],
   );
   const operationalJournal = useMemo(() => {
     const puc = (config?.accounts ?? []) as PucAccount[];
@@ -921,6 +972,20 @@ function Causar() {
           puc: (config?.accounts ?? []) as PucAccount[],
           autoLearning,
         });
+        // Aprendizaje del tratamiento del IVA con el contexto de la operación
+        // (proveedor + cuenta de gasto/costo + concepto), nunca como regla global.
+        if (ivaFinal && ivaTotal > 0) {
+          const cuentaIva = ivaFinal.account || ivaDetalle[0]?.account_code || "";
+          await learnIvaTreatment({
+            companyId,
+            userId: userId ?? null,
+            providerNit: header.provider_nit,
+            concept: lines[0]?.description ?? null,
+            expenseAccount: lines[0]?.account_code ?? null,
+            ivaAccount: cuentaIva,
+            treatment: ivaFinal.treatment,
+          });
+        }
       }
 
       toast.success(status === "aprobado" ? "Comprobante aprobado." : "Comprobante guardado en borrador.");
@@ -1387,6 +1452,15 @@ function Causar() {
               />
             </dl>
           </div>
+
+          <IvaTreatmentPanel
+            decision={ivaFinal}
+            ivaTotal={ivaTotal}
+            accounts={(config?.accounts ?? []) as PucAccount[]}
+            overridden={!!ivaOverride}
+            onChange={(v) => setIvaOverride(v)}
+            onReset={() => setIvaOverride(null)}
+          />
 
           <div className="overflow-hidden rounded-lg border border-border bg-card">
             <div className="border-b border-border px-5 py-3 text-sm font-semibold">Comprobante contable</div>
