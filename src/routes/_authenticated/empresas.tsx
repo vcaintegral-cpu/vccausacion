@@ -141,6 +141,7 @@ function PayableAccountConfig({ company }: { company: { id: string; default_paya
 
 export const Route = createFileRoute("/_authenticated/empresas")({
   head: () => ({
+  head: () => ({
     meta: [
       { title: "Empresas y configuración contable" },
       { name: "description", content: "Administra tus empresas, la cuenta por pagar genérica, los centros de costo y el tratamiento contable del IVA en compras." },
