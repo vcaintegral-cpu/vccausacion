@@ -476,6 +476,39 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
           </ul>
 
           {terminado ? (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold">Verificación de lectura por documento</p>
+              <div className="max-h-72 overflow-auto rounded-md border border-border">
+                <table className="w-full text-[11px]">
+                  <thead className="bg-muted/50 text-left">
+                    <tr>
+                      {["Archivo", "Proveedor", "Comprador", "NIT comprador", "Factura", "Estado"].map((h) => (
+                        <th key={h} className="px-2 py-1 font-medium">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((i) => (
+                      <tr key={i.id} className="border-t border-border">
+                        <td className="max-w-44 truncate px-2 py-1">{i.file_name}</td>
+                        <td className="max-w-32 truncate px-2 py-1">{i.provider_name ?? "—"}</td>
+                        <td className="max-w-32 truncate px-2 py-1">{i.buyer_name ?? "—"}</td>
+                        <td className="px-2 py-1">{i.buyer_nit ?? "—"}</td>
+                        <td className="px-2 py-1">{i.invoice_number ?? "—"}</td>
+                        <td className="px-2 py-1">
+                          {i.status === "completed" ? (i.read_status ?? "Leída") : ITEM_LABEL[i.status]}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+
+          {terminado ? (
             <p className="text-xs text-muted-foreground">
               Procesamiento terminado · Archivos en el comprimido: {upload.files_found} · PDF encontrados:{" "}
               {upload.pdf_found} · Procesados: {stats.done} · Con error: {stats.failed} · No compatibles:{" "}
