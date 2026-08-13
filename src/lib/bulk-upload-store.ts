@@ -80,6 +80,7 @@ export type BulkItem = {
   content_status?: string | null;
   extracted_text?: string | null;
   company_validation?: string | null;
+  retryable?: boolean;
 };
 
 export const ACTIVE_STATUSES: UploadStatus[] = [

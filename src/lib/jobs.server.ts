@@ -29,6 +29,12 @@ export type JobRow = {
   ai_result: unknown;
 };
 
+type TechnicalError = {
+  message: string;
+  stack: string | null;
+  httpStatus: number | null;
+};
+
 type QueryResult = { data: unknown; error: { message: string } | null; count?: number | null };
 type Builder = {
   select: (cols?: string, opts?: { count?: "exact"; head?: boolean }) => Builder;
@@ -106,12 +112,35 @@ async function loadConfig(companyId: string): Promise<BulkConfig> {
 /** Lee el texto digital del PDF en el servidor (sin renderizar, sin OCR). */
 async function readPdfText(bytes: Uint8Array): Promise<string> {
   try {
-    const pdf = await getDocumentProxy(bytes);
+    // El lector puede transferir y desacoplar el buffer recibido. Conservamos
+    // `bytes` intacto para entregarlo después al procesador común.
+    const pdf = await getDocumentProxy(bytes.slice());
     const { text } = await extractText(pdf, { mergePages: true });
     return String(text ?? "").replace(/[ \t]+/g, " ").trim();
   } catch {
     return "";
   }
+}
+
+function technicalError(error: unknown): TechnicalError {
+  if (!(error instanceof Error)) return { message: String(error), stack: null, httpStatus: null };
+  const candidate = error as Error & { status?: unknown; statusCode?: unknown; cause?: { status?: unknown } };
+  const rawStatus = candidate.status ?? candidate.statusCode ?? candidate.cause?.status;
+  return {
+    message: error.message,
+    stack: error.stack ?? null,
+    httpStatus: typeof rawStatus === "number" ? rawStatus : null,
+  };
+}
+
+function technicalErrorCode(message: string, stage: string, duplicate: boolean) {
+  if (duplicate) return "DUPLICATE";
+  if (/detached ArrayBuffer/i.test(message)) return "DETACHED_ARRAY_BUFFER";
+  if (/ERROR_STORAGE/i.test(message)) return "STORAGE_DOWNLOAD_ERROR";
+  if (/ERROR_ARCHIVO_NO_ENCONTRADO/i.test(message)) return "STORAGE_PATH_MISSING";
+  if (/ERROR_ARCHIVO_VACIO/i.test(message)) return "EMPTY_FILE";
+  if (/ERROR_PDF_INVALIDO/i.test(message)) return "INVALID_PDF_SIGNATURE";
+  return stage.toUpperCase();
 }
 
 async function updateJob(id: string, patch: Record<string, unknown>) {
@@ -165,6 +194,9 @@ async function runDocumentJob(job: JobRow) {
   if (error || !blob) throw new BulkInvoiceStageError(`ERROR_STORAGE: ${error?.message ?? "sin archivo"}`, "reading");
   const bytes = new Uint8Array(await blob.arrayBuffer());
   if (bytes.length === 0) throw new BulkInvoiceStageError("ERROR_ARCHIVO_VACIO: el PDF guardado no tiene datos.", "reading");
+  if (bytes.length < 5 || new TextDecoder().decode(bytes.slice(0, 5)) !== "%PDF-") {
+    throw new BulkInvoiceStageError("ERROR_PDF_INVALIDO: el archivo recuperado no contiene la firma PDF.", "reading");
+  }
 
   await updateJob(job.id, { status: "reading", processing_stage: "leyendo_pdf" });
   await updateItem(job.item_id, {
@@ -260,17 +292,36 @@ async function runDocumentJob(job: JobRow) {
 }
 
 async function failJob(job: JobRow, error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
+  const detail = technicalError(error);
+  const message = detail.message;
   const duplicado = /duplicad|ya fue causada|ya existe/i.test(message);
   const agotado = job.attempt_count >= job.max_attempts;
   const stage = error instanceof BulkInvoiceStageError ? error.stage : "processing";
   const requiereRevision = error instanceof BulkInvoiceStageError && error.requiresReview;
+  const retryable = !duplicado && !requiereRevision && stage !== "validating_company";
+  const code = technicalErrorCode(message, stage, duplicado);
+
+  console.error("processing_job_failed", {
+    upload_id: job.upload_id,
+    document_id: job.item_id,
+    job_id: job.id,
+    file_name: job.file_name,
+    storage_path: job.storage_path,
+    company_id: job.company_id,
+    processing_stage: stage,
+    attempt_count: job.attempt_count,
+    timestamp: new Date().toISOString(),
+    error_message: message,
+    error_stack: detail.stack,
+    http_status: detail.httpStatus,
+  });
 
   await updateItem(job.item_id, {
     status: duplicado ? "duplicate" : requiereRevision ? "requires_review" : "error",
     stage,
     error_message: message.slice(0, 1000),
-    user_message: mensajeUsuario(job.file_name, message),
+    user_message: `Etapa: ${stage} · Código: ${code} · ${mensajeUsuario(job.file_name, message)}`,
+    retryable,
     ...(error instanceof BulkInvoiceStageError && error.trace
       ? {
           provider_name: error.trace.providerName,
@@ -287,9 +338,13 @@ async function failJob(job: JobRow, error: unknown) {
     // Un duplicado o un rechazo de negocio no se reintenta.
     status: duplicado ? "duplicate" : agotado || duplicado || stage === "validating_company" ? "error" : "pending",
     processing_stage: stage,
-    error_code: duplicado ? "DUPLICATE" : stage.toUpperCase(),
+    error_code: code,
     error_message: message.slice(0, 1000),
-    user_message: mensajeUsuario(job.file_name, message),
+    error_stage: stage,
+    error_stack: detail.stack?.slice(0, 8000) ?? null,
+    http_status: detail.httpStatus,
+    retryable,
+    user_message: `Etapa: ${stage} · Código: ${code} · ${mensajeUsuario(job.file_name, message)}`,
     locked_at: null,
     locked_by: null,
     lease_until: null,
