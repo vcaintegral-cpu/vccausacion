@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, FileUp, Layers, Loader2, Save, Sparkles, Trash2, XCircle } from "lucide-react";
+import { FileUp, Loader2, Save, Sparkles, Trash2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { ITEM_TYPES, normalizeItemType } from "@/lib/item-type";
