@@ -12,7 +12,19 @@ export type UploadStatus =
   | "failed"
   | "cancelled";
 
-export type ItemStatus = "pending" | "reading" | "processing" | "completed" | "error" | "duplicate";
+export type ItemStatus =
+  | "pending"
+  | "downloading"
+  | "reading"
+  | "ocr"
+  | "extracting_data"
+  | "validating_company"
+  | "ready_for_accounting"
+  | "processing"
+  | "requires_review"
+  | "completed"
+  | "error"
+  | "duplicate";
 
 export type BulkUpload = {
   id: string;
@@ -57,6 +69,13 @@ export type BulkItem = {
   buyer_nit?: string | null;
   issue_date?: string | null;
   read_status?: string | null;
+  storage_bucket?: string;
+  download_status?: string | null;
+  stored_size_bytes?: number | null;
+  mime_type?: string | null;
+  content_status?: string | null;
+  extracted_text?: string | null;
+  company_validation?: string | null;
 };
 
 export const ACTIVE_STATUSES: UploadStatus[] = ["uploaded", "extracting", "processing", "completed_with_errors"];
@@ -73,8 +92,14 @@ export const UPLOAD_LABEL: Record<UploadStatus, string> = {
 
 export const ITEM_LABEL: Record<ItemStatus, string> = {
   pending: "Pendiente",
+  downloading: "Recuperando PDF",
   reading: "Leyendo",
+  ocr: "Leyendo imagen",
+  extracting_data: "Extrayendo datos",
+  validating_company: "Validando empresa",
+  ready_for_accounting: "Lista para causar",
   processing: "Procesando",
+  requires_review: "Requiere revisión",
   completed: "Procesada",
   error: "Error",
   duplicate: "Duplicada",
@@ -179,7 +204,9 @@ export async function existingFingerprints(companyId: string, hashes: string[]):
 export async function refreshUploadCounters(uploadId: string, items: BulkItem[]) {
   const processed = items.filter((i) => i.status === "completed").length;
   const errors = items.filter((i) => i.status === "error").length;
-  const pending = items.filter((i) => i.status === "pending" || i.status === "reading" || i.status === "processing").length;
+  const pending = items.filter((i) =>
+    ["pending", "downloading", "reading", "ocr", "extracting_data", "validating_company", "ready_for_accounting", "processing"].includes(i.status),
+  ).length;
   const status: UploadStatus = pending > 0 ? "processing" : errors > 0 ? "completed_with_errors" : "completed";
   await updateUpload(uploadId, {
     processed_count: processed,
@@ -190,10 +217,24 @@ export async function refreshUploadCounters(uploadId: string, items: BulkItem[])
   return status;
 }
 
-export async function fileFromStorage(path: string, name: string): Promise<File> {
-  const { data, error } = await supabase.storage.from("facturas").download(path);
-  if (error || !data) throw new Error(error?.message ?? "No fue posible recuperar el archivo guardado.");
-  return new File([data], name, { type: "application/pdf" });
+export type StoredPdf = {
+  file: File;
+  bucket: string;
+  path: string;
+  size: number;
+  mimeType: string;
+};
+
+export async function fileFromStorage(path: string, name: string, bucket = "facturas"): Promise<StoredPdf> {
+  if (!path) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene una ruta de almacenamiento.");
+  const { data, error } = await supabase.storage.from(bucket).download(path);
+  if (error || !data) throw new Error(`ERROR_STORAGE: ${error?.message ?? "no fue posible recuperar el PDF"}`);
+  if (data.size === 0) throw new Error("ERROR_ARCHIVO_VACIO: el PDF guardado no contiene datos.");
+  const bytes = new Uint8Array(await data.slice(0, 5).arrayBuffer());
+  const validPdf = new TextDecoder().decode(bytes) === "%PDF-";
+  if (!validPdf) throw new Error("ERROR_PDF_INVALIDO: el archivo recuperado no contiene un PDF válido.");
+  const mimeType = data.type || "application/pdf";
+  return { file: new File([data], name, { type: "application/pdf" }), bucket, path, size: data.size, mimeType };
 }
 
 export async function sha256(bytes: Uint8Array): Promise<string> {
@@ -209,7 +250,10 @@ export async function sha256(bytes: Uint8Array): Promise<string> {
 /** Mensaje sencillo para el usuario final; el detalle técnico queda en error_message. */
 export function mensajeUsuario(fileName: string, error: string): string {
   if (/duplicad|ya fue causada|ya existe/i.test(error)) return `${fileName}: este documento ya fue procesado.`;
-  if (/empresa/i.test(error)) return `${fileName}: la factura no pertenece a la empresa activa.`;
+  if (/identificar el comprador/i.test(error)) return "No fue posible identificar el comprador de la factura.";
+  if (/no pertenece|no coincide/i.test(error)) return "Comprador diferente a la empresa activa.";
+  if (/ERROR_STORAGE|ERROR_ARCHIVO_NO_ENCONTRADO/i.test(error)) return "Error al recuperar PDF.";
+  if (/ERROR_ARCHIVO_VACIO|ERROR_PDF_INVALIDO/i.test(error)) return "El contenido recuperado no es un PDF válido.";
   if (/pdf|ilegible|dañad|contraseñ/i.test(error)) return `${fileName} no pudo ser leída. Puede reintentarse.`;
   return `${fileName} no pudo ser procesada. Puede reintentarse.`;
 }

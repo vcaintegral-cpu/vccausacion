@@ -4,12 +4,9 @@
  * La IA solo extrae los datos; la decisión la toma esta regla.
  */
 
-/** Deja solo dígitos y elimina el dígito de verificación cuando viene separado. */
+/** Deja solo dígitos. El dígito de verificación se conserva para comparar formatos equivalentes. */
 export function normalizeNit(value?: string | null): string {
-  const raw = String(value ?? "").trim();
-  if (!raw) return "";
-  const sinDv = raw.includes("-") ? raw.slice(0, raw.lastIndexOf("-")) : raw;
-  return sinDv.replace(/\D/g, "");
+  return String(value ?? "").replace(/\D/g, "");
 }
 
 /** Compara dos NIT ignorando puntos, guiones y el dígito de verificación. */

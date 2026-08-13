@@ -14,9 +14,7 @@ import { findExistingInvoice, mensajeDuplicado } from "@/lib/invoice-duplicates"
 import {
   checkInvoiceCompany,
   motivoBloqueoEmpresa,
-  normalizeNit,
   sameNit,
-  textoContieneNit,
 } from "@/lib/company-validation";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 import {
@@ -121,6 +119,31 @@ export type BulkConfig = {
 
 type ExtractFn = (args: { data: { fileName: string; mimeType: string } & Record<string, unknown> }) => Promise<unknown>;
 
+export type InvoiceReadTrace = {
+  providerName: string | null;
+  providerNit: string | null;
+  buyerName: string | null;
+  buyerNit: string | null;
+  invoiceNumber: string | null;
+  issueDate: string | null;
+  text: string | null;
+  readMode: "texto" | "imagen";
+};
+
+export class BulkInvoiceStageError extends Error {
+  readonly stage: "reading" | "extracting_data" | "validating_company";
+  readonly trace?: InvoiceReadTrace;
+  readonly requiresReview: boolean;
+
+  constructor(message: string, stage: BulkInvoiceStageError["stage"], trace?: InvoiceReadTrace, requiresReview = false) {
+    super(message);
+    this.name = "BulkInvoiceStageError";
+    this.stage = stage;
+    this.trace = trace;
+    this.requiresReview = requiresReview;
+  }
+}
+
 /** Caché de extracciones ya realizadas (por huella del archivo) para no volver a llamar a la IA. */
 const extraccionCache = new Map<string, { data: ExtractedInvoice; texto: string; lectura: "texto" | "imagen" }>();
 
@@ -164,6 +187,7 @@ export async function processInvoiceFile(params: {
   knowledge?: CompanyKnowledge;
   /** Ruta del PDF ya guardado en Storage: evita subir el archivo dos veces. */
   storagePath?: string | null;
+  onStage?: (stage: "reading" | "ocr" | "extracting_data" | "validating_company" | "ready_for_accounting", trace?: InvoiceReadTrace) => Promise<void>;
 }): Promise<{
   invoiceId: string;
   numero: string;
@@ -183,7 +207,17 @@ export async function processInvoiceFile(params: {
   let cached = extraccionCache.get(huella);
   if (!cached) {
     // Lectura optimizada: XML y PDF con texto digital no pasan por OCR/visión.
-    const content = await prepareInvoiceFile(file);
+    await params.onStage?.("reading");
+    let content;
+    try {
+      content = await prepareInvoiceFile(file);
+    } catch (error) {
+      throw new BulkInvoiceStageError(error instanceof Error ? error.message : "ERROR_NO_SE_PUDO_LEER_PDF", "reading");
+    }
+    if (!content.text && !content.images?.length && !content.dataUrl) {
+      throw new BulkInvoiceStageError("ERROR_NO_SE_PUDO_LEER_PDF: no se obtuvo texto ni imagen legible.", "reading");
+    }
+    await params.onStage?.(content.text ? "extracting_data" : "ocr");
     const extraida = (await extract({
       data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
     })) as ExtractedInvoice;
@@ -197,30 +231,40 @@ export async function processInvoiceFile(params: {
   const { lines: extracted, ...header } = cached.data;
   const textoDocumento = cached.texto;
 
+  const trace: InvoiceReadTrace = {
+    providerName: header.provider_name ?? null,
+    providerNit: header.provider_nit ?? null,
+    buyerName: header.buyer_name ?? null,
+    buyerNit: header.buyer_nit ?? null,
+    invoiceNumber: [header.prefix, header.number].filter(Boolean).join("-") || null,
+    issueDate: header.issue_date ?? null,
+    text: textoDocumento ? textoDocumento.slice(0, 20000) : null,
+    readMode: cached.lectura,
+  };
+  await params.onStage?.("validating_company", trace);
+
   // Cada factura del ZIP se valida individualmente: si el NIT del comprador no es el de la
   // empresa activa (o no se pudo leer), se rechaza y NO se crea borrador.
   const { data: empresa } = await supabase
     .from("companies").select("id, name, nit").eq("id", companyId).maybeSingle();
 
-  // Respaldo determinístico contra la lectura de la IA: si el NIT de la empresa aparece en el
-  // documento, la factura sí está dirigida a la empresa activa aunque la IA haya confundido
-  // el adquiriente con el emisor o no lo haya podido leer.
-  if (!sameNit(header.buyer_nit, empresa?.nit) && textoContieneNit(textoDocumento, empresa?.nit)) {
-    // La IA puso el NIT de la empresa como proveedor: se invierten los papeles.
-    if (sameNit(header.provider_nit, empresa?.nit)) {
-      const proveedorReal = header.buyer_nit;
-      const nombreProveedor = header.buyer_name;
-      header.provider_nit = proveedorReal ?? header.provider_nit;
-      header.provider_name = nombreProveedor ?? header.provider_name;
-    }
-    header.buyer_nit = normalizeNit(empresa?.nit) || header.buyer_nit;
-    header.buyer_name = empresa?.name ?? header.buyer_name;
+  if (!header.buyer_nit || !header.buyer_name) {
+    throw new BulkInvoiceStageError(
+      "No fue posible identificar el comprador de la factura.",
+      "validating_company",
+      trace,
+      true,
+    );
   }
 
   const bloqueo = motivoBloqueoEmpresa(
     checkInvoiceCompany(empresa, { buyer_nit: header.buyer_nit, buyer_name: header.buyer_name }),
   );
-  if (bloqueo) throw new Error(bloqueo);
+  if (bloqueo) throw new BulkInvoiceStageError(bloqueo, "validating_company", trace);
+  if (!sameNit(header.buyer_nit, empresa?.nit)) {
+    throw new BulkInvoiceStageError("Comprador diferente a la empresa activa.", "validating_company", trace);
+  }
+  await params.onStage?.("ready_for_accounting", trace);
 
   // Mismo documento en dos archivos del ZIP: se procesa una sola vez.
   const clave = claveDocumento(header);
