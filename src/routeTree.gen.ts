@@ -14,6 +14,7 @@ import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as AuthenticatedAprendizajeRouteImport } from './routes/_authenticated/aprendizaje'
+import { Route as AuthenticatedBorradoresRouteImport } from './routes/_authenticated/borradores'
 import { Route as AuthenticatedCausarRouteImport } from './routes/_authenticated/causar'
 import { Route as AuthenticatedDocumentosRouteImport } from './routes/_authenticated/documentos'
 import { Route as AuthenticatedEmpresasRouteImport } from './routes/_authenticated/empresas'
@@ -47,6 +48,11 @@ const AuthenticatedAprendizajeRoute =
     path: '/aprendizaje',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedBorradoresRoute = AuthenticatedBorradoresRouteImport.update({
+  id: '/borradores',
+  path: '/borradores',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedCausarRoute = AuthenticatedCausarRouteImport.update({
   id: '/causar',
   path: '/causar',
@@ -89,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/aprendizaje': typeof AuthenticatedAprendizajeRoute
+  '/borradores': typeof AuthenticatedBorradoresRoute
   '/causar': typeof AuthenticatedCausarRoute
   '/documentos': typeof AuthenticatedDocumentosRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
@@ -102,6 +109,7 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/admin': typeof AuthenticatedAdminRoute
   '/aprendizaje': typeof AuthenticatedAprendizajeRoute
+  '/borradores': typeof AuthenticatedBorradoresRoute
   '/causar': typeof AuthenticatedCausarRoute
   '/documentos': typeof AuthenticatedDocumentosRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
@@ -117,6 +125,7 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRoute
   '/_authenticated/aprendizaje': typeof AuthenticatedAprendizajeRoute
+  '/_authenticated/borradores': typeof AuthenticatedBorradoresRoute
   '/_authenticated/causar': typeof AuthenticatedCausarRoute
   '/_authenticated/documentos': typeof AuthenticatedDocumentosRoute
   '/_authenticated/empresas': typeof AuthenticatedEmpresasRoute
@@ -132,6 +141,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/admin'
     | '/aprendizaje'
+    | '/borradores'
     | '/causar'
     | '/documentos'
     | '/empresas'
@@ -145,6 +155,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/admin'
     | '/aprendizaje'
+    | '/borradores'
     | '/causar'
     | '/documentos'
     | '/empresas'
@@ -159,6 +170,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/_authenticated/admin'
     | '/_authenticated/aprendizaje'
+    | '/_authenticated/borradores'
     | '/_authenticated/causar'
     | '/_authenticated/documentos'
     | '/_authenticated/empresas'
@@ -209,6 +221,13 @@ declare module '@tanstack/react-router' {
       path: '/aprendizaje'
       fullPath: '/aprendizaje'
       preLoaderRoute: typeof AuthenticatedAprendizajeRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/borradores': {
+      id: '/_authenticated/borradores'
+      path: '/borradores'
+      fullPath: '/borradores'
+      preLoaderRoute: typeof AuthenticatedBorradoresRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/causar': {
@@ -266,6 +285,7 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedAdminRoute: typeof AuthenticatedAdminRoute
   AuthenticatedAprendizajeRoute: typeof AuthenticatedAprendizajeRoute
+  AuthenticatedBorradoresRoute: typeof AuthenticatedBorradoresRoute
   AuthenticatedCausarRoute: typeof AuthenticatedCausarRoute
   AuthenticatedDocumentosRoute: typeof AuthenticatedDocumentosRoute
   AuthenticatedEmpresasRoute: typeof AuthenticatedEmpresasRoute
@@ -278,6 +298,7 @@ interface AuthenticatedRouteRouteChildren {
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAdminRoute: AuthenticatedAdminRoute,
   AuthenticatedAprendizajeRoute: AuthenticatedAprendizajeRoute,
+  AuthenticatedBorradoresRoute: AuthenticatedBorradoresRoute,
   AuthenticatedCausarRoute: AuthenticatedCausarRoute,
   AuthenticatedDocumentosRoute: AuthenticatedDocumentosRoute,
   AuthenticatedEmpresasRoute: AuthenticatedEmpresasRoute,

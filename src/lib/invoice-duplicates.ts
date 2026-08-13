@@ -58,8 +58,10 @@ export async function findExistingInvoice(
 }
 
 /** Estado único de la factura, derivado del estado interno y del estado en Siigo. */
-export function estadoUnico(inv: { status: string; siigo_status?: string | null }): "borrador" | "aprobado" | "sincronizada" | "error" {
+export function estadoUnico(inv: { status: string; siigo_status?: string | null }): "borrador" | "aprobado" | "causada" | "sincronizada" | "error" {
   if (inv.siigo_status === "sincronizada" || inv.status === "sincronizada") return "sincronizada";
+  // Causada = comprobante contable generado, pendiente de enviar a Siigo.
+  if (inv.status === "causada") return "causada";
   // Una factura re-aprobada tras corregirla vuelve a estar "Aprobada" aunque conserve
   // el rastro de un envío fallido anterior.
   if (inv.status === "aprobado") return "aprobado";
@@ -70,6 +72,7 @@ export function estadoUnico(inv: { status: string; siigo_status?: string | null 
 export const ESTADO_LABEL: Record<string, string> = {
   borrador: "Borrador",
   aprobado: "Aprobada",
+  causada: "Causada",
   sincronizada: "Sincronizada",
   error: "Con error",
 };

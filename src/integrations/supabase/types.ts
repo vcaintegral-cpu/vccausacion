@@ -677,6 +677,8 @@ export type Database = {
       }
       invoices: {
         Row: {
+          approved_at: string | null
+          approved_by: string | null
           buyer_name: string | null
           buyer_nit: string | null
           company_id: string
@@ -698,7 +700,12 @@ export type Database = {
           number: string | null
           payment_form: string | null
           payment_method: string | null
+          posted_at: string | null
+          posted_by: string | null
+          posting_error: string | null
           prefix: string | null
+          processing_at: string | null
+          processing_by: string | null
           provider_address: string | null
           provider_city: string | null
           provider_email: string | null
@@ -722,8 +729,11 @@ export type Database = {
           subtotal: number
           total: number
           updated_at: string
+          voucher_number: string | null
         }
         Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
           buyer_name?: string | null
           buyer_nit?: string | null
           company_id: string
@@ -745,7 +755,12 @@ export type Database = {
           number?: string | null
           payment_form?: string | null
           payment_method?: string | null
+          posted_at?: string | null
+          posted_by?: string | null
+          posting_error?: string | null
           prefix?: string | null
+          processing_at?: string | null
+          processing_by?: string | null
           provider_address?: string | null
           provider_city?: string | null
           provider_email?: string | null
@@ -769,8 +784,11 @@ export type Database = {
           subtotal?: number
           total?: number
           updated_at?: string
+          voucher_number?: string | null
         }
         Update: {
+          approved_at?: string | null
+          approved_by?: string | null
           buyer_name?: string | null
           buyer_nit?: string | null
           company_id?: string
@@ -792,7 +810,12 @@ export type Database = {
           number?: string | null
           payment_form?: string | null
           payment_method?: string | null
+          posted_at?: string | null
+          posted_by?: string | null
+          posting_error?: string | null
           prefix?: string | null
+          processing_at?: string | null
+          processing_by?: string | null
           provider_address?: string | null
           provider_city?: string | null
           provider_email?: string | null
@@ -816,6 +839,7 @@ export type Database = {
           subtotal?: number
           total?: number
           updated_at?: string
+          voucher_number?: string | null
         }
         Relationships: [
           {
@@ -1471,6 +1495,38 @@ export type Database = {
           },
         ]
       }
+      voucher_sequences: {
+        Row: {
+          company_id: string
+          created_at: string
+          last_number: number
+          prefix: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          last_number?: number
+          prefix?: string
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          last_number?: number
+          prefix?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voucher_sequences_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: true
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -1554,6 +1610,7 @@ export type Database = {
         }[]
       }
       is_company_member: { Args: { _company_id: string }; Returns: boolean }
+      post_invoice: { Args: { _invoice_id: string }; Returns: Json }
       release_stale_jobs: { Args: { _minutes?: number }; Returns: number }
       resume_upload_jobs: {
         Args: { _include_errors?: boolean; _upload_id: string }
