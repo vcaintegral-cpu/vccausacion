@@ -972,6 +972,20 @@ function Causar() {
           puc: (config?.accounts ?? []) as PucAccount[],
           autoLearning,
         });
+        // Aprendizaje del tratamiento del IVA con el contexto de la operación
+        // (proveedor + cuenta de gasto/costo + concepto), nunca como regla global.
+        if (ivaFinal && ivaTotal > 0) {
+          const cuentaIva = ivaFinal.account || ivaDetalle[0]?.account_code || "";
+          await learnIvaTreatment({
+            companyId,
+            userId,
+            providerNit: header.provider_nit,
+            concept: lines[0]?.description ?? null,
+            expenseAccount: lines[0]?.account_code ?? null,
+            ivaAccount: cuentaIva,
+            treatment: ivaFinal.treatment,
+          });
+        }
       }
 
       toast.success(status === "aprobado" ? "Comprobante aprobado." : "Comprobante guardado en borrador.");
