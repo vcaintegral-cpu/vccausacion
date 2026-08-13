@@ -248,6 +248,22 @@ export async function sha256(bytes: Uint8Array): Promise<string> {
 }
 
 /** Mensaje sencillo para el usuario final; el detalle técnico queda en error_message. */
+export async function deleteUpload(uploadId: string) {
+  const items = await listItems(uploadId);
+  const { data: up } = await supabase.from("bulk_uploads").select("storage_path").eq("id", uploadId).maybeSingle();
+  const paths = [
+    ...items.map((i) => i.storage_path).filter((p): p is string => !!p),
+    ...((up as { storage_path: string | null } | null)?.storage_path ? [(up as { storage_path: string }).storage_path] : []),
+  ];
+  for (let i = 0; i < paths.length; i += 100) {
+    await supabase.storage.from("facturas").remove(paths.slice(i, i + 100));
+  }
+  const del = await supabase.from("bulk_upload_items").delete().eq("upload_id", uploadId);
+  if (del.error) throw new Error(del.error.message);
+  const delUp = await supabase.from("bulk_uploads").delete().eq("id", uploadId);
+  if (delUp.error) throw new Error(delUp.error.message);
+}
+
 export function mensajeUsuario(fileName: string, error: string): string {
   if (/duplicad|ya fue causada|ya existe/i.test(error)) return `${fileName}: este documento ya fue procesado.`;
   if (/identificar el comprador/i.test(error)) return "No fue posible identificar el comprador de la factura.";
