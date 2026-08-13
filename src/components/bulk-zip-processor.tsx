@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cop, fechaHora } from "@/lib/format";
-import { isTransient } from "@/lib/bulk-queue";
+import { diagnoseItem, errorCode, type BulkDiagnosis } from "@/lib/bulk-diagnostics";
 import {
   BulkInvoiceStageError,
   processInvoiceFile,
@@ -62,6 +62,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   const [items, setItems] = useState<BulkItem[]>([]);
   const [running, setRunning] = useState(false);
   const [forzar, setForzar] = useState(false);
+  const [diag, setDiag] = useState<BulkDiagnosis | null>(null);
   const started = useRef<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
