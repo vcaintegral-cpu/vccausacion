@@ -38,22 +38,8 @@ const mimeFor = (name: string) => {
 
 /** Expande archivos comprimidos (.zip) y devuelve la lista plana de facturas soportadas. */
 export async function expandInvoiceFiles(input: File[]): Promise<File[]> {
-  const out: File[] = [];
-  for (const file of input) {
-    const isZip = file.name.toLowerCase().endsWith(".zip") || file.type.includes("zip");
-    if (!isZip) {
-      if (ALLOWED.test(file.name)) out.push(file);
-      continue;
-    }
-    const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
-    for (const [path, bytes] of Object.entries(entries)) {
-      const name = path.split("/").pop() ?? path;
-      if (!name || name.startsWith(".") || path.includes("__MACOSX/")) continue;
-      if (!ALLOWED.test(name) || bytes.length === 0) continue;
-      out.push(new File([new Uint8Array(bytes)], name, { type: mimeFor(name) }));
-    }
-  }
-  return out.sort((a, b) => a.name.localeCompare(b.name, "es"));
+  const { pdfs } = await readZipContents(input);
+  return pdfs;
 }
 
 export type ZipContents = {
@@ -136,7 +122,7 @@ export type BulkConfig = {
 type ExtractFn = (args: { data: { fileName: string; mimeType: string } & Record<string, unknown> }) => Promise<unknown>;
 
 /** Caché de extracciones ya realizadas (por huella del archivo) para no volver a llamar a la IA. */
-const extraccionCache = new Map<string, ExtractedInvoice>();
+const extraccionCache = new Map<string, { data: ExtractedInvoice; texto: string; lectura: "texto" | "imagen" }>();
 
 /**
  * Documentos ya tomados en este lote (CUFE, o NIT + prefijo + número): evita que
