@@ -8,6 +8,7 @@ import { createCompanyWithDefaults } from "@/lib/seed";
 import { setActiveCompany, useActiveCompany } from "@/lib/active-company";
 import { clearCostCenterPolicyCache } from "@/lib/cost-center-config";
 import { clearPayableCache, isPayableCode } from "@/lib/payable-account";
+import { clearIvaConfigCache, type IvaCompanyConfig } from "@/lib/iva-treatment";
 import { useCompanies } from "@/components/app-shell";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
@@ -139,6 +140,16 @@ function PayableAccountConfig({ company }: { company: { id: string; default_paya
 }
 
 export const Route = createFileRoute("/_authenticated/empresas")({
+  head: () => ({
+    meta: [
+      { title: "Empresas y configuración contable" },
+      { name: "description", content: "Administra tus empresas, la cuenta por pagar genérica, los centros de costo y el tratamiento contable del IVA en compras." },
+      { property: "og:title", content: "Empresas y configuración contable" },
+      { property: "og:description", content: "Configuración multiempresa: PUC, centros de costo, cuenta por pagar y tratamiento del IVA." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
+    ],
+  }),
   component: Empresas,
 });
 
