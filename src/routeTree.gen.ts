@@ -21,6 +21,7 @@ import { Route as AuthenticatedFacturasRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedIntegracionesRouteImport } from './routes/_authenticated/integraciones'
 import { Route as AuthenticatedPanelRouteImport } from './routes/_authenticated/panel'
 import { Route as AuthenticatedRevisarRouteImport } from './routes/_authenticated/revisar'
+import { Route as ApiPublicJobsRunRouteImport } from './routes/api/public/jobs/run'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -83,6 +84,11 @@ const AuthenticatedRevisarRoute = AuthenticatedRevisarRouteImport.update({
   path: '/revisar',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const ApiPublicJobsRunRoute = ApiPublicJobsRunRouteImport.update({
+  id: '/api/public/jobs/run',
+  path: '/api/public/jobs/run',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -96,6 +102,7 @@ export interface FileRoutesByFullPath {
   '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
   '/revisar': typeof AuthenticatedRevisarRoute
+  '/api/public/jobs/run': typeof ApiPublicJobsRunRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -109,6 +116,7 @@ export interface FileRoutesByTo {
   '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
   '/revisar': typeof AuthenticatedRevisarRoute
+  '/api/public/jobs/run': typeof ApiPublicJobsRunRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -124,6 +132,7 @@ export interface FileRoutesById {
   '/_authenticated/integraciones': typeof AuthenticatedIntegracionesRoute
   '/_authenticated/panel': typeof AuthenticatedPanelRoute
   '/_authenticated/revisar': typeof AuthenticatedRevisarRoute
+  '/api/public/jobs/run': typeof ApiPublicJobsRunRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -139,6 +148,7 @@ export interface FileRouteTypes {
     | '/integraciones'
     | '/panel'
     | '/revisar'
+    | '/api/public/jobs/run'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -152,6 +162,7 @@ export interface FileRouteTypes {
     | '/integraciones'
     | '/panel'
     | '/revisar'
+    | '/api/public/jobs/run'
   id:
     | '__root__'
     | '/'
@@ -166,12 +177,14 @@ export interface FileRouteTypes {
     | '/_authenticated/integraciones'
     | '/_authenticated/panel'
     | '/_authenticated/revisar'
+    | '/api/public/jobs/run'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ApiPublicJobsRunRoute: typeof ApiPublicJobsRunRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -260,6 +273,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedRevisarRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/api/public/jobs/run': {
+      id: '/api/public/jobs/run'
+      path: '/api/public/jobs/run'
+      fullPath: '/api/public/jobs/run'
+      preLoaderRoute: typeof ApiPublicJobsRunRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -294,6 +314,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  ApiPublicJobsRunRoute: ApiPublicJobsRunRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
