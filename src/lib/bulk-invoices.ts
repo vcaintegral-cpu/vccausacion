@@ -1,5 +1,6 @@
 import { unzipSync } from "fflate";
 import { supabase } from "@/integrations/supabase/client";
+import { companyUsesCostCenters, costCenterForCompany, costCentersEnabled } from "@/lib/cost-center-config";
 import { prepareInvoiceFile } from "@/lib/invoice-file";
 import type { ExtractedInvoice } from "@/lib/extract.functions";
 import {
@@ -203,12 +204,15 @@ export async function processInvoiceFile(params: {
   const ivaLineas = lines.reduce((s, l) => s + Number(l.iva || 0), 0);
   const ivaTotal = ivaLineas > 0 ? ivaLineas : Number(header.iva || 0);
   const retenciones = computeRetenciones(baseGravable, ivaTotal, config.taxes);
+  // La empresa define si maneja centros de costo; si no, nunca se guarda ninguno.
+  const costPolicy = await companyUsesCostCenters(companyId);
+  const centroFactura = costCenterForCompany(costPolicy, header.cost_center);
   const journal = buildJournal({
     lines,
     iva: ivaTotal,
     impoconsumo: Number(header.impoconsumo || 0),
     retenciones,
-    costCenter: header.cost_center,
+    costCenter: centroFactura,
   });
   const operationalJournal = journal.map((line) => {
     // Renglones sin cuenta (por ejemplo el IVA aún sin impuesto seleccionado) se guardan
@@ -271,7 +275,7 @@ export async function processInvoiceFile(params: {
       payment_form: "Crédito",
       payment_method: header.payment_method,
       currency: header.currency || "COP",
-      cost_center: header.cost_center,
+      cost_center: centroFactura,
       notes: header.notes,
       subtotal: baseGravable,
       discount: Number(header.discount || 0),
@@ -318,7 +322,7 @@ export async function processInvoiceFile(params: {
         account_name: j.account_name,
         debit: j.debit,
         credit: j.credit,
-        cost_center: j.cost_center ?? null,
+        cost_center: costCentersEnabled(costPolicy) ? (j.cost_center ?? null) : null,
         position: i,
       })),
     ),
