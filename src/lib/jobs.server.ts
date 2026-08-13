@@ -29,7 +29,21 @@ export type JobRow = {
   ai_result: unknown;
 };
 
-type Client = ReturnType<typeof createClient>;
+type QueryResult = { data: unknown; error: { message: string } | null; count?: number | null };
+type Builder = {
+  select: (cols?: string, opts?: { count?: "exact"; head?: boolean }) => Builder;
+  update: (patch: Record<string, unknown>) => Builder;
+  upsert: (rows: unknown, opts?: Record<string, unknown>) => Builder;
+  eq: (col: string, value: unknown) => Builder;
+  order: (col: string, opts?: Record<string, unknown>) => Builder;
+  range: (from: number, to: number) => Builder;
+  limit: (n: number) => Builder;
+} & PromiseLike<QueryResult>;
+type Client = {
+  from: (table: string) => Builder;
+  rpc: (fn: string, args?: Record<string, unknown>) => PromiseLike<QueryResult>;
+  storage: { from: (bucket: string) => { download: (path: string) => Promise<{ data: Blob | null; error: { message: string } | null }> } };
+};
 
 let service: Client | null = null;
 
@@ -47,18 +61,18 @@ function serviceClient(): Client {
         return fetch(input, { ...init, headers });
       },
     },
-  });
+  }) as unknown as Client;
   return service;
 }
 
 const configCache = new Map<string, BulkConfig>();
 
-async function pagedAll<T>(run: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>) {
+async function pagedAll<T>(run: (from: number, to: number) => PromiseLike<QueryResult>) {
   const PAGE = 1000;
   const out: T[] = [];
   for (let from = 0; ; from += PAGE) {
     const { data } = await run(from, from + PAGE - 1);
-    const page = data ?? [];
+    const page = (data ?? []) as T[];
     out.push(...page);
     if (page.length < PAGE) break;
   }
@@ -193,7 +207,7 @@ async function runDocumentJob(job: JobRow) {
     extract: (async (args: { data: Record<string, unknown> }) => extractWithAi(args.data)) as never,
     onExtracted: async (data) => {
       // Se guarda la lectura de IA: un reintento no vuelve a gastar créditos.
-      await updateJob(job.id, { ai_result: data as never });
+      await updateJob(job.id, { ai_result: data });
     },
     onStage: async (stage, trace) => {
       await updateJob(job.id, { processing_stage: stage });

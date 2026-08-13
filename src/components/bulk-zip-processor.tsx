@@ -21,6 +21,7 @@ import {
   type InvoiceReadTrace,
 } from "@/lib/bulk-invoices";
 import type { CompanyKnowledge } from "@/lib/causacion-engine";
+import { createJobs, kickWorker } from "@/lib/jobs-store";
 import {
   ACTIVE_STATUSES,
   createUpload,
