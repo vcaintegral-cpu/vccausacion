@@ -11,7 +11,13 @@ import {
   type CompanyKnowledge,
 } from "@/lib/causacion-engine";
 import { findExistingInvoice, mensajeDuplicado } from "@/lib/invoice-duplicates";
-import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
+import {
+  checkInvoiceCompany,
+  motivoBloqueoEmpresa,
+  normalizeNit,
+  sameNit,
+  textoContieneNit,
+} from "@/lib/company-validation";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 import {
   buildJournal,
@@ -22,6 +28,7 @@ import {
 } from "@/lib/accounting";
 
 const ALLOWED = /\.pdf$/i;
+const IS_ZIP = (name: string, type = "") => /\.zip$/i.test(name) || type.includes("zip");
 
 const mimeFor = (name: string) => {
   const ext = name.toLowerCase().split(".").pop() ?? "";
@@ -63,9 +70,15 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
   const pdfs: File[] = [];
   const skipped: string[] = [];
   let filesFound = 0;
-  for (const file of input) {
-    const isZip = file.name.toLowerCase().endsWith(".zip") || file.type.includes("zip");
-    if (!isZip) {
+  // Cola de comprimidos: los proveedores suelen enviar un ZIP que contiene otros ZIP
+  // (uno por factura, con el PDF y el XML adentro). Se recorren todos los niveles.
+  const pendientes: File[] = [...input];
+  const vistos = new Set<string>();
+  let nivel = 0;
+  while (pendientes.length > 0 && nivel < 5000) {
+    nivel += 1;
+    const file = pendientes.shift()!;
+    if (!IS_ZIP(file.name, file.type)) {
       filesFound += 1;
       if (ALLOWED.test(file.name)) pdfs.push(file);
       else skipped.push(file.name);
@@ -81,11 +94,20 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
       const name = path.split("/").pop() ?? path;
       // Carpetas y metadatos del sistema no cuentan como archivos.
       if (!name || name.startsWith(".") || path.endsWith("/") || path.includes("__MACOSX/")) continue;
+      if (IS_ZIP(name)) {
+        // Comprimido anidado: se abre en la siguiente vuelta y no se cuenta como archivo final.
+        if (bytes.length > 0) pendientes.push(new File([new Uint8Array(bytes)], name, { type: "application/zip" }));
+        continue;
+      }
       filesFound += 1;
       if (!ALLOWED.test(name) || bytes.length === 0) {
         skipped.push(name);
         continue;
       }
+      // Un mismo PDF puede venir repetido en varios niveles del comprimido.
+      const clave = `${name}:${bytes.length}`;
+      if (vistos.has(clave)) continue;
+      vistos.add(clave);
       pdfs.push(new File([new Uint8Array(bytes)], name, { type: mimeFor(name) }));
     }
   }
