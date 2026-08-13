@@ -277,8 +277,8 @@ export async function processInvoiceFile(params: {
 
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth.user?.id;
-  let filePath: string | null = null;
-  if (userId) {
+  let filePath: string | null = params.storagePath ?? null;
+  if (!filePath && userId) {
     const path = `${userId}/${companyId}/${Date.now()}-${file.name.replace(/[^\w.-]/g, "_")}`;
     const { error: upErr } = await supabase.storage.from("facturas").upload(path, file);
     if (!upErr) filePath = path;
