@@ -767,7 +767,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
             <table className="w-full text-xs">
               <thead className="bg-muted/50 text-left">
                 <tr>
-                  {["Fecha", "Archivo", "Total", "Procesados", "Errores", "Estado", ""].map((h) => (
+                  {["Fecha", "Archivo", "Total", "Procesados", "Errores", "Pendientes", "Estado", ""].map((h) => (
                     <th key={h} className="px-2 py-1 font-medium">
                       {h}
                     </th>
@@ -775,18 +775,29 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                 </tr>
               </thead>
               <tbody>
-                {(historial.data ?? []).map((u) => (
+                {(historial.data ?? []).map((u) => {
+                  const pendientes = Math.max(u.pdf_found - u.processed_count - u.error_count, 0);
+                  return (
                   <tr key={u.id} className="border-t border-border">
                     <td className="px-2 py-1">{fechaHora(u.created_at)}</td>
                     <td className="max-w-40 truncate px-2 py-1">{u.file_name}</td>
                     <td className="px-2 py-1">{u.pdf_found}</td>
                     <td className="px-2 py-1">{u.processed_count}</td>
                     <td className="px-2 py-1">{u.error_count}</td>
-                    <td className="px-2 py-1">{UPLOAD_LABEL[u.status]}</td>
+                    <td className="px-2 py-1">{pendientes}</td>
+                    <td className="px-2 py-1">
+                      {UPLOAD_LABEL[u.status]}
+                      {u.error_code ? <span className="block text-[10px] text-muted-foreground">{u.error_code}</span> : null}
+                    </td>
                     <td className="px-2 py-1">
                       <Button size="sm" variant="ghost" onClick={() => void abrirProceso(u)}>
                         Ver detalle
                       </Button>
+                      {RESUMABLE_STATUSES.includes(u.status) && pendientes > 0 ? (
+                        <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void reanudar(u)}>
+                          Reanudar
+                        </Button>
+                      ) : null}
                       <Button
                         size="sm"
                         variant="ghost"
@@ -798,7 +809,8 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                       </Button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
