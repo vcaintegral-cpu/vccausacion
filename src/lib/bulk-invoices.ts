@@ -351,12 +351,32 @@ export async function processInvoiceFile(params: {
   const centroFactura = costCenterForCompany(costPolicy, header.cost_center);
   // Contrapartida: obligación por pagar según el histórico de esta empresa con este proveedor.
   const payable = applyPucToPayable(await fetchPayableAccount(companyId, header.provider_nit), config.accounts);
+  // Tratamiento contable del IVA de esta factura (descontable / gasto / costo).
+  // No altera el cálculo del impuesto, solo la cuenta donde queda registrado.
+  const ivaDecision =
+    ivaTotal > 0
+      ? resolveIvaTreatment({
+          config: await fetchIvaConfig(companyId),
+          evidence: await fetchIvaEvidence(companyId, header.provider_nit),
+          providerNit: header.provider_nit,
+          expenseAccounts: [...new Set(lines.map((l) => String(l.account_code ?? "").trim()).filter(Boolean))],
+          concepts: lines.map((l) => l.description ?? ""),
+          puc: config.accounts,
+          taxAccount: null,
+        })
+      : null;
+  // El IVA que no es descontable se registra SIEMPRE como una línea independiente por el total.
+  const ivaDetalle =
+    ivaDecision && ivaDecision.treatment !== "descontable"
+      ? applyIvaTreatment([{ account_code: "", account_name: "IVA", amount: ivaTotal }], ivaDecision)
+      : undefined;
   const journal = buildJournal({
     lines,
     iva: ivaTotal,
     impoconsumo: Number(header.impoconsumo || 0),
     retenciones,
     costCenter: centroFactura,
+    ...(ivaDetalle ? { ivaDetalle } : {}),
     payableAccount: payable,
   });
   const unresolvedAccounts: string[] = [];
