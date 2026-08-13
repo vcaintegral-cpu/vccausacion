@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { companyUsesCostCenters, costCentersEnabled } from "@/lib/cost-center-config";
 
 export type CostCenterSuggestion = {
   code: string;
@@ -19,6 +20,9 @@ export async function suggestCostCenter(params: {
 }): Promise<CostCenterSuggestion | null> {
   const { companyId, providerNit } = params;
   if (!companyId) return null;
+  // Si la empresa no maneja centros de costo, nunca se sugiere ninguno.
+  const policy = await companyUsesCostCenters(companyId);
+  if (!costCentersEnabled(policy)) return null;
 
   if (providerNit) {
   // Historial: siempre por empresa + proveedor, nunca solo por nombre.
