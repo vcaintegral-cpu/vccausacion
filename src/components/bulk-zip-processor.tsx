@@ -393,6 +393,26 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     setItems(await listItems(u.id));
   }
 
+  /** Elimina una carga masiva completa: tareas, archivos guardados y el registro. */
+  async function eliminarProceso(u: BulkUpload) {
+    if (running) return;
+    if (!window.confirm(`¿Eliminar la carga "${u.file_name}"? Se borran sus tareas y archivos guardados.`)) return;
+    setBusy("Eliminando carga…");
+    try {
+      await deleteUpload(u.id);
+      if (upload?.id === u.id) {
+        setUpload(null);
+        setItems([]);
+      }
+      await historial.refetch();
+      toast.success("Carga masiva eliminada.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible eliminar la carga.");
+    } finally {
+      setBusy("");
+    }
+  }
+
   function descargarReporte() {
     if (!upload) return;
     const head = "Archivo;Proveedor;NIT proveedor;Comprador;NIT comprador;Factura;Fecha;Estado;Intentos;Total;Confianza;Detalle";
@@ -450,6 +470,10 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
             multiple
             onChange={(e) => setSelected(Array.from(e.target.files ?? []))}
           />
+          <label className="flex items-center gap-2 pt-1 text-xs text-muted-foreground">
+            <input type="checkbox" checked={forzar} onChange={(e) => setForzar(e.target.checked)} />
+            Reprocesar aunque el documento ya se haya cargado antes
+          </label>
         </div>
         <Button
           onClick={() => void iniciar()}
@@ -485,6 +509,9 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                   <Download className="size-4" /> Descargar reporte
                 </Button>
               ) : null}
+              <Button size="sm" variant="outline" disabled={running || !!busy} onClick={() => void eliminarProceso(upload)}>
+                <Trash2 className="size-4" /> Eliminar carga
+              </Button>
             </div>
           </div>
 
@@ -618,6 +645,15 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                     <td className="px-2 py-1">
                       <Button size="sm" variant="ghost" onClick={() => void abrirProceso(u)}>
                         Ver detalle
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive"
+                        disabled={running || !!busy}
+                        onClick={() => void eliminarProceso(u)}
+                      >
+                        <Trash2 className="size-4" /> Eliminar
                       </Button>
                     </td>
                   </tr>
