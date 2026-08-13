@@ -153,7 +153,10 @@ export async function listUploads(companyId: string, limit = 30): Promise<BulkUp
   return (data ?? []) as unknown as BulkUpload[];
 }
 
-/** Huellas de archivos ya procesados correctamente en la empresa (control de duplicados). */
+/**
+ * Huellas de archivos que terminaron correctamente en la empresa.
+ * Las tareas pendientes, fallidas o abandonadas no bloquean una nueva carga del PDF.
+ */
 export async function existingFingerprints(companyId: string, hashes: string[]): Promise<Set<string>> {
   const found = new Set<string>();
   for (let i = 0; i < hashes.length; i += 200) {
@@ -162,6 +165,7 @@ export async function existingFingerprints(companyId: string, hashes: string[]):
       .from("bulk_upload_items")
       .select("fingerprint")
       .eq("company_id", companyId)
+      .eq("status", "completed")
       .in("fingerprint", chunk);
     for (const row of data ?? []) {
       const f = (row as { fingerprint: string | null }).fingerprint;
