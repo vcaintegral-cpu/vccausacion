@@ -978,7 +978,7 @@ function Causar() {
           const cuentaIva = ivaFinal.account || ivaDetalle[0]?.account_code || "";
           await learnIvaTreatment({
             companyId,
-            userId,
+            userId: userId ?? null,
             providerNit: header.provider_nit,
             concept: lines[0]?.description ?? null,
             expenseAccount: lines[0]?.account_code ?? null,
