@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cop, fechaHora } from "@/lib/format";
-import { isTransient } from "@/lib/bulk-queue";
+import { diagnoseItem, errorCode, type BulkDiagnosis } from "@/lib/bulk-diagnostics";
 import {
   BulkInvoiceStageError,
   processInvoiceFile,
@@ -41,9 +41,10 @@ import {
   type BulkUpload,
 } from "@/lib/bulk-upload-store";
 
-const CONCURRENCY = 6;
-const MAX_ATTEMPTS = 3;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Secuencial y sin reintentos automáticos: un error detiene la tarea y el usuario
+// decide si reintenta manualmente (no se gastan créditos de IA en bucles).
+const CONCURRENCY = 1;
+const MAX_ATTEMPTS = 1;
 
 type Props = {
   companyId: string;
@@ -61,6 +62,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   const [items, setItems] = useState<BulkItem[]>([]);
   const [running, setRunning] = useState(false);
   const [forzar, setForzar] = useState(false);
+  const [diag, setDiag] = useState<BulkDiagnosis | null>(null);
   const started = useRef<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -201,20 +203,17 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               break;
             } catch (error) {
               const message = error instanceof Error ? error.message : "Error al procesar";
-              if (attempt < MAX_ATTEMPTS && isTransient(error)) {
-                patchItem(item.id, { stage: `reintento ${attempt}`, error_message: message });
-                await sleep(800 * attempt);
-                continue;
-              }
               const duplicado = /duplicad|ya fue causada|ya existe|repetido/i.test(message);
               const staged = error instanceof BulkInvoiceStageError ? error : null;
               const trace = staged?.trace;
               const storageError = /ERROR_STORAGE|ERROR_ARCHIVO|ERROR_PDF_INVALIDO/.test(message);
+              const stage = staged?.stage ?? (storageError ? "download_pdf" : "process_invoice");
+              const code = errorCode(stage, message);
               const patch: Partial<BulkItem> = {
                 status: staged?.requiresReview ? "requires_review" : duplicado ? "duplicate" : "error",
-                stage: staged?.stage ?? (storageError ? "recuperando_pdf" : "error"),
+                stage,
                 error_message: message,
-                user_message: mensajeUsuario(item.file_name, message),
+                user_message: `Etapa: ${stage} · Código: ${code} · ${mensajeUsuario(item.file_name, message)} · ${message}`,
                 ...(storageError ? { download_status: "ERROR", content_status: "ERROR" } : {}),
                 ...(trace ? {
                   provider_name: trace.providerName,
@@ -312,11 +311,17 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
         const repetido = previos.has(hash) || vistos.has(hash);
         vistos.add(hash);
         let path: string | null = null;
+        let uploadError: string | null = null;
         if (!repetido) {
           const safe = file.name.replace(/[^\w.-]/g, "_");
           const target = `${userId}/${companyId}/bulk/${row.id}/${position}-${safe}`;
-          const res = await supabase.storage.from("facturas").upload(target, file, { upsert: true });
-          if (!res.error) path = target;
+          // El PDF extraído se guarda siempre como application/pdf: el worker lo
+          // recupera después desde bucket + storage_path (nunca desde el File del navegador).
+          const res = await supabase.storage
+            .from("facturas")
+            .upload(target, file, { upsert: true, contentType: "application/pdf" });
+          if (res.error) uploadError = `ERROR_SUBIDA_PDF: ${res.error.message}`;
+          else path = target;
         }
         rows.push({
           upload_id: row.id,
@@ -325,8 +330,16 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
           storage_path: path,
           size_bytes: file.size,
           fingerprint: repetido ? null : hash,
-          status: repetido ? "duplicate" : "pending",
-          user_message: repetido ? `${file.name}: este documento ya fue procesado.` : null,
+          status: repetido ? "duplicate" : uploadError ? "error" : "pending",
+          ...(uploadError
+            ? {
+                stage: "upload_pdf",
+                error_message: uploadError,
+                user_message: `Etapa: upload_pdf · Código: STORAGE_UPLOAD_ERROR · ${uploadError}`,
+                download_status: "ERROR",
+              }
+            : {}),
+          ...(repetido ? { user_message: `${file.name}: este documento ya fue procesado.` } : {}),
           position,
         });
         files.push(file);
@@ -391,6 +404,26 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   async function abrirProceso(u: BulkUpload) {
     setUpload(u);
     setItems(await listItems(u.id));
+  }
+
+  /** Prueba SIN IA: recupera el primer PDF desde Storage y lo lee con el mismo lector individual. */
+  async function diagnosticar() {
+    if (!upload) return;
+    const rows = await listItems(upload.id);
+    setItems(rows);
+    const target = rows.find((i) => i.status !== "completed") ?? rows[0];
+    if (!target) return;
+    setBusy("Diagnóstico sin IA…");
+    try {
+      const resultado = await diagnoseItem(target);
+      setDiag(resultado);
+      if (resultado.code === "OK") toast.success("PDF recuperado y leído correctamente (sin IA).");
+      else toast.error(`Etapa: ${resultado.stage} · Código: ${resultado.code}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible ejecutar el diagnóstico.");
+    } finally {
+      setBusy("");
+    }
   }
 
   /** Elimina una carga masiva completa: tareas, archivos guardados y el registro. */
@@ -512,8 +545,27 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               <Button size="sm" variant="outline" disabled={running || !!busy} onClick={() => void eliminarProceso(upload)}>
                 <Trash2 className="size-4" /> Eliminar carga
               </Button>
+              <Button size="sm" variant="outline" disabled={running || !!busy} onClick={() => void diagnosticar()}>
+                <RefreshCw className="size-4" /> Diagnóstico sin IA
+              </Button>
             </div>
           </div>
+
+          {diag ? (
+            <div className="rounded-md border border-border bg-muted/30 p-3 text-[11px] leading-5">
+              <p className="mb-1 text-xs font-semibold">Diagnóstico del PDF (sin IA) · {diag.fileName}</p>
+              <p>Bucket: {diag.bucket}</p>
+              <p>Storage path: {diag.storagePath ?? "—"}</p>
+              <p>Existe: {diag.exists ? "SI" : "NO"}</p>
+              <p>Descarga: {diag.downloadOk ? "OK" : "ERROR"}</p>
+              <p>Tamaño: {diag.sizeBytes ?? 0} bytes</p>
+              <p>MIME: {diag.mimeType ?? "—"}</p>
+              <p>PDF válido: {diag.pdfValid ? "OK" : "NO"}</p>
+              <p>Texto extraído: {diag.textChars} caracteres ({diag.readMode})</p>
+              <p>Etapa: {diag.stage} · Código: {diag.code}</p>
+              <p>Mensaje: {diag.message}</p>
+            </div>
+          ) : null}
 
           <div>
             <div className="mb-1 flex justify-between text-xs text-muted-foreground">
