@@ -65,10 +65,9 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   const [busy, setBusy] = useState<string>("");
   const [upload, setUpload] = useState<BulkUpload | null>(null);
   const [items, setItems] = useState<BulkItem[]>([]);
-  const [running, setRunning] = useState(false);
+  const progress = useBulkProgress();
   const [forzar, setForzar] = useState(false);
   const [diag, setDiag] = useState<BulkDiagnosis | null>(null);
-  const started = useRef<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const historial = useQuery({
@@ -95,6 +94,9 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     };
   }, [companyId]);
 
+  // El proceso corre en segundo plano; "running" refleja el motor global, no la pantalla.
+  const running = progress.running && (!upload || progress.uploadId === upload.id || progress.queued > 0);
+
   const stats = useMemo(() => {
     const total = items.length;
     const done = items.filter((i) => i.status === "completed").length;
@@ -106,8 +108,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     const review = items.filter((i) => i.status === "requires_review").length;
     const pending = total - done - failed - dup - review - active;
     const terminados = done + failed + dup + review;
-    const elapsed = started.current ? Date.now() - started.current : 0;
-    const eta = running && terminados > 0 ? Math.round((elapsed / terminados) * (total - terminados)) : null;
+    const eta = null;
     return {
       total,
       done,
@@ -116,10 +117,10 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       active,
       pending,
       percent: total ? Math.round(((done + failed + dup + review) / total) * 100) : 0,
-      eta,
+      eta: eta as number | null,
       review: review + items.filter((i) => i.status === "completed" && i.needs_review).length,
     };
-  }, [items, running]);
+  }, [items]);
 
   /** Estado en vivo desde base de datos: la pantalla solo muestra el avance. */
   useEffect(() => {
@@ -246,19 +247,10 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       setBusy("");
       setSelected([]);
       if (inputRef.current) inputRef.current.value = "";
-      const pending = created.filter((i) => i.status === "pending");
-      if (pending[0]) {
-        await runItems({ ...row, files_found: filesFound, pdf_found: pdfs.length, skipped_files: skipped.length }, [pending[0]]);
-        const first = (await listItems(row.id)).find((i) => i.id === pending[0]?.id);
-        if (!first || first.status !== "completed") {
-          toast.error(`La prueba del primer PDF falló en: ${first?.stage ?? "lectura"}. No se procesaron los demás documentos.`);
-          return;
-        }
-      }
-      await runItems(
-        { ...row, files_found: filesFound, pdf_found: pdfs.length, skipped_files: skipped.length },
-        pending.slice(1),
-      );
+      // 4) El procesamiento arranca en segundo plano: la pantalla ya no es necesaria.
+      startBackgroundUpload({ uploadId: row.id, companyId, fileName: zip.name });
+      toast.success("Procesamiento iniciado en segundo plano. Puedes salir de este módulo.");
+      void historial.refetch();
     } catch (error) {
       setBusy("");
       const message = error instanceof Error ? error.message : "No fue posible iniciar el procesamiento.";
@@ -267,27 +259,22 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     }
   }
 
-  async function continuar() {
+  function continuar() {
     if (!upload) return;
-    const rows = await listItems(upload.id);
-    setItems(rows);
-    await runItems(upload, rows.filter((i) => i.status !== "completed" && i.status !== "duplicate" && i.status !== "error"));
+    startBackgroundUpload({ uploadId: upload.id, companyId, fileName: upload.file_name });
+  }
+
+  /** Reintenta solo las tareas indicadas, sin reiniciar el ZIP completo. */
+  async function reintentar(ids: string[]) {
+    if (!upload || ids.length === 0) return;
+    await retryBulkItems({ uploadId: upload.id, companyId, fileName: upload.file_name }, ids);
   }
 
   async function reintentarErrores() {
     if (!upload) return;
     const rows = await listItems(upload.id);
     setItems(rows);
-    const failed = rows.filter((i) => i.status !== "completed" && i.status !== "duplicate");
-    const first = failed[0];
-    if (!first) return;
-    await runItems(upload, [first]);
-    const tested = (await listItems(upload.id)).find((i) => i.id === first.id);
-    if (!tested || tested.status !== "completed") {
-      toast.error(`La prueba del primer PDF falló en: ${tested?.stage ?? "lectura"}. No se procesaron los demás documentos.`);
-      return;
-    }
-    await runItems(upload, failed.slice(1));
+    await reintentar(rows.filter((i) => i.status === "error" || i.status === "requires_review").map((i) => i.id));
   }
 
   async function abrirProceso(u: BulkUpload) {
@@ -417,7 +404,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
             </div>
             <div className="flex flex-wrap gap-2">
               {!running && stats.pending > 0 ? (
-                <Button size="sm" variant="outline" onClick={() => void continuar()}>
+                <Button size="sm" variant="outline" onClick={() => continuar()}>
                   <RefreshCw className="size-4" /> Continuar procesamiento
                 </Button>
               ) : null}
