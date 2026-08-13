@@ -130,6 +130,11 @@ export function buildJournal(params: {
   costCenter?: string | null;
   /** Detalle del IVA por cuenta del impuesto seleccionado (fuente: Administración → Retenciones). */
   ivaDetalle?: { account_code: string; account_name?: string | null; amount: number }[];
+  /**
+   * Cuenta de la obligación por pagar (grupos 22 o 23) resuelta por empresa y proveedor.
+   * Una factura de compra NUNCA se causa contra bancos, caja ni cuentas de pago.
+   */
+  payableAccount?: { code: string; name?: string | null } | null;
 }): JournalLine[] {
   const { lines, iva, retenciones, provider, costCenter, ivaDetalle } = params;
   const impoconsumo = params.impoconsumo ?? 0;
@@ -179,9 +184,15 @@ export function buildJournal(params: {
     });
   }
 
+  const payable = [
+    params.payableAccount?.code,
+    provider?.default_payable_account,
+  ].find((c) => isPayableCode(c));
   out.push({
-    account_code: provider?.default_payable_account || "220505",
-    account_name: "Proveedores nacionales",
+    account_code: payable ?? "220505",
+    account_name:
+      (payable && payable === params.payableAccount?.code ? params.payableAccount?.name : null) ||
+      "Cuentas por pagar",
     debit: 0,
     credit: round(totalDebito - totalRet),
     cost_center: costCenter ?? null,
