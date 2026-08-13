@@ -139,8 +139,106 @@ function PayableAccountConfig({ company }: { company: { id: string; default_paya
   );
 }
 
+/**
+ * Tratamiento contable del IVA en compras.
+ * No modifica el módulo de impuestos: solo indica cómo debe contabilizarse el IVA
+ * que ese módulo ya calcula. La opción principal es "Mixto": el tratamiento se
+ * determina factura por factura con el histórico y el contexto de la operación.
+ */
+function IvaTreatmentConfig({
+  company,
+}: {
+  company: {
+    id: string;
+    iva_treatment_mode?: string | null;
+    iva_account_descontable?: string | null;
+    iva_account_gasto?: string | null;
+    iva_account_costo?: string | null;
+  };
+}) {
+  const queryClient = useQueryClient();
+  const guardado: IvaCompanyConfig = {
+    mode: ((company.iva_treatment_mode ?? "mixto") as IvaCompanyConfig["mode"]),
+    descontable: company.iva_account_descontable ?? "",
+    gasto: company.iva_account_gasto ?? "",
+    costo: company.iva_account_costo ?? "",
+  };
+  const [valor, setValor] = useState<IvaCompanyConfig>(guardado);
+  const [saving, setSaving] = useState(false);
+  const cambiado = JSON.stringify(valor) !== JSON.stringify(guardado);
+
+  async function guardar() {
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from("companies")
+        .update({
+          iva_treatment_mode: valor.mode,
+          iva_account_descontable: (valor.descontable ?? "").trim() || null,
+          iva_account_gasto: (valor.gasto ?? "").trim() || null,
+          iva_account_costo: (valor.costo ?? "").trim() || null,
+        })
+        .eq("id", company.id);
+      if (error) throw error;
+      clearIvaConfigCache(company.id);
+      await queryClient.invalidateQueries({ queryKey: ["companies"] });
+      await queryClient.invalidateQueries({ queryKey: ["iva-config", company.id] });
+      toast.success("Tratamiento contable del IVA actualizado.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No fue posible guardar la configuración del IVA.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const campo = (key: "descontable" | "gasto" | "costo", label: string, ejemplo: string) => (
+    <div className="space-y-1.5">
+      <Label htmlFor={`iva-${key}-${company.id}`} className="text-xs">{label}</Label>
+      <Input
+        id={`iva-${key}-${company.id}`}
+        className="w-40 font-mono"
+        placeholder={ejemplo}
+        value={valor[key] ?? ""}
+        onChange={(e) => setValor((v) => ({ ...v, [key]: e.target.value }))}
+      />
+    </div>
+  );
+
+  return (
+    <div className="mt-3 rounded-md border border-border bg-muted/30 p-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Tratamiento contable del IVA en compras
+      </p>
+      <div className="mt-2 space-y-1.5">
+        <Label htmlFor={`iva-mode-${company.id}`} className="text-xs">Modo</Label>
+        <select
+          id={`iva-mode-${company.id}`}
+          className="h-9 w-full max-w-md rounded-md border border-input bg-background px-3 text-sm"
+          value={valor.mode}
+          onChange={(e) => setValor((v) => ({ ...v, mode: e.target.value as IvaCompanyConfig["mode"] }))}
+        >
+          <option value="mixto">Mixto / determinado según operación e histórico (recomendado)</option>
+          <option value="descontable">Siempre IVA descontable</option>
+          <option value="gasto">Siempre mayor valor del gasto</option>
+          <option value="costo">Siempre mayor valor del costo</option>
+        </select>
+      </div>
+      <div className="mt-3 flex flex-wrap items-end gap-3">
+        {campo("descontable", "Cuenta de IVA descontable", "2408")}
+        {campo("gasto", "Cuenta de IVA de gastos", "5115")}
+        {campo("costo", "Cuenta de IVA de costos", "7315")}
+        <Button size="sm" disabled={saving || !cambiado} onClick={() => void guardar()}>Guardar</Button>
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        En modo mixto la misma empresa puede manejar los tres tratamientos: cada factura se decide con el histórico
+        contable de la empresa (proveedor, concepto y cuenta de gasto/costo) y con las correcciones que usted apruebe.
+        Las cuentas indicadas aquí son opcionales y deben existir en el PUC de la empresa.
+      </p>
+    </div>
+  );
+}
+
 export const Route = createFileRoute("/_authenticated/empresas")({
-  head: () => ({
   head: () => ({
     meta: [
       { title: "Empresas y configuración contable" },
