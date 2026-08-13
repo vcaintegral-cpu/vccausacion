@@ -779,6 +779,15 @@ function Revisar() {
           </dl>
         </div>
 
+        <IvaTreatmentPanel
+          decision={ivaFinal}
+          ivaTotal={Number(header.iva || 0)}
+          accounts={puc}
+          overridden={!!ivaOverride}
+          onChange={(v) => setIvaOverride(v)}
+          onReset={() => setIvaOverride(null)}
+        />
+
         <div className="overflow-hidden rounded-lg border border-border bg-card">
           <div className="border-b border-border px-5 py-3 text-sm font-semibold">Asiento contable generado</div>
           <table className="w-full text-sm">
