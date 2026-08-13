@@ -60,8 +60,6 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   const [items, setItems] = useState<BulkItem[]>([]);
   const [running, setRunning] = useState(false);
   const started = useRef<number>(0);
-  // Archivos en memoria de esta sesión (evita descargar de nuevo desde Storage).
-  const cache = useRef(new Map<string, File>());
   const inputRef = useRef<HTMLInputElement>(null);
 
   const historial = useQuery({
@@ -98,7 +96,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     ).length;
     const review = items.filter((i) => i.status === "requires_review").length;
     const pending = total - done - failed - dup - review - active;
-    const terminados = done + failed + dup;
+    const terminados = done + failed + dup + review;
     const elapsed = started.current ? Date.now() - started.current : 0;
     const eta = running && terminados > 0 ? Math.round((elapsed / terminados) * (total - terminados)) : null;
     return {
@@ -108,7 +106,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       dup,
       active,
       pending,
-      percent: total ? Math.round(((done + failed + dup) / total) * 100) : 0,
+      percent: total ? Math.round(((done + failed + dup + review) / total) * 100) : 0,
       eta,
       review: review + items.filter((i) => i.status === "completed" && i.needs_review).length,
     };
@@ -332,10 +330,6 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       }
 
       const created = await insertItems(rows);
-      created.forEach((item, i) => {
-        const f = files[i];
-        if (f) cache.current.set(item.id, f);
-      });
       setItems(created);
       await updateUpload(row.id, {
         status: "processing",
@@ -378,8 +372,16 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     if (!upload) return;
     const rows = await listItems(upload.id);
     setItems(rows);
-    // Solo los documentos con error: los completados nunca se vuelven a causar.
-    await runItems(upload, rows.filter((i) => i.status === "error"));
+    const failed = rows.filter((i) => i.status === "error" || i.status === "requires_review");
+    const first = failed[0];
+    if (!first) return;
+    await runItems(upload, [first]);
+    const tested = (await listItems(upload.id)).find((i) => i.id === first.id);
+    if (!tested || tested.status !== "completed") {
+      toast.error(`La prueba del primer PDF falló en: ${tested?.stage ?? "lectura"}. No se procesaron los demás documentos.`);
+      return;
+    }
+    await runItems(upload, failed.slice(1));
   }
 
   async function abrirProceso(u: BulkUpload) {

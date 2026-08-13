@@ -218,9 +218,17 @@ export async function processInvoiceFile(params: {
       throw new BulkInvoiceStageError("ERROR_NO_SE_PUDO_LEER_PDF: no se obtuvo texto ni imagen legible.", "reading");
     }
     await params.onStage?.(content.text ? "extracting_data" : "ocr");
-    const extraida = (await extract({
-      data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
-    })) as ExtractedInvoice;
+    let extraida: ExtractedInvoice;
+    try {
+      extraida = (await extract({
+        data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
+      })) as ExtractedInvoice;
+    } catch (error) {
+      throw new BulkInvoiceStageError(
+        error instanceof Error ? error.message : "No fue posible extraer los datos de la factura.",
+        "extracting_data",
+      );
+    }
     cached = {
       data: extraida,
       texto: content.text ?? "",
