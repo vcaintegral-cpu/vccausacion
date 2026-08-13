@@ -22,6 +22,7 @@ import {
 import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
 import { AccountCombobox } from "@/components/account-combobox";
 import { CUENTA_PADRE_MSG, resolveOperationalAccount, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
+import { costCentersEnabled, costCenterForCompany, useCostCenterPolicy, validateCostCenter } from "@/lib/cost-center-config";
 import { fetchCompanyPuc } from "@/lib/puc-data";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { BulkApply } from "@/components/bulk-apply";
