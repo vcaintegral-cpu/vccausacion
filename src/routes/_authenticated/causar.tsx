@@ -1213,6 +1213,7 @@ function Causar() {
             ))}
           </select>
         </div>
+        {usaCentros && (
         <div className="space-y-1.5">
           <Label className="text-xs">Centro de costo</Label>
           <select
@@ -1230,7 +1231,11 @@ function Causar() {
           {centroSugerido && !centroTocado && (
             <p className="text-xs text-muted-foreground">{centroSugerido}</p>
           )}
+          {erroresCentro.map((e, i) => (
+            <p key={i} className="text-xs text-destructive">{e}</p>
+          ))}
         </div>
+        )}
         <div className="space-y-1.5 sm:col-span-2 xl:col-span-4">
           <Label className="text-xs">Notas</Label>
           <Textarea rows={2} value={header.notes ?? ""} onChange={(e) => setHeader({ ...header, notes: e.target.value })} />
