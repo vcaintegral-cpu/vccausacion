@@ -6,7 +6,9 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { createCompanyWithDefaults } from "@/lib/seed";
 import { setActiveCompany, useActiveCompany } from "@/lib/active-company";
+import { clearCostCenterPolicyCache } from "@/lib/cost-center-config";
 import { useCompanies } from "@/components/app-shell";
+import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,6 +24,61 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Trash2 } from "lucide-react";
+
+/** Configuración contable de la empresa: ¿maneja centros de costos? */
+function CostCenterConfig({ company }: { company: { id: string; uses_cost_centers?: boolean | null } }) {
+  const queryClient = useQueryClient();
+  const guardado = (company.uses_cost_centers ?? null) as boolean | null;
+  const [valor, setValor] = useState<boolean | null>(guardado);
+  const [saving, setSaving] = useState(false);
+
+  async function guardar() {
+    if (valor === null) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase.from("companies").update({ uses_cost_centers: valor }).eq("id", company.id);
+      if (error) throw error;
+      clearCostCenterPolicyCache(company.id);
+      await queryClient.invalidateQueries({ queryKey: ["companies"] });
+      await queryClient.invalidateQueries({ queryKey: ["cost-center-policy", company.id] });
+      toast.success(valor ? "La empresa maneja centros de costos." : "La empresa no maneja centros de costos.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No fue posible guardar la configuración.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-border bg-muted/30 p-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Configuración contable</p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <span className="text-sm">¿Esta empresa maneja centros de costos?</span>
+        <Button size="sm" variant={valor === true ? "default" : "outline"} onClick={() => setValor(true)}>Sí</Button>
+        <Button size="sm" variant={valor === false ? "default" : "outline"} onClick={() => setValor(false)}>No</Button>
+        <Button size="sm" disabled={saving || valor === null || valor === guardado} onClick={() => void guardar()}>
+          Guardar
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          Estado: {guardado === true ? "Activo" : guardado === false ? "No utiliza" : "Pendiente de configurar"}
+        </span>
+      </div>
+      {guardado === null && (
+        <p className="mt-2 text-xs text-destructive">Configure si esta empresa maneja centros de costos.</p>
+      )}
+      {guardado === true && (
+        <p className="mt-2 text-xs">
+          <Button asChild size="sm" variant="outline" onClick={() => setActiveCompany(company.id)}>
+            <Link to="/admin">Administrar centros de costos</Link>
+          </Button>
+          <span className="ml-2 text-muted-foreground">
+            Sincroniza con Siigo, consulta código y nombre, y activa o desactiva centros.
+          </span>
+        </p>
+      )}
+    </div>
+  );
+}
 
 export const Route = createFileRoute("/_authenticated/empresas")({
   component: Empresas,
@@ -93,7 +150,8 @@ function Empresas() {
 
       <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
         {(companies ?? []).map((c) => (
-          <li key={c.id} className="flex items-center justify-between px-5 py-3">
+          <li key={c.id} className="px-5 py-3">
+            <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium">{c.name}</p>
               <p className="font-mono text-xs text-muted-foreground">NIT {c.nit}</p>
@@ -123,6 +181,8 @@ function Empresas() {
                 </AlertDialogContent>
               </AlertDialog>
             </div>
+            </div>
+            <CostCenterConfig company={c} />
           </li>
         ))}
         {(companies ?? []).length === 0 && (
