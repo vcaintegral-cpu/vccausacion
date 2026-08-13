@@ -164,24 +164,59 @@ export async function processInvoiceFile(params: {
   knowledge?: CompanyKnowledge;
   /** Ruta del PDF ya guardado en Storage: evita subir el archivo dos veces. */
   storagePath?: string | null;
-}): Promise<{ invoiceId: string; numero: string; total: number; score: number; needsReview: boolean; reason: string }> {
+}): Promise<{
+  invoiceId: string;
+  numero: string;
+  total: number;
+  score: number;
+  needsReview: boolean;
+  reason: string;
+  providerName: string | null;
+  providerNit: string | null;
+  buyerName: string | null;
+  buyerNit: string | null;
+  issueDate: string | null;
+  readMode: "texto" | "imagen";
+}> {
   const { file, companyId, config, extract } = params;
   const huella = await fileFingerprint(file);
-  let data = extraccionCache.get(huella);
-  if (!data) {
+  let cached = extraccionCache.get(huella);
+  if (!cached) {
     // Lectura optimizada: XML y PDF con texto digital no pasan por OCR/visión.
     const content = await prepareInvoiceFile(file);
-    data = (await extract({
+    const extraida = (await extract({
       data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
     })) as ExtractedInvoice;
-    extraccionCache.set(huella, data);
+    cached = {
+      data: extraida,
+      texto: content.text ?? "",
+      lectura: content.text ? "texto" : "imagen",
+    };
+    extraccionCache.set(huella, cached);
   }
-  const { lines: extracted, ...header } = data;
+  const { lines: extracted, ...header } = cached.data;
+  const textoDocumento = cached.texto;
 
   // Cada factura del ZIP se valida individualmente: si el NIT del comprador no es el de la
   // empresa activa (o no se pudo leer), se rechaza y NO se crea borrador.
   const { data: empresa } = await supabase
     .from("companies").select("id, name, nit").eq("id", companyId).maybeSingle();
+
+  // Respaldo determinístico contra la lectura de la IA: si el NIT de la empresa aparece en el
+  // documento, la factura sí está dirigida a la empresa activa aunque la IA haya confundido
+  // el adquiriente con el emisor o no lo haya podido leer.
+  if (!sameNit(header.buyer_nit, empresa?.nit) && textoContieneNit(textoDocumento, empresa?.nit)) {
+    // La IA puso el NIT de la empresa como proveedor: se invierten los papeles.
+    if (sameNit(header.provider_nit, empresa?.nit)) {
+      const proveedorReal = header.buyer_nit;
+      const nombreProveedor = header.buyer_name;
+      header.provider_nit = proveedorReal ?? header.provider_nit;
+      header.provider_name = nombreProveedor ?? header.provider_name;
+    }
+    header.buyer_nit = normalizeNit(empresa?.nit) || header.buyer_nit;
+    header.buyer_name = empresa?.name ?? header.buyer_name;
+  }
+
   const bloqueo = motivoBloqueoEmpresa(
     checkInvoiceCompany(empresa, { buyer_nit: header.buyer_nit, buyer_name: header.buyer_name }),
   );
