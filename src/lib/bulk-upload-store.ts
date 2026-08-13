@@ -186,9 +186,11 @@ export async function existingFingerprints(companyId: string, hashes: string[]):
   const found = new Set<string>();
   for (let i = 0; i < hashes.length; i += 200) {
     const chunk = hashes.slice(i, i + 200);
+    // Solo es duplicado si la factura resultante SIGUE existiendo: si el usuario
+    // borró el documento del histórico, el PDF debe poder cargarse de nuevo.
     const { data } = await supabase
       .from("bulk_upload_items")
-      .select("fingerprint")
+      .select("fingerprint, invoices!inner(id)")
       .eq("company_id", companyId)
       .eq("status", "completed")
       .in("fingerprint", chunk);
