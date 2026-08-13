@@ -546,6 +546,46 @@ function Causar() {
 
   // Centros de costo: dependen de la configuración de la empresa y de la cuenta contable.
   const { data: costPolicy } = useCostCenterPolicy(companyId);
+
+  // Tratamiento contable del IVA: descontable, mayor valor del gasto o mayor valor del costo.
+  // No cambia el cálculo del IVA (módulo de impuestos), solo la cuenta donde se contabiliza.
+  const { data: ivaConfig } = useIvaConfig(companyId);
+  const { data: ivaEvidence } = useQuery({
+    queryKey: ["iva-evidence", companyId, header.provider_nit ?? ""],
+    enabled: !!companyId,
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => fetchIvaEvidence(companyId!, header.provider_nit),
+  });
+  const [ivaOverride, setIvaOverride] = useState<{ treatment: IvaTreatment; account: string } | null>(null);
+  const ivaDecision = useMemo<IvaTreatmentDecision | null>(() => {
+    if (!ivaConfig || !ivaEvidence) return null;
+    return resolveIvaTreatment({
+      config: ivaConfig,
+      evidence: ivaEvidence,
+      providerNit: header.provider_nit,
+      expenseAccounts: [...new Set(lines.map((l) => String(l.account_code ?? "").trim()).filter(Boolean))],
+      concepts: lines.map((l) => l.description ?? ""),
+      puc: (config?.accounts ?? []) as PucAccount[],
+      taxAccount: ivaGroups.groups[0]?.account_code ?? null,
+    });
+  }, [ivaConfig, ivaEvidence, header.provider_nit, lines, config?.accounts, ivaGroups.groups]);
+  const ivaFinal = useMemo<IvaTreatmentDecision | null>(() => {
+    if (!ivaDecision) return null;
+    if (!ivaOverride) return ivaDecision;
+    const puc = (config?.accounts ?? []) as PucAccount[];
+    return {
+      ...ivaDecision,
+      treatment: ivaOverride.treatment,
+      account: ivaOverride.account,
+      accountName: puc.find((p) => p.code === ivaOverride.account)?.name ?? "",
+      origin: "CORRECCION",
+      reason: "Tratamiento del IVA corregido manualmente en esta factura.",
+      confidence: 1,
+      warning: null,
+    };
+  }, [ivaDecision, ivaOverride, config?.accounts]);
+  const ivaDetalle = useMemo(() => applyIvaTreatment(ivaGroups.groups, ivaFinal), [ivaGroups.groups, ivaFinal]);
+
   const usaCentros = costCentersEnabled(costPolicy ?? null);
   const erroresCentro = useMemo(
     () =>
