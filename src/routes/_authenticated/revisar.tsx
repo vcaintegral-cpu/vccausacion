@@ -12,6 +12,16 @@ import { useActiveCompany } from "@/lib/active-company";
 import { buildJournal, totals, type JournalLine, type Retenciones } from "@/lib/accounting";
 import { applyPucToPayable, learnPayableAccount, usePayableAccount } from "@/lib/payable-account";
 import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
+import {
+  applyIvaTreatment,
+  fetchIvaEvidence,
+  learnIvaTreatment,
+  resolveIvaTreatment,
+  useIvaConfig,
+  type IvaTreatment,
+  type IvaTreatmentDecision,
+} from "@/lib/iva-treatment";
+import { IvaTreatmentPanel } from "@/components/iva-treatment-panel";
 import { type LearningRule } from "@/lib/learning";
 import { ITEM_TYPES, isValidItemType, normalizeItemType } from "@/lib/item-type";
 import { cop, fecha } from "@/lib/format";
@@ -220,6 +230,43 @@ function Revisar() {
   const { data: costPolicy } = useCostCenterPolicy(companyId);
   const usaCentros = costCentersEnabled(costPolicy ?? null);
 
+  // Tratamiento contable del IVA de esta factura (descontable, gasto o costo).
+  const { data: ivaConfig } = useIvaConfig(companyId);
+  const { data: ivaEvidence } = useQuery({
+    queryKey: ["iva-evidence", companyId, header?.provider_nit ?? ""],
+    enabled: !!companyId,
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => fetchIvaEvidence(companyId!, header?.provider_nit ?? null),
+  });
+  const [ivaOverride, setIvaOverride] = useState<{ treatment: IvaTreatment; account: string } | null>(null);
+  const ivaDecision = useMemo<IvaTreatmentDecision | null>(() => {
+    if (!ivaConfig || !ivaEvidence) return null;
+    return resolveIvaTreatment({
+      config: ivaConfig,
+      evidence: ivaEvidence,
+      providerNit: header?.provider_nit ?? null,
+      expenseAccounts: [...new Set(lines.map((l) => String(l.account_code ?? "").trim()).filter(Boolean))],
+      concepts: lines.map((l) => l.description ?? ""),
+      puc,
+      taxAccount: ivaGroups.groups[0]?.account_code ?? null,
+    });
+  }, [ivaConfig, ivaEvidence, header?.provider_nit, lines, puc, ivaGroups.groups]);
+  const ivaFinal = useMemo<IvaTreatmentDecision | null>(() => {
+    if (!ivaDecision) return null;
+    if (!ivaOverride) return ivaDecision;
+    return {
+      ...ivaDecision,
+      treatment: ivaOverride.treatment,
+      account: ivaOverride.account,
+      accountName: puc.find((p) => p.code === ivaOverride.account)?.name ?? "",
+      origin: "CORRECCION",
+      reason: "Tratamiento del IVA corregido manualmente en esta factura.",
+      confidence: 1,
+      warning: null,
+    };
+  }, [ivaDecision, ivaOverride, puc]);
+  const ivaDetalle = useMemo(() => applyIvaTreatment(ivaGroups.groups, ivaFinal), [ivaGroups.groups, ivaFinal]);
+
   const erroresImpuestos = useMemo(() => {
     const out = [...ivaGroups.errors];
     lines.forEach((l, i) => {
@@ -257,10 +304,10 @@ function Revisar() {
         impoconsumo: Number(header?.impoconsumo ?? 0),
         retenciones,
         costCenter: costCenterForCompany(costPolicy ?? null, header?.cost_center),
-        ivaDetalle: ivaGroups.groups,
+        ivaDetalle: ivaDetalle,
         payableAccount: payable,
       }),
-    [lines, header?.iva, header?.impoconsumo, header?.cost_center, retenciones, ivaGroups, costPolicy, payable],
+    [lines, header?.iva, header?.impoconsumo, header?.cost_center, retenciones, ivaDetalle, costPolicy, payable],
   );
   const operationalJournal = useMemo(() => {
     const puc = (data?.accounts ?? []) as PucAccount[];
@@ -437,6 +484,17 @@ function Revisar() {
       if (!res.ok) { toast.error(res.error ?? "Siigo rechazó el comprobante."); return; }
       // Aprendizaje: la cuenta por pagar aprobada queda asociada al proveedor DENTRO de esta empresa.
       await learnPayableAccount(header.company_id, header.provider_nit, payable?.code);
+      // Aprendizaje del tratamiento del IVA aprobado para este proveedor y concepto.
+      if (ivaFinal && Number(header.iva || 0) > 0) {
+        await learnIvaTreatment({
+          companyId: header.company_id,
+          providerNit: header.provider_nit,
+          concept: lines[0]?.description ?? null,
+          expenseAccount: lines[0]?.account_code ?? null,
+          ivaAccount: ivaFinal.account || ivaDetalle[0]?.account_code || null,
+          treatment: ivaFinal.treatment,
+        });
+      }
       setOk({ number: res.siigoNumber, id: res.siigoId, date: res.syncedAt, url: res.documentUrl });
       toast.success(res.error ?? "Factura sincronizada correctamente.");
       await queryClient.invalidateQueries({ queryKey: ["invoices", companyId] });
