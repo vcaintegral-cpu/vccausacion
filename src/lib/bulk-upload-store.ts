@@ -203,7 +203,7 @@ export async function existingFingerprints(companyId: string, hashes: string[]):
 /** Recalcula contadores del proceso a partir del estado real de sus tareas. */
 export async function refreshUploadCounters(uploadId: string, items: BulkItem[]) {
   const processed = items.filter((i) => i.status === "completed").length;
-  const errors = items.filter((i) => i.status === "error").length;
+  const errors = items.filter((i) => i.status === "error" || i.status === "requires_review").length;
   const pending = items.filter((i) =>
     ["pending", "downloading", "reading", "ocr", "extracting_data", "validating_company", "ready_for_accounting", "processing"].includes(i.status),
   ).length;

@@ -372,7 +372,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     if (!upload) return;
     const rows = await listItems(upload.id);
     setItems(rows);
-    const failed = rows.filter((i) => i.status === "error" || i.status === "requires_review");
+    const failed = rows.filter((i) => i.status !== "completed" && i.status !== "duplicate");
     const first = failed[0];
     if (!first) return;
     await runItems(upload, [first]);
@@ -471,9 +471,9 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                   <RefreshCw className="size-4" /> Continuar procesamiento
                 </Button>
               ) : null}
-              {!running && stats.failed > 0 ? (
+              {!running && stats.failed + stats.review + stats.active > 0 ? (
                 <Button size="sm" variant="outline" onClick={() => void reintentarErrores()}>
-                  <RefreshCw className="size-4" /> Reintentar errores ({stats.failed})
+                  <RefreshCw className="size-4" /> Reintentar pendientes ({stats.failed + stats.review + stats.active})
                 </Button>
               ) : null}
               {stats.total > 0 ? (
@@ -487,7 +487,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
           <div>
             <div className="mb-1 flex justify-between text-xs text-muted-foreground">
               <span>
-                {stats.done + stats.failed + stats.dup} de {stats.total}
+                {stats.done + stats.failed + stats.dup + stats.review} de {stats.total}
               </span>
               <span>
                 {stats.percent}%
