@@ -1,4 +1,4 @@
-import { db as supabase } from "@/lib/db-client";
+import { supabase } from "@/integrations/supabase/client";
 
 export type DuplicateInvoice = {
   id: string;

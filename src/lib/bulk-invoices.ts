@@ -1,7 +1,7 @@
 import { unzipSync } from "fflate";
-import { db as supabase } from "@/lib/db-client";
+import { supabase } from "@/integrations/supabase/client";
 import { companyUsesCostCenters, costCenterForCompany, costCentersEnabled } from "@/lib/cost-center-config";
-import { prepareInvoiceFile, type PreparedInvoiceFile } from "@/lib/invoice-file";
+import { prepareInvoiceFile } from "@/lib/invoice-file";
 import type { ExtractedInvoice } from "@/lib/extract.functions";
 import {
   applyEngineToLines,
@@ -187,12 +187,6 @@ export async function processInvoiceFile(params: {
   knowledge?: CompanyKnowledge;
   /** Ruta del PDF ya guardado en Storage: evita subir el archivo dos veces. */
   storagePath?: string | null;
-  /** Contenido ya preparado (texto o imágenes). El worker del servidor lo entrega listo. */
-  prepared?: PreparedInvoiceFile | undefined;
-  /** Lectura de IA ya realizada en un intento anterior: no se vuelve a gastar IA. */
-  cachedExtraction?: ExtractedInvoice | undefined;
-  /** Devuelve la lectura de IA recién hecha para poder guardarla en el trabajo. */
-  onExtracted?: (data: ExtractedInvoice, texto: string, lectura: "texto" | "imagen") => Promise<void> | void;
   onStage?: (stage: "reading" | "ocr" | "extracting_data" | "validating_company" | "ready_for_accounting", trace?: InvoiceReadTrace) => Promise<void>;
 }): Promise<{
   invoiceId: string;
@@ -211,25 +205,14 @@ export async function processInvoiceFile(params: {
   const { file, companyId, config, extract } = params;
   const huella = await fileFingerprint(file);
   let cached = extraccionCache.get(huella);
-  if (!cached && params.cachedExtraction) {
-    cached = {
-      data: params.cachedExtraction,
-      texto: params.prepared?.text ?? "",
-      lectura: params.prepared?.text ? "texto" : "imagen",
-    };
-  }
   if (!cached) {
     // Lectura optimizada: XML y PDF con texto digital no pasan por OCR/visión.
     await params.onStage?.("reading");
     let content;
-    if (params.prepared) {
-      content = params.prepared;
-    } else {
-      try {
-        content = await prepareInvoiceFile(file);
-      } catch (error) {
-        throw new BulkInvoiceStageError(error instanceof Error ? error.message : "ERROR_NO_SE_PUDO_LEER_PDF", "reading");
-      }
+    try {
+      content = await prepareInvoiceFile(file);
+    } catch (error) {
+      throw new BulkInvoiceStageError(error instanceof Error ? error.message : "ERROR_NO_SE_PUDO_LEER_PDF", "reading");
     }
     if (!content.text && !content.images?.length && !content.dataUrl) {
       throw new BulkInvoiceStageError("ERROR_NO_SE_PUDO_LEER_PDF: no se obtuvo texto ni imagen legible.", "reading");
@@ -252,7 +235,6 @@ export async function processInvoiceFile(params: {
       lectura: content.text ? "texto" : "imagen",
     };
     extraccionCache.set(huella, cached);
-    await params.onExtracted?.(cached.data, cached.texto, cached.lectura);
   }
   const { lines: extracted, ...header } = cached.data;
   const textoDocumento = cached.texto;

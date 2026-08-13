@@ -5,7 +5,7 @@
 // 5) historial de causaciones (proveedor / conceptos similares),
 // 6) reglas contables del usuario y PUC operativo.
 // Todo es SIEMPRE por empresa: nunca se comparten datos entre empresas.
-import { db as supabase } from "@/lib/db-client";
+import { supabase } from "@/integrations/supabase/client";
 import { suggestSmart, bySourcePriority, type HistoryEvent, type LearningRule } from "@/lib/learning";
 import { resolveProductAccount, type CategoryRef, type ProductRef } from "@/lib/product-account";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";

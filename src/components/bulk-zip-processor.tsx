@@ -21,7 +21,6 @@ import {
   type InvoiceReadTrace,
 } from "@/lib/bulk-invoices";
 import type { CompanyKnowledge } from "@/lib/causacion-engine";
-import { createJobs, ensureUploadJobs, kickWorker, retryUploadErrors } from "@/lib/jobs-store";
 import {
   ACTIVE_STATUSES,
   createUpload,
@@ -34,7 +33,6 @@ import {
   listUploads,
   mensajeUsuario,
   refreshUploadCounters,
-  RESUMABLE_STATUSES,
   sha256,
   updateItem,
   updateUpload,
@@ -92,22 +90,6 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     };
   }, [companyId]);
 
-  /** El progreso real se lee de la base de datos: el trabajo ocurre en el backend. */
-  useEffect(() => {
-    if (!upload || running) return;
-    const activo = ["pending", "extracting", "processing"].includes(upload.status);
-    if (!activo) return;
-    const timer = setInterval(() => {
-      void (async () => {
-        const rows = await listItems(upload.id);
-        setItems(rows);
-        const [fresco] = await listUploads(companyId, 20).then((us) => us.filter((u) => u.id === upload.id));
-        if (fresco) setUpload(fresco);
-      })();
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [companyId, running, upload]);
-
   const stats = useMemo(() => {
     const total = items.length;
     const done = items.filter((i) => i.status === "completed").length;
@@ -117,7 +99,6 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       ["downloading", "reading", "ocr", "extracting_data", "validating_company", "ready_for_accounting", "processing"].includes(i.status),
     ).length;
     const review = items.filter((i) => i.status === "requires_review").length;
-    const retryableErrors = items.filter((i) => i.status === "error" && i.retryable === true).length;
     const pending = total - done - failed - dup - review - active;
     const terminados = done + failed + dup + review;
     const elapsed = started.current ? Date.now() - started.current : 0;
@@ -132,7 +113,6 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       percent: total ? Math.round(((done + failed + dup + review) / total) * 100) : 0,
       eta,
       review: review + items.filter((i) => i.status === "completed" && i.needs_review).length,
-      retryableErrors,
     };
   }, [items, running]);
 
@@ -281,11 +261,6 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   async function iniciar() {
     if (!companyId || selected.length === 0) return;
     setBusy("Guardando el archivo…");
-    // Cada carga tiene su propio identificador y su propio estado: nunca se toca
-    // el registro de otra carga que esté en curso.
-    let actual: BulkUpload | null = null;
-    let etapa = "crear_carga";
-    let conTareas = false;
     try {
       const zip = selected[0]!;
       const { data: auth } = await supabase.auth.getUser();
@@ -293,12 +268,10 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       if (!userId) throw new Error("Sesión no válida.");
 
       const row = await createUpload({ companyId, fileName: zip.name, size: zip.size });
-      actual = row;
       setUpload(row);
       setItems([]);
 
       // 1) El comprimido original se guarda antes de procesar y nunca se borra solo.
-      etapa = "guardar_zip";
       const zipPath = `${userId}/${companyId}/zips/${row.id}-${zip.name.replace(/[^\w.-]/g, "_")}`;
       const up = await supabase.storage.from("facturas").upload(zipPath, zip, { upsert: true });
       if (up.error) throw new Error(up.error.message);
@@ -306,15 +279,12 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
 
       // 2) Descompresión controlada: PDFs por un lado, archivos no compatibles por otro.
       setBusy("Descomprimiendo…");
-      etapa = "descomprimir";
       const { pdfs, skipped, filesFound } = await readZipContents(selected);
       if (pdfs.length === 0) {
         await updateUpload(row.id, {
           status: "failed",
           files_found: filesFound,
           skipped_files: skipped.length,
-          error_code: "ZIP_SIN_PDF",
-          error_stage: "descomprimir",
           error_message: "El comprimido no contiene facturas PDF.",
           finished_at: new Date().toISOString(),
         });
@@ -325,7 +295,6 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
 
       // 3) Control de duplicados por huella del archivo (dentro del ZIP y contra la empresa).
       setBusy(`Guardando ${pdfs.length} documentos…`);
-      etapa = "guardar_pdf";
       const prepared: Array<{ file: File; hash: string }> = [];
       for (const file of pdfs) {
         prepared.push({ file, hash: await sha256(new Uint8Array(await file.arrayBuffer())) });
@@ -377,84 +346,35 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
         position += 1;
       }
 
-      etapa = "crear_documentos";
       const created = await insertItems(rows);
-      conTareas = created.length > 0;
       setItems(created);
       await updateUpload(row.id, {
         status: "processing",
         files_found: filesFound,
         pdf_found: pdfs.length,
         skipped_files: skipped.length,
-        error_code: null,
-        error_message: null,
-        error_stage: null,
       });
       setBusy("");
       setSelected([]);
       if (inputRef.current) inputRef.current.value = "";
       const pending = created.filter((i) => i.status === "pending");
-      // 4) Cada PDF queda como un trabajo independiente en la cola persistente:
-      // a partir de aquí el procesamiento vive en el backend, no en esta pestaña.
-      etapa = "crear_tareas";
-      await createJobs(
-        pending.map((i) => ({
-          company_id: companyId,
-          upload_id: row.id,
-          item_id: i.id,
-          file_name: i.file_name,
-          storage_bucket: i.storage_bucket ?? "facturas",
-          storage_path: i.storage_path,
-        })),
-      );
-      setUpload({ ...row, files_found: filesFound, pdf_found: pdfs.length, skipped_files: skipped.length, status: "processing" });
-      await kickWorker();
-      void historial.refetch();
-      toast.success(
-        `${pending.length} facturas enviadas a procesamiento en segundo plano. Puedes salir de esta pantalla.`,
+      if (pending[0]) {
+        await runItems({ ...row, files_found: filesFound, pdf_found: pdfs.length, skipped_files: skipped.length }, [pending[0]]);
+        const first = (await listItems(row.id)).find((i) => i.id === pending[0]?.id);
+        if (!first || first.status !== "completed") {
+          toast.error(`La prueba del primer PDF falló en: ${first?.stage ?? "lectura"}. No se procesaron los demás documentos.`);
+          return;
+        }
+      }
+      await runItems(
+        { ...row, files_found: filesFound, pdf_found: pdfs.length, skipped_files: skipped.length },
+        pending.slice(1),
       );
     } catch (error) {
       setBusy("");
       const message = error instanceof Error ? error.message : "No fue posible iniciar el procesamiento.";
-      if (actual) {
-        // Si los documentos ya existen, la carga NO se pierde: queda pausada y
-        // puede reanudarse sin volver a subir el ZIP.
-        await updateUpload(actual.id, {
-          status: conTareas ? "processing_paused" : "failed",
-          error_code: conTareas ? "WORKER_INTERRUMPIDO" : "UPLOAD_ERROR",
-          error_stage: etapa,
-          error_message: message,
-          ...(conTareas ? { finished_at: null } : { finished_at: new Date().toISOString() }),
-        });
-        const [fresco] = (await listUploads(companyId, 20)).filter((u) => u.id === actual!.id);
-        if (fresco) setUpload(fresco);
-      }
-      void historial.refetch();
-      toast.error(
-        conTareas
-          ? `La carga quedó pausada en la etapa "${etapa}". Pulsa "Reanudar" para continuar sin volver a subir el ZIP. Detalle: ${message}`
-          : message,
-      );
-    }
-  }
-
-  /** Reanuda una carga concreta: recrea las tareas que falten y despierta al worker. */
-  async function reanudar(u: BulkUpload) {
-    setBusy("Reanudando carga…");
-    try {
-      const { recuperables } = await ensureUploadJobs(u.id, true);
-      await updateUpload(u.id, { status: "processing", finished_at: null, error_code: null, error_message: null, error_stage: null });
-      await kickWorker();
-      const rows = await listItems(u.id);
-      setItems(rows);
-      const [fresco] = (await listUploads(companyId, 20)).filter((x) => x.id === u.id);
-      setUpload(fresco ?? { ...u, status: "processing" });
-      void historial.refetch();
-      toast.success(`${recuperables} documentos pendientes reenviados a la cola en segundo plano.`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No fue posible reanudar la carga.");
-    } finally {
-      setBusy("");
+      if (upload) await updateUpload(upload.id, { status: "failed", error_message: message });
+      toast.error(message);
     }
   }
 
@@ -467,22 +387,18 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
 
   async function reintentarErrores() {
     if (!upload) return;
-    setBusy("Reencolando errores…");
-    try {
-      const count = await retryUploadErrors(upload.id);
-      if (count === 0) {
-        toast.error("No hay errores marcados como reintentables.");
-        return;
-      }
-      await updateUpload(upload.id, { status: "processing", finished_at: null });
-      setItems(await listItems(upload.id));
-      setUpload({ ...upload, status: "processing" });
-      toast.success(`${count} errores reencolados sin duplicar documentos ni trabajos.`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No fue posible reintentar los errores.");
-    } finally {
-      setBusy("");
+    const rows = await listItems(upload.id);
+    setItems(rows);
+    const failed = rows.filter((i) => i.status !== "completed" && i.status !== "duplicate");
+    const first = failed[0];
+    if (!first) return;
+    await runItems(upload, [first]);
+    const tested = (await listItems(upload.id)).find((i) => i.id === first.id);
+    if (!tested || tested.status !== "completed") {
+      toast.error(`La prueba del primer PDF falló en: ${tested?.stage ?? "lectura"}. No se procesaron los demás documentos.`);
+      return;
     }
+    await runItems(upload, failed.slice(1));
   }
 
   async function abrirProceso(u: BulkUpload) {
@@ -611,19 +527,14 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {!running && RESUMABLE_STATUSES.includes(upload.status) && stats.pending + stats.failed > 0 ? (
-                <Button size="sm" disabled={!!busy} onClick={() => void reanudar(upload)}>
-                  <RefreshCw className="size-4" /> Reanudar en segundo plano
-                </Button>
-              ) : null}
               {!running && stats.pending > 0 ? (
                 <Button size="sm" variant="outline" onClick={() => void continuar()}>
                   <RefreshCw className="size-4" /> Continuar procesamiento
                 </Button>
               ) : null}
-              {!running && stats.retryableErrors > 0 ? (
+              {!running && stats.failed + stats.review + stats.active > 0 ? (
                 <Button size="sm" variant="outline" onClick={() => void reintentarErrores()}>
-                  <RefreshCw className="size-4" /> Reintentar errores ({stats.retryableErrors})
+                  <RefreshCw className="size-4" /> Reintentar pendientes ({stats.failed + stats.review + stats.active})
                 </Button>
               ) : null}
               {stats.total > 0 ? (
@@ -639,12 +550,6 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               </Button>
             </div>
           </div>
-
-          {upload.error_message ? (
-            <p className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-[11px] text-destructive">
-              Causa técnica · Etapa: {upload.error_stage ?? "—"} · Código: {upload.error_code ?? "—"} · {upload.error_message}
-            </p>
-          ) : null}
 
           {diag ? (
             <div className="rounded-md border border-border bg-muted/30 p-3 text-[11px] leading-5">
@@ -773,7 +678,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
             <table className="w-full text-xs">
               <thead className="bg-muted/50 text-left">
                 <tr>
-                  {["Fecha", "Archivo", "Total", "Procesados", "Errores", "Pendientes", "Estado", ""].map((h) => (
+                  {["Fecha", "Archivo", "Total", "Procesados", "Errores", "Estado", ""].map((h) => (
                     <th key={h} className="px-2 py-1 font-medium">
                       {h}
                     </th>
@@ -781,29 +686,18 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                 </tr>
               </thead>
               <tbody>
-                {(historial.data ?? []).map((u) => {
-                  const pendientes = Math.max(u.pdf_found - u.processed_count - u.error_count, 0);
-                  return (
+                {(historial.data ?? []).map((u) => (
                   <tr key={u.id} className="border-t border-border">
                     <td className="px-2 py-1">{fechaHora(u.created_at)}</td>
                     <td className="max-w-40 truncate px-2 py-1">{u.file_name}</td>
                     <td className="px-2 py-1">{u.pdf_found}</td>
                     <td className="px-2 py-1">{u.processed_count}</td>
                     <td className="px-2 py-1">{u.error_count}</td>
-                    <td className="px-2 py-1">{pendientes}</td>
-                    <td className="px-2 py-1">
-                      {UPLOAD_LABEL[u.status]}
-                      {u.error_code ? <span className="block text-[10px] text-muted-foreground">{u.error_code}</span> : null}
-                    </td>
+                    <td className="px-2 py-1">{UPLOAD_LABEL[u.status]}</td>
                     <td className="px-2 py-1">
                       <Button size="sm" variant="ghost" onClick={() => void abrirProceso(u)}>
                         Ver detalle
                       </Button>
-                      {RESUMABLE_STATUSES.includes(u.status) && pendientes > 0 ? (
-                        <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void reanudar(u)}>
-                          Reanudar
-                        </Button>
-                      ) : null}
                       <Button
                         size="sm"
                         variant="ghost"
@@ -815,8 +709,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                       </Button>
                     </td>
                   </tr>
-                  );
-                })}
+                ))}
               </tbody>
             </table>
           </div>

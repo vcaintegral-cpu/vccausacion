@@ -7,7 +7,6 @@ export type UploadStatus =
   | "uploaded"
   | "extracting"
   | "processing"
-  | "processing_paused"
   | "completed"
   | "completed_with_errors"
   | "failed"
@@ -40,9 +39,6 @@ export type BulkUpload = {
   processed_count: number;
   error_count: number;
   error_message: string | null;
-  error_code?: string | null;
-  error_stage?: string | null;
-  attempt_count?: number;
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
@@ -80,25 +76,14 @@ export type BulkItem = {
   content_status?: string | null;
   extracted_text?: string | null;
   company_validation?: string | null;
-  retryable?: boolean;
 };
 
-export const ACTIVE_STATUSES: UploadStatus[] = [
-  "uploaded",
-  "extracting",
-  "processing",
-  "processing_paused",
-  "completed_with_errors",
-];
-
-/** Estados en los que una carga aún tiene trabajo por hacer y puede reanudarse. */
-export const RESUMABLE_STATUSES: UploadStatus[] = ["uploaded", "extracting", "processing", "processing_paused", "failed"];
+export const ACTIVE_STATUSES: UploadStatus[] = ["uploaded", "extracting", "processing", "completed_with_errors"];
 
 export const UPLOAD_LABEL: Record<UploadStatus, string> = {
   uploaded: "Cargado",
   extracting: "Descomprimiendo",
   processing: "Procesando",
-  processing_paused: "Pausado (pendiente de reanudar)",
   completed: "Completado",
   completed_with_errors: "Con errores",
   failed: "Fallido",
@@ -201,11 +186,9 @@ export async function existingFingerprints(companyId: string, hashes: string[]):
   const found = new Set<string>();
   for (let i = 0; i < hashes.length; i += 200) {
     const chunk = hashes.slice(i, i + 200);
-    // Solo es duplicado si la factura resultante SIGUE existiendo: si el usuario
-    // borró el documento del histórico, el PDF debe poder cargarse de nuevo.
     const { data } = await supabase
       .from("bulk_upload_items")
-      .select("fingerprint, invoices!inner(id)")
+      .select("fingerprint")
       .eq("company_id", companyId)
       .eq("status", "completed")
       .in("fingerprint", chunk);
@@ -232,16 +215,6 @@ export async function refreshUploadCounters(uploadId: string, items: BulkItem[])
     ...(pending === 0 ? { finished_at: new Date().toISOString() } : { finished_at: null }),
   });
   return status;
-}
-
-/** Conteo por estado de una carga, calculado siempre desde la base de datos. */
-export function uploadCounts(items: BulkItem[]) {
-  const processed = items.filter((i) => i.status === "completed").length;
-  const errors = items.filter((i) => i.status === "error").length;
-  const review = items.filter((i) => i.status === "requires_review").length;
-  const duplicates = items.filter((i) => i.status === "duplicate").length;
-  const pending = items.length - processed - errors - review - duplicates;
-  return { total: items.length, processed, errors, review, duplicates, pending };
 }
 
 export type StoredPdf = {
