@@ -20,7 +20,9 @@ import { Route as AuthenticatedEmpresasRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedFacturasRouteImport } from './routes/_authenticated/facturas'
 import { Route as AuthenticatedIntegracionesRouteImport } from './routes/_authenticated/integraciones'
 import { Route as AuthenticatedPanelRouteImport } from './routes/_authenticated/panel'
+import { Route as AuthenticatedProcesosRouteImport } from './routes/_authenticated/procesos'
 import { Route as AuthenticatedRevisarRouteImport } from './routes/_authenticated/revisar'
+import { Route as ApiPublicJobsRunRouteImport } from './routes/api/public/jobs/run'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -78,10 +80,20 @@ const AuthenticatedPanelRoute = AuthenticatedPanelRouteImport.update({
   path: '/panel',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedProcesosRoute = AuthenticatedProcesosRouteImport.update({
+  id: '/procesos',
+  path: '/procesos',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedRevisarRoute = AuthenticatedRevisarRouteImport.update({
   id: '/revisar',
   path: '/revisar',
   getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const ApiPublicJobsRunRoute = ApiPublicJobsRunRouteImport.update({
+  id: '/api/public/jobs/run',
+  path: '/api/public/jobs/run',
+  getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -95,7 +107,9 @@ export interface FileRoutesByFullPath {
   '/facturas': typeof AuthenticatedFacturasRoute
   '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
+  '/procesos': typeof AuthenticatedProcesosRoute
   '/revisar': typeof AuthenticatedRevisarRoute
+  '/api/public/jobs/run': typeof ApiPublicJobsRunRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -108,7 +122,9 @@ export interface FileRoutesByTo {
   '/facturas': typeof AuthenticatedFacturasRoute
   '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
+  '/procesos': typeof AuthenticatedProcesosRoute
   '/revisar': typeof AuthenticatedRevisarRoute
+  '/api/public/jobs/run': typeof ApiPublicJobsRunRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -123,7 +139,9 @@ export interface FileRoutesById {
   '/_authenticated/facturas': typeof AuthenticatedFacturasRoute
   '/_authenticated/integraciones': typeof AuthenticatedIntegracionesRoute
   '/_authenticated/panel': typeof AuthenticatedPanelRoute
+  '/_authenticated/procesos': typeof AuthenticatedProcesosRoute
   '/_authenticated/revisar': typeof AuthenticatedRevisarRoute
+  '/api/public/jobs/run': typeof ApiPublicJobsRunRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -138,7 +156,9 @@ export interface FileRouteTypes {
     | '/facturas'
     | '/integraciones'
     | '/panel'
+    | '/procesos'
     | '/revisar'
+    | '/api/public/jobs/run'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -151,7 +171,9 @@ export interface FileRouteTypes {
     | '/facturas'
     | '/integraciones'
     | '/panel'
+    | '/procesos'
     | '/revisar'
+    | '/api/public/jobs/run'
   id:
     | '__root__'
     | '/'
@@ -165,13 +187,16 @@ export interface FileRouteTypes {
     | '/_authenticated/facturas'
     | '/_authenticated/integraciones'
     | '/_authenticated/panel'
+    | '/_authenticated/procesos'
     | '/_authenticated/revisar'
+    | '/api/public/jobs/run'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ApiPublicJobsRunRoute: typeof ApiPublicJobsRunRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -253,12 +278,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedPanelRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/procesos': {
+      id: '/_authenticated/procesos'
+      path: '/procesos'
+      fullPath: '/procesos'
+      preLoaderRoute: typeof AuthenticatedProcesosRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/revisar': {
       id: '/_authenticated/revisar'
       path: '/revisar'
       fullPath: '/revisar'
       preLoaderRoute: typeof AuthenticatedRevisarRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/api/public/jobs/run': {
+      id: '/api/public/jobs/run'
+      path: '/api/public/jobs/run'
+      fullPath: '/api/public/jobs/run'
+      preLoaderRoute: typeof ApiPublicJobsRunRouteImport
+      parentRoute: typeof rootRouteImport
     }
   }
 }
@@ -272,6 +311,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedFacturasRoute: typeof AuthenticatedFacturasRoute
   AuthenticatedIntegracionesRoute: typeof AuthenticatedIntegracionesRoute
   AuthenticatedPanelRoute: typeof AuthenticatedPanelRoute
+  AuthenticatedProcesosRoute: typeof AuthenticatedProcesosRoute
   AuthenticatedRevisarRoute: typeof AuthenticatedRevisarRoute
 }
 
@@ -284,6 +324,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedFacturasRoute: AuthenticatedFacturasRoute,
   AuthenticatedIntegracionesRoute: AuthenticatedIntegracionesRoute,
   AuthenticatedPanelRoute: AuthenticatedPanelRoute,
+  AuthenticatedProcesosRoute: AuthenticatedProcesosRoute,
   AuthenticatedRevisarRoute: AuthenticatedRevisarRoute,
 }
 
@@ -294,6 +335,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  ApiPublicJobsRunRoute: ApiPublicJobsRunRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -21,6 +21,7 @@ import {
   type InvoiceReadTrace,
 } from "@/lib/bulk-invoices";
 import type { CompanyKnowledge } from "@/lib/causacion-engine";
+import { createJobs, kickWorker } from "@/lib/jobs-store";
 import {
   ACTIVE_STATUSES,
   createUpload,
@@ -89,6 +90,22 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       cancel = true;
     };
   }, [companyId]);
+
+  /** El progreso real se lee de la base de datos: el trabajo ocurre en el backend. */
+  useEffect(() => {
+    if (!upload || running) return;
+    const activo = ["pending", "extracting", "processing"].includes(upload.status);
+    if (!activo) return;
+    const timer = setInterval(() => {
+      void (async () => {
+        const rows = await listItems(upload.id);
+        setItems(rows);
+        const [fresco] = await listUploads(companyId, 20).then((us) => us.filter((u) => u.id === upload.id));
+        if (fresco) setUpload(fresco);
+      })();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [companyId, running, upload]);
 
   const stats = useMemo(() => {
     const total = items.length;
@@ -358,17 +375,23 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       setSelected([]);
       if (inputRef.current) inputRef.current.value = "";
       const pending = created.filter((i) => i.status === "pending");
-      if (pending[0]) {
-        await runItems({ ...row, files_found: filesFound, pdf_found: pdfs.length, skipped_files: skipped.length }, [pending[0]]);
-        const first = (await listItems(row.id)).find((i) => i.id === pending[0]?.id);
-        if (!first || first.status !== "completed") {
-          toast.error(`La prueba del primer PDF falló en: ${first?.stage ?? "lectura"}. No se procesaron los demás documentos.`);
-          return;
-        }
-      }
-      await runItems(
-        { ...row, files_found: filesFound, pdf_found: pdfs.length, skipped_files: skipped.length },
-        pending.slice(1),
+      // 4) Cada PDF queda como un trabajo independiente en la cola persistente:
+      // a partir de aquí el procesamiento vive en el backend, no en esta pestaña.
+      await createJobs(
+        pending.map((i) => ({
+          company_id: companyId,
+          upload_id: row.id,
+          item_id: i.id,
+          file_name: i.file_name,
+          storage_bucket: i.storage_bucket ?? "facturas",
+          storage_path: i.storage_path,
+        })),
+      );
+      setUpload({ ...row, files_found: filesFound, pdf_found: pdfs.length, skipped_files: skipped.length, status: "processing" });
+      await kickWorker();
+      void historial.refetch();
+      toast.success(
+        `${pending.length} facturas enviadas a procesamiento en segundo plano. Puedes salir de esta pantalla.`,
       );
     } catch (error) {
       setBusy("");
