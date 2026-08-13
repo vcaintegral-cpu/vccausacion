@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { suggestSmart, bySourcePriority, type HistoryEvent, type LearningRule } from "@/lib/learning";
 import { resolveProductAccount, type CategoryRef, type ProductRef } from "@/lib/product-account";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
+import { companyUsesCostCenters, costCenterForCompany } from "@/lib/cost-center-config";
 import type { Line, ProviderConfig, Rule } from "@/lib/accounting";
 
 const PAGE = 1000;
@@ -370,6 +371,8 @@ export async function registrarAprendizaje(params: {
 }) {
   const { companyId, invoiceId, userId, providerNit, providerName, costCenter, lines, decisions, puc, autoLearning } = params;
   if (!companyId || !userId) return;
+  // El centro de costo solo se aprende si la empresa los maneja.
+  const centroAprendido = costCenterForCompany(await companyUsesCostCenters(companyId), costCenter);
   const operacional = (code: string) =>
     puc.length === 0 ? code : resolveOperationalAccount(puc, code).operationalAccount ?? code;
 
@@ -411,7 +414,7 @@ export async function registrarAprendizaje(params: {
         concept: l.description || null,
         account_code: final,
         account_name: l.account_name || null,
-        cost_center: costCenter || null,
+        cost_center: centroAprendido,
         iva: Number(l.iva ?? 0),
         item_type: l.item_type ?? "gasto",
         source: "manual",
