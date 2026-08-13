@@ -41,9 +41,10 @@ import {
   type BulkUpload,
 } from "@/lib/bulk-upload-store";
 
-const CONCURRENCY = 6;
-const MAX_ATTEMPTS = 3;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Secuencial y sin reintentos automáticos: un error detiene la tarea y el usuario
+// decide si reintenta manualmente (no se gastan créditos de IA en bucles).
+const CONCURRENCY = 1;
+const MAX_ATTEMPTS = 1;
 
 type Props = {
   companyId: string;
@@ -312,11 +313,17 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
         const repetido = previos.has(hash) || vistos.has(hash);
         vistos.add(hash);
         let path: string | null = null;
+        let uploadError: string | null = null;
         if (!repetido) {
           const safe = file.name.replace(/[^\w.-]/g, "_");
           const target = `${userId}/${companyId}/bulk/${row.id}/${position}-${safe}`;
-          const res = await supabase.storage.from("facturas").upload(target, file, { upsert: true });
-          if (!res.error) path = target;
+          // El PDF extraído se guarda siempre como application/pdf: el worker lo
+          // recupera después desde bucket + storage_path (nunca desde el File del navegador).
+          const res = await supabase.storage
+            .from("facturas")
+            .upload(target, file, { upsert: true, contentType: "application/pdf" });
+          if (res.error) uploadError = `ERROR_SUBIDA_PDF: ${res.error.message}`;
+          else path = target;
         }
         rows.push({
           upload_id: row.id,
@@ -325,8 +332,16 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
           storage_path: path,
           size_bytes: file.size,
           fingerprint: repetido ? null : hash,
-          status: repetido ? "duplicate" : "pending",
-          user_message: repetido ? `${file.name}: este documento ya fue procesado.` : null,
+          status: repetido ? "duplicate" : uploadError ? "error" : "pending",
+          ...(uploadError
+            ? {
+                stage: "upload_pdf",
+                error_message: uploadError,
+                user_message: `Etapa: upload_pdf · Código: STORAGE_UPLOAD_ERROR · ${uploadError}`,
+                download_status: "ERROR",
+              }
+            : {}),
+          ...(repetido ? { user_message: `${file.name}: este documento ya fue procesado.` } : {}),
           position,
         });
         files.push(file);
