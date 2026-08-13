@@ -43,6 +43,7 @@ import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validat
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { BulkZipProcessor } from "@/components/bulk-zip-processor";
+import { IvaTreatmentPanel } from "@/components/iva-treatment-panel";
 import {
   ESTADO_LABEL,
   estadoUnico,
@@ -1437,6 +1438,15 @@ function Causar() {
               />
             </dl>
           </div>
+
+          <IvaTreatmentPanel
+            decision={ivaFinal}
+            ivaTotal={ivaTotal}
+            accounts={(config?.accounts ?? []) as PucAccount[]}
+            overridden={!!ivaOverride}
+            onChange={(v) => setIvaOverride(v)}
+            onReset={() => setIvaOverride(null)}
+          />
 
           <div className="overflow-hidden rounded-lg border border-border bg-card">
             <div className="border-b border-border px-5 py-3 text-sm font-semibold">Comprobante contable</div>
