@@ -279,6 +279,11 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   async function iniciar() {
     if (!companyId || selected.length === 0) return;
     setBusy("Guardando el archivo…");
+    // Cada carga tiene su propio identificador y su propio estado: nunca se toca
+    // el registro de otra carga que esté en curso.
+    let actual: BulkUpload | null = null;
+    let etapa = "crear_carga";
+    let conTareas = false;
     try {
       const zip = selected[0]!;
       const { data: auth } = await supabase.auth.getUser();
@@ -286,10 +291,12 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       if (!userId) throw new Error("Sesión no válida.");
 
       const row = await createUpload({ companyId, fileName: zip.name, size: zip.size });
+      actual = row;
       setUpload(row);
       setItems([]);
 
       // 1) El comprimido original se guarda antes de procesar y nunca se borra solo.
+      etapa = "guardar_zip";
       const zipPath = `${userId}/${companyId}/zips/${row.id}-${zip.name.replace(/[^\w.-]/g, "_")}`;
       const up = await supabase.storage.from("facturas").upload(zipPath, zip, { upsert: true });
       if (up.error) throw new Error(up.error.message);
@@ -297,12 +304,15 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
 
       // 2) Descompresión controlada: PDFs por un lado, archivos no compatibles por otro.
       setBusy("Descomprimiendo…");
+      etapa = "descomprimir";
       const { pdfs, skipped, filesFound } = await readZipContents(selected);
       if (pdfs.length === 0) {
         await updateUpload(row.id, {
           status: "failed",
           files_found: filesFound,
           skipped_files: skipped.length,
+          error_code: "ZIP_SIN_PDF",
+          error_stage: "descomprimir",
           error_message: "El comprimido no contiene facturas PDF.",
           finished_at: new Date().toISOString(),
         });
@@ -313,6 +323,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
 
       // 3) Control de duplicados por huella del archivo (dentro del ZIP y contra la empresa).
       setBusy(`Guardando ${pdfs.length} documentos…`);
+      etapa = "guardar_pdf";
       const prepared: Array<{ file: File; hash: string }> = [];
       for (const file of pdfs) {
         prepared.push({ file, hash: await sha256(new Uint8Array(await file.arrayBuffer())) });
@@ -364,13 +375,18 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
         position += 1;
       }
 
+      etapa = "crear_documentos";
       const created = await insertItems(rows);
+      conTareas = created.length > 0;
       setItems(created);
       await updateUpload(row.id, {
         status: "processing",
         files_found: filesFound,
         pdf_found: pdfs.length,
         skipped_files: skipped.length,
+        error_code: null,
+        error_message: null,
+        error_stage: null,
       });
       setBusy("");
       setSelected([]);
@@ -378,6 +394,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       const pending = created.filter((i) => i.status === "pending");
       // 4) Cada PDF queda como un trabajo independiente en la cola persistente:
       // a partir de aquí el procesamiento vive en el backend, no en esta pestaña.
+      etapa = "crear_tareas";
       await createJobs(
         pending.map((i) => ({
           company_id: companyId,
@@ -397,8 +414,45 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     } catch (error) {
       setBusy("");
       const message = error instanceof Error ? error.message : "No fue posible iniciar el procesamiento.";
-      if (upload) await updateUpload(upload.id, { status: "failed", error_message: message });
-      toast.error(message);
+      if (actual) {
+        // Si los documentos ya existen, la carga NO se pierde: queda pausada y
+        // puede reanudarse sin volver a subir el ZIP.
+        await updateUpload(actual.id, {
+          status: conTareas ? "processing_paused" : "failed",
+          error_code: conTareas ? "WORKER_INTERRUMPIDO" : "UPLOAD_ERROR",
+          error_stage: etapa,
+          error_message: message,
+          ...(conTareas ? { finished_at: null } : { finished_at: new Date().toISOString() }),
+        });
+        const [fresco] = (await listUploads(companyId, 20)).filter((u) => u.id === actual!.id);
+        if (fresco) setUpload(fresco);
+      }
+      void historial.refetch();
+      toast.error(
+        conTareas
+          ? `La carga quedó pausada en la etapa "${etapa}". Pulsa "Reanudar" para continuar sin volver a subir el ZIP. Detalle: ${message}`
+          : message,
+      );
+    }
+  }
+
+  /** Reanuda una carga concreta: recrea las tareas que falten y despierta al worker. */
+  async function reanudar(u: BulkUpload) {
+    setBusy("Reanudando carga…");
+    try {
+      const { recuperables } = await ensureUploadJobs(u.id, true);
+      await updateUpload(u.id, { status: "processing", finished_at: null, error_code: null, error_message: null, error_stage: null });
+      await kickWorker();
+      const rows = await listItems(u.id);
+      setItems(rows);
+      const [fresco] = (await listUploads(companyId, 20)).filter((x) => x.id === u.id);
+      setUpload(fresco ?? { ...u, status: "processing" });
+      void historial.refetch();
+      toast.success(`${recuperables} documentos pendientes reenviados a la cola en segundo plano.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible reanudar la carga.");
+    } finally {
+      setBusy("");
     }
   }
 
