@@ -358,6 +358,7 @@ export function applyIvaTreatment(
 export async function learnIvaTreatment(params: {
   companyId: string;
   userId?: string | null;
+  /** El identificador puede llegar sin definir desde la sesión. */
   providerNit?: string | null;
   concept?: string | null;
   expenseAccount?: string | null;
