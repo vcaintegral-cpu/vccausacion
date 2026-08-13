@@ -270,6 +270,7 @@ export type Database = {
           provider_name: string | null
           provider_nit: string | null
           read_status: string | null
+          retryable: boolean
           score: number | null
           size_bytes: number
           stage: string | null
@@ -305,6 +306,7 @@ export type Database = {
           provider_name?: string | null
           provider_nit?: string | null
           read_status?: string | null
+          retryable?: boolean
           score?: number | null
           size_bytes?: number
           stage?: string | null
@@ -340,6 +342,7 @@ export type Database = {
           provider_name?: string | null
           provider_nit?: string | null
           read_status?: string | null
+          retryable?: boolean
           score?: number | null
           size_bytes?: number
           stage?: string | null
@@ -991,7 +994,10 @@ export type Database = {
           created_by: string | null
           error_code: string | null
           error_message: string | null
+          error_stack: string | null
+          error_stage: string | null
           file_name: string
+          http_status: number | null
           id: string
           invoice_id: string | null
           item_id: string | null
@@ -1003,6 +1009,7 @@ export type Database = {
           payload: Json | null
           priority: number
           processing_stage: string | null
+          retryable: boolean
           started_at: string | null
           status: string
           storage_bucket: string
@@ -1020,7 +1027,10 @@ export type Database = {
           created_by?: string | null
           error_code?: string | null
           error_message?: string | null
+          error_stack?: string | null
+          error_stage?: string | null
           file_name?: string
+          http_status?: number | null
           id?: string
           invoice_id?: string | null
           item_id?: string | null
@@ -1032,6 +1042,7 @@ export type Database = {
           payload?: Json | null
           priority?: number
           processing_stage?: string | null
+          retryable?: boolean
           started_at?: string | null
           status?: string
           storage_bucket?: string
@@ -1049,7 +1060,10 @@ export type Database = {
           created_by?: string | null
           error_code?: string | null
           error_message?: string | null
+          error_stack?: string | null
+          error_stage?: string | null
           file_name?: string
+          http_status?: number | null
           id?: string
           invoice_id?: string | null
           item_id?: string | null
@@ -1061,6 +1075,7 @@ export type Database = {
           payload?: Json | null
           priority?: number
           processing_stage?: string | null
+          retryable?: boolean
           started_at?: string | null
           status?: string
           storage_bucket?: string
@@ -1470,7 +1485,10 @@ export type Database = {
           created_by: string | null
           error_code: string | null
           error_message: string | null
+          error_stack: string | null
+          error_stage: string | null
           file_name: string
+          http_status: number | null
           id: string
           invoice_id: string | null
           item_id: string | null
@@ -1482,6 +1500,7 @@ export type Database = {
           payload: Json | null
           priority: number
           processing_stage: string | null
+          retryable: boolean
           started_at: string | null
           status: string
           storage_bucket: string
