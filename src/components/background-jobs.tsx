@@ -10,7 +10,7 @@ export function BackgroundJobsPanel() {
   if (!p.running || p.total === 0) return null;
   const listas = p.done;
   return (
-    <div className="pointer-events-auto fixed bottom-4 right-4 z-50 w-64 rounded-lg border border-border bg-card p-3 shadow-lg">
+    <div className="pointer-events-auto fixed top-4 right-4 z-50 w-64 rounded-lg border border-border bg-card p-3 shadow-lg">
       <div className="flex items-center gap-2">
         <Loader2 className="size-4 animate-spin text-primary" />
         <p className="text-xs font-semibold">Procesando facturas en segundo plano</p>
