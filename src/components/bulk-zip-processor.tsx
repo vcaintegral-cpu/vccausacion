@@ -155,6 +155,12 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                 needs_review: result.needsReview,
                 error_message: null,
                 user_message: null,
+                provider_name: result.providerName,
+                provider_nit: result.providerNit,
+                buyer_name: result.buyerName,
+                buyer_nit: result.buyerNit,
+                issue_date: result.issueDate,
+                read_status: result.readMode === "texto" ? "Leída (texto)" : "Leída (imagen)",
               };
               patchItem(item.id, patch);
               await updateItem(item.id, patch);
