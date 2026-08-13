@@ -20,6 +20,7 @@ import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy"
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
+*** placeholder
   computeRetenciones,
   type Line,
   type Rule,
