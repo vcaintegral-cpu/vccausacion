@@ -537,6 +537,20 @@ function Causar() {
     });
     return out;
   }, [ivaGroups.errors, lines, impuestosRet, lineTax, config?.accounts]);
+
+  // Centros de costo: dependen de la configuración de la empresa y de la cuenta contable.
+  const { data: costPolicy } = useCostCenterPolicy(companyId);
+  const usaCentros = costCentersEnabled(costPolicy ?? null);
+  const erroresCentro = useMemo(
+    () =>
+      validateCostCenter({
+        policy: costPolicy ?? null,
+        accounts: (config?.accounts ?? []) as PucAccount[],
+        costCenter: header.cost_center,
+        lines,
+      }),
+    [costPolicy, config?.accounts, header.cost_center, lines],
+  );
   const journal = useMemo(
     () =>
       buildJournal({
