@@ -461,6 +461,7 @@ export type Database = {
           created_at: string
           created_by: string
           currency: string
+          default_payable_account: string | null
           id: string
           name: string
           nit: string | null
@@ -471,6 +472,7 @@ export type Database = {
           created_at?: string
           created_by?: string
           currency?: string
+          default_payable_account?: string | null
           id?: string
           name: string
           nit?: string | null
@@ -481,6 +483,7 @@ export type Database = {
           created_at?: string
           created_by?: string
           currency?: string
+          default_payable_account?: string | null
           id?: string
           name?: string
           nit?: string | null
@@ -1525,12 +1528,28 @@ export type Database = {
           uses: number
         }[]
       }
+      history_provider_payable_accounts: {
+        Args: { _company_id: string; _limit?: number; _nits: string[] }
+        Returns: {
+          account_code: string
+          credit_total: number
+          provider_nit: string
+          uses: number
+        }[]
+      }
       history_top_accounts: {
         Args: { _company_id: string; _limit?: number }
         Returns: {
           account_code: string
           concept: string
           provider_nit: string
+          uses: number
+        }[]
+      }
+      history_top_payable_accounts: {
+        Args: { _company_id: string; _limit?: number }
+        Returns: {
+          account_code: string
           uses: number
         }[]
       }

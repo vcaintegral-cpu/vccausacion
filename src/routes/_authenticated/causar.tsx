@@ -11,6 +11,7 @@ import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
+import { applyPucToPayable, learnPayableAccount, usePayableAccount } from "@/lib/payable-account";
 import {
   applyEngineToLines,
   emptyKnowledge,
@@ -546,6 +547,12 @@ function Causar() {
       }),
     [costPolicy, config?.accounts, header.cost_center, lines],
   );
+  // Contrapartida: obligación por pagar según histórico de ESTA empresa con ESTE proveedor.
+  const { data: payableBase } = usePayableAccount(companyId, header.provider_nit);
+  const payable = useMemo(
+    () => (payableBase ? applyPucToPayable(payableBase, (config?.accounts ?? []) as PucAccount[]) : null),
+    [payableBase, config?.accounts],
+  );
   const journal = useMemo(
     () =>
       buildJournal({
@@ -555,8 +562,9 @@ function Causar() {
         retenciones,
         costCenter: costCenterForCompany(costPolicy ?? null, header.cost_center),
         ivaDetalle: ivaGroups.groups,
+        payableAccount: payable,
       }),
-    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaGroups, costPolicy],
+    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaGroups, costPolicy, payable],
   );
   const operationalJournal = useMemo(() => {
     const puc = (config?.accounts ?? []) as PucAccount[];

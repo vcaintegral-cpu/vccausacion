@@ -17,6 +17,7 @@ import {
   sameNit,
 } from "@/lib/company-validation";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
+import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
   computeRetenciones,
@@ -348,12 +349,15 @@ export async function processInvoiceFile(params: {
   // La empresa define si maneja centros de costo; si no, nunca se guarda ninguno.
   const costPolicy = await companyUsesCostCenters(companyId);
   const centroFactura = costCenterForCompany(costPolicy, header.cost_center);
+  // Contrapartida: obligación por pagar según el histórico de esta empresa con este proveedor.
+  const payable = applyPucToPayable(await fetchPayableAccount(companyId, header.provider_nit), config.accounts);
   const journal = buildJournal({
     lines,
     iva: ivaTotal,
     impoconsumo: Number(header.impoconsumo || 0),
     retenciones,
     costCenter: centroFactura,
+    payableAccount: payable,
   });
   const unresolvedAccounts: string[] = [];
   const operationalJournal = journal.map((line) => {
