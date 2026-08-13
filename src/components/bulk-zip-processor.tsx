@@ -121,146 +121,30 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     };
   }, [items, running]);
 
-  const patchItem = useCallback((id: string, patch: Partial<BulkItem>) => {
-    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
-  }, []);
+  /** Estado en vivo desde base de datos: la pantalla solo muestra el avance. */
+  useEffect(() => {
+    if (!upload) return;
+    let cancel = false;
+    const tick = async () => {
+      const rows = await listItems(upload.id);
+      if (!cancel) setItems(rows);
+    };
+    void tick();
+    if (!running) return;
+    const timer = window.setInterval(() => void tick(), 2500);
+    return () => {
+      cancel = true;
+      window.clearInterval(timer);
+    };
+  }, [upload, running, progress.done, progress.errors]);
 
-  /** Procesa una lista de tareas, una por una y guardando el resultado inmediatamente. */
-  const runItems = useCallback(
-    async (uploadRow: BulkUpload, targets: BulkItem[]) => {
-      if (targets.length === 0) return;
-      if (!config) {
-        toast.error("Los parámetros contables aún se están cargando.");
-        return;
-      }
-      setRunning(true);
-      started.current = Date.now();
-      resetBulkBatch();
-      await updateUpload(uploadRow.id, { status: "processing", finished_at: null });
-
-      let cursor = 0;
-      const worker = async () => {
-        for (;;) {
-          const index = cursor++;
-          if (index >= targets.length) return;
-          const item = targets[index]!;
-          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-            patchItem(item.id, { status: "downloading", attempts: attempt, stage: "recuperando_pdf" });
-            await updateItem(item.id, { status: "downloading", attempts: attempt, stage: "recuperando_pdf" });
-            try {
-              if (!item.storage_path) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene storage_path.");
-              const stored = await fileFromStorage(item.storage_path, item.file_name, item.storage_bucket ?? "facturas");
-              const storagePatch: Partial<BulkItem> = {
-                download_status: "OK",
-                stored_size_bytes: stored.size,
-                mime_type: stored.mimeType,
-                content_status: "OK",
-              };
-              patchItem(item.id, storagePatch);
-              await updateItem(item.id, storagePatch);
-              const saveTrace = async (stage: string, trace?: InvoiceReadTrace) => {
-                const status = stage as BulkItem["status"];
-                const tracePatch: Partial<BulkItem> = {
-                  status,
-                  stage,
-                  ...(trace ? {
-                    provider_name: trace.providerName,
-                    provider_nit: trace.providerNit,
-                    buyer_name: trace.buyerName,
-                    buyer_nit: trace.buyerNit,
-                    invoice_number: trace.invoiceNumber,
-                    issue_date: trace.issueDate,
-                    extracted_text: trace.text,
-                    read_status: trace.readMode === "texto" ? "Leída (texto)" : "Leída (imagen)",
-                  } : {}),
-                };
-                patchItem(item.id, tracePatch);
-                await updateItem(item.id, tracePatch);
-              };
-              const result = await processInvoiceFile({
-                file: stored.file,
-                companyId,
-                config,
-                extract: extract as never,
-                storagePath: item.storage_path,
-                onStage: saveTrace,
-                ...(knowledge ? { knowledge } : {}),
-              });
-              const patch: Partial<BulkItem> = {
-                status: "completed",
-                stage: "guardado",
-                invoice_id: result.invoiceId,
-                invoice_number: result.numero,
-                invoice_total: result.total,
-                score: result.score,
-                needs_review: result.needsReview,
-                error_message: null,
-                user_message: null,
-                provider_name: result.providerName,
-                provider_nit: result.providerNit,
-                buyer_name: result.buyerName,
-                buyer_nit: result.buyerNit,
-                issue_date: result.issueDate,
-                read_status: result.readMode === "texto" ? "Leída (texto)" : "Leída (imagen)",
-              };
-              patchItem(item.id, patch);
-              await updateItem(item.id, patch);
-              break;
-            } catch (error) {
-              const message = error instanceof Error ? error.message : "Error al procesar";
-              const duplicado = /duplicad|ya fue causada|ya existe|repetido/i.test(message);
-              const staged = error instanceof BulkInvoiceStageError ? error : null;
-              const trace = staged?.trace;
-              const storageError = /ERROR_STORAGE|ERROR_ARCHIVO|ERROR_PDF_INVALIDO/.test(message);
-              const stage = staged?.stage ?? (storageError ? "download_pdf" : "process_invoice");
-              const code = errorCode(stage, message);
-              const patch: Partial<BulkItem> = {
-                status: staged?.requiresReview ? "requires_review" : duplicado ? "duplicate" : "error",
-                stage,
-                error_message: message,
-                user_message: `Etapa: ${stage} · Código: ${code} · ${mensajeUsuario(item.file_name, message)} · ${message}`,
-                ...(storageError ? { download_status: "ERROR", content_status: "ERROR" } : {}),
-                ...(trace ? {
-                  provider_name: trace.providerName,
-                  provider_nit: trace.providerNit,
-                  buyer_name: trace.buyerName,
-                  buyer_nit: trace.buyerNit,
-                  invoice_number: trace.invoiceNumber,
-                  issue_date: trace.issueDate,
-                  extracted_text: trace.text,
-                  read_status: trace.readMode === "texto" ? "Leída (texto)" : "Leída (imagen)",
-                  company_validation: staged?.requiresReview ? "REQUIERE_REVISION" : "ERROR",
-                } : {}),
-              };
-              patchItem(item.id, patch);
-              await updateItem(item.id, patch);
-              break;
-            }
-          }
-        }
-      };
-
-      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, worker));
-
-      const rows = await listItems(uploadRow.id);
-      setItems(rows);
-      const status = await refreshUploadCounters(uploadRow.id, rows);
-      setUpload({
-        ...uploadRow,
-        status,
-        files_found: Math.max(uploadRow.files_found, rows.length),
-        pdf_found: Math.max(uploadRow.pdf_found, rows.length),
-        processed_count: rows.filter((r) => r.status === "completed").length,
-        error_count: rows.filter((r) => r.status === "error").length,
-      });
-      setRunning(false);
+  useEffect(() => {
+    if (!running && upload) {
       void historial.refetch();
       onFinished?.();
-      const ok = rows.filter((r) => r.status === "completed").length;
-      toast.success(`${ok} de ${rows.length} facturas causadas como borrador.`);
-    },
-    [companyId, config, extract, historial, knowledge, onFinished, patchItem],
-  );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running]);
 
   /** Sube el ZIP, lo descomprime, guarda cada PDF y crea las tareas. */
   async function iniciar() {
