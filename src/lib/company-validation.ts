@@ -72,3 +72,15 @@ export function motivoBloqueoEmpresa(check: CompanyCheck): string | null {
     return "La empresa activa no tiene NIT configurado. Registre el NIT de la empresa antes de guardar o causar facturas.";
   return null;
 }
+
+/**
+ * Respaldo determinístico: busca el NIT de la empresa dentro del texto del documento,
+ * ignorando puntos, espacios y el dígito de verificación. Se usa cuando la IA no logró
+ * separar bien proveedor y adquiriente, para no rechazar facturas que sí son de la empresa.
+ */
+export function textoContieneNit(texto: string | null | undefined, nit: string | null | undefined): boolean {
+  const objetivo = normalizeNit(nit);
+  if (!objetivo || objetivo.length < 6 || !texto) return false;
+  const digitos = String(texto).replace(/[^0-9]/g, "");
+  return digitos.includes(objetivo);
+}

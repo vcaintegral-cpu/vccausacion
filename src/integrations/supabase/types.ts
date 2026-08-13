@@ -248,6 +248,8 @@ export type Database = {
       bulk_upload_items: {
         Row: {
           attempts: number
+          buyer_name: string | null
+          buyer_nit: string | null
           company_id: string
           created_at: string
           error_message: string | null
@@ -257,8 +259,12 @@ export type Database = {
           invoice_id: string | null
           invoice_number: string | null
           invoice_total: number | null
+          issue_date: string | null
           needs_review: boolean
           position: number
+          provider_name: string | null
+          provider_nit: string | null
+          read_status: string | null
           score: number | null
           size_bytes: number
           stage: string | null
@@ -270,6 +276,8 @@ export type Database = {
         }
         Insert: {
           attempts?: number
+          buyer_name?: string | null
+          buyer_nit?: string | null
           company_id: string
           created_at?: string
           error_message?: string | null
@@ -279,8 +287,12 @@ export type Database = {
           invoice_id?: string | null
           invoice_number?: string | null
           invoice_total?: number | null
+          issue_date?: string | null
           needs_review?: boolean
           position?: number
+          provider_name?: string | null
+          provider_nit?: string | null
+          read_status?: string | null
           score?: number | null
           size_bytes?: number
           stage?: string | null
@@ -292,6 +304,8 @@ export type Database = {
         }
         Update: {
           attempts?: number
+          buyer_name?: string | null
+          buyer_nit?: string | null
           company_id?: string
           created_at?: string
           error_message?: string | null
@@ -301,8 +315,12 @@ export type Database = {
           invoice_id?: string | null
           invoice_number?: string | null
           invoice_total?: number | null
+          issue_date?: string | null
           needs_review?: boolean
           position?: number
+          provider_name?: string | null
+          provider_nit?: string | null
+          read_status?: string | null
           score?: number | null
           size_bytes?: number
           stage?: string | null

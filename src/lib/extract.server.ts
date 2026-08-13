@@ -10,7 +10,11 @@ Estructura exacta:
 "payment_method":string|null,"currency":string|null,"cost_center":string|null,"notes":string|null,
 "subtotal":number,"discount":number,"iva":number,"impoconsumo":number,"total":number,
 "lines":[{"code":string|null,"description":string,"quantity":number,"unit_value":number,"discount":number,"iva":number,"retention":number,"impoconsumo":number,"total":number}]}
-Reglas: los importes son números sin separadores ni símbolos. El NIT va sin dígito de verificación separado por guion (usa solo el número base). "provider_*" es el emisor/vendedor; "buyer_nit" y "buyer_name" son el NIT y la razón social del ADQUIRIENTE/COMPRADOR (cliente que recibe la factura). Si un dato no aparece, usa null o 0. Nunca inventes valores.`;
+Reglas: los importes son números sin separadores ni símbolos. El NIT va sin dígito de verificación separado por guion (usa solo el número base).
+"provider_*" es el EMISOR/VENDEDOR de la factura (quien la expide, normalmente en el encabezado junto al logo y la resolución DIAN).
+"buyer_nit" y "buyer_name" son el NIT y la razón social del ADQUIRIENTE/COMPRADOR/CLIENTE (bloque "Adquiriente", "Cliente", "Señores", "Facturar a", "Datos del receptor"). Nunca uses el mismo NIT para proveedor y comprador: son dos empresas distintas. Si dudas, el emisor es quien cobra y el adquiriente es quien paga.
+No supongas impuestos: si la factura no muestra IVA, "iva" es 0. Usa exclusivamente los valores impresos en el documento.
+Si un dato no aparece, usa null o 0. Nunca inventes valores.`;
 
 export type ExtractInvoiceInput = {
   fileName: string;

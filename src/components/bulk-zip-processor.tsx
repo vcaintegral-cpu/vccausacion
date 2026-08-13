@@ -155,6 +155,12 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                 needs_review: result.needsReview,
                 error_message: null,
                 user_message: null,
+                provider_name: result.providerName,
+                provider_nit: result.providerNit,
+                buyer_name: result.buyerName,
+                buyer_nit: result.buyerNit,
+                issue_date: result.issueDate,
+                read_status: result.readMode === "texto" ? "Leída (texto)" : "Leída (imagen)",
               };
               patchItem(item.id, patch);
               await updateItem(item.id, patch);
@@ -315,14 +321,19 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
 
   function descargarReporte() {
     if (!upload) return;
-    const head = "Archivo;Estado;Intentos;Factura;Total;Confianza;Detalle";
+    const head = "Archivo;Proveedor;NIT proveedor;Comprador;NIT comprador;Factura;Fecha;Estado;Intentos;Total;Confianza;Detalle";
     const body = items
       .map((i) =>
         [
           i.file_name,
+          i.provider_name ?? "",
+          i.provider_nit ?? "",
+          i.buyer_name ?? "",
+          i.buyer_nit ?? "",
+          i.invoice_number ?? "",
+          i.issue_date ?? "",
           ITEM_LABEL[i.status],
           i.attempts,
-          i.invoice_number ?? "",
           i.invoice_total ?? "",
           i.score !== null ? `${Math.round(Number(i.score) * 100)}%` : "",
           (i.user_message ?? i.error_message ?? "").replace(/[\r\n;]+/g, " "),
@@ -463,6 +474,39 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               </li>
             ))}
           </ul>
+
+          {terminado ? (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold">Verificación de lectura por documento</p>
+              <div className="max-h-72 overflow-auto rounded-md border border-border">
+                <table className="w-full text-[11px]">
+                  <thead className="bg-muted/50 text-left">
+                    <tr>
+                      {["Archivo", "Proveedor", "Comprador", "NIT comprador", "Factura", "Estado"].map((h) => (
+                        <th key={h} className="px-2 py-1 font-medium">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((i) => (
+                      <tr key={i.id} className="border-t border-border">
+                        <td className="max-w-44 truncate px-2 py-1">{i.file_name}</td>
+                        <td className="max-w-32 truncate px-2 py-1">{i.provider_name ?? "—"}</td>
+                        <td className="max-w-32 truncate px-2 py-1">{i.buyer_name ?? "—"}</td>
+                        <td className="px-2 py-1">{i.buyer_nit ?? "—"}</td>
+                        <td className="px-2 py-1">{i.invoice_number ?? "—"}</td>
+                        <td className="px-2 py-1">
+                          {i.status === "completed" ? (i.read_status ?? "Leída") : ITEM_LABEL[i.status]}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
 
           {terminado ? (
             <p className="text-xs text-muted-foreground">

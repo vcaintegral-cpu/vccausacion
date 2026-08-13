@@ -51,6 +51,12 @@ export type BulkItem = {
   score: number | null;
   needs_review: boolean;
   position: number;
+  provider_name?: string | null;
+  provider_nit?: string | null;
+  buyer_name?: string | null;
+  buyer_nit?: string | null;
+  issue_date?: string | null;
+  read_status?: string | null;
 };
 
 export const ACTIVE_STATUSES: UploadStatus[] = ["uploaded", "extracting", "processing", "completed_with_errors"];

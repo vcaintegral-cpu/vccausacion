@@ -11,7 +11,13 @@ import {
   type CompanyKnowledge,
 } from "@/lib/causacion-engine";
 import { findExistingInvoice, mensajeDuplicado } from "@/lib/invoice-duplicates";
-import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
+import {
+  checkInvoiceCompany,
+  motivoBloqueoEmpresa,
+  normalizeNit,
+  sameNit,
+  textoContieneNit,
+} from "@/lib/company-validation";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 import {
   buildJournal,
@@ -22,6 +28,7 @@ import {
 } from "@/lib/accounting";
 
 const ALLOWED = /\.pdf$/i;
+const IS_ZIP = (name: string, type = "") => /\.zip$/i.test(name) || type.includes("zip");
 
 const mimeFor = (name: string) => {
   const ext = name.toLowerCase().split(".").pop() ?? "";
@@ -31,22 +38,8 @@ const mimeFor = (name: string) => {
 
 /** Expande archivos comprimidos (.zip) y devuelve la lista plana de facturas soportadas. */
 export async function expandInvoiceFiles(input: File[]): Promise<File[]> {
-  const out: File[] = [];
-  for (const file of input) {
-    const isZip = file.name.toLowerCase().endsWith(".zip") || file.type.includes("zip");
-    if (!isZip) {
-      if (ALLOWED.test(file.name)) out.push(file);
-      continue;
-    }
-    const entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
-    for (const [path, bytes] of Object.entries(entries)) {
-      const name = path.split("/").pop() ?? path;
-      if (!name || name.startsWith(".") || path.includes("__MACOSX/")) continue;
-      if (!ALLOWED.test(name) || bytes.length === 0) continue;
-      out.push(new File([new Uint8Array(bytes)], name, { type: mimeFor(name) }));
-    }
-  }
-  return out.sort((a, b) => a.name.localeCompare(b.name, "es"));
+  const { pdfs } = await readZipContents(input);
+  return pdfs;
 }
 
 export type ZipContents = {
@@ -63,9 +56,15 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
   const pdfs: File[] = [];
   const skipped: string[] = [];
   let filesFound = 0;
-  for (const file of input) {
-    const isZip = file.name.toLowerCase().endsWith(".zip") || file.type.includes("zip");
-    if (!isZip) {
+  // Cola de comprimidos: los proveedores suelen enviar un ZIP que contiene otros ZIP
+  // (uno por factura, con el PDF y el XML adentro). Se recorren todos los niveles.
+  const pendientes: File[] = [...input];
+  const vistos = new Set<string>();
+  let nivel = 0;
+  while (pendientes.length > 0 && nivel < 5000) {
+    nivel += 1;
+    const file = pendientes.shift()!;
+    if (!IS_ZIP(file.name, file.type)) {
       filesFound += 1;
       if (ALLOWED.test(file.name)) pdfs.push(file);
       else skipped.push(file.name);
@@ -81,11 +80,20 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
       const name = path.split("/").pop() ?? path;
       // Carpetas y metadatos del sistema no cuentan como archivos.
       if (!name || name.startsWith(".") || path.endsWith("/") || path.includes("__MACOSX/")) continue;
+      if (IS_ZIP(name)) {
+        // Comprimido anidado: se abre en la siguiente vuelta y no se cuenta como archivo final.
+        if (bytes.length > 0) pendientes.push(new File([new Uint8Array(bytes)], name, { type: "application/zip" }));
+        continue;
+      }
       filesFound += 1;
       if (!ALLOWED.test(name) || bytes.length === 0) {
         skipped.push(name);
         continue;
       }
+      // Un mismo PDF puede venir repetido en varios niveles del comprimido.
+      const clave = `${name}:${bytes.length}`;
+      if (vistos.has(clave)) continue;
+      vistos.add(clave);
       pdfs.push(new File([new Uint8Array(bytes)], name, { type: mimeFor(name) }));
     }
   }
@@ -114,7 +122,7 @@ export type BulkConfig = {
 type ExtractFn = (args: { data: { fileName: string; mimeType: string } & Record<string, unknown> }) => Promise<unknown>;
 
 /** Caché de extracciones ya realizadas (por huella del archivo) para no volver a llamar a la IA. */
-const extraccionCache = new Map<string, ExtractedInvoice>();
+const extraccionCache = new Map<string, { data: ExtractedInvoice; texto: string; lectura: "texto" | "imagen" }>();
 
 /**
  * Documentos ya tomados en este lote (CUFE, o NIT + prefijo + número): evita que
@@ -156,24 +164,59 @@ export async function processInvoiceFile(params: {
   knowledge?: CompanyKnowledge;
   /** Ruta del PDF ya guardado en Storage: evita subir el archivo dos veces. */
   storagePath?: string | null;
-}): Promise<{ invoiceId: string; numero: string; total: number; score: number; needsReview: boolean; reason: string }> {
+}): Promise<{
+  invoiceId: string;
+  numero: string;
+  total: number;
+  score: number;
+  needsReview: boolean;
+  reason: string;
+  providerName: string | null;
+  providerNit: string | null;
+  buyerName: string | null;
+  buyerNit: string | null;
+  issueDate: string | null;
+  readMode: "texto" | "imagen";
+}> {
   const { file, companyId, config, extract } = params;
   const huella = await fileFingerprint(file);
-  let data = extraccionCache.get(huella);
-  if (!data) {
+  let cached = extraccionCache.get(huella);
+  if (!cached) {
     // Lectura optimizada: XML y PDF con texto digital no pasan por OCR/visión.
     const content = await prepareInvoiceFile(file);
-    data = (await extract({
+    const extraida = (await extract({
       data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
     })) as ExtractedInvoice;
-    extraccionCache.set(huella, data);
+    cached = {
+      data: extraida,
+      texto: content.text ?? "",
+      lectura: content.text ? "texto" : "imagen",
+    };
+    extraccionCache.set(huella, cached);
   }
-  const { lines: extracted, ...header } = data;
+  const { lines: extracted, ...header } = cached.data;
+  const textoDocumento = cached.texto;
 
   // Cada factura del ZIP se valida individualmente: si el NIT del comprador no es el de la
   // empresa activa (o no se pudo leer), se rechaza y NO se crea borrador.
   const { data: empresa } = await supabase
     .from("companies").select("id, name, nit").eq("id", companyId).maybeSingle();
+
+  // Respaldo determinístico contra la lectura de la IA: si el NIT de la empresa aparece en el
+  // documento, la factura sí está dirigida a la empresa activa aunque la IA haya confundido
+  // el adquiriente con el emisor o no lo haya podido leer.
+  if (!sameNit(header.buyer_nit, empresa?.nit) && textoContieneNit(textoDocumento, empresa?.nit)) {
+    // La IA puso el NIT de la empresa como proveedor: se invierten los papeles.
+    if (sameNit(header.provider_nit, empresa?.nit)) {
+      const proveedorReal = header.buyer_nit;
+      const nombreProveedor = header.buyer_name;
+      header.provider_nit = proveedorReal ?? header.provider_nit;
+      header.provider_name = nombreProveedor ?? header.provider_name;
+    }
+    header.buyer_nit = normalizeNit(empresa?.nit) || header.buyer_nit;
+    header.buyer_name = empresa?.name ?? header.buyer_name;
+  }
+
   const bloqueo = motivoBloqueoEmpresa(
     checkInvoiceCompany(empresa, { buyer_nit: header.buyer_nit, buyer_name: header.buyer_name }),
   );
@@ -335,6 +378,13 @@ export async function processInvoiceFile(params: {
       dian_status: header.cufe ? "con CUFE" : "sin CUFE",
       file_path: filePath,
       file_name: file.name,
+      // Trazabilidad de lectura: lo que devolvió la IA y el texto extraído del documento.
+      raw_extraction: {
+        ia: cached.data,
+        lectura: cached.lectura,
+        texto: textoDocumento ? textoDocumento.slice(0, 20000) : null,
+        archivo: file.name,
+      } as never,
     })
     .select()
     .single();
@@ -382,5 +432,11 @@ export async function processInvoiceFile(params: {
     // 95% o más: automática. 80–94%: sugerida y marcada para revisión. Menos de 80%: revisión obligatoria.
     needsReview: score < 0.95,
     reason,
+    providerName: header.provider_name ?? null,
+    providerNit: header.provider_nit ?? null,
+    buyerName: header.buyer_name ?? null,
+    buyerNit: header.buyer_nit ?? null,
+    issueDate: header.issue_date || null,
+    readMode: cached.lectura,
   };
 }
