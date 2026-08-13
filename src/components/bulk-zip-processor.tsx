@@ -545,8 +545,27 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               <Button size="sm" variant="outline" disabled={running || !!busy} onClick={() => void eliminarProceso(upload)}>
                 <Trash2 className="size-4" /> Eliminar carga
               </Button>
+              <Button size="sm" variant="outline" disabled={running || !!busy} onClick={() => void diagnosticar()}>
+                <RefreshCw className="size-4" /> Diagnóstico sin IA
+              </Button>
             </div>
           </div>
+
+          {diag ? (
+            <div className="rounded-md border border-border bg-muted/30 p-3 text-[11px] leading-5">
+              <p className="mb-1 text-xs font-semibold">Diagnóstico del PDF (sin IA) · {diag.fileName}</p>
+              <p>Bucket: {diag.bucket}</p>
+              <p>Storage path: {diag.storagePath ?? "—"}</p>
+              <p>Existe: {diag.exists ? "SI" : "NO"}</p>
+              <p>Descarga: {diag.downloadOk ? "OK" : "ERROR"}</p>
+              <p>Tamaño: {diag.sizeBytes ?? 0} bytes</p>
+              <p>MIME: {diag.mimeType ?? "—"}</p>
+              <p>PDF válido: {diag.pdfValid ? "OK" : "NO"}</p>
+              <p>Texto extraído: {diag.textChars} caracteres ({diag.readMode})</p>
+              <p>Etapa: {diag.stage} · Código: {diag.code}</p>
+              <p>Mensaje: {diag.message}</p>
+            </div>
+          ) : null}
 
           <div>
             <div className="mb-1 flex justify-between text-xs text-muted-foreground">
