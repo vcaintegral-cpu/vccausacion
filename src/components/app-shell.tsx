@@ -4,6 +4,8 @@ import { useEffect, type ReactNode } from "react";
 import { Brain, Building2, FileUp, FolderOpen, LayoutDashboard, ListChecks, LogOut, Plug, Settings2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
+import { BackgroundJobsPanel } from "@/components/background-jobs";
+import { resumeBackgroundUploads } from "@/lib/bulk-runner";
 import { setActiveCompany, setCompanyLocked, useActiveCompany, useCompanyLocked } from "@/lib/active-company";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -42,6 +44,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       setActiveCompany(companies[0]!.id);
     }
   }, [companies, active, locked]);
+
+  // Retoma automáticamente las cargas masivas que quedaron pendientes.
+  useEffect(() => {
+    if (!active) return;
+    void resumeBackgroundUploads(active);
+  }, [active]);
 
   async function signOut() {
     await queryClient.cancelQueries();
@@ -113,6 +121,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
         <main className="min-w-0 flex-1 p-5">{children}</main>
+        <BackgroundJobsPanel />
       </div>
     </div>
   );
