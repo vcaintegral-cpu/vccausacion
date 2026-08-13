@@ -463,6 +463,10 @@ export type Database = {
           currency: string
           default_payable_account: string | null
           id: string
+          iva_account_costo: string | null
+          iva_account_descontable: string | null
+          iva_account_gasto: string | null
+          iva_treatment_mode: string
           name: string
           nit: string | null
           uses_cost_centers: boolean | null
@@ -474,6 +478,10 @@ export type Database = {
           currency?: string
           default_payable_account?: string | null
           id?: string
+          iva_account_costo?: string | null
+          iva_account_descontable?: string | null
+          iva_account_gasto?: string | null
+          iva_treatment_mode?: string
           name: string
           nit?: string | null
           uses_cost_centers?: boolean | null
@@ -485,6 +493,10 @@ export type Database = {
           currency?: string
           default_payable_account?: string | null
           id?: string
+          iva_account_costo?: string | null
+          iva_account_descontable?: string | null
+          iva_account_gasto?: string | null
+          iva_treatment_mode?: string
           name?: string
           nit?: string | null
           uses_cost_centers?: boolean | null
@@ -844,6 +856,56 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "invoices_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      iva_treatment_rules: {
+        Row: {
+          company_id: string
+          concept: string | null
+          created_at: string
+          created_by: string | null
+          expense_account: string | null
+          id: string
+          iva_account: string | null
+          provider_nit: string | null
+          times_used: number
+          treatment: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          concept?: string | null
+          created_at?: string
+          created_by?: string | null
+          expense_account?: string | null
+          id?: string
+          iva_account?: string | null
+          provider_nit?: string | null
+          times_used?: number
+          treatment: string
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          concept?: string | null
+          created_at?: string
+          created_by?: string | null
+          expense_account?: string | null
+          id?: string
+          iva_account?: string | null
+          provider_nit?: string | null
+          times_used?: number
+          treatment?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "iva_treatment_rules_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
@@ -1574,6 +1636,15 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      history_iva_treatment: {
+        Args: { _company_id: string; _limit?: number; _nits?: string[] }
+        Returns: {
+          expense_account: string
+          iva_account: string
+          provider_nit: string
+          uses: number
+        }[]
       }
       history_provider_accounts: {
         Args: { _company_id: string; _limit?: number; _nits: string[] }
