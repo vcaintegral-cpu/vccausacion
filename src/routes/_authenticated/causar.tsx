@@ -118,10 +118,6 @@ function Causar() {
   const [header, setHeader] = useState<Header>(emptyHeader());
   const [lines, setLines] = useState<Line[]>([]);
   const [recordar, setRecordar] = useState<{ index: number; code: string; name: string | null } | null>(null);
-  const bulkRef = useRef<HTMLInputElement>(null);
-  const [bulkFiles, setBulkFiles] = useState<File[]>([]);
-  const [bulkRunning, setBulkRunning] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState<QueueProgress | null>(null);
   // Impuesto/retención elegido por renglón (índice -> ids)
   const [lineTax, setLineTax] = useState<Record<number, { iva?: string | undefined; ret?: string | undefined }>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
