@@ -91,6 +91,22 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     };
   }, [companyId]);
 
+  /** El progreso real se lee de la base de datos: el trabajo ocurre en el backend. */
+  useEffect(() => {
+    if (!upload || running) return;
+    const activo = ["pending", "extracting", "processing"].includes(upload.status);
+    if (!activo) return;
+    const timer = setInterval(() => {
+      void (async () => {
+        const rows = await listItems(upload.id);
+        setItems(rows);
+        const [fresco] = await listUploads(companyId, 20).then((us) => us.filter((u) => u.id === upload.id));
+        if (fresco) setUpload(fresco);
+      })();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [companyId, running, upload]);
+
   const stats = useMemo(() => {
     const total = items.length;
     const done = items.filter((i) => i.status === "completed").length;
