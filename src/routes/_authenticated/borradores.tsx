@@ -12,6 +12,7 @@ import { fetchCompanyPuc } from "@/lib/puc-data";
 import { cop, fecha } from "@/lib/format";
 import { ESTADO_LABEL, estadoUnico } from "@/lib/invoice-duplicates";
 import { siigoSyncInvoice } from "@/lib/siigo.functions";
+import { IVA_TREATMENT_LABEL, treatmentForAccount } from "@/lib/iva-treatment";
 import {
   alertasBorrador,
   aprobarBorrador,
@@ -232,6 +233,7 @@ function Borradores() {
               <th className="px-3 py-2 text-right font-medium">Total</th>
               <th className="px-3 py-2 font-medium">Cuenta gasto/costo</th>
               <th className="px-3 py-2 font-medium">Cuenta IVA</th>
+              <th className="px-3 py-2 font-medium">Tratamiento IVA</th>
               <th className="px-3 py-2 font-medium">Cuenta CxP</th>
               <th className="px-3 py-2 font-medium">Centro de costo</th>
               <th className="px-3 py-2 font-medium">Estado</th>
@@ -273,6 +275,13 @@ function Borradores() {
                     <span className="font-mono text-xs">{acc?.iva?.code ?? "—"}</span>
                     <div className="max-w-[180px] truncate text-[11px] text-muted-foreground">{acc?.iva?.name ?? ""}</div>
                   </td>
+                  <td className="px-3 py-2 text-[11px] text-muted-foreground">
+                    {Number(r.iva || 0) > 0
+                      ? acc?.iva?.code
+                        ? IVA_TREATMENT_LABEL[treatmentForAccount(acc.iva.code)]
+                        : "Sin cuenta de IVA"
+                      : "Sin IVA"}
+                  </td>
                   <td className="px-3 py-2">
                     <span className="font-mono text-xs">{acc?.payable?.code ?? "—"}</span>
                     <div className="max-w-[180px] truncate text-[11px] text-muted-foreground">{acc?.payable?.name ?? ""}</div>
@@ -306,7 +315,7 @@ function Borradores() {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={15} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={16} className="px-4 py-8 text-center text-sm text-muted-foreground">
                   {isLoading ? "Cargando facturas…" : "No hay facturas que coincidan con el filtro."}
                 </td>
               </tr>
