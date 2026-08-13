@@ -25,7 +25,7 @@ export function BackgroundJobsPanel() {
       <p className="mt-1 text-[11px] text-muted-foreground">
         Pendientes: {p.pending} · Errores: {p.errors}
       </p>
-      <Link to="/causar" search={{}} className="mt-2 inline-block text-[11px] font-medium text-primary underline">
+      <Link to="/causar" search={{ id: undefined }} className="mt-2 inline-block text-[11px] font-medium text-primary underline">
         Ver detalle
       </Link>
     </div>
