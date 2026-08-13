@@ -245,10 +245,10 @@ function Revisar() {
         iva: Number(header?.iva ?? 0),
         impoconsumo: Number(header?.impoconsumo ?? 0),
         retenciones,
-        costCenter: header?.cost_center ?? null,
+        costCenter: costCenterForCompany(costPolicy ?? null, header?.cost_center),
         ivaDetalle: ivaGroups.groups,
       }),
-    [lines, header?.iva, header?.impoconsumo, header?.cost_center, retenciones, ivaGroups],
+    [lines, header?.iva, header?.impoconsumo, header?.cost_center, retenciones, ivaGroups, costPolicy],
   );
   const operationalJournal = useMemo(() => {
     const puc = (data?.accounts ?? []) as PucAccount[];
@@ -258,6 +258,10 @@ function Revisar() {
     });
   }, [journal, data?.accounts]);
   const t = totals(operationalJournal);
+
+  // Centros de costo condicionales por empresa y por cuenta contable.
+  const { data: costPolicy } = useCostCenterPolicy(companyId);
+  const usaCentros = costCentersEnabled(costPolicy ?? null);
 
   const errores = useMemo(() => {
     const e: string[] = [];
@@ -288,21 +292,28 @@ function Revisar() {
         e.push(`Renglón ${i + 1}: el producto no tiene código válido de Siigo. Sincronice los productos con Siigo antes de causar.`);
       }
     });
-    if (!header.cost_center) e.push("Falta el centro de costo.");
+    e.push(
+      ...validateCostCenter({
+        policy: costPolicy ?? null,
+        accounts: (data?.accounts ?? []) as PucAccount[],
+        costCenter: header.cost_center,
+        lines,
+      }),
+    );
     if (Number(header.iva) < 0) e.push("El IVA no puede ser negativo.");
     e.push(...erroresImpuestos);
     if (retenciones.retefuente < 0 || retenciones.reteiva < 0 || retenciones.reteica < 0) e.push("Las retenciones no pueden ser negativas.");
     if (Math.abs(t.diferencia) > 1) e.push(`El comprobante está descuadrado por ${cop(t.diferencia)}.`);
     if (base <= 0) e.push("La base gravable debe ser mayor a cero.");
     return e;
-  }, [header, lines, data?.accounts, data?.company, cuentasVerificadas, retenciones, t.diferencia, base, erroresImpuestos]);
+  }, [header, lines, data?.accounts, data?.company, cuentasVerificadas, retenciones, t.diferencia, base, erroresImpuestos, costPolicy]);
 
   async function guardarCambios() {
     if (!header) return;
     await supabase
       .from("invoices")
       .update({
-        cost_center: header.cost_center,
+        cost_center: costCenterForCompany(costPolicy ?? null, header.cost_center),
         payment_form: header.payment_form,
         notes: header.notes,
         iva: Number(header.iva || 0),
@@ -359,7 +370,7 @@ function Revisar() {
         account_name: j.account_name,
         debit: j.debit,
         credit: j.credit,
-        cost_center: j.cost_center ?? null,
+        cost_center: usaCentros ? (j.cost_center ?? null) : null,
         position: i,
       })),
     );
@@ -495,6 +506,7 @@ function Revisar() {
       </div>
 
       <div className="grid gap-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2 xl:grid-cols-4">
+        {usaCentros && (
         <div className="space-y-1.5">
           <Label className="text-xs">Centro de costo</Label>
           <select
@@ -511,6 +523,7 @@ function Revisar() {
           </select>
           {centroSugerido && !centroTocado && <p className="text-xs text-muted-foreground">{centroSugerido}</p>}
         </div>
+        )}
         <div className="space-y-1.5">
           <Label className="text-xs">Forma de pago</Label>
           <Input value={header.payment_form ?? ""} onChange={(e) => setHeader({ ...header, payment_form: e.target.value })} />
@@ -675,7 +688,7 @@ function Revisar() {
           <h2 className="text-sm font-semibold">Resumen contable</h2>
           <dl className="mt-3 space-y-1.5 text-sm">
             <Row k="Proveedor" v={`${header.provider_name ?? "—"} (${header.provider_nit ?? "—"})`} />
-            <Row k="Centro de costo" v={header.cost_center || "—"} />
+            {usaCentros && <Row k="Centro de costo" v={header.cost_center || "—"} />}
             <Row
               k="Tipos de ítem"
               v={[...new Set(lines.map((l) => l.item_type))].join(", ").toUpperCase() || "—"}
