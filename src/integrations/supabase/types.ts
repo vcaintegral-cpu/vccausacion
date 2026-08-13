@@ -245,6 +245,165 @@ export type Database = {
           },
         ]
       }
+      bulk_upload_items: {
+        Row: {
+          attempts: number
+          company_id: string
+          created_at: string
+          error_message: string | null
+          file_name: string
+          fingerprint: string | null
+          id: string
+          invoice_id: string | null
+          invoice_number: string | null
+          invoice_total: number | null
+          needs_review: boolean
+          position: number
+          score: number | null
+          size_bytes: number
+          stage: string | null
+          status: string
+          storage_path: string | null
+          updated_at: string
+          upload_id: string
+          user_message: string | null
+        }
+        Insert: {
+          attempts?: number
+          company_id: string
+          created_at?: string
+          error_message?: string | null
+          file_name: string
+          fingerprint?: string | null
+          id?: string
+          invoice_id?: string | null
+          invoice_number?: string | null
+          invoice_total?: number | null
+          needs_review?: boolean
+          position?: number
+          score?: number | null
+          size_bytes?: number
+          stage?: string | null
+          status?: string
+          storage_path?: string | null
+          updated_at?: string
+          upload_id: string
+          user_message?: string | null
+        }
+        Update: {
+          attempts?: number
+          company_id?: string
+          created_at?: string
+          error_message?: string | null
+          file_name?: string
+          fingerprint?: string | null
+          id?: string
+          invoice_id?: string | null
+          invoice_number?: string | null
+          invoice_total?: number | null
+          needs_review?: boolean
+          position?: number
+          score?: number | null
+          size_bytes?: number
+          stage?: string | null
+          status?: string
+          storage_path?: string | null
+          updated_at?: string
+          upload_id?: string
+          user_message?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bulk_upload_items_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bulk_upload_items_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bulk_upload_items_upload_id_fkey"
+            columns: ["upload_id"]
+            isOneToOne: false
+            referencedRelation: "bulk_uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bulk_uploads: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string
+          error_count: number
+          error_message: string | null
+          file_name: string
+          files_found: number
+          finished_at: string | null
+          id: string
+          pdf_found: number
+          processed_count: number
+          size_bytes: number
+          skipped_files: number
+          started_at: string | null
+          status: string
+          storage_path: string | null
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string
+          error_count?: number
+          error_message?: string | null
+          file_name: string
+          files_found?: number
+          finished_at?: string | null
+          id?: string
+          pdf_found?: number
+          processed_count?: number
+          size_bytes?: number
+          skipped_files?: number
+          started_at?: string | null
+          status?: string
+          storage_path?: string | null
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string
+          error_count?: number
+          error_message?: string | null
+          file_name?: string
+          files_found?: number
+          finished_at?: string | null
+          id?: string
+          pdf_found?: number
+          processed_count?: number
+          size_bytes?: number
+          skipped_files?: number
+          started_at?: string | null
+          status?: string
+          storage_path?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bulk_uploads_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       companies: {
         Row: {
           auto_learning: boolean
