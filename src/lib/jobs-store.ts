@@ -33,6 +33,10 @@ export type ProcessingJob = {
   error_code: string | null;
   error_message: string | null;
   user_message: string | null;
+  error_stage: string | null;
+  error_stack: string | null;
+  http_status: number | null;
+  retryable: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -216,6 +220,59 @@ export async function resumeUpload(uploadId: string, incluirErrores = false) {
   } as never);
   if (error) throw new Error(error.message);
   await kickWorker();
+}
+
+/** Reencola únicamente errores reintentables existentes, sin crear documentos ni jobs. */
+export async function retryUploadErrors(uploadId: string) {
+  const { data: jobs, error: readError } = await supabase
+    .from("processing_jobs")
+    .select("id, item_id")
+    .eq("upload_id", uploadId)
+    .eq("status", "error")
+    .eq("retryable", true);
+  if (readError) throw new Error(readError.message);
+
+  const rows = (jobs ?? []) as Array<{ id: string; item_id: string | null }>;
+  if (rows.length === 0) return 0;
+  const jobIds = rows.map((job) => job.id);
+  const itemIds = rows.map((job) => job.item_id).filter((id): id is string => Boolean(id));
+
+  const { error: jobError } = await supabase
+    .from("processing_jobs")
+    .update({
+      status: "pending",
+      attempt_count: 0,
+      processing_stage: "reencolado",
+      error_code: null,
+      error_message: null,
+      error_stage: null,
+      error_stack: null,
+      http_status: null,
+      retryable: false,
+      locked_at: null,
+      locked_by: null,
+      lease_until: null,
+      completed_at: null,
+    } as never)
+    .in("id", jobIds);
+  if (jobError) throw new Error(jobError.message);
+
+  if (itemIds.length > 0) {
+    const { error: itemError } = await supabase
+      .from("bulk_upload_items")
+      .update({
+        status: "pending",
+        stage: "reencolado",
+        error_message: null,
+        user_message: null,
+        retryable: false,
+      } as never)
+      .in("id", itemIds);
+    if (itemError) throw new Error(itemError.message);
+  }
+
+  await kickWorker();
+  return rows.length;
 }
 
 /** Reintento manual de un trabajo con error (no hay reintentos automáticos infinitos). */
