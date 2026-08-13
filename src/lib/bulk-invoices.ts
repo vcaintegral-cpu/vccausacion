@@ -378,6 +378,13 @@ export async function processInvoiceFile(params: {
       dian_status: header.cufe ? "con CUFE" : "sin CUFE",
       file_path: filePath,
       file_name: file.name,
+      // Trazabilidad de lectura: lo que devolvió la IA y el texto extraído del documento.
+      raw_extraction: {
+        ia: cached.data,
+        lectura: cached.lectura,
+        texto: textoDocumento ? textoDocumento.slice(0, 20000) : null,
+        archivo: file.name,
+      } as never,
     })
     .select()
     .single();
@@ -425,5 +432,11 @@ export async function processInvoiceFile(params: {
     // 95% o más: automática. 80–94%: sugerida y marcada para revisión. Menos de 80%: revisión obligatoria.
     needsReview: score < 0.95,
     reason,
+    providerName: header.provider_name ?? null,
+    providerNit: header.provider_nit ?? null,
+    buyerName: header.buyer_name ?? null,
+    buyerNit: header.buyer_nit ?? null,
+    issueDate: header.issue_date || null,
+    readMode: cached.lectura,
   };
 }
