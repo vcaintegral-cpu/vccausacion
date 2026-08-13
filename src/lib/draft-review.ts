@@ -60,6 +60,12 @@ const RET_PREFIX = ["2365", "2367", "2368"];
 const esRetencion = (c: string) => RET_PREFIX.some((p) => c.startsWith(p));
 const esIva = (c: string) => c.startsWith("24") && !esRetencion(c);
 const esPasivo = (c: string) => (c.startsWith("22") || c.startsWith("23")) && !esRetencion(c);
+/**
+ * El IVA puede estar como descontable (24xx) o como mayor valor del gasto/costo
+ * (por ejemplo 5115 o 7315). En ese caso la línea es independiente y su nombre
+ * corresponde a la cuenta de IVA de la empresa.
+ */
+const esLineaIva = (code: string, name?: string | null) => esIva(code) || /\biva\b/i.test(String(name ?? ""));
 
 /** Clasifica el comprobante ya almacenado en cuentas de gasto/costo, IVA y por pagar. */
 export function classifyJournal(rows: JournalRow[]): DraftAccounts {
@@ -81,7 +87,7 @@ export function classifyJournal(rows: JournalRow[]): DraftAccounts {
       if (!out.retenciones.some((x) => x.code === code)) out.retenciones.push({ code, name: r.account_name });
       continue;
     }
-    if (debit > 0 && esIva(code)) {
+    if (debit > 0 && esLineaIva(code, r.account_name)) {
       if (debit > mayorIva) { mayorIva = debit; out.iva = { code, name: r.account_name }; }
       continue;
     }
