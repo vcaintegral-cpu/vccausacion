@@ -1,5 +1,5 @@
 import { unzipSync } from "fflate";
-import { supabase } from "@/integrations/supabase/client";
+import { db as supabase } from "@/lib/db-client";
 import { companyUsesCostCenters, costCenterForCompany, costCentersEnabled } from "@/lib/cost-center-config";
 import { prepareInvoiceFile } from "@/lib/invoice-file";
 import type { ExtractedInvoice } from "@/lib/extract.functions";
