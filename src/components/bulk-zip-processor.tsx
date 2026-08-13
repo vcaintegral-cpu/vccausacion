@@ -406,6 +406,26 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     setItems(await listItems(u.id));
   }
 
+  /** Prueba SIN IA: recupera el primer PDF desde Storage y lo lee con el mismo lector individual. */
+  async function diagnosticar() {
+    if (!upload) return;
+    const rows = await listItems(upload.id);
+    setItems(rows);
+    const target = rows.find((i) => i.status !== "completed") ?? rows[0];
+    if (!target) return;
+    setBusy("Diagnóstico sin IA…");
+    try {
+      const resultado = await diagnoseItem(target);
+      setDiag(resultado);
+      if (resultado.code === "OK") toast.success("PDF recuperado y leído correctamente (sin IA).");
+      else toast.error(`Etapa: ${resultado.stage} · Código: ${resultado.code}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible ejecutar el diagnóstico.");
+    } finally {
+      setBusy("");
+    }
+  }
+
   /** Elimina una carga masiva completa: tareas, archivos guardados y el registro. */
   async function eliminarProceso(u: BulkUpload) {
     if (running) return;
