@@ -1,7 +1,7 @@
 // Carga masiva de facturas desde un comprimido .zip, con persistencia total:
 // el ZIP y cada PDF quedan en Storage, cada PDF es una tarea en base de datos
 // y el proceso puede reanudarse aunque se cierre el navegador.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { CheckCircle2, Download, Layers, Loader2, RefreshCw, Sparkles, Trash2, XCircle } from "lucide-react";
@@ -11,30 +11,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cop, fechaHora } from "@/lib/format";
-import { diagnoseItem, errorCode, type BulkDiagnosis } from "@/lib/bulk-diagnostics";
+import { diagnoseItem, type BulkDiagnosis } from "@/lib/bulk-diagnostics";
+import { readZipContents, type BulkConfig } from "@/lib/bulk-invoices";
 import {
-  BulkInvoiceStageError,
-  processInvoiceFile,
-  readZipContents,
-  resetBulkBatch,
-  type BulkConfig,
-  type InvoiceReadTrace,
-} from "@/lib/bulk-invoices";
+  retryBulkItems,
+  startBackgroundUpload,
+  useBulkProgress,
+} from "@/lib/bulk-runner";
 import type { CompanyKnowledge } from "@/lib/causacion-engine";
 import {
   ACTIVE_STATUSES,
   createUpload,
   deleteUpload,
   existingFingerprints,
-  fileFromStorage,
   insertItems,
   ITEM_LABEL,
   listItems,
   listUploads,
-  mensajeUsuario,
-  refreshUploadCounters,
   sha256,
-  updateItem,
   updateUpload,
   UPLOAD_LABEL,
   type BulkItem,
@@ -60,10 +54,9 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   const [busy, setBusy] = useState<string>("");
   const [upload, setUpload] = useState<BulkUpload | null>(null);
   const [items, setItems] = useState<BulkItem[]>([]);
-  const [running, setRunning] = useState(false);
+  const progress = useBulkProgress();
   const [forzar, setForzar] = useState(false);
   const [diag, setDiag] = useState<BulkDiagnosis | null>(null);
-  const started = useRef<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const historial = useQuery({
@@ -90,6 +83,9 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     };
   }, [companyId]);
 
+  // El proceso corre en segundo plano; "running" refleja el motor global, no la pantalla.
+  const running = progress.running && (!upload || progress.uploadId === upload.id || progress.queued > 0);
+
   const stats = useMemo(() => {
     const total = items.length;
     const done = items.filter((i) => i.status === "completed").length;
@@ -101,8 +97,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     const review = items.filter((i) => i.status === "requires_review").length;
     const pending = total - done - failed - dup - review - active;
     const terminados = done + failed + dup + review;
-    const elapsed = started.current ? Date.now() - started.current : 0;
-    const eta = running && terminados > 0 ? Math.round((elapsed / terminados) * (total - terminados)) : null;
+    const eta = null;
     return {
       total,
       done,
@@ -111,151 +106,35 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       active,
       pending,
       percent: total ? Math.round(((done + failed + dup + review) / total) * 100) : 0,
-      eta,
+      eta: eta as number | null,
       review: review + items.filter((i) => i.status === "completed" && i.needs_review).length,
     };
-  }, [items, running]);
+  }, [items]);
 
-  const patchItem = useCallback((id: string, patch: Partial<BulkItem>) => {
-    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
-  }, []);
+  /** Estado en vivo desde base de datos: la pantalla solo muestra el avance. */
+  useEffect(() => {
+    if (!upload) return;
+    let cancel = false;
+    const tick = async () => {
+      const rows = await listItems(upload.id);
+      if (!cancel) setItems(rows);
+    };
+    void tick();
+    if (!running) return;
+    const timer = window.setInterval(() => void tick(), 2500);
+    return () => {
+      cancel = true;
+      window.clearInterval(timer);
+    };
+  }, [upload, running, progress.done, progress.errors]);
 
-  /** Procesa una lista de tareas, una por una y guardando el resultado inmediatamente. */
-  const runItems = useCallback(
-    async (uploadRow: BulkUpload, targets: BulkItem[]) => {
-      if (targets.length === 0) return;
-      if (!config) {
-        toast.error("Los parámetros contables aún se están cargando.");
-        return;
-      }
-      setRunning(true);
-      started.current = Date.now();
-      resetBulkBatch();
-      await updateUpload(uploadRow.id, { status: "processing", finished_at: null });
-
-      let cursor = 0;
-      const worker = async () => {
-        for (;;) {
-          const index = cursor++;
-          if (index >= targets.length) return;
-          const item = targets[index]!;
-          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-            patchItem(item.id, { status: "downloading", attempts: attempt, stage: "recuperando_pdf" });
-            await updateItem(item.id, { status: "downloading", attempts: attempt, stage: "recuperando_pdf" });
-            try {
-              if (!item.storage_path) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene storage_path.");
-              const stored = await fileFromStorage(item.storage_path, item.file_name, item.storage_bucket ?? "facturas");
-              const storagePatch: Partial<BulkItem> = {
-                download_status: "OK",
-                stored_size_bytes: stored.size,
-                mime_type: stored.mimeType,
-                content_status: "OK",
-              };
-              patchItem(item.id, storagePatch);
-              await updateItem(item.id, storagePatch);
-              const saveTrace = async (stage: string, trace?: InvoiceReadTrace) => {
-                const status = stage as BulkItem["status"];
-                const tracePatch: Partial<BulkItem> = {
-                  status,
-                  stage,
-                  ...(trace ? {
-                    provider_name: trace.providerName,
-                    provider_nit: trace.providerNit,
-                    buyer_name: trace.buyerName,
-                    buyer_nit: trace.buyerNit,
-                    invoice_number: trace.invoiceNumber,
-                    issue_date: trace.issueDate,
-                    extracted_text: trace.text,
-                    read_status: trace.readMode === "texto" ? "Leída (texto)" : "Leída (imagen)",
-                  } : {}),
-                };
-                patchItem(item.id, tracePatch);
-                await updateItem(item.id, tracePatch);
-              };
-              const result = await processInvoiceFile({
-                file: stored.file,
-                companyId,
-                config,
-                extract: extract as never,
-                storagePath: item.storage_path,
-                onStage: saveTrace,
-                ...(knowledge ? { knowledge } : {}),
-              });
-              const patch: Partial<BulkItem> = {
-                status: "completed",
-                stage: "guardado",
-                invoice_id: result.invoiceId,
-                invoice_number: result.numero,
-                invoice_total: result.total,
-                score: result.score,
-                needs_review: result.needsReview,
-                error_message: null,
-                user_message: null,
-                provider_name: result.providerName,
-                provider_nit: result.providerNit,
-                buyer_name: result.buyerName,
-                buyer_nit: result.buyerNit,
-                issue_date: result.issueDate,
-                read_status: result.readMode === "texto" ? "Leída (texto)" : "Leída (imagen)",
-              };
-              patchItem(item.id, patch);
-              await updateItem(item.id, patch);
-              break;
-            } catch (error) {
-              const message = error instanceof Error ? error.message : "Error al procesar";
-              const duplicado = /duplicad|ya fue causada|ya existe|repetido/i.test(message);
-              const staged = error instanceof BulkInvoiceStageError ? error : null;
-              const trace = staged?.trace;
-              const storageError = /ERROR_STORAGE|ERROR_ARCHIVO|ERROR_PDF_INVALIDO/.test(message);
-              const stage = staged?.stage ?? (storageError ? "download_pdf" : "process_invoice");
-              const code = errorCode(stage, message);
-              const patch: Partial<BulkItem> = {
-                status: staged?.requiresReview ? "requires_review" : duplicado ? "duplicate" : "error",
-                stage,
-                error_message: message,
-                user_message: `Etapa: ${stage} · Código: ${code} · ${mensajeUsuario(item.file_name, message)} · ${message}`,
-                ...(storageError ? { download_status: "ERROR", content_status: "ERROR" } : {}),
-                ...(trace ? {
-                  provider_name: trace.providerName,
-                  provider_nit: trace.providerNit,
-                  buyer_name: trace.buyerName,
-                  buyer_nit: trace.buyerNit,
-                  invoice_number: trace.invoiceNumber,
-                  issue_date: trace.issueDate,
-                  extracted_text: trace.text,
-                  read_status: trace.readMode === "texto" ? "Leída (texto)" : "Leída (imagen)",
-                  company_validation: staged?.requiresReview ? "REQUIERE_REVISION" : "ERROR",
-                } : {}),
-              };
-              patchItem(item.id, patch);
-              await updateItem(item.id, patch);
-              break;
-            }
-          }
-        }
-      };
-
-      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, worker));
-
-      const rows = await listItems(uploadRow.id);
-      setItems(rows);
-      const status = await refreshUploadCounters(uploadRow.id, rows);
-      setUpload({
-        ...uploadRow,
-        status,
-        files_found: Math.max(uploadRow.files_found, rows.length),
-        pdf_found: Math.max(uploadRow.pdf_found, rows.length),
-        processed_count: rows.filter((r) => r.status === "completed").length,
-        error_count: rows.filter((r) => r.status === "error").length,
-      });
-      setRunning(false);
+  useEffect(() => {
+    if (!running && upload) {
       void historial.refetch();
       onFinished?.();
-      const ok = rows.filter((r) => r.status === "completed").length;
-      toast.success(`${ok} de ${rows.length} facturas causadas como borrador.`);
-    },
-    [companyId, config, extract, historial, knowledge, onFinished, patchItem],
-  );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running]);
 
   /** Sube el ZIP, lo descomprime, guarda cada PDF y crea las tareas. */
   async function iniciar() {
@@ -357,19 +236,10 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       setBusy("");
       setSelected([]);
       if (inputRef.current) inputRef.current.value = "";
-      const pending = created.filter((i) => i.status === "pending");
-      if (pending[0]) {
-        await runItems({ ...row, files_found: filesFound, pdf_found: pdfs.length, skipped_files: skipped.length }, [pending[0]]);
-        const first = (await listItems(row.id)).find((i) => i.id === pending[0]?.id);
-        if (!first || first.status !== "completed") {
-          toast.error(`La prueba del primer PDF falló en: ${first?.stage ?? "lectura"}. No se procesaron los demás documentos.`);
-          return;
-        }
-      }
-      await runItems(
-        { ...row, files_found: filesFound, pdf_found: pdfs.length, skipped_files: skipped.length },
-        pending.slice(1),
-      );
+      // 4) El procesamiento arranca en segundo plano: la pantalla ya no es necesaria.
+      startBackgroundUpload({ uploadId: row.id, companyId, fileName: zip.name });
+      toast.success("Procesamiento iniciado en segundo plano. Puedes salir de este módulo.");
+      void historial.refetch();
     } catch (error) {
       setBusy("");
       const message = error instanceof Error ? error.message : "No fue posible iniciar el procesamiento.";
@@ -378,27 +248,22 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     }
   }
 
-  async function continuar() {
+  function continuar() {
     if (!upload) return;
-    const rows = await listItems(upload.id);
-    setItems(rows);
-    await runItems(upload, rows.filter((i) => i.status !== "completed" && i.status !== "duplicate" && i.status !== "error"));
+    startBackgroundUpload({ uploadId: upload.id, companyId, fileName: upload.file_name });
+  }
+
+  /** Reintenta solo las tareas indicadas, sin reiniciar el ZIP completo. */
+  async function reintentar(ids: string[]) {
+    if (!upload || ids.length === 0) return;
+    await retryBulkItems({ uploadId: upload.id, companyId, fileName: upload.file_name }, ids);
   }
 
   async function reintentarErrores() {
     if (!upload) return;
     const rows = await listItems(upload.id);
     setItems(rows);
-    const failed = rows.filter((i) => i.status !== "completed" && i.status !== "duplicate");
-    const first = failed[0];
-    if (!first) return;
-    await runItems(upload, [first]);
-    const tested = (await listItems(upload.id)).find((i) => i.id === first.id);
-    if (!tested || tested.status !== "completed") {
-      toast.error(`La prueba del primer PDF falló en: ${tested?.stage ?? "lectura"}. No se procesaron los demás documentos.`);
-      return;
-    }
-    await runItems(upload, failed.slice(1));
+    await reintentar(rows.filter((i) => i.status === "error" || i.status === "requires_review").map((i) => i.id));
   }
 
   async function abrirProceso(u: BulkUpload) {
@@ -528,7 +393,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
             </div>
             <div className="flex flex-wrap gap-2">
               {!running && stats.pending > 0 ? (
-                <Button size="sm" variant="outline" onClick={() => void continuar()}>
+                <Button size="sm" variant="outline" onClick={() => continuar()}>
                   <RefreshCw className="size-4" /> Continuar procesamiento
                 </Button>
               ) : null}

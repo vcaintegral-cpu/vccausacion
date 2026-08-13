@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { CheckCircle2, Download, Eye, FileSpreadsheet, FileText, Pencil, Send, Trash2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
+import { useBulkProgress } from "@/lib/bulk-runner";
 import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { cop, fecha } from "@/lib/format";
@@ -81,9 +82,14 @@ function Facturas() {
   const [pdfDoc, setPdfDoc] = useState<Inv | null>(null);
   const [estado, setEstado] = useState<"todas" | "borrador" | "aprobado" | "sincronizada" | "error">("todas");
 
+  // Mientras hay una carga en segundo plano, el historial se refresca solo:
+  // las facturas aparecen como borrador ("lista para revisar") al terminar cada PDF.
+  const bulk = useBulkProgress();
+
   const { data: invoices } = useQuery({
     queryKey: ["invoices", companyId],
     enabled: !!companyId,
+    refetchInterval: bulk.running ? 5000 : false,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("invoices")
