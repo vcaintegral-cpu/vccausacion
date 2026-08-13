@@ -321,14 +321,19 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
 
   function descargarReporte() {
     if (!upload) return;
-    const head = "Archivo;Estado;Intentos;Factura;Total;Confianza;Detalle";
+    const head = "Archivo;Proveedor;NIT proveedor;Comprador;NIT comprador;Factura;Fecha;Estado;Intentos;Total;Confianza;Detalle";
     const body = items
       .map((i) =>
         [
           i.file_name,
+          i.provider_name ?? "",
+          i.provider_nit ?? "",
+          i.buyer_name ?? "",
+          i.buyer_nit ?? "",
+          i.invoice_number ?? "",
+          i.issue_date ?? "",
           ITEM_LABEL[i.status],
           i.attempts,
-          i.invoice_number ?? "",
           i.invoice_total ?? "",
           i.score !== null ? `${Math.round(Number(i.score) * 100)}%` : "",
           (i.user_message ?? i.error_message ?? "").replace(/[\r\n;]+/g, " "),
