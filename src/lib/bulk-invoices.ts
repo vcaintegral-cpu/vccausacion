@@ -49,6 +49,50 @@ export async function expandInvoiceFiles(input: File[]): Promise<File[]> {
   return out.sort((a, b) => a.name.localeCompare(b.name, "es"));
 }
 
+export type ZipContents = {
+  /** Facturas PDF encontradas dentro del comprimido. */
+  pdfs: File[];
+  /** Archivos ignorados por no ser PDF (no detienen el proceso). */
+  skipped: string[];
+  /** Total de archivos (sin carpetas) encontrados. */
+  filesFound: number;
+};
+
+/** Abre un .zip (o una selección de archivos sueltos) y separa PDFs de archivos no compatibles. */
+export async function readZipContents(input: File[]): Promise<ZipContents> {
+  const pdfs: File[] = [];
+  const skipped: string[] = [];
+  let filesFound = 0;
+  for (const file of input) {
+    const isZip = file.name.toLowerCase().endsWith(".zip") || file.type.includes("zip");
+    if (!isZip) {
+      filesFound += 1;
+      if (ALLOWED.test(file.name)) pdfs.push(file);
+      else skipped.push(file.name);
+      continue;
+    }
+    let entries: Record<string, Uint8Array>;
+    try {
+      entries = unzipSync(new Uint8Array(await file.arrayBuffer()));
+    } catch {
+      throw new Error(`El archivo ${file.name} no es un comprimido ZIP válido.`);
+    }
+    for (const [path, bytes] of Object.entries(entries)) {
+      const name = path.split("/").pop() ?? path;
+      // Carpetas y metadatos del sistema no cuentan como archivos.
+      if (!name || name.startsWith(".") || path.endsWith("/") || path.includes("__MACOSX/")) continue;
+      filesFound += 1;
+      if (!ALLOWED.test(name) || bytes.length === 0) {
+        skipped.push(name);
+        continue;
+      }
+      pdfs.push(new File([new Uint8Array(bytes)], name, { type: mimeFor(name) }));
+    }
+  }
+  pdfs.sort((a, b) => a.name.localeCompare(b.name, "es"));
+  return { pdfs, skipped, filesFound };
+}
+
 export type BulkConfig = {
   accounts: PucAccount[];
   rules: Rule[];
@@ -110,6 +154,8 @@ export async function processInvoiceFile(params: {
   config: BulkConfig;
   extract: ExtractFn;
   knowledge?: CompanyKnowledge;
+  /** Ruta del PDF ya guardado en Storage: evita subir el archivo dos veces. */
+  storagePath?: string | null;
 }): Promise<{ invoiceId: string; numero: string; total: number; score: number; needsReview: boolean; reason: string }> {
   const { file, companyId, config, extract } = params;
   const huella = await fileFingerprint(file);
@@ -231,8 +277,8 @@ export async function processInvoiceFile(params: {
 
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth.user?.id;
-  let filePath: string | null = null;
-  if (userId) {
+  let filePath: string | null = params.storagePath ?? null;
+  if (!filePath && userId) {
     const path = `${userId}/${companyId}/${Date.now()}-${file.name.replace(/[^\w.-]/g, "_")}`;
     const { error: upErr } = await supabase.storage.from("facturas").upload(path, file);
     if (!upErr) filePath = path;

@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, FileUp, Layers, Loader2, Save, Sparkles, Trash2, XCircle } from "lucide-react";
+import { FileUp, Loader2, Save, Sparkles, Trash2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { ITEM_TYPES, normalizeItemType } from "@/lib/item-type";
@@ -31,8 +31,7 @@ import { suggestCostCenter } from "@/lib/cost-center";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
 import { cop } from "@/lib/format";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
-import { expandInvoiceFiles, processInvoiceFile, resetBulkBatch } from "@/lib/bulk-invoices";
-import { runInvoiceQueue, type QueueProgress } from "@/lib/bulk-queue";
+import { BulkZipProcessor } from "@/components/bulk-zip-processor";
 import {
   ESTADO_LABEL,
   estadoUnico,
@@ -119,10 +118,6 @@ function Causar() {
   const [header, setHeader] = useState<Header>(emptyHeader());
   const [lines, setLines] = useState<Line[]>([]);
   const [recordar, setRecordar] = useState<{ index: number; code: string; name: string | null } | null>(null);
-  const bulkRef = useRef<HTMLInputElement>(null);
-  const [bulkFiles, setBulkFiles] = useState<File[]>([]);
-  const [bulkRunning, setBulkRunning] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState<QueueProgress | null>(null);
   // Impuesto/retención elegido por renglón (índice -> ids)
   const [lineTax, setLineTax] = useState<Record<number, { iva?: string | undefined; ret?: string | undefined }>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -691,45 +686,6 @@ function Causar() {
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
-  async function seleccionarMasivo(selected: FileList | null) {
-    setBulkProgress(null);
-    if (!selected || selected.length === 0) { setBulkFiles([]); return; }
-    try {
-      const expanded = await expandInvoiceFiles(Array.from(selected));
-      setBulkFiles(expanded);
-      if (expanded.length === 0) toast.error("El archivo no contiene facturas PDF, XML, JPG o PNG.");
-    } catch {
-      toast.error("No fue posible abrir el archivo comprimido.");
-      setBulkFiles([]);
-    }
-  }
-
-  async function procesarMasivo() {
-    if (!companyId || bulkFiles.length === 0 || !config) return;
-    setBulkRunning(true);
-    setBulkProgress(null);
-    // Un lote nuevo: se reinicia el control de documentos repetidos (XML/PDF del mismo documento).
-    resetBulkBatch();
-    // Cola en paralelo: varias facturas a la vez, con reintentos y progreso en vivo.
-    const final = await runInvoiceQueue({
-      items: bulkFiles,
-      nameOf: (f) => f.name,
-      concurrency: 6,
-      onProgress: setBulkProgress,
-      run: async (f) => {
-        const r = await processInvoiceFile({
-          file: f,
-          companyId,
-          config: config as never,
-          extract: extract as never,
-          ...(knowledge ? { knowledge } : {}),
-        });
-        return { ...r, numero: `${r.numero} · ${cop(r.total)}` };
-      },
-    });
-    setBulkRunning(false);
-    toast.success(`${final.done} de ${final.total} facturas causadas como borrador.`);
-  }
 
   /** Al elegir un producto o servicio del catálogo se traen nombre, tipo y la cuenta de su categoría. */
   function elegirProducto(i: number, p: ProductOption) {
@@ -1022,105 +978,13 @@ function Causar() {
         </Button>
       </div>
 
-      <div className="space-y-3 rounded-lg border border-border bg-card p-5">
-        <div className="flex items-start gap-3">
-          <div className="flex size-9 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
-            <Layers className="size-4" />
-          </div>
-          <div>
-            <h2 className="text-sm font-semibold">Carga masiva</h2>
-            <p className="text-xs text-muted-foreground">
-              Sube un archivo .zip con hasta cientos de facturas (o varios archivos a la vez). Cada una se lee con IA y se
-              guarda como borrador para revisarla después.
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-64 flex-1 space-y-1.5">
-            <Label htmlFor="masivo">Archivos o comprimido (.zip)</Label>
-            <Input
-              id="masivo"
-              ref={bulkRef}
-              type="file"
-              multiple
-              onChange={(e) => void seleccionarMasivo(e.target.files)}
-            />
-          </div>
-          <Button
-            onClick={() => void procesarMasivo()}
-            disabled={bulkRunning || bulkFiles.length === 0 || !companyId || cargandoConfig || !config}
-          >
-            {bulkRunning ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-            {bulkRunning
-              ? `Procesando ${(bulkProgress?.done ?? 0) + (bulkProgress?.failed ?? 0)} de ${bulkFiles.length}…`
-              : cargandoConfig
-                ? "Cargando parámetros contables…"
-                : `Procesar ${bulkFiles.length || ""} facturas`}
-          </Button>
-        </div>
-        {bulkFiles.length > 0 ? (
-          <p className="text-xs text-muted-foreground">
-            {bulkFiles.length} factura(s) detectada(s). Se procesan hasta 6 al mismo tiempo.
-          </p>
-        ) : null}
-        {bulkProgress ? (
-          <>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {[
-                ["Total", String(bulkProgress.total)],
-                ["Procesadas", String(bulkProgress.done)],
-                ["En proceso", String(bulkProgress.running)],
-                ["Pendientes", String(bulkProgress.pending)],
-                ["Con error", String(bulkProgress.failed)],
-                ["Automáticas", String(bulkProgress.auto)],
-                ["Requieren revisión", String(bulkProgress.review)],
-                [
-                  "Tiempo",
-                  `${Math.round(bulkProgress.elapsedMs / 1000)}s${
-                    bulkProgress.etaMs !== null && bulkProgress.pending + bulkProgress.running > 0
-                      ? ` · faltan ~${Math.round(bulkProgress.etaMs / 1000)}s`
-                      : ""
-                  }`,
-                ],
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-md border border-border p-2">
-                  <p className="text-[11px] text-muted-foreground">{label}</p>
-                  <p className="text-sm font-semibold">{value}</p>
-                </div>
-              ))}
-            </div>
-          <ul className="max-h-64 space-y-1 overflow-auto rounded-md border border-border p-2">
-            {bulkProgress.jobs.map((j) => (
-              <li key={j.id} className="flex items-start gap-2 text-xs">
-                {j.state === "listo" ? (
-                  <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />
-                ) : j.state === "error" ? (
-                  <XCircle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-                ) : j.state === "procesando" ? (
-                  <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin text-muted-foreground" />
-                ) : (
-                  <Layers className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                )}
-                <span className="truncate font-medium">{j.name}</span>
-                <span className="text-muted-foreground">
-                  {j.detail || (j.state === "pendiente" ? "En cola" : "Leyendo…")}
-                </span>
-                {j.result ? (
-                  <span className={j.result.needsReview ? "text-warning" : "text-success"}>
-                    {j.result.needsReview ? "Revisar" : "Automática"} · {Math.round(j.result.score * 100)}%
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-          </>
-        ) : null}
-        {bulkProgress && bulkProgress.done > 0 ? (
-          <Button variant="outline" onClick={() => navigate({ to: "/facturas" })}>
-            Revisar facturas terminadas
-          </Button>
-        ) : null}
-      </div>
+      <BulkZipProcessor
+        companyId={companyId ?? ""}
+        config={config as never}
+        knowledge={knowledge}
+        extract={extract as never}
+        loadingConfig={cargandoConfig}
+      />
 
       <Dialog open={passwordOpen} onOpenChange={(open) => !reading && setPasswordOpen(open)}>
         <DialogContent>
