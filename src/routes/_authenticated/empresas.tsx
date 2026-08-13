@@ -352,6 +352,7 @@ function Empresas() {
             </div>
             <CostCenterConfig company={c} />
             <PayableAccountConfig company={c} />
+            <IvaTreatmentConfig company={c} />
           </li>
         ))}
         {(companies ?? []).length === 0 && (
