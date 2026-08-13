@@ -605,6 +605,11 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
+              {!running && RESUMABLE_STATUSES.includes(upload.status) && stats.pending + stats.failed > 0 ? (
+                <Button size="sm" disabled={!!busy} onClick={() => void reanudar(upload)}>
+                  <RefreshCw className="size-4" /> Reanudar en segundo plano
+                </Button>
+              ) : null}
               {!running && stats.pending > 0 ? (
                 <Button size="sm" variant="outline" onClick={() => void continuar()}>
                   <RefreshCw className="size-4" /> Continuar procesamiento
@@ -628,6 +633,12 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               </Button>
             </div>
           </div>
+
+          {upload.error_message ? (
+            <p className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-[11px] text-destructive">
+              Causa técnica · Etapa: {upload.error_stage ?? "—"} · Código: {upload.error_code ?? "—"} · {upload.error_message}
+            </p>
+          ) : null}
 
           {diag ? (
             <div className="rounded-md border border-border bg-muted/30 p-3 text-[11px] leading-5">
