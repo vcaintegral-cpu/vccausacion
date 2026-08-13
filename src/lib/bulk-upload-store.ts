@@ -7,6 +7,7 @@ export type UploadStatus =
   | "uploaded"
   | "extracting"
   | "processing"
+  | "processing_paused"
   | "completed"
   | "completed_with_errors"
   | "failed"
@@ -39,6 +40,9 @@ export type BulkUpload = {
   processed_count: number;
   error_count: number;
   error_message: string | null;
+  error_code?: string | null;
+  error_stage?: string | null;
+  attempt_count?: number;
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
@@ -78,12 +82,22 @@ export type BulkItem = {
   company_validation?: string | null;
 };
 
-export const ACTIVE_STATUSES: UploadStatus[] = ["uploaded", "extracting", "processing", "completed_with_errors"];
+export const ACTIVE_STATUSES: UploadStatus[] = [
+  "uploaded",
+  "extracting",
+  "processing",
+  "processing_paused",
+  "completed_with_errors",
+];
+
+/** Estados en los que una carga aún tiene trabajo por hacer y puede reanudarse. */
+export const RESUMABLE_STATUSES: UploadStatus[] = ["uploaded", "extracting", "processing", "processing_paused", "failed"];
 
 export const UPLOAD_LABEL: Record<UploadStatus, string> = {
   uploaded: "Cargado",
   extracting: "Descomprimiendo",
   processing: "Procesando",
+  processing_paused: "Pausado (pendiente de reanudar)",
   completed: "Completado",
   completed_with_errors: "Con errores",
   failed: "Fallido",
@@ -217,6 +231,16 @@ export async function refreshUploadCounters(uploadId: string, items: BulkItem[])
     ...(pending === 0 ? { finished_at: new Date().toISOString() } : { finished_at: null }),
   });
   return status;
+}
+
+/** Conteo por estado de una carga, calculado siempre desde la base de datos. */
+export function uploadCounts(items: BulkItem[]) {
+  const processed = items.filter((i) => i.status === "completed").length;
+  const errors = items.filter((i) => i.status === "error").length;
+  const review = items.filter((i) => i.status === "requires_review").length;
+  const duplicates = items.filter((i) => i.status === "duplicate").length;
+  const pending = items.length - processed - errors - review - duplicates;
+  return { total: items.length, processed, errors, review, duplicates, pending };
 }
 
 export type StoredPdf = {
