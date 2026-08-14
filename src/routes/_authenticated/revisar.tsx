@@ -774,16 +774,16 @@ function Revisar() {
             <Row k="Cuentas" v={[...new Set(lines.map((l) => l.account_code ?? "—"))].join(", ")} />
             <Row k="Subtotal" v={cop(base)} />
             <Row k="IVA" v={cop(Number(header.iva))} />
-            <Row k="Total factura" v={cop(base + Number(header.iva) + Number(header.impoconsumo ?? 0))} />
+            <Row k="Total factura" v={cop(roundCOP(base + roundCOP(header.iva) + roundCOP(header.impoconsumo)))} />
             <Row k="Retefuente" v={cop(retenciones.retefuente)} />
             <Row k="Otras retenciones" v={cop(retenciones.reteiva + retenciones.reteica)} />
             <Row
               k="NETO A PAGAR"
               v={cop(
-                base +
-                  Number(header.iva) +
-                  Number(header.impoconsumo ?? 0) -
-                  (retenciones.retefuente + retenciones.reteiva + retenciones.reteica),
+                netoAPagarCOP(
+                  roundCOP(base + roundCOP(header.iva) + roundCOP(header.impoconsumo)),
+                  roundCOP(retenciones.retefuente) + roundCOP(retenciones.reteiva) + roundCOP(retenciones.reteica),
+                ),
               )}
             />
           </dl>
@@ -848,10 +848,10 @@ function Revisar() {
               <dt>NETO A PAGAR</dt>
               <dd className="font-mono tabular-nums">
                 {cop(
-                  base +
-                    Number(header.iva) +
-                    Number(header.impoconsumo ?? 0) -
-                    (retenciones.retefuente + retenciones.reteiva + retenciones.reteica),
+                  netoAPagarCOP(
+                    roundCOP(base + roundCOP(header.iva) + roundCOP(header.impoconsumo)),
+                    roundCOP(retenciones.retefuente) + roundCOP(retenciones.reteiva) + roundCOP(retenciones.reteica),
+                  ),
                 )}
               </dd>
             </div>
