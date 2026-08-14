@@ -1514,6 +1514,32 @@ function Causar() {
       {lines.length > 0 && journal.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-border bg-card">
           <div className="border-b border-border px-5 py-3 text-sm font-semibold">Validación contable</div>
+          {payable && (
+            <div className="flex flex-wrap items-end gap-4 border-b border-border px-5 py-4">
+              <div className="min-w-[280px] flex-1">
+                <p className="mb-1 text-xs font-medium text-muted-foreground">
+                  Cuenta por pagar del proveedor (NIT {header.provider_nit || "sin NIT"})
+                </p>
+                <AccountCombobox
+                  accounts={config?.accounts ?? []}
+                  value={payable.code}
+                  onChange={(code, name) => setPayableManual(code ? { code, name: name ?? "" } : null)}
+                />
+              </div>
+              <div className="text-xs text-muted-foreground">
+                <p>
+                  Origen: <span className="font-medium text-foreground">{PAYABLE_SOURCE_LABEL[payable.source]}</span>
+                </p>
+                <p>{payable.reason}</p>
+                {payable.warning && <p className="text-destructive">{payable.warning}</p>}
+                {payableManual && (
+                  <button type="button" className="mt-1 underline" onClick={() => setPayableManual(null)}>
+                    Volver a la cuenta sugerida por el histórico
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           {erroresImpuestos.length > 0 && (
             <ul className="list-disc space-y-1 border-b border-border bg-destructive/5 px-8 py-3 text-xs text-destructive">
               {erroresImpuestos.map((e, i) => (
