@@ -21,7 +21,7 @@ import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy"
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
-  computeRetenciones,
+  retencionesDelDocumento,
   type Line,
   type Rule,
   type TaxRate,
@@ -354,7 +354,16 @@ export async function processInvoiceFile(params: {
   );
   const ivaLineas = roundCOP(lines.reduce((s, l) => s + roundCOP(l.iva), 0));
   const ivaTotal = ivaLineas > 0 ? ivaLineas : roundCOP(header.iva);
-  const retenciones = computeRetenciones(baseGravable, ivaTotal, config.taxes);
+  // Las retenciones salen ÚNICAMENTE de lo retenido en la factura leída.
+  // Nunca se aplican todas las tarifas del catálogo: una factura sin retención
+  // no genera líneas 2365 / 2367 / 2368 ni valida esas cuentas.
+  const retencionDocumento = roundCOP(lines.reduce((s, l) => s + roundCOP(Number(l.retention || 0)), 0));
+  const retenciones = retencionesDelDocumento({
+    baseGravable,
+    ivaTotal,
+    taxes: config.taxes,
+    reportado: retencionDocumento,
+  });
   // La empresa define si maneja centros de costo; si no, nunca se guarda ninguno.
   const costPolicy = await companyUsesCostCenters(companyId);
   const centroFactura = costCenterForCompany(costPolicy, header.cost_center);

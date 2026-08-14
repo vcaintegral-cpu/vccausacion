@@ -127,6 +127,71 @@ export function computeRetenciones(baseGravable: number, ivaTotal: number, taxes
   return res;
 }
 
+export const sinRetenciones = (): Retenciones => ({
+  retefuente: 0,
+  reteiva: 0,
+  reteica: 0,
+  autorretencion: 0,
+  detalle: [],
+});
+
+/**
+ * Retenciones REALES del documento.
+ *
+ * El catálogo de tarifas de la empresa NO define qué retenciones tiene una factura:
+ * solo sirve para identificar la tarifa que corresponde al valor efectivamente
+ * retenido en el documento. Si la factura no trae retención (valor 0), no se
+ * genera ninguna línea ni se valida ninguna cuenta (2365 / 2367 / 2368).
+ */
+export function retencionesDelDocumento(params: {
+  baseGravable: number;
+  ivaTotal: number;
+  taxes: TaxRate[];
+  /** Valor total retenido según la factura leída. 0 = la factura no tiene retenciones. */
+  reportado: number;
+}): Retenciones {
+  const reportado = round(params.reportado);
+  if (!(reportado > 0)) return sinRetenciones();
+
+  const candidatos = params.taxes.filter((t) => t.active && t.kind !== "iva" && t.kind !== "autorretencion");
+  const calculado = (t: TaxRate) => {
+    const base = t.kind === "reteiva" ? params.ivaTotal : params.baseGravable;
+    return round((base * Number(t.rate ?? 0)) / 100);
+  };
+  // Se acepta únicamente la tarifa cuyo cálculo coincide con lo retenido en la factura.
+  const exacto = candidatos.find((t) => Math.abs(calculado(t) - reportado) <= 1);
+
+  const res = sinRetenciones();
+  if (exacto) {
+    const amount = reportado;
+    if (exacto.kind === "retefuente") res.retefuente = amount;
+    else if (exacto.kind === "reteiva") res.reteiva = amount;
+    else if (exacto.kind === "reteica") res.reteica = amount;
+    res.detalle.push({
+      kind: exacto.kind,
+      name: exacto.name,
+      rate: Number(exacto.rate ?? 0),
+      base: exacto.kind === "reteiva" ? params.ivaTotal : params.baseGravable,
+      amount,
+      account_code: exacto.account_code ?? null,
+    });
+    return res;
+  }
+
+  // Hay retención en el documento pero ninguna tarifa configurada coincide:
+  // se conserva el valor sin cuenta para que se revise manualmente.
+  res.retefuente = reportado;
+  res.detalle.push({
+    kind: "retefuente",
+    name: "Retención según factura (revisar tarifa)",
+    rate: 0,
+    base: params.baseGravable,
+    amount: reportado,
+    account_code: null,
+  });
+  return res;
+}
+
 export type JournalLine = {
   account_code: string;
   account_name: string | null;
@@ -188,6 +253,8 @@ export function buildJournal(params: {
 
   for (const d of retenciones.detalle) {
     if (d.kind === "autorretencion") continue;
+    // Una retención en cero no existe contablemente: no genera línea ni cuenta.
+    if (round(d.amount) <= 0) continue;
     out.push({
       // La cuenta sale del registro exacto de la retención seleccionada.
       account_code: d.account_code ?? "",
