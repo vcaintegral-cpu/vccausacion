@@ -3,22 +3,27 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, Loader2, Pencil, Send, Stamp } from "lucide-react";
+import { CheckCircle2, History, Loader2, Pencil, RotateCcw, Send, Stamp, Undo2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { fetchCompanyPuc } from "@/lib/puc-data";
 import { cop, fecha } from "@/lib/format";
-import { ESTADO_LABEL, estadoUnico } from "@/lib/invoice-duplicates";
+import { ESTADO_LABEL, estadoUnico, type EstadoFactura } from "@/lib/invoice-duplicates";
 import { siigoSyncInvoice } from "@/lib/siigo.functions";
 import { IVA_TREATMENT_LABEL, treatmentForAccount } from "@/lib/iva-treatment";
 import { PAYABLE_SOURCE_LABEL, type PayableSource } from "@/lib/payable-account";
 import {
   alertasBorrador,
+  accionDisponible,
   aprobarBorrador,
   causarFactura,
   classifyJournal,
+  devolverABorrador,
+  revertirCausacion,
+  ETAPA_LABEL,
+  type EtapaMasiva,
   type DraftAccounts,
   type DraftInvoice,
   type JournalRow,
@@ -53,6 +58,27 @@ const origenPayable = (i: DraftInvoice) => {
 
 const etiquetaFactura = (i: DraftInvoice) => [i.prefix, i.number].filter(Boolean).join("-") || "Sin número";
 
+const ESTADO_CLASS: Record<string, string> = {
+  borrador: "bg-muted text-muted-foreground",
+  aprobado: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
+  causada: "bg-violet-500/15 text-violet-700 dark:text-violet-400",
+  sincronizando: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+  sincronizada: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+  error_siigo: "bg-destructive/10 text-destructive",
+  error: "bg-destructive/10 text-destructive",
+};
+
+const ETAPAS: EstadoFactura[] = ["borrador", "aprobado", "causada", "sincronizando", "error_siigo", "sincronizada", "error"];
+
+type EventoFactura = {
+  id: string;
+  action: string;
+  message: string | null;
+  status: string;
+  siigo_status: string | null;
+  created_at: string;
+};
+
 function Borradores() {
   const companyId = useActiveCompany();
   const queryClient = useQueryClient();
@@ -67,6 +93,8 @@ function Borradores() {
   const [hasta, setHasta] = useState("");
   const [estado, setEstado] = useState<"borrador" | "aprobado" | "causada" | "sincronizada" | "error" | "todas">("borrador");
   const [busy, setBusy] = useState<null | string>(null);
+  const [avance, setAvance] = useState<{ hechas: number; total: number } | null>(null);
+  const [traza, setTraza] = useState<DraftInvoice | null>(null);
   const [resultados, setResultados] = useState<ResultadoFactura[] | null>(null);
 
   const { data, isLoading } = useQuery({
@@ -135,6 +163,33 @@ function Borradores() {
   const seleccionadas = rows.filter((r) => sel[r.id]);
   const todasVisiblesMarcadas = rows.length > 0 && rows.every((r) => sel[r.id]);
 
+  /** Conteo por etapa del flujo, sobre todas las facturas de la empresa. */
+  const resumen = useMemo(() => {
+    const base: Record<string, number> = {};
+    for (const i of invoices) {
+      const e = estadoUnico(i);
+      base[e] = (base[e] ?? 0) + 1;
+    }
+    return base;
+  }, [invoices]);
+
+  /** Cuántas de las seleccionadas pueden realmente ejecutar cada etapa. */
+  const elegibles = (etapa: EtapaMasiva) => seleccionadas.filter((r) => accionDisponible(estadoUnico(r), etapa));
+
+  const { data: eventos, isLoading: cargandoTraza } = useQuery({
+    queryKey: ["invoice-events", traza?.id],
+    enabled: !!traza,
+    queryFn: async () => {
+      const { data: rowsEv, error } = await supabase
+        .from("invoice_events")
+        .select("id, action, message, status, siigo_status, created_at")
+        .eq("invoice_id", traza!.id)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (rowsEv ?? []) as unknown as EventoFactura[];
+    },
+  });
+
   function marcarTodas(valor: boolean) {
     setSel((prev) => {
       const next = { ...prev };
@@ -143,17 +198,32 @@ function Borradores() {
     });
   }
 
-  async function ejecutar(tipo: "aprobar" | "causar" | "siigo") {
+  async function ejecutar(tipo: EtapaMasiva) {
+    // Protección contra doble clic: mientras haya un proceso activo no se inicia otro.
     if (busy || seleccionadas.length === 0) return;
+    const objetivo = elegibles(tipo);
+    const fueraDeEtapa = seleccionadas.filter((r) => !accionDisponible(estadoUnico(r), tipo));
+    if (objetivo.length === 0) {
+      toast.error(`Ninguna de las facturas seleccionadas está en la etapa requerida para "${ETAPA_LABEL[tipo]}".`);
+      return;
+    }
     setBusy(tipo);
+    setAvance({ hechas: 0, total: objetivo.length });
     const userId = (await supabase.auth.getUser()).data.user?.id ?? null;
-    const out: ResultadoFactura[] = [];
+    const out: ResultadoFactura[] = fueraDeEtapa.map((inv) => ({
+      id: inv.id,
+      etiqueta: etiquetaFactura(inv),
+      ok: false,
+      message: `Omitida: está en estado ${ESTADO_LABEL[estadoUnico(inv)]} y esta acción requiere otra etapa del flujo.`,
+    }));
     try {
-      for (const inv of seleccionadas) {
+      for (const inv of objetivo) {
         const etiqueta = etiquetaFactura(inv);
         try {
           if (tipo === "aprobar") out.push(await aprobarBorrador(inv, accounts.get(inv.id), pucCodes, etiqueta, userId));
           else if (tipo === "causar") out.push(await causarFactura(inv, etiqueta));
+          else if (tipo === "devolver") out.push(await devolverABorrador(inv, etiqueta));
+          else if (tipo === "revertir") out.push(await revertirCausacion(inv, etiqueta));
           else {
             if (inv.siigo_status === "sincronizada" || inv.siigo_id) {
               out.push({ id: inv.id, etiqueta, ok: true, message: `Ya sincronizada con Siigo${inv.siigo_number ? ` · N° ${inv.siigo_number}` : ""}.` });
@@ -166,6 +236,8 @@ function Borradores() {
           }
         } catch (err) {
           out.push({ id: inv.id, etiqueta, ok: false, message: err instanceof Error ? err.message : "Error inesperado." });
+        } finally {
+          setAvance((p) => (p ? { ...p, hechas: p.hechas + 1 } : p));
         }
       }
     } finally {
