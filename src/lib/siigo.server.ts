@@ -2,6 +2,8 @@
 // Autenticación vigente: POST /auth  { username, access_key }  + header Partner-Id.
 // Devuelve { access_token, expires_in, token_type }.
 
+import { roundCOP } from "@/lib/money";
+
 const SIIGO_BASE = "https://api.siigo.com";
 
 type SiigoCreds = { username: string; accessKey: string; partnerId: string };
@@ -495,7 +497,8 @@ export function calculateSiigoPurchaseTotals(params: {
   retentions: number;
   payments?: number;
 }): SiigoPurchaseTotals {
-  const roundMoney = (value: number) => Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
+  // Pesos colombianos: sin decimales. Redondeo único de la aplicación.
+  const roundMoney = roundCOP;
   const subtotal = roundMoney(params.subtotal);
   const taxes = roundMoney(params.taxes);
   const retencionesAplicadas = roundMoney(params.retentions);
@@ -509,7 +512,7 @@ export function calculateSiigoPurchaseTotals(params: {
     retencionesAplicadas,
     netoAPagar,
     totalPayments,
-    diferencia: roundMoney(Math.round(netoAPagar) - totalPayments),
+    diferencia: roundMoney(netoAPagar - totalPayments),
   };
 }
 
@@ -553,7 +556,7 @@ export function buildSiigoPurchasePayload(params: {
   /** Retenciones aplicadas al documento: ID REAL del impuesto en Siigo + valor. */
   retentions?: Array<{ id: number | string; value: number }>;
 }) {
-  const roundMoney = (value: number) => Math.round(Number(value) * 100) / 100;
+  const roundMoney = roundCOP;
   const total = roundMoney(params.purchaseTotal);
   const paymentValue = roundMoney(params.paymentValue);
   const isSiigoTaxId = (value: number | string) => {
@@ -596,9 +599,9 @@ export function buildSiigoPurchasePayload(params: {
         code: item.code,
         description: (item.description || `${item.type} ${item.code}`).slice(0, 500),
         quantity: item.quantity > 0 ? item.quantity : 1,
-        price: item.price,
+        price: roundCOP(item.price),
       };
-      if (item.discount && item.discount > 0) line["discount"] = item.discount;
+      if (item.discount && item.discount > 0) line["discount"] = roundCOP(item.discount);
       if (item.tax_ids && item.tax_ids.length > 0) {
         line["taxes"] = item.tax_ids.map((id) => ({ id }));
       }

@@ -1,3 +1,5 @@
+import { roundCOP } from "@/lib/money";
+
 export type Rule = {
   id?: string;
   match_type: string; // 'keyword' | 'nit'
@@ -96,7 +98,8 @@ export type Retenciones = {
   detalle: { kind: string; name: string; rate: number; base: number; amount: number; account_code: string | null }[];
 };
 
-const round = (n: number) => Math.round(n);
+/** Redondeo único de la aplicación: pesos colombianos sin decimales. */
+const round = roundCOP;
 
 /** Calcula retenciones sobre la base gravable y el IVA, según tarifas vigentes de la empresa. */
 export function computeRetenciones(baseGravable: number, ivaTotal: number, taxes: TaxRate[]): Retenciones {
