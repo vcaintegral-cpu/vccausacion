@@ -456,6 +456,32 @@ function Borradores() {
         </table>
       </div>
 
+      <Dialog open={!!traza} onOpenChange={(o) => !o && setTraza(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Trazabilidad · {traza ? etiquetaFactura(traza) : ""}</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-96 space-y-2 overflow-y-auto">
+            {cargandoTraza && <p className="text-sm text-muted-foreground">Cargando historial…</p>}
+            {!cargandoTraza && (eventos ?? []).length === 0 && (
+              <p className="text-sm text-muted-foreground">Aún no hay eventos registrados para esta factura.</p>
+            )}
+            {(eventos ?? []).map((ev) => (
+              <div key={ev.id} className="rounded-md border border-border px-3 py-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{ev.action}</span>
+                  <span className="text-muted-foreground">{new Date(ev.created_at).toLocaleString("es-CO")}</span>
+                </div>
+                <div className="mt-0.5 text-muted-foreground">
+                  Estado: {ESTADO_LABEL[estadoUnico({ status: ev.status, siigo_status: ev.siigo_status })]}
+                </div>
+                {ev.message && <div className="mt-0.5 text-muted-foreground">{ev.message}</div>}
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!resultados} onOpenChange={(o) => !o && setResultados(null)}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
