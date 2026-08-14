@@ -171,6 +171,9 @@ export async function aprobarBorrador(
     .select("id");
   if (error) return { id: inv.id, etiqueta, ok: false, message: error.message };
   if (!data?.length) return { id: inv.id, etiqueta, ok: false, message: "La factura cambió de estado durante el proceso." };
+  // Aprendizaje: la cuenta por pagar aprobada queda asociada al NIT del proveedor en esta empresa.
+  const cuentaPagar = acc?.payable?.code ?? inv.payable_account ?? null;
+  await learnPayableAccount(inv.company_id, inv.provider_nit, cuentaPagar);
   return { id: inv.id, etiqueta, ok: true, message: "Aprobada." };
 }
 
