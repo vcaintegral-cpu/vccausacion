@@ -1752,6 +1752,7 @@ export type Database = {
           uses: number
         }[]
       }
+      is_company_admin: { Args: { _company_id: string }; Returns: boolean }
       is_company_member: { Args: { _company_id: string }; Returns: boolean }
       post_invoice: { Args: { _invoice_id: string }; Returns: Json }
       provider_payable_candidates: {
