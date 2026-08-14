@@ -13,6 +13,7 @@ import { cop, fecha } from "@/lib/format";
 import { ESTADO_LABEL, estadoUnico } from "@/lib/invoice-duplicates";
 import { siigoSyncInvoice } from "@/lib/siigo.functions";
 import { IVA_TREATMENT_LABEL, treatmentForAccount } from "@/lib/iva-treatment";
+import { PAYABLE_SOURCE_LABEL, type PayableSource } from "@/lib/payable-account";
 import {
   alertasBorrador,
   aprobarBorrador,
@@ -41,7 +42,14 @@ export const Route = createFileRoute("/_authenticated/borradores")({
 });
 
 const COLS =
-  "id, company_id, prefix, number, issue_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name";
+  "id, company_id, prefix, number, issue_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual";
+
+/** Origen visible de la cuenta por pagar del borrador. */
+const origenPayable = (i: DraftInvoice) => {
+  if (i.payable_manual) return PAYABLE_SOURCE_LABEL.manual;
+  const s = (i.payable_source ?? "") as PayableSource;
+  return PAYABLE_SOURCE_LABEL[s] ?? "—";
+};
 
 const etiquetaFactura = (i: DraftInvoice) => [i.prefix, i.number].filter(Boolean).join("-") || "Sin número";
 
@@ -235,6 +243,7 @@ function Borradores() {
               <th className="px-3 py-2 font-medium">Cuenta IVA</th>
               <th className="px-3 py-2 font-medium">Tratamiento IVA</th>
               <th className="px-3 py-2 font-medium">Cuenta CxP</th>
+              <th className="px-3 py-2 font-medium">Origen cuenta por pagar</th>
               <th className="px-3 py-2 font-medium">Centro de costo</th>
               <th className="px-3 py-2 font-medium">Estado</th>
               <th className="px-3 py-2 font-medium">Advertencias</th>
@@ -283,9 +292,10 @@ function Borradores() {
                       : "Sin IVA"}
                   </td>
                   <td className="px-3 py-2">
-                    <span className="font-mono text-xs">{acc?.payable?.code ?? "—"}</span>
+                    <span className="font-mono text-xs">{acc?.payable?.code ?? r.payable_account ?? "—"}</span>
                     <div className="max-w-[180px] truncate text-[11px] text-muted-foreground">{acc?.payable?.name ?? ""}</div>
                   </td>
+                  <td className="px-3 py-2 text-[11px] text-muted-foreground">{origenPayable(r)}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{acc?.costCenter ?? r.cost_center ?? "—"}</td>
                   <td className="px-3 py-2">
                     <span className="inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
@@ -315,7 +325,7 @@ function Borradores() {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={16} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={17} className="px-4 py-8 text-center text-sm text-muted-foreground">
                   {isLoading ? "Cargando facturas…" : "No hay facturas que coincidan con el filtro."}
                 </td>
               </tr>
