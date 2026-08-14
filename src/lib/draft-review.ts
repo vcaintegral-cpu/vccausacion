@@ -32,6 +32,10 @@ export type DraftInvoice = {
   posting_error: string | null;
   file_path: string | null;
   file_name: string | null;
+  /** Cuenta por pagar asignada automáticamente (NIT + histórico) o manualmente. */
+  payable_account?: string | null;
+  payable_source?: string | null;
+  payable_manual?: boolean | null;
 };
 
 export type JournalRow = {
