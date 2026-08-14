@@ -1556,7 +1556,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         console.log("CUENTA CONTABLE RETEFUENTE:", retencionesTrace.find((t) => t.tipo === r.tipo)?.cuenta ?? null);
         console.log("VALOR RETEFUENTE:", r.value);
       }
-      console.log("PAYMENT:", netoSiigo);
+      console.log("PAYMENT:", conciliableSiigo);
       const construirPayload = (totalDocumento: number) =>
         buildSiigoPurchasePayload({
         documentId,
@@ -1571,7 +1571,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         items: itemsConRetencion,
         paymentId,
         purchaseTotal: totalDocumento,
-        paymentValue: netoSiigo,
+        paymentValue: conciliableSiigo,
         paymentDueDate: dueDate,
         retentions: retencionesEnDocumento.map((r) => ({ id: r.id, value: r.value })),
         });
@@ -1586,7 +1586,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           cuenta_contable_local: r.cuenta,
           valor: r.valor,
         })),
-        medio_pago_siigo: { id: paymentId, valor: netoSiigo },
+        medio_pago_siigo: { id: paymentId, valor: conciliableSiigo },
         valores: {
           subtotal,
           iva,
@@ -1682,7 +1682,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             neto_local: netoAPagar,
             retenciones_local: retenciones,
           });
-          if (Math.abs(r2(pagoSiigo - netoSiigo)) !== 0) {
+          if (Math.abs(r2(pagoSiigo - conciliableSiigo)) !== 0) {
             throw new Error("El payment devuelto por Siigo no coincide con el total conciliable de la compra.");
           }
           if (retencionesSiigo.length > 0 && retSiigo <= 0) {
