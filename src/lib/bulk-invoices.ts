@@ -2,6 +2,7 @@ import { unzipSync } from "fflate";
 import { supabase } from "@/integrations/supabase/client";
 import { companyUsesCostCenters, costCenterForCompany, costCentersEnabled } from "@/lib/cost-center-config";
 import { prepareInvoiceFile } from "@/lib/invoice-file";
+import { roundCOP } from "@/lib/money";
 import type { ExtractedInvoice } from "@/lib/extract.functions";
 import {
   applyEngineToLines,
