@@ -710,6 +710,13 @@ export type Database = {
           iva: number
           notes: string | null
           number: string | null
+          payable_account: string | null
+          payable_confidence: number | null
+          payable_manual: boolean
+          payable_source: string | null
+          payable_suggested: string | null
+          payable_updated_at: string | null
+          payable_updated_by: string | null
           payment_form: string | null
           payment_method: string | null
           posted_at: string | null
@@ -765,6 +772,13 @@ export type Database = {
           iva?: number
           notes?: string | null
           number?: string | null
+          payable_account?: string | null
+          payable_confidence?: number | null
+          payable_manual?: boolean
+          payable_source?: string | null
+          payable_suggested?: string | null
+          payable_updated_at?: string | null
+          payable_updated_by?: string | null
           payment_form?: string | null
           payment_method?: string | null
           posted_at?: string | null
@@ -820,6 +834,13 @@ export type Database = {
           iva?: number
           notes?: string | null
           number?: string | null
+          payable_account?: string | null
+          payable_confidence?: number | null
+          payable_manual?: boolean
+          payable_source?: string | null
+          payable_suggested?: string | null
+          payable_updated_at?: string | null
+          payable_updated_by?: string | null
           payment_form?: string | null
           payment_method?: string | null
           posted_at?: string | null
@@ -1682,6 +1703,16 @@ export type Database = {
       }
       is_company_member: { Args: { _company_id: string }; Returns: boolean }
       post_invoice: { Args: { _invoice_id: string }; Returns: Json }
+      provider_payable_candidates: {
+        Args: { _company_id: string; _nits: string[] }
+        Returns: {
+          account_code: string
+          last_used: string
+          provider_nit: string
+          source: string
+          uses: number
+        }[]
+      }
       release_stale_jobs: { Args: { _minutes?: number }; Returns: number }
       resume_upload_jobs: {
         Args: { _include_errors?: boolean; _upload_id: string }

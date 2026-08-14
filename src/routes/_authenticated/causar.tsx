@@ -11,7 +11,13 @@ import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
-import { applyPucToPayable, learnPayableAccount, usePayableAccount } from "@/lib/payable-account";
+import {
+  PAYABLE_SOURCE_LABEL,
+  applyPucToPayable,
+  learnPayableAccount,
+  manualPayable,
+  usePayableAccount,
+} from "@/lib/payable-account";
 import {
   applyEngineToLines,
   emptyKnowledge,
@@ -237,6 +243,9 @@ function Causar() {
     const inv = borrador.invoice as Record<string, any>;
     setEditingId(inv['id'] as string);
     setExistingFile({ path: (inv['file_path'] as string) ?? null, name: (inv['file_name'] as string) ?? null });
+    // Cuenta por pagar corregida manualmente antes: se respeta y no se recalcula.
+    if (inv['payable_manual'] && inv['payable_account'])
+      setPayableManual({ code: String(inv['payable_account']), name: "" });
     setHeader({
       ...emptyHeader(),
       prefix: inv['prefix'] ?? "",
@@ -599,11 +608,13 @@ function Causar() {
     [costPolicy, config?.accounts, header.cost_center, lines],
   );
   // Contrapartida: obligación por pagar según histórico de ESTA empresa con ESTE proveedor.
+  const [payableManual, setPayableManual] = useState<{ code: string; name: string } | null>(null);
   const { data: payableBase } = usePayableAccount(companyId, header.provider_nit);
-  const payable = useMemo(
-    () => (payableBase ? applyPucToPayable(payableBase, (config?.accounts ?? []) as PucAccount[]) : null),
-    [payableBase, config?.accounts],
-  );
+  const payable = useMemo(() => {
+    // Una cuenta seleccionada manualmente nunca se recalcula ni se sobrescribe.
+    if (payableManual?.code) return manualPayable(payableManual.code, payableManual.name);
+    return payableBase ? applyPucToPayable(payableBase, (config?.accounts ?? []) as PucAccount[]) : null;
+  }, [payableBase, config?.accounts, payableManual]);
   const journal = useMemo(
     () =>
       buildJournal({
@@ -872,6 +883,17 @@ function Causar() {
           total,
           status,
           dian_status: header.cufe ? "con CUFE" : "sin CUFE",
+          // Cuenta por pagar: se determina por NIT + histórico, no por la descripción.
+          ...(payable
+            ? {
+                payable_account: payable.code,
+                payable_suggested: payableBase?.code ?? payable.code,
+                payable_source: payable.source,
+                payable_manual: payable.source === "manual",
+                payable_confidence: payable.confidence,
+                payable_updated_at: new Date().toISOString(),
+              }
+            : {}),
           // Al aprobar tras corregir, se limpia el error previo y queda pendiente de envío.
           ...(status === "aprobado" ? { siigo_status: "pendiente", siigo_error: null } : {}),
         file_path: filePath ?? existingFile.path,
@@ -960,6 +982,8 @@ function Causar() {
 
       // El aprendizaje solo se registra cuando la causación queda aprobada.
       if (status === "aprobado") {
+        // Aprendizaje: cuenta por pagar aprobada para este proveedor en esta empresa.
+        await learnPayableAccount(companyId, header.provider_nit, payable?.code);
         await registrarAprendizaje({
           companyId,
           invoiceId: inv.id,
@@ -1492,6 +1516,32 @@ function Causar() {
       {lines.length > 0 && journal.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-border bg-card">
           <div className="border-b border-border px-5 py-3 text-sm font-semibold">Validación contable</div>
+          {payable && (
+            <div className="flex flex-wrap items-end gap-4 border-b border-border px-5 py-4">
+              <div className="min-w-[280px] flex-1">
+                <p className="mb-1 text-xs font-medium text-muted-foreground">
+                  Cuenta por pagar del proveedor (NIT {header.provider_nit || "sin NIT"})
+                </p>
+                <AccountCombobox
+                  accounts={config?.accounts ?? []}
+                  value={payable.code}
+                  onChange={(code, name) => setPayableManual(code ? { code, name: name ?? "" } : null)}
+                />
+              </div>
+              <div className="text-xs text-muted-foreground">
+                <p>
+                  Origen: <span className="font-medium text-foreground">{PAYABLE_SOURCE_LABEL[payable.source]}</span>
+                </p>
+                <p>{payable.reason}</p>
+                {payable.warning && <p className="text-destructive">{payable.warning}</p>}
+                {payableManual && (
+                  <button type="button" className="mt-1 underline" onClick={() => setPayableManual(null)}>
+                    Volver a la cuenta sugerida por el histórico
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           {erroresImpuestos.length > 0 && (
             <ul className="list-disc space-y-1 border-b border-border bg-destructive/5 px-8 py-3 text-xs text-destructive">
               {erroresImpuestos.map((e, i) => (
