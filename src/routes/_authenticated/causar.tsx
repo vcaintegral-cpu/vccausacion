@@ -982,6 +982,8 @@ function Causar() {
 
       // El aprendizaje solo se registra cuando la causación queda aprobada.
       if (status === "aprobado") {
+        // Aprendizaje: cuenta por pagar aprobada para este proveedor en esta empresa.
+        await learnPayableAccount(companyId, header.provider_nit, payable?.code);
         await registrarAprendizaje({
           companyId,
           invoiceId: inv.id,
