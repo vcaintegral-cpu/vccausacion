@@ -872,6 +872,17 @@ function Causar() {
           total,
           status,
           dian_status: header.cufe ? "con CUFE" : "sin CUFE",
+          // Cuenta por pagar: se determina por NIT + histórico, no por la descripción.
+          ...(payable
+            ? {
+                payable_account: payable.code,
+                payable_suggested: payable.code,
+                payable_source: payable.source,
+                payable_manual: false,
+                payable_confidence: payable.confidence,
+                payable_updated_at: new Date().toISOString(),
+              }
+            : {}),
           // Al aprobar tras corregir, se limpia el error previo y queda pendiente de envío.
           ...(status === "aprobado" ? { siigo_status: "pendiente", siigo_error: null } : {}),
         file_path: filePath ?? existingFile.path,
