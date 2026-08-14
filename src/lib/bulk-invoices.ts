@@ -345,12 +345,14 @@ export async function processInvoiceFile(params: {
   const peor = tomadas.sort((a, b) => a.score - b.score)[0];
   const score = tomadas.length === 0 ? 1 : (peor?.score ?? 0);
   const reason = tomadas.length === 0 ? "Cuentas tomadas del catálogo o del borrador." : (peor?.reason ?? "");
-  const baseGravable = lines.reduce(
-    (s, l) => s + Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
-    0,
+  const baseGravable = roundCOP(
+    lines.reduce(
+      (s, l) => s + roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
+      0,
+    ),
   );
-  const ivaLineas = lines.reduce((s, l) => s + Number(l.iva || 0), 0);
-  const ivaTotal = ivaLineas > 0 ? ivaLineas : Number(header.iva || 0);
+  const ivaLineas = roundCOP(lines.reduce((s, l) => s + roundCOP(l.iva), 0));
+  const ivaTotal = ivaLineas > 0 ? ivaLineas : roundCOP(header.iva);
   const retenciones = computeRetenciones(baseGravable, ivaTotal, config.taxes);
   // La empresa define si maneja centros de costo; si no, nunca se guarda ninguno.
   const costPolicy = await companyUsesCostCenters(companyId);
@@ -431,7 +433,7 @@ export async function processInvoiceFile(params: {
     );
   }
 
-  const total = baseGravable + ivaTotal + Number(header.impoconsumo || 0);
+  const total = roundCOP(baseGravable + ivaTotal + roundCOP(header.impoconsumo));
   const { data: inv, error } = await supabase
     .from("invoices")
     .insert({
@@ -456,12 +458,12 @@ export async function processInvoiceFile(params: {
       cost_center: centroFactura,
       notes: header.notes,
       subtotal: baseGravable,
-      discount: Number(header.discount || 0),
+      discount: roundCOP(header.discount),
       iva: ivaTotal,
-      impoconsumo: Number(header.impoconsumo || 0),
-      retefuente: retenciones.retefuente,
-      reteiva: retenciones.reteiva,
-      reteica: retenciones.reteica,
+      impoconsumo: roundCOP(header.impoconsumo),
+      retefuente: roundCOP(retenciones.retefuente),
+      reteiva: roundCOP(retenciones.reteiva),
+      reteica: roundCOP(retenciones.reteica),
       total,
       status: "borrador",
       dian_status: header.cufe ? "con CUFE" : "sin CUFE",
