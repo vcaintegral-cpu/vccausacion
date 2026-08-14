@@ -1447,22 +1447,56 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // La API de esta cuenta rechaza Retefuente en retentions[] y la acepta como
       // impuesto de renglón; en esa estructura payments concilia contra el neto.
       const sumaRetencionesEnviadas = r2(retencionesSiigo.reduce((acc, r) => acc + r.value, 0));
-      const payments = [{ id: paymentId, value: netoSiigo, due_date: dueDate }];
+      // Siigo NO usa el valor de retención que enviamos para conciliar: recalcula cada
+      // retención con su porcentaje oficial sobre la base (subtotal, o IVA en ReteIVA).
+      // El conciliable de payments es Total factura − retenciones recalculadas por Siigo.
+      const retencionesRecalculadas = retencionesSiigo.map((r) => {
+        const pct = porcentajePorTaxId.get(String(r.id)) ?? 0;
+        const base = r.kind === "reteiva" ? iva : subtotal;
+        const calculado = pct > 0 ? r2((base * pct) / 100) : r2(r.value);
+        return { ...r, porcentaje: pct, base, valor_siigo: calculado };
+      });
+      const sumaRetencionesSiigo = r2(
+        retencionesRecalculadas.reduce((acc, r) => acc + r.valor_siigo, 0),
+      );
+      // Conciliable exacto que espera Siigo. El total de la factura y el asiento NO cambian.
+      const conciliableSiigo = r2(totalFactura - sumaRetencionesSiigo);
+      const payments = [{ id: paymentId, value: conciliableSiigo, due_date: dueDate }];
       const sumaPagos = r2(payments.reduce((acc, p) => acc + p.value, 0));
       const totalesValidados = calculateSiigoPurchaseTotals({
         subtotal,
         taxes: iva + impoconsumo,
-        retentions: sumaRetencionesEnviadas,
+        retentions: sumaRetencionesSiigo,
         payments: sumaPagos,
       });
       const diferencia = totalesValidados.diferencia;
       if (Math.abs(diferencia) !== 0) {
         console.log("[siigo][causacion] ⚠ Payments no coincide con el total conciliable de Siigo");
-        console.log("[siigo][causacion] Suma de payments:", sumaPagos, "Neto Siigo:", netoSiigo);
+        console.log("[siigo][causacion] Suma de payments:", sumaPagos, "Conciliable Siigo:", conciliableSiigo);
         throw new Error(
-          `La suma de los pagos (${sumaPagos}) no coincide con el total conciliable (${netoSiigo}).`,
+          `La suma de los pagos (${sumaPagos}) no coincide con el total conciliable (${conciliableSiigo}).`,
         );
       }
+
+      console.log("[siigo][payments] Diagnóstico:", {
+        totalFactura,
+        totalRetencionesContables: retenciones,
+        totalRetencionesSiigo: sumaRetencionesSiigo,
+        netoAPagarContable: netoAPagar,
+        paymentType: formaPago,
+        paymentId,
+        paymentValue: conciliableSiigo,
+        dueDate,
+        fechaFactura: fechaDoc,
+        detalleRetenciones: retencionesRecalculadas.map((r) => ({
+          tipo: r.tipo,
+          id: r.id,
+          porcentaje: r.porcentaje,
+          base: r.base,
+          valor_reportado: r.value,
+          valor_siigo: r.valor_siigo,
+        })),
+      });
 
       console.log("[siigo][causacion] Diagnóstico previo:", {
         subtotal,
