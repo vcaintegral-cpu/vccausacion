@@ -714,6 +714,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     if ((companyAccounts ?? []).length > 0) {
       const problemas: string[] = [];
       for (const line of resolvedJournal) {
+        if (lineaSinValor(line)) continue;
         const check = validarCuenta(companyAccounts ?? [], line.account_code);
         if (!check.ok && check.problema) problemas.push(check.problema);
       }
