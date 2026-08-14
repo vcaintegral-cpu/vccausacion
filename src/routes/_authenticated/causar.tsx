@@ -102,7 +102,8 @@ const emptyHeader = (): Header => ({
   provider_phone: "", provider_email: "", cufe: "", payment_form: "Crédito", payment_method: "",
   buyer_nit: "", buyer_name: "",
   currency: "COP", cost_center: "", notes: "",
-  subtotal: 0, discount: 0, iva: 0, impoconsumo: 0, total: 0,
+  subtotal: 0, discount: 0, iva: 0, impoconsumo: 0,
+  retefuente: 0, reteiva: 0, reteica: 0, total: 0,
 });
 
 /** Plazo de crédito según los días entre la fecha de la factura y su vencimiento. */
