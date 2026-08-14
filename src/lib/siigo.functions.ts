@@ -1,3 +1,4 @@
+import { roundCOP } from "@/lib/money";
 import { createServerFn } from "@tanstack/react-start";
 import { resolveOperationalAccount, validarCuenta } from "@/lib/puc-hierarchy";
 import { mensajeSiigoAmigable } from "@/lib/siigo-errors";
@@ -1066,7 +1067,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         0,
       );
 
-      const r2 = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+      // Pesos colombianos: valores enteros en toda la conciliación con Siigo.
+      const r2 = roundCOP;
       // Subtotal e IVA: se prefieren los valores de la factura y, si vienen en 0,
       // se recalculan desde los renglones que se envían a Siigo.
       const subtotalItems = items.reduce(
@@ -1091,7 +1093,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       });
       const totalFactura = totalesSiigo.totalFactura;
       const netoAPagar = totalesSiigo.netoAPagar;
-      const netoSiigo = Math.round(netoAPagar);
+      const netoSiigo = roundCOP(netoAPagar);
 
       if (totalFactura <= 0) {
         throw new Error(
@@ -1426,7 +1428,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         payments: sumaPagos,
       });
       const diferencia = totalesValidados.diferencia;
-      if (Math.abs(diferencia) > 0.009) {
+      if (Math.abs(diferencia) !== 0) {
         console.log("[siigo][causacion] ⚠ Payments no coincide con el total conciliable de Siigo");
         console.log("[siigo][causacion] Suma de payments:", sumaPagos, "Neto Siigo:", netoSiigo);
         throw new Error(
@@ -1464,19 +1466,19 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
       // Validaciones obligatorias previas al POST.
       const totalEsperado = r2(subtotal + iva + impoconsumo);
-      if (Math.abs(r2(totalFactura - totalEsperado)) > 0.009) {
+      if (Math.abs(r2(totalFactura - totalEsperado)) !== 0) {
         throw new Error(
           `El total de la factura (${totalFactura}) no corresponde a Subtotal + IVA (${totalEsperado}).`,
         );
       }
-      if (Math.abs(r2(netoAPagar - (totalFactura - retenciones))) > 0.009) {
+      if (Math.abs(r2(netoAPagar - (totalFactura - retenciones))) !== 0) {
         throw new Error(
           `El neto a pagar (${netoAPagar}) no corresponde a Total factura − Retenciones (${r2(totalFactura - retenciones)}).`,
         );
       }
       const totalDebitos = r2(resolvedJournal.reduce((acc, l) => acc + Number(l.debit ?? 0), 0));
       const totalCreditos = r2(resolvedJournal.reduce((acc, l) => acc + Number(l.credit ?? 0), 0));
-      if (Math.abs(r2(totalDebitos - totalCreditos)) > 0.009) {
+      if (Math.abs(r2(totalDebitos - totalCreditos)) !== 0) {
         throw new Error(
           `El asiento contable no está cuadrado: débitos ${totalDebitos} vs créditos ${totalCreditos}.`,
         );
@@ -1618,7 +1620,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             neto_local: netoAPagar,
             retenciones_local: retenciones,
           });
-          if (Math.abs(r2(pagoSiigo - netoSiigo)) > 0.009) {
+          if (Math.abs(r2(pagoSiigo - netoSiigo)) !== 0) {
             throw new Error("El payment devuelto por Siigo no coincide con el total conciliable de la compra.");
           }
           if (retencionesSiigo.length > 0 && retSiigo <= 0) {
