@@ -3,6 +3,7 @@
 // sin crear una segunda lógica contable.
 import { supabase } from "@/integrations/supabase/client";
 import { findExistingInvoice } from "@/lib/invoice-duplicates";
+import { learnPayableAccount } from "@/lib/payable-account";
 
 export type DraftInvoice = {
   id: string;
