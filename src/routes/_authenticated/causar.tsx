@@ -243,6 +243,9 @@ function Causar() {
     const inv = borrador.invoice as Record<string, any>;
     setEditingId(inv['id'] as string);
     setExistingFile({ path: (inv['file_path'] as string) ?? null, name: (inv['file_name'] as string) ?? null });
+    // Cuenta por pagar corregida manualmente antes: se respeta y no se recalcula.
+    if (inv['payable_manual'] && inv['payable_account'])
+      setPayableManual({ code: String(inv['payable_account']), name: "" });
     setHeader({
       ...emptyHeader(),
       prefix: inv['prefix'] ?? "",
