@@ -570,6 +570,57 @@ export type Database = {
           },
         ]
       }
+      invoice_events: {
+        Row: {
+          action: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          invoice_id: string
+          message: string | null
+          siigo_status: string | null
+          status: string
+        }
+        Insert: {
+          action: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id: string
+          message?: string | null
+          siigo_status?: string | null
+          status: string
+        }
+        Update: {
+          action?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id?: string
+          message?: string | null
+          siigo_status?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_events_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_events_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoice_lines: {
         Row: {
           account_code: string | null
@@ -1718,6 +1769,8 @@ export type Database = {
         Args: { _include_errors?: boolean; _upload_id: string }
         Returns: number
       }
+      return_invoice_to_draft: { Args: { _invoice_id: string }; Returns: Json }
+      revert_invoice_posting: { Args: { _invoice_id: string }; Returns: Json }
     }
     Enums: {
       [_ in never]: never
