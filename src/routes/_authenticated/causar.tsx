@@ -993,8 +993,8 @@ function Causar() {
             company_id: companyId,
             account_code: j.account_code,
             account_name: j.account_name,
-            debit: j.debit,
-            credit: j.credit,
+            debit: roundCOP(j.debit),
+            credit: roundCOP(j.credit),
             cost_center: usaCentros ? (j.cost_center ?? null) : null,
             position: i,
           })),
@@ -1490,10 +1490,15 @@ function Causar() {
               <Row k="Retefuente" v={cop(retenciones.retefuente)} />
               <Row k="ReteIVA" v={cop(retenciones.reteiva)} />
               <Row k="ReteICA" v={cop(retenciones.reteica)} />
-              <Row k="Total factura" v={cop(baseGravable + ivaTotal + Number(header.impoconsumo || 0))} />
+              <Row k="Total factura" v={cop(roundCOP(baseGravable + ivaTotal + roundCOP(header.impoconsumo)))} />
               <Row
                 k="Neto a pagar"
-                v={cop(baseGravable + ivaTotal + Number(header.impoconsumo || 0) - retenciones.retefuente - retenciones.reteiva - retenciones.reteica)}
+                v={cop(
+                  netoAPagarCOP(
+                    roundCOP(baseGravable + ivaTotal + roundCOP(header.impoconsumo)),
+                    roundCOP(retenciones.retefuente) + roundCOP(retenciones.reteiva) + roundCOP(retenciones.reteica),
+                  ),
+                )}
               />
             </dl>
           </div>
