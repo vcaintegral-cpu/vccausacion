@@ -11,7 +11,13 @@ import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
-import { applyPucToPayable, learnPayableAccount, usePayableAccount } from "@/lib/payable-account";
+import {
+  PAYABLE_SOURCE_LABEL,
+  applyPucToPayable,
+  learnPayableAccount,
+  manualPayable,
+  usePayableAccount,
+} from "@/lib/payable-account";
 import {
   applyEngineToLines,
   emptyKnowledge,
@@ -600,10 +606,11 @@ function Causar() {
   );
   // Contrapartida: obligación por pagar según histórico de ESTA empresa con ESTE proveedor.
   const { data: payableBase } = usePayableAccount(companyId, header.provider_nit);
-  const payable = useMemo(
-    () => (payableBase ? applyPucToPayable(payableBase, (config?.accounts ?? []) as PucAccount[]) : null),
-    [payableBase, config?.accounts],
-  );
+  const payable = useMemo(() => {
+    // Una cuenta seleccionada manualmente nunca se recalcula ni se sobrescribe.
+    if (payableManual?.code) return manualPayable(payableManual.code, payableManual.name);
+    return payableBase ? applyPucToPayable(payableBase, (config?.accounts ?? []) as PucAccount[]) : null;
+  }, [payableBase, config?.accounts, payableManual]);
   const journal = useMemo(
     () =>
       buildJournal({
