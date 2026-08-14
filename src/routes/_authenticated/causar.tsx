@@ -605,6 +605,7 @@ function Causar() {
     [costPolicy, config?.accounts, header.cost_center, lines],
   );
   // Contrapartida: obligación por pagar según histórico de ESTA empresa con ESTE proveedor.
+  const [payableManual, setPayableManual] = useState<{ code: string; name: string } | null>(null);
   const { data: payableBase } = usePayableAccount(companyId, header.provider_nit);
   const payable = useMemo(() => {
     // Una cuenta seleccionada manualmente nunca se recalcula ni se sobrescribe.
