@@ -575,7 +575,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
       .select(
-        "id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, buyer_nit, buyer_name, notes, total, iva, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at",
+        "id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, buyer_nit, buyer_name, notes, total, iva, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at, voucher_number",
       )
       .eq("id", data.invoiceId)
       .single();
@@ -622,6 +622,17 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       .order("position");
     if (jErr) throw new Error(jErr.message);
     if (!journal || journal.length === 0) throw new Error("La factura no tiene asiento contable generado.");
+
+    // Flujo obligatorio: BORRADOR → APROBADO → CAUSADO → SINCRONIZADO → HISTÓRICO.
+    // Solo se envía a Siigo lo que ya tiene comprobante interno de causación.
+    if (!inv.voucher_number || (inv.status !== "causada" && inv.status !== "error")) {
+      throw new Error("La factura debe estar causada (con comprobante interno) antes de sincronizarla con Siigo.");
+    }
+
+    // Protección contra doble clic / envíos simultáneos.
+    if (inv.siigo_status === "sincronizando") {
+      throw new Error("Esta factura ya se está enviando a Siigo. Espere el resultado del envío en curso.");
+    }
 
     // Las cuentas base del PUC colombiano pueden no existir con el mismo nivel
     // de detalle en Siigo. Antes de enviar, cambia únicamente esos códigos base
@@ -713,10 +724,16 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       }
     }
 
-    await supabase
+    const { data: lock } = await supabase
       .from("invoices")
-      .update({ siigo_status: "sincronizando", siigo_last_attempt_at: new Date().toISOString() })
-      .eq("id", data.invoiceId);
+      .update({ siigo_status: "sincronizando", siigo_error: null, siigo_last_attempt_at: new Date().toISOString() })
+      .eq("id", data.invoiceId)
+      .neq("siigo_status", "sincronizando")
+      .neq("siigo_status", "sincronizada")
+      .select("id");
+    if (!lock?.length) {
+      throw new Error("Esta factura ya se está enviando a Siigo o ya fue sincronizada.");
+    }
 
     let siigoAttemptTrace: Record<string, unknown> = {
       invoice_id: data.invoiceId,
@@ -1689,7 +1706,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .from("invoices")
         .update({
           siigo_status: "sincronizada",
-          status: "sincronizada",
+          // Solo tras la confirmación real de Siigo la factura pasa al histórico.
+          status: "historico",
           siigo_id: siigoId,
           siigo_number: siigoNumber,
           siigo_document_url: documentUrl,
@@ -1720,8 +1738,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .eq("id", data.invoiceId);
       await supabase
         .from("invoices")
-        // Si Siigo falla, la factura queda en estado Error para revisarla y reenviarla.
-        .update({ siigo_status: "error", siigo_error: message, siigo_synced_by: context.userId, status: "error" })
+        // Si Siigo falla, la factura CONSERVA su causación y queda como "Error Siigo"
+        // para corregirla y reintentar el envío sin rehacer el comprobante.
+        .update({ siigo_status: "error", siigo_error: message, siigo_synced_by: context.userId, status: "causada" })
         .eq("id", data.invoiceId);
       return { ok: false, siigoId: null, siigoNumber: null, documentUrl: null, syncedAt: null, status: "error", error: message };
     }
