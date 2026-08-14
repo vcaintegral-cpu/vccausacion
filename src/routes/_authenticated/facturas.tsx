@@ -195,11 +195,14 @@ function Facturas() {
           value={estado}
           onChange={(e) => setEstado(e.target.value as typeof estado)}
         >
+          <option value="sincronizada">Histórico (sincronizadas)</option>
           <option value="todas">Todos</option>
           <option value="borrador">Borradores</option>
           <option value="aprobado">Aprobados</option>
-          <option value="sincronizada">Sincronizadas</option>
-          <option value="error">Con error</option>
+          <option value="causada">Causadas</option>
+          <option value="sincronizando">Sincronizando</option>
+          <option value="error_siigo">Error Siigo</option>
+          <option value="error">Error de causación</option>
         </select>
       </div>
 
@@ -237,10 +240,10 @@ function Facturas() {
                 </td>
                 <td className="px-4 py-2 text-right font-mono tabular-nums">{cop(r.total)}</td>
                 <td className="px-4 py-2">
-                  <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${SIIGO_CLASS[estadoUnico(r) === "sincronizada" ? "sincronizada" : estadoUnico(r) === "error" ? "error" : estadoUnico(r) === "aprobado" ? "sincronizando" : "pendiente"]}`}>
+                  <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${SIIGO_CLASS[estadoUnico(r) === "sincronizada" ? "sincronizada" : estadoUnico(r) === "error" || estadoUnico(r) === "error_siigo" ? "error" : estadoUnico(r) === "borrador" ? "pendiente" : "sincronizando"]}`}>
                     {ESTADO_LABEL[estadoUnico(r)]}
                   </span>
-                  {estadoUnico(r) === "error" && r.siigo_error && (
+                  {estadoUnico(r) === "error_siigo" && r.siigo_error && (
                     <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-destructive" title={r.siigo_error}>
                       {r.siigo_error}
                     </div>
