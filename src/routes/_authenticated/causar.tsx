@@ -220,7 +220,13 @@ function Causar() {
   });
 
   const baseGravable = useMemo(
-    () => lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0), 0),
+    () =>
+      roundCOP(
+        lines.reduce(
+          (s, l) => s + roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
+          0,
+        ),
+      ),
     [lines],
   );
 
@@ -497,9 +503,9 @@ function Causar() {
     toast.success(`"${p.name}" aplicado a todos los renglones.`);
   }
   // Si la factura trae IVA en los renglones, ese es el IVA que se causa; si no, el del encabezado.
-  const ivaLineas = useMemo(() => lines.reduce((s, l) => s + Number(l.iva || 0), 0), [lines]);
-  const ivaTotal = ivaLineas > 0 ? ivaLineas : Number(header.iva || 0);
-  const retencionLineas = useMemo(() => lines.reduce((s, l) => s + Number(l.retention || 0), 0), [lines]);
+  const ivaLineas = useMemo(() => roundCOP(lines.reduce((s, l) => s + roundCOP(l.iva), 0)), [lines]);
+  const ivaTotal = ivaLineas > 0 ? ivaLineas : roundCOP(header.iva);
+  const retencionLineas = useMemo(() => roundCOP(lines.reduce((s, l) => s + roundCOP(l.retention), 0)), [lines]);
 
   // Solo se aplican los impuestos/retenciones elegidos en cada renglón.
   const impuestos = config?.taxes ?? [];
@@ -509,9 +515,9 @@ function Causar() {
   const retenciones = useMemo(() => {
     const r = { retefuente: 0, reteiva: 0, reteica: 0, autorretencion: 0, detalle: [] as any[] };
     lines.forEach((l, i) => {
-      const amount = Number(l.retention || 0);
+      const amount = roundCOP(l.retention);
       if (!amount) return;
-      const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+      const base = roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0));
       const tx = impuestosRet.find((t) => String(t.id) === lineTax[i]?.ret);
       const kind = (String(tx?.kind ?? "retefuente") as "retefuente" | "reteiva" | "reteica");
       const key = kind === "reteiva" ? "reteiva" : kind === "reteica" ? "reteica" : "retefuente";
