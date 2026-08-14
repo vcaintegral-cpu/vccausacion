@@ -669,7 +669,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
     const accounts = companyAccounts ?? [];
 
+    // Una línea en cero (por ejemplo una retención que no aplica) no se envía a
+    // Siigo, así que su cuenta no debe validarse ni bloquear la sincronización.
+    const lineaSinValor = (line: { debit: number | null; credit: number | null }) =>
+      Math.round(Number(line.debit || 0)) === 0 && Math.round(Number(line.credit || 0)) === 0;
+
     const resolvedJournal = journal.map((line) => {
+      if (lineaSinValor(line)) return { ...line };
       const resolution = resolveOperationalAccount(accounts, line.account_code);
       if (!resolution.valid || !resolution.operationalAccount) throw new Error(resolution.message ?? `La cuenta ${line.account_code} no es operativa en Siigo.`);
       return { ...line, account_code: resolution.operationalAccount };
