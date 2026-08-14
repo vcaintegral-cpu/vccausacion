@@ -80,7 +80,9 @@ function Facturas() {
   const [hasta, setHasta] = useState("");
   const [detalle, setDetalle] = useState<Inv | null>(null);
   const [pdfDoc, setPdfDoc] = useState<Inv | null>(null);
-  const [estado, setEstado] = useState<"todas" | "borrador" | "aprobado" | "sincronizada" | "error">("todas");
+  const [estado, setEstado] = useState<"todas" | "borrador" | "aprobado" | "causada" | "sincronizando" | "sincronizada" | "error_siigo" | "error">(
+    "sincronizada",
+  );
 
   // Mientras hay una carga en segundo plano, el historial se refresca solo:
   // las facturas aparecen como borrador ("lista para revisar") al terminar cada PDF.
@@ -278,7 +280,7 @@ function Facturas() {
                       </Link>
                     </Button>
                   )}
-                  {estadoUnico(r) === "error" && (
+                  {(estadoUnico(r) === "error" || estadoUnico(r) === "error_siigo") && (
                     <Button asChild variant="ghost" size="icon" title="Revisar y corregir">
                       <Link to="/causar" search={{ id: r.id }}>
                         <Pencil className="size-4" />
