@@ -226,9 +226,9 @@ function Borradores() {
           else if (tipo === "revertir") out.push(await revertirCausacion(inv, etiqueta));
           else {
             if (inv.siigo_status === "sincronizada" || inv.siigo_id) {
-              out.push({ id: inv.id, etiqueta, ok: true, message: `Ya sincronizada con Siigo${inv.siigo_number ? ` · N° ${inv.siigo_number}` : ""}.` });
+              out.push({ id: inv.id, etiqueta, ok: true, message: `Esta factura ya fue causada en Siigo${inv.siigo_number ? ` · N° ${inv.siigo_number}` : ""}.` });
             } else if (!inv.voucher_number) {
-              out.push({ id: inv.id, etiqueta, ok: false, message: "Debe causarse antes de sincronizar." });
+              out.push({ id: inv.id, etiqueta, ok: false, message: "Debe causarse internamente antes de causar en Siigo." });
             } else {
               const res = await sync({ data: { invoiceId: inv.id } });
               out.push({ id: inv.id, etiqueta, ok: res.ok, message: res.ok ? `Siigo N° ${res.siigoNumber ?? res.siigoId ?? "creado"}.` : res.error ?? "Siigo rechazó el comprobante." });
@@ -274,7 +274,7 @@ function Borradores() {
             {busy === "causar" ? <Loader2 className="size-4 animate-spin" /> : <Stamp className="size-4" />} Causar ({elegibles("causar").length})
           </Button>
           <Button variant="outline" onClick={() => void ejecutar("siigo")} disabled={!!busy || elegibles("siigo").length === 0}>
-            {busy === "siigo" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} Sincronizar con Siigo ({elegibles("siigo").length})
+            {busy === "siigo" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} Causar en Siigo ({elegibles("siigo").length})
           </Button>
           <Button variant="ghost" onClick={() => void ejecutar("devolver")} disabled={!!busy || elegibles("devolver").length === 0}>
             {busy === "devolver" ? <Loader2 className="size-4 animate-spin" /> : <Undo2 className="size-4" />} Devolver a borrador ({elegibles("devolver").length})
@@ -310,7 +310,9 @@ function Borradores() {
       {busy && avance && (
         <div className="rounded-lg border border-border bg-card p-3">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-medium">{ETAPA_LABEL[busy as EtapaMasiva]} en proceso…</span>
+            <span className="font-medium">
+              {busy === "siigo" ? "Causando en Siigo" : `${ETAPA_LABEL[busy as EtapaMasiva]} en proceso…`}
+            </span>
             <span className="text-muted-foreground">{avance.hechas} de {avance.total}</span>
           </div>
           <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">

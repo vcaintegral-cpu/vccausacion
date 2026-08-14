@@ -263,7 +263,7 @@ export function accionDisponible(estado: EstadoFactura, etapa: EtapaMasiva): boo
 export const ETAPA_LABEL: Record<EtapaMasiva, string> = {
   aprobar: "Aprobar",
   causar: "Causar",
-  siigo: "Sincronizar con Siigo",
+  siigo: "Causar en Siigo",
   devolver: "Devolver a borrador",
   revertir: "Revertir causación",
 };
