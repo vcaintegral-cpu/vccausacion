@@ -3,7 +3,7 @@
 // sin crear una segunda lógica contable.
 import { supabase } from "@/integrations/supabase/client";
 import { findExistingInvoice } from "@/lib/invoice-duplicates";
-import { learnPayableAccount } from "@/lib/payable-account";
+import { isPayableCode, learnPayableAccount } from "@/lib/payable-account";
 
 export type DraftInvoice = {
   id: string;
@@ -125,6 +125,7 @@ export function alertasBorrador(inv: DraftInvoice, acc: DraftAccounts | undefine
   }
   if (!acc.payable) a.push({ level: "error", message: "Proveedor sin cuenta por pagar." });
   else if (pucCodes.size && !pucCodes.has(acc.payable.code)) a.push({ level: "error", message: `Cuenta por pagar ${acc.payable.code} no existe en el PUC.` });
+  else if (!isPayableCode(acc.payable.code)) a.push({ level: "error", message: `La cuenta ${acc.payable.code} no es una cuenta por pagar válida (grupos 22 o 23).` });
   if (Math.abs(acc.debit - acc.credit) > 1) a.push({ level: "error", message: "Débitos y créditos no cuadran." });
   if (inv.processing_at) a.push({ level: "warn", message: "La factura está siendo procesada." });
   if (inv.posting_error) a.push({ level: "warn", message: inv.posting_error });
