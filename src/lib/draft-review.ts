@@ -2,7 +2,7 @@
 // de causación (journal_lines) y ejecuta aprobación y causación por factura,
 // sin crear una segunda lógica contable.
 import { supabase } from "@/integrations/supabase/client";
-import { findExistingInvoice } from "@/lib/invoice-duplicates";
+import { estadoUnico, findExistingInvoice, type EstadoFactura } from "@/lib/invoice-duplicates";
 import { isPayableCode, learnPayableAccount } from "@/lib/payable-account";
 
 export type DraftInvoice = {
@@ -157,7 +157,14 @@ export async function aprobarBorrador(
     { cufe: inv.cufe, provider_nit: inv.provider_nit, prefix: inv.prefix, number: inv.number },
     inv.id,
   );
-  if (dup && (dup.status === "aprobado" || dup.status === "causada" || dup.siigo_status === "sincronizada"))
+  if (
+    dup &&
+    (dup.status === "aprobado" ||
+      dup.status === "causada" ||
+      dup.status === "historico" ||
+      dup.status === "sincronizada" ||
+      dup.siigo_status === "sincronizada")
+  )
     return { id: inv.id, etiqueta, ok: false, message: "Posible factura duplicada: ya existe una causación para el mismo proveedor y número." };
 
   const { data, error } = await supabase
@@ -191,6 +198,10 @@ type PostResult = { ok: boolean; already?: boolean; voucher_number?: string | nu
 export async function causarFactura(inv: DraftInvoice, etiqueta: string): Promise<ResultadoFactura> {
   if (inv.voucher_number)
     return { id: inv.id, etiqueta, ok: true, message: `Factura ya causada. Comprobante ${inv.voucher_number}.` };
+  // Flujo obligatorio: solo se causa lo que ya fue aprobado.
+  if (estadoUnico(inv) !== "aprobado")
+    return { id: inv.id, etiqueta, ok: false, message: "Solo se pueden causar facturas en estado Aprobada." };
+  if (inv.processing_at) return { id: inv.id, etiqueta, ok: false, message: "La factura está siendo procesada." };
   const rpc = supabase.rpc.bind(supabase) as unknown as (
     fn: string,
     args: Record<string, unknown>,
@@ -206,3 +217,53 @@ export async function causarFactura(inv: DraftInvoice, etiqueta: string): Promis
     message: res.already ? `Factura ya causada. Comprobante ${res.voucher_number}.` : `Comprobante ${res.voucher_number}.`,
   };
 }
+
+type RpcResult = { ok: boolean; message?: string };
+
+async function llamarRpc(fn: string, invoiceId: string): Promise<RpcResult> {
+  const rpc = supabase.rpc.bind(supabase) as unknown as (
+    name: string,
+    args: Record<string, unknown>,
+  ) => PromiseLike<{ data: RpcResult | null; error: { message: string } | null }>;
+  const { data, error } = await rpc(fn, { _invoice_id: invoiceId });
+  if (error) return { ok: false, message: error.message };
+  return data ?? { ok: false, message: "Sin respuesta del servidor." };
+}
+
+/** Devuelve una factura aprobada (aún sin causar) al estado borrador para poder editarla. */
+export async function devolverABorrador(inv: DraftInvoice, etiqueta: string): Promise<ResultadoFactura> {
+  const res = await llamarRpc("return_invoice_to_draft", inv.id);
+  return { id: inv.id, etiqueta, ok: res.ok, message: res.message ?? (res.ok ? "Devuelta a borrador." : "No fue posible devolverla a borrador.") };
+}
+
+/** Revierte la causación local (comprobante interno) siempre que no se haya sincronizado. */
+export async function revertirCausacion(inv: DraftInvoice, etiqueta: string): Promise<ResultadoFactura> {
+  const res = await llamarRpc("revert_invoice_posting", inv.id);
+  return { id: inv.id, etiqueta, ok: res.ok, message: res.message ?? (res.ok ? "Causación revertida." : "No fue posible revertir la causación.") };
+}
+
+export type EtapaMasiva = "aprobar" | "causar" | "siigo" | "devolver" | "revertir";
+
+/** Etapas permitidas para cada estado: cada acción actúa solo sobre su etapa del flujo. */
+export function accionDisponible(estado: EstadoFactura, etapa: EtapaMasiva): boolean {
+  switch (etapa) {
+    case "aprobar":
+      return estado === "borrador" || estado === "error";
+    case "causar":
+      return estado === "aprobado";
+    case "siigo":
+      return estado === "causada" || estado === "error_siigo";
+    case "devolver":
+      return estado === "aprobado";
+    case "revertir":
+      return estado === "causada" || estado === "error_siigo";
+  }
+}
+
+export const ETAPA_LABEL: Record<EtapaMasiva, string> = {
+  aprobar: "Aprobar",
+  causar: "Causar",
+  siigo: "Sincronizar con Siigo",
+  devolver: "Devolver a borrador",
+  revertir: "Revertir causación",
+};
