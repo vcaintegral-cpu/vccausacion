@@ -887,9 +887,9 @@ function Causar() {
           ...(payable
             ? {
                 payable_account: payable.code,
-                payable_suggested: payable.code,
+                payable_suggested: payableBase?.code ?? payable.code,
                 payable_source: payable.source,
-                payable_manual: false,
+                payable_manual: payable.source === "manual",
                 payable_confidence: payable.confidence,
                 payable_updated_at: new Date().toISOString(),
               }
