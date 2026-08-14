@@ -253,6 +253,8 @@ export function buildJournal(params: {
 
   for (const d of retenciones.detalle) {
     if (d.kind === "autorretencion") continue;
+    // Una retención en cero no existe contablemente: no genera línea ni cuenta.
+    if (round(d.amount) <= 0) continue;
     out.push({
       // La cuenta sale del registro exacto de la retención seleccionada.
       account_code: d.account_code ?? "",
