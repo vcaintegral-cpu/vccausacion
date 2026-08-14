@@ -21,7 +21,7 @@ import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy"
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
-  computeRetenciones,
+  retencionesDelDocumento,
   type Line,
   type Rule,
   type TaxRate,
