@@ -1443,7 +1443,16 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         total_despues_de_retencion: netoAPagar,
       });
       const fechaDoc = inv.issue_date ?? new Date().toISOString().slice(0, 10);
-      const dueDate = esCredito ? (inv.due_date ?? fechaDoc) : fechaDoc;
+      const soloFecha = (valor: string | null | undefined, respaldo: string) => {
+        const texto = String(valor ?? "").trim();
+        const iso = /^(\d{4}-\d{2}-\d{2})/.exec(texto)?.[1];
+        if (iso) return iso;
+        // Formatos DD/MM/YYYY se normalizan al formato exigido por Siigo.
+        const dmy = /^(\d{2})[\/-](\d{2})[\/-](\d{4})$/.exec(texto);
+        if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
+        return respaldo;
+      };
+      const dueDate = esCredito ? soloFecha(inv.due_date, fechaDoc) : fechaDoc;
       // La API de esta cuenta rechaza Retefuente en retentions[] y la acepta como
       // impuesto de renglón; en esa estructura payments concilia contra el neto.
       const sumaRetencionesEnviadas = r2(retencionesSiigo.reduce((acc, r) => acc + r.value, 0));
@@ -1557,7 +1566,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         console.log("VALOR RETEFUENTE:", r.value);
       }
       console.log("PAYMENT:", conciliableSiigo);
-      const construirPayload = (totalDocumento: number) =>
+      const construirPayload = (totalDocumento: number, valorPago: number = conciliableSiigo) =>
         buildSiigoPurchasePayload({
         documentId,
         date: fechaDoc,
@@ -1571,7 +1580,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         items: itemsConRetencion,
         paymentId,
         purchaseTotal: totalDocumento,
-        paymentValue: conciliableSiigo,
+        paymentValue: valorPago,
         paymentDueDate: dueDate,
         retentions: retencionesEnDocumento.map((r) => ({ id: r.id, value: r.value })),
         });
@@ -1643,9 +1652,28 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         metadata?: { created?: string };
         _links?: { self?: { href?: string } };
       };
-      const payloadEnviado: unknown = payload;
+      let payloadEnviado: unknown = payload;
       // NO se reintenta alterando el total de la compra: el total siempre es Subtotal + IVA.
-      const res: SiigoPurchaseResponse = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payload);
+      // Único reintento permitido: cuando Siigo rechaza el CONCILIABLE de payments
+      // (invalid_total_payments) porque, en esta estructura, no descuenta las
+      // retenciones del documento. Se reenvía el mismo documento con payments = total
+      // bruto. Nunca se altera el total de la factura ni el asiento contable.
+      let res: SiigoPurchaseResponse;
+      try {
+        res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payload);
+      } catch (e) {
+        const raw = e instanceof Error ? e.message : JSON.stringify(e);
+        if (!raw.includes("invalid_total_payments") || conciliableSiigo === totalFactura) throw e;
+        console.log(
+          "[siigo][payments] Siigo rechazó el conciliable",
+          conciliableSiigo,
+          "→ reintento con el total bruto",
+          totalFactura,
+        );
+        const payloadBruto = construirPayload(totalDocumentoSiigo, totalFactura);
+        payloadEnviado = payloadBruto;
+        res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadBruto);
+      }
       siigoAttemptTrace = { ...siigoAttemptTrace, resultado: "aceptado", response: res };
       console.log("[siigo][causacion] Respuesta completa de Siigo:", JSON.stringify(res, null, 2));
       // Verificación posterior obligatoria: se consulta el documento creado en Siigo.
