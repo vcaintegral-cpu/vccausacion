@@ -91,7 +91,7 @@ function Borradores() {
   const [cuenta, setCuenta] = useState("");
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
-  const [estado, setEstado] = useState<"borrador" | "aprobado" | "causada" | "sincronizada" | "error" | "todas">("borrador");
+  const [estado, setEstado] = useState<EstadoFactura | "todas">("borrador");
   const [busy, setBusy] = useState<null | string>(null);
   const [avance, setAvance] = useState<{ hechas: number; total: number } | null>(null);
   const [traza, setTraza] = useState<DraftInvoice | null>(null);
@@ -242,6 +242,7 @@ function Borradores() {
       }
     } finally {
       setBusy(null);
+      setAvance(null);
       setResultados(out);
       setSel({});
       await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
@@ -266,17 +267,57 @@ function Borradores() {
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => marcarTodas(true)} disabled={rows.length === 0}>Seleccionar todos</Button>
           <Button variant="outline" onClick={() => setSel({})} disabled={seleccionadas.length === 0}>Deseleccionar todos</Button>
-          <Button onClick={() => void ejecutar("aprobar")} disabled={!!busy || seleccionadas.length === 0}>
-            {busy === "aprobar" ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Aprobar seleccionadas
+          <Button onClick={() => void ejecutar("aprobar")} disabled={!!busy || elegibles("aprobar").length === 0}>
+            {busy === "aprobar" ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Aprobar ({elegibles("aprobar").length})
           </Button>
-          <Button variant="secondary" onClick={() => void ejecutar("causar")} disabled={!!busy || seleccionadas.length === 0}>
-            {busy === "causar" ? <Loader2 className="size-4 animate-spin" /> : <Stamp className="size-4" />} Causar seleccionadas
+          <Button variant="secondary" onClick={() => void ejecutar("causar")} disabled={!!busy || elegibles("causar").length === 0}>
+            {busy === "causar" ? <Loader2 className="size-4 animate-spin" /> : <Stamp className="size-4" />} Causar ({elegibles("causar").length})
           </Button>
-          <Button variant="outline" onClick={() => void ejecutar("siigo")} disabled={!!busy || seleccionadas.length === 0}>
-            {busy === "siigo" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} Sincronizar con Siigo
+          <Button variant="outline" onClick={() => void ejecutar("siigo")} disabled={!!busy || elegibles("siigo").length === 0}>
+            {busy === "siigo" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} Sincronizar con Siigo ({elegibles("siigo").length})
+          </Button>
+          <Button variant="ghost" onClick={() => void ejecutar("devolver")} disabled={!!busy || elegibles("devolver").length === 0}>
+            {busy === "devolver" ? <Loader2 className="size-4 animate-spin" /> : <Undo2 className="size-4" />} Devolver a borrador ({elegibles("devolver").length})
+          </Button>
+          <Button variant="ghost" onClick={() => void ejecutar("revertir")} disabled={!!busy || elegibles("revertir").length === 0}>
+            {busy === "revertir" ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />} Revertir causación ({elegibles("revertir").length})
           </Button>
         </div>
       </div>
+
+      {/* Flujo obligatorio y conteo por etapa */}
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3 text-xs">
+        <span className="mr-1 font-medium text-muted-foreground">Flujo:</span>
+        {ETAPAS.map((e) => (
+          <button
+            key={e}
+            type="button"
+            onClick={() => setEstado(e)}
+            className={`rounded-full px-2.5 py-1 font-medium transition ${ESTADO_CLASS[e]} ${estado === e ? "ring-2 ring-primary/50" : "opacity-80 hover:opacity-100"}`}
+          >
+            {ESTADO_LABEL[e]} · {resumen[e] ?? 0}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => setEstado("todas")}
+          className={`rounded-full bg-muted px-2.5 py-1 font-medium text-muted-foreground ${estado === "todas" ? "ring-2 ring-primary/50" : ""}`}
+        >
+          Todas · {invoices.length}
+        </button>
+      </div>
+
+      {busy && avance && (
+        <div className="rounded-lg border border-border bg-card p-3">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-medium">{ETAPA_LABEL[busy as EtapaMasiva]} en proceso…</span>
+            <span className="text-muted-foreground">{avance.hechas} de {avance.total}</span>
+          </div>
+          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-full bg-primary transition-all" style={{ width: `${avance.total ? (avance.hechas / avance.total) * 100 : 0}%` }} />
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-3 rounded-lg border border-border bg-card p-4 lg:grid-cols-6">
         <Input placeholder="Buscar factura, proveedor o NIT" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -291,8 +332,10 @@ function Borradores() {
           <option value="borrador">Borradores</option>
           <option value="aprobado">Aprobadas</option>
           <option value="causada">Causadas</option>
-          <option value="sincronizada">Sincronizadas</option>
-          <option value="error">Con error</option>
+          <option value="sincronizando">Sincronizando</option>
+          <option value="error_siigo">Error Siigo</option>
+          <option value="error">Error de causación</option>
+          <option value="sincronizada">Histórico</option>
           <option value="todas">Todas</option>
         </select>
       </div>
@@ -370,9 +413,13 @@ function Borradores() {
                   <td className="px-3 py-2 text-[11px] text-muted-foreground">{origenPayable(r)}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{acc?.costCenter ?? r.cost_center ?? "—"}</td>
                   <td className="px-3 py-2">
-                    <span className="inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${ESTADO_CLASS[e] ?? "bg-muted text-muted-foreground"}`}>
                       {ESTADO_LABEL[e] ?? e}
                     </span>
+                    {e === "error_siigo" && r.siigo_error && (
+                      <div className="mt-0.5 max-w-[200px] truncate text-[11px] text-destructive" title={r.siigo_error}>{r.siigo_error}</div>
+                    )}
+                    {r.siigo_number && <div className="mt-0.5 text-[11px] text-muted-foreground">Siigo N° {r.siigo_number}</div>}
                   </td>
                   <td className="px-3 py-2">
                     <span
@@ -385,11 +432,14 @@ function Borradores() {
                     </span>
                     {alertas.length > 1 && <div className="text-[11px] text-muted-foreground">+{alertas.length - 1} más</div>}
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="whitespace-nowrap px-3 py-2 text-right">
                     <Button asChild variant="ghost" size="icon" title="Editar con el lápiz">
                       <Link to={e === "borrador" || e === "error" ? "/causar" : "/revisar"} search={{ id: r.id }}>
                         <Pencil className="size-4" />
                       </Link>
+                    </Button>
+                    <Button variant="ghost" size="icon" title="Ver trazabilidad" onClick={() => setTraza(r)}>
+                      <History className="size-4" />
                     </Button>
                   </td>
                 </tr>
