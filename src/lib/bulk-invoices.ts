@@ -354,15 +354,23 @@ export async function processInvoiceFile(params: {
   );
   const ivaLineas = roundCOP(lines.reduce((s, l) => s + roundCOP(l.iva), 0));
   const ivaTotal = ivaLineas > 0 ? ivaLineas : roundCOP(header.iva);
-  // Las retenciones salen ÚNICAMENTE de lo retenido en la factura leída.
-  // Nunca se aplican todas las tarifas del catálogo: una factura sin retención
-  // no genera líneas 2365 / 2367 / 2368 ni valida esas cuentas.
-  const retencionDocumento = roundCOP(lines.reduce((s, l) => s + roundCOP(Number(l.retention || 0)), 0));
-  const retenciones = retencionesDelDocumento({
+  // Las retenciones salen ÚNICAMENTE de lo retenido en ESTA factura y se
+  // resuelven desde cero por tipo (retefuente / reteiva / reteica). Una factura
+  // sin retención no genera líneas 2365 / 2367 / 2368 ni valida esas cuentas.
+  const retencionLineas = roundCOP(lines.reduce((s, l) => s + roundCOP(Number(l.retention || 0)), 0));
+  const reportado = retencionesReportadas({
+    header,
+    lineRetention: retencionLineas,
     baseGravable,
     ivaTotal,
     taxes: config.taxes,
-    reportado: retencionDocumento,
+  });
+  const { retenciones, errores: erroresRetencion } = resolverRetenciones({
+    reportado,
+    baseGravable,
+    ivaTotal,
+    taxes: config.taxes,
+    puc: config.accounts,
   });
   // La empresa define si maneja centros de costo; si no, nunca se guarda ninguno.
   const costPolicy = await companyUsesCostCenters(companyId);
@@ -398,6 +406,7 @@ export async function processInvoiceFile(params: {
     payableAccount: payable,
   });
   const unresolvedAccounts: string[] = [];
+  unresolvedAccounts.push(...erroresRetencion);
   const operationalJournal = journal.map((line) => {
     // Renglones sin cuenta (por ejemplo el IVA aún sin impuesto seleccionado) se guardan
     // tal cual: el borrador exige elegir el impuesto exacto antes de causar.

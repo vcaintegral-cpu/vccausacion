@@ -37,6 +37,10 @@ export type ExtractedInvoice = {
   discount: number;
   iva: number;
   impoconsumo: number;
+  /** Retenciones impresas en la factura (0 si el documento no las trae). */
+  retefuente: number;
+  reteiva: number;
+  reteica: number;
   total: number;
   lines: ExtractedLine[];
 };
