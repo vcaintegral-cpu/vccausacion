@@ -25,6 +25,7 @@ import { IvaTreatmentPanel } from "@/components/iva-treatment-panel";
 import { type LearningRule } from "@/lib/learning";
 import { ITEM_TYPES, isValidItemType, normalizeItemType } from "@/lib/item-type";
 import { cop, fecha } from "@/lib/format";
+import { netoAPagarCOP, roundCOP } from "@/lib/money";
 import { suggestCostCenter } from "@/lib/cost-center";
 import { costCentersEnabled, costCenterForCompany, useCostCenterPolicy, validateCostCenter } from "@/lib/cost-center-config";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
@@ -189,7 +190,13 @@ function Revisar() {
   }, [header?.provider_nit, header?.company_id, centroTocado]);
 
   const base = useMemo(
-    () => lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0), 0),
+    () =>
+      roundCOP(
+        lines.reduce(
+          (s, l) => s + roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
+          0,
+        ),
+      ),
     [lines],
   );
 
@@ -202,7 +209,7 @@ function Revisar() {
   const retenciones: Retenciones = useMemo(() => {
     const r: Retenciones = { retefuente: 0, reteiva: 0, reteica: 0, autorretencion: 0, detalle: [] };
     lines.forEach((l) => {
-      const amount = Number(l.retention || 0);
+      const amount = roundCOP(l.retention);
       if (!amount) return;
       const tx = findTaxById(impuestosRet, l.ret_tax_id);
       const kind = String(tx?.kind ?? "retefuente");
@@ -213,7 +220,7 @@ function Revisar() {
         kind: key,
         name: tx?.name ?? "Retención sin impuesto seleccionado",
         rate: Number(tx?.rate ?? 0),
-        base: Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
+        base: roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
         amount,
         account_code: cuenta?.error ? "" : cuenta?.code ?? "",
       });
@@ -358,7 +365,10 @@ function Revisar() {
     if (Number(header.iva) < 0) e.push("El IVA no puede ser negativo.");
     e.push(...erroresImpuestos);
     if (retenciones.retefuente < 0 || retenciones.reteiva < 0 || retenciones.reteica < 0) e.push("Las retenciones no pueden ser negativas.");
-    if (Math.abs(t.diferencia) > 1) e.push(`El comprobante está descuadrado por ${cop(t.diferencia)}.`);
+    if (t.diferencia !== 0)
+      e.push(
+        `La causación no está cuadrada. Existe una diferencia de ${cop(t.diferencia)} por redondeo. Revise los valores antes de enviar a Siigo.`,
+      );
     if (base <= 0) e.push("La base gravable debe ser mayor a cero.");
     return e;
   }, [header, lines, data?.accounts, data?.company, cuentasVerificadas, retenciones, t.diferencia, base, erroresImpuestos, costPolicy]);
@@ -371,12 +381,12 @@ function Revisar() {
         cost_center: costCenterForCompany(costPolicy ?? null, header.cost_center),
         payment_form: header.payment_form,
         notes: header.notes,
-        iva: Number(header.iva || 0),
-        retefuente: retenciones.retefuente,
-        reteiva: retenciones.reteiva,
-        reteica: retenciones.reteica,
+        iva: roundCOP(header.iva),
+        retefuente: roundCOP(retenciones.retefuente),
+        reteiva: roundCOP(retenciones.reteiva),
+        reteica: roundCOP(retenciones.reteica),
         subtotal: base,
-        total: base + Number(header.iva || 0) + Number(header.impoconsumo || 0),
+        total: roundCOP(base + roundCOP(header.iva) + roundCOP(header.impoconsumo)),
       })
       .eq("id", header.id);
 
@@ -393,8 +403,8 @@ function Revisar() {
             account_code: l.account_code,
             account_name: l.account_name,
             item_type: l.item_type,
-            iva: Number(l.iva || 0),
-            retention: Number(l.retention || 0),
+            iva: roundCOP(l.iva),
+            retention: roundCOP(l.retention),
             iva_tax_id: ivaTrace?.tax_id ?? null,
             iva_tax_name: ivaTrace?.tax_name ?? null,
             iva_tax_rate: ivaTrace?.tax_rate ?? null,
@@ -423,8 +433,8 @@ function Revisar() {
         company_id: header.company_id,
         account_code: j.account_code,
         account_name: j.account_name,
-        debit: j.debit,
-        credit: j.credit,
+        debit: roundCOP(j.debit),
+        credit: roundCOP(j.credit),
         cost_center: usaCentros ? (j.cost_center ?? null) : null,
         position: i,
       })),
