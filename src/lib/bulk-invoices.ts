@@ -465,6 +465,13 @@ export async function processInvoiceFile(params: {
       total,
       status: "borrador",
       dian_status: header.cufe ? "con CUFE" : "sin CUFE",
+      // Cuenta por pagar asignada automáticamente por NIT + histórico contable.
+      payable_account: payable.code,
+      payable_suggested: payable.code,
+      payable_source: payable.source,
+      payable_manual: false,
+      payable_confidence: payable.confidence,
+      payable_updated_at: new Date().toISOString(),
       file_path: filePath,
       file_name: file.name,
       // Trazabilidad de lectura: lo que devolvió la IA y el texto extraído del documento.
