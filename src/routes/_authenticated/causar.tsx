@@ -865,7 +865,16 @@ function Causar() {
         );
       }
 
-      const total = baseGravable + ivaTotal + Number(header.impoconsumo || 0);
+      // Secuencia única: LEER → CALCULAR → REDONDEAR → GUARDAR → CONTABILIZAR → ENVIAR.
+      const impoconsumoTotal = roundCOP(header.impoconsumo);
+      const retefuente = roundCOP(retenciones.retefuente);
+      const reteiva = roundCOP(retenciones.reteiva);
+      const reteica = roundCOP(retenciones.reteica);
+      const total = roundCOP(baseGravable + ivaTotal + impoconsumoTotal);
+      const netoAPagar = netoAPagarCOP(total, retefuente + reteiva + reteica);
+      console.log("[causacion] TOTAL FACTURA:", total, "RETEFUENTE:", retefuente, "RETEIVA:", reteiva,
+        "RETEICA:", reteica, "NETO A PAGAR:", netoAPagar, "TOTAL DÉBITOS:", t.debito, "TOTAL CRÉDITOS:", t.credito,
+        "DIFERENCIA:", t.diferencia);
       const payload = {
           prefix: header.prefix,
           number: header.number,
@@ -886,12 +895,12 @@ function Causar() {
           cost_center: costCenterForCompany(costPolicy ?? null, header.cost_center),
           notes: header.notes,
           subtotal: baseGravable,
-          discount: Number(header.discount || 0),
+          discount: roundCOP(header.discount),
           iva: ivaTotal,
-          impoconsumo: Number(header.impoconsumo || 0),
-          retefuente: retenciones.retefuente,
-          reteiva: retenciones.reteiva,
-          reteica: retenciones.reteica,
+          impoconsumo: impoconsumoTotal,
+          retefuente,
+          reteiva,
+          reteica,
           total,
           status,
           dian_status: header.cufe ? "con CUFE" : "sin CUFE",
@@ -950,12 +959,12 @@ function Causar() {
             code: l.code ?? null,
             description: l.description,
             quantity: Number(l.quantity || 0),
-            unit_value: Number(l.unit_value || 0),
-            discount: Number(l.discount || 0),
-            iva: Number(l.iva || 0),
-            retention: Number(l.retention || 0),
-            impoconsumo: Number(l.impoconsumo || 0),
-            total: Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
+            unit_value: roundCOP(l.unit_value),
+            discount: roundCOP(l.discount),
+            iva: roundCOP(l.iva),
+            retention: roundCOP(l.retention),
+            impoconsumo: roundCOP(l.impoconsumo),
+            total: roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
             account_code: l.account_code ?? null,
             account_name: l.account_name ?? null,
             item_type: normalizeItemType(l.item_type),
