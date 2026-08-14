@@ -822,7 +822,12 @@ function Causar() {
     }
     if (erroresImpuestos.length > 0) { toast.error(erroresImpuestos[0]!); return; }
     if (status === "aprobado" && erroresCentro.length > 0) { toast.error(erroresCentro[0]!); return; }
-    if (Math.abs(t.diferencia) > 1) { toast.error("El comprobante está descuadrado."); return; }
+    if (t.diferencia !== 0) {
+      toast.error(
+        `La causación no está cuadrada. Existe una diferencia de ${cop(t.diferencia)} por redondeo. Revise los valores antes de enviar a Siigo.`,
+      );
+      return;
+    }
     setSaving(true);
     try {
       const existente = await findExistingInvoice(
