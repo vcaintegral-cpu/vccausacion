@@ -1396,6 +1396,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
       // Validación final contra /v1/taxes: cada ID enviado debe existir, estar activo
       // y corresponder al tipo de retención esperado. CUENTA CONTABLE ≠ ID DE IMPUESTO.
+      // Además se guarda el PORCENTAJE oficial de Siigo: es el que Siigo usa para
+      // recalcular la retención del documento y, por lo tanto, el conciliable de payments.
+      const porcentajePorTaxId = new Map<string, number>();
       if (retencionesSiigo.length > 0) {
         const respTaxes = await siigoGet<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
         const listaTaxes = (Array.isArray(respTaxes) ? respTaxes : (respTaxes.results ?? [])).filter(
@@ -1421,6 +1424,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               `El impuesto de ${r.tipo} seleccionado no está correctamente configurado en Siigo. Sincroniza nuevamente los impuestos.`,
             );
           }
+          porcentajePorTaxId.set(String(r.id), Number(tax.percentage ?? 0));
         }
       }
       console.log("[siigo][retenciones] Diagnóstico:", {
