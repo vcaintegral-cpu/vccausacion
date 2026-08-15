@@ -359,7 +359,15 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     URL.revokeObjectURL(url);
   }
 
-  const terminado = upload && !running && stats.total > 0 && stats.pending === 0 && stats.active === 0;
+  const errores = items.filter((i) => i.status === "error");
+  const duplicados = items.filter((i) => i.status === "duplicate");
+  const procesadas = items.filter((i) => i.status === "completed");
+  const revision = items.filter((i) => i.status === "requires_review" || (i.status === "completed" && i.needs_review));
+  const pendientes = items.filter((i) =>
+    ["pending", "downloading", "reading", "ocr", "extracting_data", "validating_company", "ready_for_accounting", "processing"].includes(
+      i.status,
+    ),
+  );
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-card p-5">
