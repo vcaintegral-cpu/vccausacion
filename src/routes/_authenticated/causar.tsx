@@ -27,6 +27,17 @@ import {
   type LineDecisions,
 } from "@/lib/causacion-engine";
 import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
+import { retencionesReportadas } from "@/lib/retenciones";
+import {
+  buildRetenciones,
+  emptyRetBlocks,
+  erroresRetenciones,
+  seedRetBlocks,
+  totalRetenciones,
+  type RetBlocks,
+  type TaxLike,
+} from "@/lib/retenciones-multi";
+import { RetencionesPanel } from "@/components/retenciones-panel";
 import {
   applyIvaTreatment,
   fetchIvaEvidence,
@@ -148,6 +159,9 @@ function Causar() {
   const [plazoTocado, setPlazoTocado] = useState(false);
   // Trazabilidad de la sugerencia automática por renglón (motor de causación).
   const [decisiones, setDecisiones] = useState<LineDecisions>({});
+  // Retenciones múltiples e independientes de ESTA factura.
+  const [retBlocks, setRetBlocks] = useState<RetBlocks>(emptyRetBlocks());
+  const [retTocado, setRetTocado] = useState(false);
 
   // El plazo de crédito se recalcula con la fecha de vencimiento, salvo edición manual.
   useEffect(() => {
