@@ -288,6 +288,8 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   async function abrirProceso(u: BulkUpload) {
     setUpload(u);
     setItems(await listItems(u.id));
+    setDetalle("procesadas");
+    setAbierto(true);
   }
 
   /** Prueba SIN IA: recupera el primer PDF desde Storage y lo lee con el mismo lector individual. */
