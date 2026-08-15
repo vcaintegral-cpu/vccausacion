@@ -704,7 +704,7 @@ function Revisar() {
                         const id = e.target.value || null;
                         const tx = findTaxById(impuestosIva, id);
                         const baseLinea = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
-                        setLine(i, { iva_tax_id: id, iva: tx ? Math.round((baseLinea * Number(tx.rate)) / 100) : 0 });
+                        setLine(i, { iva_tax_id: id, iva: tx ? roundCOP((baseLinea * Number(tx.rate)) / 100) : 0 });
                       }}
                     >
                       <option value="">Sin impuesto</option>
@@ -727,7 +727,7 @@ function Revisar() {
                           String(tx?.kind) === "reteiva"
                             ? Number(l.iva || 0)
                             : Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
-                        setLine(i, { ret_tax_id: id, retention: tx ? Math.round((baseLinea * Number(tx.rate)) / 100) : 0 });
+                        setLine(i, { ret_tax_id: id, retention: tx ? roundCOP((baseLinea * Number(tx.rate)) / 100) : 0 });
                       }}
                     >
                       <option value="">Sin retención</option>
