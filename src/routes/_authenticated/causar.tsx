@@ -527,27 +527,10 @@ function Causar() {
   const impuestosIva = impuestos.filter((t) => String(t.kind) === "iva" || String(t.kind) === "impoconsumo");
   const impuestosRet = impuestos.filter((t) => String(t.kind).startsWith("rete"));
 
-  const retenciones = useMemo(() => {
-    const r = { retefuente: 0, reteiva: 0, reteica: 0, autorretencion: 0, detalle: [] as any[] };
-    lines.forEach((l, i) => {
-      const amount = roundCOP(l.retention);
-      if (!amount) return;
-      const base = roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0));
-      const tx = impuestosRet.find((t) => String(t.id) === lineTax[i]?.ret);
-      const kind = (String(tx?.kind ?? "retefuente") as "retefuente" | "reteiva" | "reteica");
-      const key = kind === "reteiva" ? "reteiva" : kind === "reteica" ? "reteica" : "retefuente";
-      r[key] += amount;
-      r.detalle.push({
-        kind: key,
-        name: tx?.name ?? "Retención de la factura",
-        rate: Number(tx?.rate ?? 0),
-        base,
-        amount,
-        account_code: (tx as any)?.account_code ?? null,
-      });
-    });
-    return r;
-  }, [lines, impuestosRet, lineTax]);
+  // Las retenciones de la factura salen de la sección RETENCIONES: Retefuente,
+  // ReteIVA y ReteICA son independientes y pueden coexistir en la misma factura.
+  const retenciones = useMemo(() => buildRetenciones(retBlocks), [retBlocks]);
+  const erroresRet = useMemo(() => erroresRetenciones(retBlocks), [retBlocks]);
 
   // IVA: la cuenta sale del registro exacto del impuesto elegido en cada renglón.
   const ivaGroups = useMemo(
