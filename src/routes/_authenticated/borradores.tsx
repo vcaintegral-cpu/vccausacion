@@ -127,13 +127,19 @@ function Borradores() {
       const accounts = new Map<string, DraftAccounts>();
       for (const [id, rows] of porFactura) accounts.set(id, classifyJournal(rows));
       const puc = await fetchCompanyPuc(companyId!);
-      return { invoices, accounts, pucCodes: new Set(puc.map((p) => p.code)) };
+      return {
+        invoices,
+        accounts,
+        pucCodes: new Set(puc.map((p) => p.code)),
+        pucNames: new Map(puc.map((p) => [p.code, p.name])),
+      };
     },
   });
 
   const invoices = data?.invoices ?? [];
   const accounts = data?.accounts ?? new Map<string, DraftAccounts>();
   const pucCodes = data?.pucCodes ?? new Set<string>();
+  const pucNames = data?.pucNames ?? new Map<string, string>();
 
   const proveedores = useMemo(
     () => [...new Set(invoices.map((i) => i.provider_name).filter((x): x is string => !!x))].sort(),
@@ -152,7 +158,15 @@ function Borradores() {
         if (hasta && (r.issue_date ?? "") > hasta) return false;
         if (cuenta) {
           const a = accounts.get(r.id);
-          const codes = [a?.gasto?.code, a?.iva?.code, a?.payable?.code].filter(Boolean).join(" ");
+          const codes = [
+            ...(a?.gastos ?? []).map((x) => x.code),
+            ...(a?.ivas ?? []).map((x) => x.code),
+            ...(a?.retenciones ?? []).map((x) => x.code),
+            a?.payable?.code,
+            r.payable_account,
+          ]
+            .filter(Boolean)
+            .join(" ");
           if (!codes.includes(cuenta.trim())) return false;
         }
         return true;
