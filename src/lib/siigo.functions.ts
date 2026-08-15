@@ -1668,16 +1668,36 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payload);
       } catch (e) {
         const raw = e instanceof Error ? e.message : JSON.stringify(e);
-        if (!raw.includes("invalid_total_payments") || conciliableSiigo === totalFactura) throw e;
-        console.log(
-          "[siigo][payments] Siigo rechazó el conciliable",
-          conciliableSiigo,
-          "→ reintento con el total bruto",
-          totalFactura,
-        );
-        const payloadBruto = construirPayload(totalDocumentoSiigo, totalFactura);
-        payloadEnviado = payloadBruto;
-        res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadBruto);
+        if (!raw.includes("invalid_total_payments")) throw e;
+        // Siigo informa en el propio error el total conciliable que espera, con decimales
+        // ("The total purchase calculated is 4935450.96"). Ese valor es el que debe llevar
+        // payments[0].value: nuestro neto redondeado a pesos difiere en centavos porque
+        // Siigo recalcula la retención con su propio porcentaje oficial.
+        const calculado = /total purchase calculated is\s*(-?\d+(?:\.\d+)?)/i.exec(raw)?.[1];
+        if (calculado) {
+          const exacto = Number(calculado);
+          console.log(
+            "[siigo][payments] Siigo rechazó el conciliable",
+            conciliableSiigo,
+            "→ reintento con el conciliable exacto informado por Siigo:",
+            exacto,
+          );
+          const payloadExacto = construirPayload(totalDocumentoSiigo, exacto, true);
+          payloadEnviado = payloadExacto;
+          res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadExacto);
+        } else if (conciliableSiigo !== totalFactura) {
+          console.log(
+            "[siigo][payments] Siigo rechazó el conciliable",
+            conciliableSiigo,
+            "→ reintento con el total bruto",
+            totalFactura,
+          );
+          const payloadBruto = construirPayload(totalDocumentoSiigo, totalFactura);
+          payloadEnviado = payloadBruto;
+          res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadBruto);
+        } else {
+          throw e;
+        }
       }
       siigoAttemptTrace = { ...siigoAttemptTrace, resultado: "aceptado", response: res };
       console.log("[siigo][causacion] Respuesta completa de Siigo:", JSON.stringify(res, null, 2));
