@@ -365,7 +365,7 @@ function Revisar() {
     if (Number(header.iva) < 0) e.push("El IVA no puede ser negativo.");
     e.push(...erroresImpuestos);
     if (retenciones.retefuente < 0 || retenciones.reteiva < 0 || retenciones.reteica < 0) e.push("Las retenciones no pueden ser negativas.");
-    if (t.diferencia !== 0)
+    if (Math.abs(t.diferencia) >= 0.005)
       e.push(
         `El asiento no está cuadrado. Revise los valores tributarios y contables. Diferencia: ${cop(t.diferencia)}`,
       );
