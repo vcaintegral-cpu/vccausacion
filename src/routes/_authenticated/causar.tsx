@@ -38,6 +38,7 @@ import {
   type TaxLike,
 } from "@/lib/retenciones-multi";
 import { RetencionesPanel } from "@/components/retenciones-panel";
+import { aprenderDeCausacion, buscarRegla, fetchCompanyRules } from "@/lib/learning-rules";
 import {
   applyIvaTreatment,
   fetchIvaEvidence,
@@ -148,7 +149,7 @@ function Causar() {
   const [passwordError, setPasswordError] = useState("");
   const [header, setHeader] = useState<Header>(emptyHeader());
   const [lines, setLines] = useState<Line[]>([]);
-  const [recordar, setRecordar] = useState<{ index: number; code: string; name: string | null } | null>(null);
+  // El aprendizaje ya no pregunta: se guarda automáticamente al aprobar.
   // Impuesto/retención elegido por renglón (índice -> ids)
   const [lineTax, setLineTax] = useState<Record<number, { iva?: string | undefined; ret?: string | undefined }>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -534,6 +535,22 @@ function Causar() {
   const retenciones = useMemo(() => buildRetenciones(retBlocks), [retBlocks]);
   const erroresRet = useMemo(() => erroresRetenciones(retBlocks), [retBlocks]);
 
+  // Reglas contables aprendidas de ESTA empresa (estructura completa).
+  const { data: reglasEmpresa } = useQuery({
+    queryKey: ["learning_rules", companyId],
+    enabled: !!companyId,
+    queryFn: () => fetchCompanyRules(companyId!),
+  });
+  const reglaProveedor = useMemo(
+    () =>
+      buscarRegla(reglasEmpresa ?? [], {
+        providerNit: header.provider_nit,
+        concept: lines[0]?.description ?? null,
+        itemType: lines[0]?.item_type ?? null,
+      }),
+    [reglasEmpresa, header.provider_nit, lines],
+  );
+
   // Semilla: lo que reporta el documento (encabezado o renglones). Mientras el
   // usuario no edite la sección, las tres retenciones se recalculan solas.
   useEffect(() => {
@@ -545,15 +562,23 @@ function Causar() {
       ivaTotal,
       taxes: impuestosRet as unknown as TaxRate[],
     });
-    setRetBlocks(
-      seedRetBlocks({
-        reportado,
-        baseGravable,
-        ivaTotal,
-        taxes: impuestosRet as unknown as TaxLike[],
-        puc: (config?.accounts ?? []) as PucAccount[],
-      }),
-    );
+    const semilla = seedRetBlocks({
+      reportado,
+      baseGravable,
+      ivaTotal,
+      taxes: impuestosRet as unknown as TaxLike[],
+      puc: (config?.accounts ?? []) as PucAccount[],
+    });
+    // Si la regla aprendida del proveedor ya conoce la cuenta de una retención,
+    // se usa solo cuando la semilla no logró resolverla (nunca cambia valores).
+    const aprendida = reglaProveedor?.rule;
+    if (aprendida) {
+      for (const k of ["retefuente", "reteiva", "reteica"] as const) {
+        const cuenta = aprendida[`${k}_account`];
+        if (semilla[k].apply && !semilla[k].account_code && cuenta) semilla[k].account_code = cuenta;
+      }
+    }
+    setRetBlocks(semilla);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     retTocado,
@@ -565,6 +590,7 @@ function Causar() {
     ivaTotal,
     impuestosRet.length,
     config?.accounts,
+    reglaProveedor?.rule.id,
   ]);
 
   // IVA: la cuenta sale del registro exacto del impuesto elegido en cada renglón.
@@ -808,35 +834,6 @@ function Causar() {
 
   const autoLearning = (companies ?? []).find((c) => c.id === companyId)?.auto_learning ?? true;
 
-  async function guardarAprendizaje() {
-    if (!recordar || !companyId) return;
-    // El aprendizaje nunca memoriza una cuenta que no permita movimiento en Siigo.
-    const puc = (config?.accounts ?? []) as PucAccount[];
-    if (puc.length > 0) {
-      const check = validarCuenta(puc, recordar.code);
-      if (!check.ok) {
-        setRecordar(null);
-        toast.error(check.problema ?? CUENTA_PADRE_MSG);
-        return;
-      }
-    }
-    const line = lines[recordar.index];
-    const { error } = await supabase.from("learning_rules").insert({
-      company_id: companyId,
-      provider_nit: header.provider_nit || null,
-      provider_name: header.provider_name || null,
-      concept: line?.description || null,
-      account_code: recordar.code,
-      account_name: recordar.name,
-      cost_center: costCenterForCompany(costPolicy ?? null, header.cost_center),
-      iva: Number(line?.iva ?? 0),
-      item_type: normalizeItemType(line?.item_type),
-    });
-    setRecordar(null);
-    if (error) { toast.error(error.message); return; }
-    toast.success("Regla aprendida guardada para este proveedor.");
-  }
-
   async function guardar(status: "borrador" | "aprobado") {
     if (!companyId) return;
     if (lines.length === 0) { toast.error("Agrega al menos un renglón."); return; }
@@ -1046,6 +1043,30 @@ function Causar() {
           puc: (config?.accounts ?? []) as PucAccount[],
           autoLearning,
         });
+        // Regla contable integral: toda la estructura aprobada (cuenta, centro de
+        // costo, IVA y su tratamiento, retenciones, CxP y forma de pago).
+        if (autoLearning) {
+          try {
+            await aprenderDeCausacion({
+              companyId,
+              invoiceId: inv.id,
+              userId,
+              providerNit: header.provider_nit,
+              providerName: header.provider_name,
+              costCenter: costCenterForCompany(costPolicy ?? null, header.cost_center),
+              lines,
+              retBlocks,
+              ivaTreatment: ivaFinal?.treatment ?? null,
+              ivaAccount: ivaFinal?.account || ivaDetalle[0]?.account_code || null,
+              ivaRate: Number(lines[0]?.iva ?? 0) || null,
+              payableAccount: payable?.code ?? null,
+              paymentForm: header.payment_form || null,
+            });
+          } catch (e) {
+            // El aprendizaje nunca debe impedir la aprobación de la factura.
+            console.warn("[aprendizaje] no se pudo guardar la regla", e);
+          }
+        }
         // Aprendizaje del tratamiento del IVA con el contexto de la operación
         // (proveedor + cuenta de gasto/costo + concepto), nunca como regla global.
         if (ivaFinal && ivaTotal > 0) {
@@ -1416,7 +1437,6 @@ function Causar() {
                       value={l.account_code ?? ""}
                       onChange={(code, name) => {
                         setLine(i, { account_code: code, account_name: name });
-                        if (autoLearning && code) setRecordar({ index: i, code, name });
                       }}
                     />
                     {lineErrors[i] && <p className="mt-1 text-xs text-destructive">{lineErrors[i]}</p>}
@@ -1671,24 +1691,6 @@ function Causar() {
           </Button>
         </div>
       )}
-
-      <Dialog open={!!recordar} onOpenChange={(o) => !o && setRecordar(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>¿Desea recordar esta cuenta para futuras facturas de este proveedor?</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Se guardará una regla de aprendizaje para {header.provider_name || header.provider_nit || "este proveedor"} con la cuenta{" "}
-            <span className="font-mono">{recordar?.code}</span>. Solo aplica a esta empresa.
-          </p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRecordar(null)}>
-              No
-            </Button>
-            <Button onClick={guardarAprendizaje}>Sí, recordar</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={!!duplicado} onOpenChange={(o) => !o && setDuplicado(null)}>
         <DialogContent className="max-w-md">

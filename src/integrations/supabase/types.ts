@@ -1074,6 +1074,67 @@ export type Database = {
           },
         ]
       }
+      learning_rule_changes: {
+        Row: {
+          changed_by: string | null
+          company_id: string
+          created_at: string
+          field: string
+          field_label: string | null
+          id: string
+          invoice_id: string | null
+          new_value: string | null
+          old_value: string | null
+          rule_id: string
+        }
+        Insert: {
+          changed_by?: string | null
+          company_id: string
+          created_at?: string
+          field: string
+          field_label?: string | null
+          id?: string
+          invoice_id?: string | null
+          new_value?: string | null
+          old_value?: string | null
+          rule_id: string
+        }
+        Update: {
+          changed_by?: string | null
+          company_id?: string
+          created_at?: string
+          field?: string
+          field_label?: string | null
+          id?: string
+          invoice_id?: string | null
+          new_value?: string | null
+          old_value?: string | null
+          rule_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "learning_rule_changes_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "learning_rule_changes_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "learning_rule_changes_rule_id_fkey"
+            columns: ["rule_id"]
+            isOneToOne: false
+            referencedRelation: "learning_rules"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       learning_rules: {
         Row: {
           account_code: string
@@ -1087,13 +1148,33 @@ export type Database = {
           id: string
           item_type: string
           iva: number
+          iva_account: string | null
+          iva_aplica: boolean
+          iva_rate: number | null
+          iva_treatment: string | null
           last_used_at: string | null
+          otras_account: string | null
+          otras_aplica: boolean
+          otras_rate: number | null
+          payable_account: string | null
+          payment_form: string | null
           provider_name: string | null
           provider_nit: string | null
+          retefuente_account: string | null
+          retefuente_aplica: boolean
+          retefuente_rate: number | null
+          reteica_account: string | null
+          reteica_aplica: boolean
+          reteica_rate: number | null
+          reteiva_account: string | null
+          reteiva_aplica: boolean
+          reteiva_rate: number | null
           retentions: string | null
           source: string
           taxes: string | null
           times_used: number
+          updated_at: string
+          updated_by: string | null
         }
         Insert: {
           account_code: string
@@ -1107,13 +1188,33 @@ export type Database = {
           id?: string
           item_type?: string
           iva?: number
+          iva_account?: string | null
+          iva_aplica?: boolean
+          iva_rate?: number | null
+          iva_treatment?: string | null
           last_used_at?: string | null
+          otras_account?: string | null
+          otras_aplica?: boolean
+          otras_rate?: number | null
+          payable_account?: string | null
+          payment_form?: string | null
           provider_name?: string | null
           provider_nit?: string | null
+          retefuente_account?: string | null
+          retefuente_aplica?: boolean
+          retefuente_rate?: number | null
+          reteica_account?: string | null
+          reteica_aplica?: boolean
+          reteica_rate?: number | null
+          reteiva_account?: string | null
+          reteiva_aplica?: boolean
+          reteiva_rate?: number | null
           retentions?: string | null
           source?: string
           taxes?: string | null
           times_used?: number
+          updated_at?: string
+          updated_by?: string | null
         }
         Update: {
           account_code?: string
@@ -1127,13 +1228,33 @@ export type Database = {
           id?: string
           item_type?: string
           iva?: number
+          iva_account?: string | null
+          iva_aplica?: boolean
+          iva_rate?: number | null
+          iva_treatment?: string | null
           last_used_at?: string | null
+          otras_account?: string | null
+          otras_aplica?: boolean
+          otras_rate?: number | null
+          payable_account?: string | null
+          payment_form?: string | null
           provider_name?: string | null
           provider_nit?: string | null
+          retefuente_account?: string | null
+          retefuente_aplica?: boolean
+          retefuente_rate?: number | null
+          reteica_account?: string | null
+          reteica_aplica?: boolean
+          reteica_rate?: number | null
+          reteiva_account?: string | null
+          reteiva_aplica?: boolean
+          reteiva_rate?: number | null
           retentions?: string | null
           source?: string
           taxes?: string | null
           times_used?: number
+          updated_at?: string
+          updated_by?: string | null
         }
         Relationships: [
           {

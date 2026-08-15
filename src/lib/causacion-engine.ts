@@ -380,7 +380,11 @@ export async function registrarAprendizaje(params: {
   const resoluciones: {
     company_id: string; invoice_id: string; suggested_code: string; used_code: string; reason: string; created_by: string;
   }[] = [];
-  const reglas: Record<string, unknown>[] = [];
+  // Las reglas aprendidas las escribe el motor integral (src/lib/learning-rules.ts),
+  // que guarda toda la estructura contable y su historial de cambios.
+  void autoLearning;
+  void providerName;
+  void centroAprendido;
 
   lines.forEach((l, i) => {
     const code = String(l.account_code ?? "").trim();
@@ -406,43 +410,10 @@ export async function registrarAprendizaje(params: {
         : `Cuenta ${final} asignada manualmente por el usuario.`,
       created_by: userId,
     });
-    if (autoLearning) {
-      reglas.push({
-        company_id: companyId,
-        provider_nit: providerNit || null,
-        provider_name: providerName || null,
-        concept: l.description || null,
-        account_code: final,
-        account_name: l.account_name || null,
-        cost_center: centroAprendido,
-        iva: Number(l.iva ?? 0),
-        item_type: l.item_type ?? "gasto",
-        source: "manual",
-        created_by: userId,
-      });
-    }
   });
 
   await Promise.all([
     eventos.length ? supabase.from("learning_events").insert(eventos) : Promise.resolve(),
     resoluciones.length ? supabase.from("account_resolutions").insert(resoluciones) : Promise.resolve(),
-    ...reglas.map(async (r) => {
-      // Una regla por proveedor + concepto: si ya existe, se refuerza su uso.
-      const q = supabase
-        .from("learning_rules")
-        .select("id, times_used")
-        .eq("company_id", companyId)
-        .eq("concept", String(r["concept"] ?? ""))
-        .eq("account_code", String(r["account_code"]))
-        .limit(1);
-      const { data } = r["provider_nit"] ? await q.eq("provider_nit", String(r["provider_nit"])) : await q.is("provider_nit", null);
-      const existente = data?.[0];
-      if (existente)
-        await supabase
-          .from("learning_rules")
-          .update({ times_used: Number(existente.times_used ?? 0) + 1, last_used_at: new Date().toISOString(), active: true })
-          .eq("id", existente.id);
-      else await supabase.from("learning_rules").insert(r as never);
-    }),
   ]);
 }
