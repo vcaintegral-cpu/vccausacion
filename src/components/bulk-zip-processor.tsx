@@ -73,6 +73,8 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   const progress = useBulkProgress();
   const [forzar, setForzar] = useState(false);
   const [diag, setDiag] = useState<BulkDiagnosis | null>(null);
+  const [detalle, setDetalle] = useState<null | "errores" | "duplicados" | "procesadas" | "revision">(null);
+  const [tecnicos, setTecnicos] = useState<Record<string, boolean>>({});
   const inputRef = useRef<HTMLInputElement>(null);
 
   const historial = useQuery({
