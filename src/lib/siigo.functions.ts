@@ -1566,7 +1566,11 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         console.log("VALOR RETEFUENTE:", r.value);
       }
       console.log("PAYMENT:", conciliableSiigo);
-      const construirPayload = (totalDocumento: number, valorPago: number = conciliableSiigo) =>
+      const construirPayload = (
+        totalDocumento: number,
+        valorPago: number = conciliableSiigo,
+        valorPagoExacto = false,
+      ) =>
         buildSiigoPurchasePayload({
         documentId,
         date: fechaDoc,
@@ -1581,6 +1585,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         paymentId,
         purchaseTotal: totalDocumento,
         paymentValue: valorPago,
+        paymentValueExact: valorPagoExacto,
         paymentDueDate: dueDate,
         retentions: retencionesEnDocumento.map((r) => ({ id: r.id, value: r.value })),
         });
@@ -1653,6 +1658,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         _links?: { self?: { href?: string } };
       };
       let payloadEnviado: unknown = payload;
+      // Valor de payments realmente aceptado por Siigo (puede llevar centavos si Siigo
+      // recalculó la retención). Se usa en la verificación posterior.
+      let valorPagoEnviado = conciliableSiigo;
       // NO se reintenta alterando el total de la compra: el total siempre es Subtotal + IVA.
       // Único reintento permitido: cuando Siigo rechaza el CONCILIABLE de payments
       // (invalid_total_payments) porque, en esta estructura, no descuenta las
@@ -1663,16 +1671,38 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payload);
       } catch (e) {
         const raw = e instanceof Error ? e.message : JSON.stringify(e);
-        if (!raw.includes("invalid_total_payments") || conciliableSiigo === totalFactura) throw e;
-        console.log(
-          "[siigo][payments] Siigo rechazó el conciliable",
-          conciliableSiigo,
-          "→ reintento con el total bruto",
-          totalFactura,
-        );
-        const payloadBruto = construirPayload(totalDocumentoSiigo, totalFactura);
-        payloadEnviado = payloadBruto;
-        res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadBruto);
+        if (!raw.includes("invalid_total_payments")) throw e;
+        // Siigo informa en el propio error el total conciliable que espera, con decimales
+        // ("The total purchase calculated is 4935450.96"). Ese valor es el que debe llevar
+        // payments[0].value: nuestro neto redondeado a pesos difiere en centavos porque
+        // Siigo recalcula la retención con su propio porcentaje oficial.
+        const calculado = /total purchase calculated is\s*(-?\d+(?:\.\d+)?)/i.exec(raw)?.[1];
+        if (calculado) {
+          const exacto = Number(calculado);
+          console.log(
+            "[siigo][payments] Siigo rechazó el conciliable",
+            conciliableSiigo,
+            "→ reintento con el conciliable exacto informado por Siigo:",
+            exacto,
+          );
+          const payloadExacto = construirPayload(totalDocumentoSiigo, exacto, true);
+          payloadEnviado = payloadExacto;
+          valorPagoEnviado = exacto;
+          res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadExacto);
+        } else if (conciliableSiigo !== totalFactura) {
+          console.log(
+            "[siigo][payments] Siigo rechazó el conciliable",
+            conciliableSiigo,
+            "→ reintento con el total bruto",
+            totalFactura,
+          );
+          const payloadBruto = construirPayload(totalDocumentoSiigo, totalFactura);
+          payloadEnviado = payloadBruto;
+          valorPagoEnviado = totalFactura;
+          res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadBruto);
+        } else {
+          throw e;
+        }
       }
       siigoAttemptTrace = { ...siigoAttemptTrace, resultado: "aceptado", response: res };
       console.log("[siigo][causacion] Respuesta completa de Siigo:", JSON.stringify(res, null, 2));
@@ -1710,7 +1740,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             neto_local: netoAPagar,
             retenciones_local: retenciones,
           });
-          if (Math.abs(r2(pagoSiigo - conciliableSiigo)) !== 0) {
+          if (Math.abs(pagoSiigo - valorPagoEnviado) > 1) {
             throw new Error("El payment devuelto por Siigo no coincide con el total conciliable de la compra.");
           }
           if (retencionesSiigo.length > 0 && retSiigo <= 0) {

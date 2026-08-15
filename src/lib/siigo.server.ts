@@ -552,13 +552,15 @@ export function buildSiigoPurchasePayload(params: {
   purchaseTotal: number;
   /** Total conciliable calculado por Siigo después de impuestos de retención. */
   paymentValue: number;
+  /** Cuando es true, paymentValue se envía tal cual (con decimales) sin redondear. */
+  paymentValueExact?: boolean;
   paymentDueDate: string | null;
   /** Retenciones aplicadas al documento: ID REAL del impuesto en Siigo + valor. */
   retentions?: Array<{ id: number | string; value: number }>;
 }) {
   const roundMoney = roundCOP;
   const total = roundMoney(params.purchaseTotal);
-  const paymentValue = roundMoney(params.paymentValue);
+  const paymentValue = params.paymentValueExact ? params.paymentValue : roundMoney(params.paymentValue);
   const isSiigoTaxId = (value: number | string) => {
     const id = String(value ?? "").trim();
     return /^\d+$/.test(id) && !(/^23/.test(id) && id.length >= 6);
