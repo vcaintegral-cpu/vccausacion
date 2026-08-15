@@ -1513,21 +1513,32 @@ function Causar() {
             <dl className="mt-3 space-y-1.5 text-sm">
               <Row k="Base gravable" v={cop(baseGravable)} />
               <Row k="IVA" v={cop(ivaTotal)} />
-              <Row k="Retefuente" v={cop(retenciones.retefuente)} />
-              <Row k="ReteIVA" v={cop(retenciones.reteiva)} />
-              <Row k="ReteICA" v={cop(retenciones.reteica)} />
+              <Row k="Retefuente" v={retBlocks.retefuente.apply ? cop(retenciones.retefuente) : "—"} />
+              <Row k="ReteIVA" v={retBlocks.reteiva.apply ? cop(retenciones.reteiva) : "—"} />
+              <Row k="ReteICA" v={retBlocks.reteica.apply ? cop(retenciones.reteica) : "—"} />
+              <Row k="Total retenciones" v={cop(totalRetenciones(retBlocks))} />
               <Row k="Total factura" v={cop(roundCOP(baseGravable + ivaTotal + roundCOP(header.impoconsumo)))} />
               <Row
                 k="Neto a pagar"
                 v={cop(
                   netoAPagarCOP(
                     roundCOP(baseGravable + ivaTotal + roundCOP(header.impoconsumo)),
-                    roundCOP(retenciones.retefuente) + roundCOP(retenciones.reteiva) + roundCOP(retenciones.reteica),
+                    totalRetenciones(retBlocks),
                   ),
                 )}
               />
             </dl>
           </div>
+
+          <RetencionesPanel
+            blocks={retBlocks}
+            taxes={impuestosRet as unknown as TaxLike[]}
+            accounts={(config?.accounts ?? []) as PucAccount[]}
+            baseGravable={baseGravable}
+            ivaTotal={ivaTotal}
+            errors={erroresRet}
+            onChange={(next) => { setRetTocado(true); setRetBlocks(next); }}
+          />
 
           <IvaTreatmentPanel
             decision={ivaFinal}
