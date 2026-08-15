@@ -4,6 +4,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { estadoUnico, findExistingInvoice, type EstadoFactura } from "@/lib/invoice-duplicates";
 import { isPayableCode, learnPayableAccount } from "@/lib/payable-account";
+import { EPS_COP } from "@/lib/money";
 
 export type DraftInvoice = {
   id: string;
