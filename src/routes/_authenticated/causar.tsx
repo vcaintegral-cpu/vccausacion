@@ -535,6 +535,22 @@ function Causar() {
   const retenciones = useMemo(() => buildRetenciones(retBlocks), [retBlocks]);
   const erroresRet = useMemo(() => erroresRetenciones(retBlocks), [retBlocks]);
 
+  // Reglas contables aprendidas de ESTA empresa (estructura completa).
+  const { data: reglasEmpresa } = useQuery({
+    queryKey: ["learning_rules", companyId],
+    enabled: !!companyId,
+    queryFn: () => fetchCompanyRules(companyId!),
+  });
+  const reglaProveedor = useMemo(
+    () =>
+      buscarRegla(reglasEmpresa ?? [], {
+        providerNit: header.provider_nit,
+        concept: lines[0]?.description ?? null,
+        itemType: lines[0]?.item_type ?? null,
+      }),
+    [reglasEmpresa, header.provider_nit, lines],
+  );
+
   // Semilla: lo que reporta el documento (encabezado o renglones). Mientras el
   // usuario no edite la sección, las tres retenciones se recalculan solas.
   useEffect(() => {
