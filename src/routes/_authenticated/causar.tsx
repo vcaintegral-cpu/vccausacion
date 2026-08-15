@@ -455,7 +455,7 @@ function Causar() {
   /** Aplica el mismo impuesto (IVA/impoconsumo) a todos los renglones. */
   function aplicarIvaTodos(id: string) {
     const tx = impuestosIva.find((t) => String(t.id) === id);
-    setLines((prev) => prev.map((l) => ({ ...l, iva: tx ? Math.round((baseDe(l) * Number(tx.rate)) / 100) : 0 })));
+    setLines((prev) => prev.map((l) => ({ ...l, iva: tx ? roundCOP((baseDe(l) * Number(tx.rate)) / 100) : 0 })));
     setLineTax((prev) => {
       const out = { ...prev };
       lines.forEach((_, i) => { out[i] = { ...out[i], iva: tx ? String(tx.id) : undefined }; });
@@ -470,7 +470,7 @@ function Causar() {
     setLines((prev) =>
       prev.map((l) => {
         const base = String(tx?.kind) === "reteiva" ? Number(l.iva || 0) : baseDe(l);
-        return { ...l, retention: tx ? Math.round((base * Number(tx.rate)) / 100) : 0 };
+        return { ...l, retention: tx ? roundCOP((base * Number(tx.rate)) / 100) : 0 };
       }),
     );
     setLineTax((prev) => {
@@ -823,9 +823,9 @@ function Causar() {
     }
     if (erroresImpuestos.length > 0) { toast.error(erroresImpuestos[0]!); return; }
     if (status === "aprobado" && erroresCentro.length > 0) { toast.error(erroresCentro[0]!); return; }
-    if (t.diferencia !== 0) {
+    if (Math.abs(t.diferencia) >= 0.005) {
       toast.error(
-        `La causación no está cuadrada. Existe una diferencia de ${cop(t.diferencia)} por redondeo. Revise los valores antes de enviar a Siigo.`,
+        `El asiento no está cuadrado. Revise los valores tributarios y contables. Diferencia: ${cop(t.diferencia)}`,
       );
       return;
     }
@@ -1422,7 +1422,7 @@ function Causar() {
                           setLineTax((p) => ({ ...p, [i]: { ...p[i], iva: id || undefined } }));
                           const tx = impuestosIva.find((t) => String(t.id) === id);
                           const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
-                          setLine(i, { iva: tx ? Math.round((base * Number(tx.rate)) / 100) : 0 });
+                          setLine(i, { iva: tx ? roundCOP((base * Number(tx.rate)) / 100) : 0 });
                         }}
                       >
                         <option value="">Sin impuesto</option>
@@ -1451,7 +1451,7 @@ function Causar() {
                           const tx = impuestosRet.find((t) => String(t.id) === id);
                           const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
                           const baseRet = String(tx?.kind) === "reteiva" ? Number(l.iva || 0) : base;
-                          setLine(i, { retention: tx ? Math.round((baseRet * Number(tx.rate)) / 100) : 0 });
+                          setLine(i, { retention: tx ? roundCOP((baseRet * Number(tx.rate)) / 100) : 0 });
                         }}
                       >
                         <option value="">Sin retención</option>
@@ -1529,7 +1529,7 @@ function Causar() {
               <tfoot className="border-t border-border bg-muted/40 text-xs">
                 <tr>
                   <td className="px-4 py-2 font-medium" colSpan={2}>
-                    {Math.abs(t.diferencia) <= 1 ? "Comprobante cuadrado" : `Descuadre ${cop(t.diferencia)}`}
+                    {Math.abs(t.diferencia) < 0.005 ? "Comprobante cuadrado" : `Descuadre ${cop(t.diferencia)}`}
                   </td>
                   <td className="px-4 py-2 text-right font-mono">{cop(t.debito)}</td>
                   <td className="px-4 py-2 text-right font-mono">{cop(t.credito)}</td>

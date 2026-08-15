@@ -1,4 +1,4 @@
-import { roundCOP } from "@/lib/money";
+import { esCeroCOP, roundCOP } from "@/lib/money";
 import { createServerFn } from "@tanstack/react-start";
 import { resolveOperationalAccount, validarCuenta } from "@/lib/puc-hierarchy";
 import { mensajeSiigoAmigable } from "@/lib/siigo-errors";
@@ -672,7 +672,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     // Una línea en cero (por ejemplo una retención que no aplica) no se envía a
     // Siigo, así que su cuenta no debe validarse ni bloquear la sincronización.
     const lineaSinValor = (line: { debit: number | null; credit: number | null }) =>
-      Math.round(Number(line.debit || 0)) === 0 && Math.round(Number(line.credit || 0)) === 0;
+      esCeroCOP(line.debit) && esCeroCOP(line.credit);
 
     const resolvedJournal = journal.map((line) => {
       if (lineaSinValor(line)) return { ...line };
@@ -1740,7 +1740,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             neto_local: netoAPagar,
             retenciones_local: retenciones,
           });
-          if (Math.abs(pagoSiigo - valorPagoEnviado) > 1) {
+          if (Math.abs(pagoSiigo - valorPagoEnviado) > 0.005) {
             throw new Error("El payment devuelto por Siigo no coincide con el total conciliable de la compra.");
           }
           if (retencionesSiigo.length > 0 && retSiigo <= 0) {

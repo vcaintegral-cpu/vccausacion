@@ -365,9 +365,9 @@ function Revisar() {
     if (Number(header.iva) < 0) e.push("El IVA no puede ser negativo.");
     e.push(...erroresImpuestos);
     if (retenciones.retefuente < 0 || retenciones.reteiva < 0 || retenciones.reteica < 0) e.push("Las retenciones no pueden ser negativas.");
-    if (t.diferencia !== 0)
+    if (Math.abs(t.diferencia) >= 0.005)
       e.push(
-        `La causación no está cuadrada. Existe una diferencia de ${cop(t.diferencia)} por redondeo. Revise los valores antes de enviar a Siigo.`,
+        `El asiento no está cuadrado. Revise los valores tributarios y contables. Diferencia: ${cop(t.diferencia)}`,
       );
     if (base <= 0) e.push("La base gravable debe ser mayor a cero.");
     return e;
@@ -704,7 +704,7 @@ function Revisar() {
                         const id = e.target.value || null;
                         const tx = findTaxById(impuestosIva, id);
                         const baseLinea = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
-                        setLine(i, { iva_tax_id: id, iva: tx ? Math.round((baseLinea * Number(tx.rate)) / 100) : 0 });
+                        setLine(i, { iva_tax_id: id, iva: tx ? roundCOP((baseLinea * Number(tx.rate)) / 100) : 0 });
                       }}
                     >
                       <option value="">Sin impuesto</option>
@@ -727,7 +727,7 @@ function Revisar() {
                           String(tx?.kind) === "reteiva"
                             ? Number(l.iva || 0)
                             : Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
-                        setLine(i, { ret_tax_id: id, retention: tx ? Math.round((baseLinea * Number(tx.rate)) / 100) : 0 });
+                        setLine(i, { ret_tax_id: id, retention: tx ? roundCOP((baseLinea * Number(tx.rate)) / 100) : 0 });
                       }}
                     >
                       <option value="">Sin retención</option>
@@ -814,7 +814,7 @@ function Revisar() {
             <tfoot className="border-t border-border bg-muted/40 text-xs">
               <tr>
                 <td className="px-4 py-2 font-medium" colSpan={2}>
-                  {Math.abs(t.diferencia) <= 1 ? "Comprobante cuadrado" : `Descuadre ${cop(t.diferencia)}`}
+                  {Math.abs(t.diferencia) < 0.005 ? "Comprobante cuadrado" : `Descuadre ${cop(t.diferencia)}`}
                 </td>
                 <td className="px-4 py-2 text-right font-mono">{cop(t.debito)}</td>
                 <td className="px-4 py-2 text-right font-mono">{cop(t.credito)}</td>

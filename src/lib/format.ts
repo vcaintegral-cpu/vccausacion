@@ -2,7 +2,8 @@ export const cop = (n: number | null | undefined) =>
   new Intl.NumberFormat("es-CO", {
     style: "currency",
     currency: "COP",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(Number(n ?? 0));
 
 export const num = (n: number | null | undefined) =>

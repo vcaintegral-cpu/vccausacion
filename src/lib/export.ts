@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import type { JournalLine } from "./accounting";
+import { roundCOP } from "@/lib/money";
 
 export type ExportInvoice = {
   prefix?: string | null;
@@ -23,8 +24,8 @@ export function journalRows(inv: ExportInvoice, journal: JournalLine[]): Row[] {
     Tercero: inv.provider_nit ?? "",
     RazonSocial: inv.provider_name ?? "",
     CentroCosto: l.cost_center ?? inv.cost_center ?? "",
-    Debito: Math.round(l.debit),
-    Credito: Math.round(l.credit),
+    Debito: roundCOP(l.debit),
+    Credito: roundCOP(l.credit),
     Detalle: inv.notes ?? "",
   }));
 }
