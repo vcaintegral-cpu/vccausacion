@@ -783,19 +783,31 @@ function Revisar() {
             <Row k="Subtotal" v={cop(base)} />
             <Row k="IVA" v={cop(Number(header.iva))} />
             <Row k="Total factura" v={cop(roundCOP(base + roundCOP(header.iva) + roundCOP(header.impoconsumo)))} />
-            <Row k="Retefuente" v={cop(retenciones.retefuente)} />
-            <Row k="Otras retenciones" v={cop(retenciones.reteiva + retenciones.reteica)} />
+            <Row k="Retefuente" v={retBlocks.retefuente.apply ? cop(retenciones.retefuente) : "—"} />
+            <Row k="ReteIVA" v={retBlocks.reteiva.apply ? cop(retenciones.reteiva) : "—"} />
+            <Row k="ReteICA" v={retBlocks.reteica.apply ? cop(retenciones.reteica) : "—"} />
+            <Row k="Total retenciones" v={cop(totalRetenciones(retBlocks))} />
             <Row
               k="NETO A PAGAR"
               v={cop(
                 netoAPagarCOP(
                   roundCOP(base + roundCOP(header.iva) + roundCOP(header.impoconsumo)),
-                  roundCOP(retenciones.retefuente) + roundCOP(retenciones.reteiva) + roundCOP(retenciones.reteica),
+                  totalRetenciones(retBlocks),
                 ),
               )}
             />
           </dl>
         </div>
+
+        <RetencionesPanel
+          blocks={retBlocks}
+          taxes={impuestosRet as unknown as TaxLikeRet[]}
+          accounts={puc}
+          baseGravable={base}
+          ivaTotal={ivaHeader}
+          errors={erroresRet}
+          onChange={(next) => { setRetTocado(true); setRetBlocks(next); }}
+        />
 
         <IvaTreatmentPanel
           decision={ivaFinal}
@@ -844,21 +856,19 @@ function Revisar() {
                 {cop(base + Number(header.iva) + Number(header.impoconsumo ?? 0))}
               </dd>
             </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Retefuente</dt>
-              <dd className="font-mono tabular-nums">-{cop(retenciones.retefuente)}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Otras retenciones</dt>
-              <dd className="font-mono tabular-nums">-{cop(retenciones.reteiva + retenciones.reteica)}</dd>
-            </div>
+            {retenciones.detalle.map((d) => (
+              <div className="flex justify-between" key={d.kind}>
+                <dt className="text-muted-foreground">{d.name}</dt>
+                <dd className="font-mono tabular-nums">-{cop(d.amount)}</dd>
+              </div>
+            ))}
             <div className="flex justify-between border-t border-border pt-1 font-semibold">
               <dt>NETO A PAGAR</dt>
               <dd className="font-mono tabular-nums">
                 {cop(
                   netoAPagarCOP(
                     roundCOP(base + roundCOP(header.iva) + roundCOP(header.impoconsumo)),
-                    roundCOP(retenciones.retefuente) + roundCOP(retenciones.reteiva) + roundCOP(retenciones.reteica),
+                    totalRetenciones(retBlocks),
                   ),
                 )}
               </dd>
