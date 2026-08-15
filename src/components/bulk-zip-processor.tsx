@@ -571,7 +571,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
           <Accordion
             type="single"
             collapsible
-            value={detalle ?? undefined}
+            value={detalle ?? ""}
             onValueChange={(v) => setDetalle((v || null) as typeof detalle)}
           >
             <AccordionItem value="errores">
