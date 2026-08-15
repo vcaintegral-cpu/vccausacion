@@ -33,7 +33,7 @@ import {
 import { Button } from "@/components/ui/button";
 
 /** Muestra código + nombre de todas las cuentas de una categoría del asiento. */
-function Cuentas({ items, nombres }: { items?: Cuenta[]; nombres: Map<string, string> }) {
+function Cuentas({ items, nombres }: { items: Cuenta[] | undefined; nombres: Map<string, string> }) {
   const list = (items ?? []).filter((c) => !!c?.code);
   if (list.length === 0) return <span className="text-xs text-muted-foreground">—</span>;
   return (
