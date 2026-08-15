@@ -1740,7 +1740,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             neto_local: netoAPagar,
             retenciones_local: retenciones,
           });
-          if (Math.abs(pagoSiigo - valorPagoEnviado) > 1) {
+          if (Math.abs(pagoSiigo - valorPagoEnviado) > 0.005) {
             throw new Error("El payment devuelto por Siigo no coincide con el total conciliable de la compra.");
           }
           if (retencionesSiigo.length > 0 && retSiigo <= 0) {

@@ -1529,7 +1529,7 @@ function Causar() {
               <tfoot className="border-t border-border bg-muted/40 text-xs">
                 <tr>
                   <td className="px-4 py-2 font-medium" colSpan={2}>
-                    {Math.abs(t.diferencia) <= 1 ? "Comprobante cuadrado" : `Descuadre ${cop(t.diferencia)}`}
+                    {Math.abs(t.diferencia) < 0.005 ? "Comprobante cuadrado" : `Descuadre ${cop(t.diferencia)}`}
                   </td>
                   <td className="px-4 py-2 text-right font-mono">{cop(t.debito)}</td>
                   <td className="px-4 py-2 text-right font-mono">{cop(t.credito)}</td>
