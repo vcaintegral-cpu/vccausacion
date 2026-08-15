@@ -357,7 +357,7 @@ function Borradores() {
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border bg-card">
-        <table className="w-full min-w-[1400px] text-sm">
+        <table className="w-full min-w-[2000px] text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-3 py-2">
@@ -372,6 +372,10 @@ function Borradores() {
               <th className="px-3 py-2 text-right font-medium">Total</th>
               <th className="px-3 py-2 font-medium">Cuenta gasto/costo</th>
               <th className="px-3 py-2 font-medium">Cuenta IVA</th>
+              <th className="px-3 py-2 font-medium">Cuenta Retefuente</th>
+              <th className="px-3 py-2 font-medium">Cuenta ReteIVA</th>
+              <th className="px-3 py-2 font-medium">Cuenta ReteICA</th>
+              <th className="px-3 py-2 font-medium">Otras retenciones</th>
               <th className="px-3 py-2 font-medium">Tratamiento IVA</th>
               <th className="px-3 py-2 font-medium">Cuenta CxP</th>
               <th className="px-3 py-2 font-medium">Origen cuenta por pagar</th>
@@ -407,14 +411,12 @@ function Borradores() {
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.subtotal)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.iva)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.total)}</td>
-                  <td className="px-3 py-2">
-                    <span className="font-mono text-xs">{acc?.gasto?.code ?? "—"}</span>
-                    <div className="max-w-[180px] truncate text-[11px] text-muted-foreground">{acc?.gasto?.name ?? ""}</div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className="font-mono text-xs">{acc?.iva?.code ?? "—"}</span>
-                    <div className="max-w-[180px] truncate text-[11px] text-muted-foreground">{acc?.iva?.name ?? ""}</div>
-                  </td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.gastos} nombres={pucNames} /></td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.ivas} nombres={pucNames} /></td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.retefuente} nombres={pucNames} /></td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.reteiva} nombres={pucNames} /></td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.reteica} nombres={pucNames} /></td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.otrasRetenciones} nombres={pucNames} /></td>
                   <td className="px-3 py-2 text-[11px] text-muted-foreground">
                     {Number(r.iva || 0) > 0
                       ? acc?.iva?.code
@@ -423,8 +425,16 @@ function Borradores() {
                       : "Sin IVA"}
                   </td>
                   <td className="px-3 py-2">
-                    <span className="font-mono text-xs">{acc?.payable?.code ?? r.payable_account ?? "—"}</span>
-                    <div className="max-w-[180px] truncate text-[11px] text-muted-foreground">{acc?.payable?.name ?? ""}</div>
+                    <Cuentas
+                      items={
+                        acc?.payable
+                          ? [acc.payable]
+                          : r.payable_account
+                            ? [{ code: r.payable_account, name: null }]
+                            : []
+                      }
+                      nombres={pucNames}
+                    />
                   </td>
                   <td className="px-3 py-2 text-[11px] text-muted-foreground">{origenPayable(r)}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{acc?.costCenter ?? r.cost_center ?? "—"}</td>
