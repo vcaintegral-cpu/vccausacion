@@ -53,9 +53,18 @@ export type Cuenta = { code: string; name: string | null };
 
 export type DraftAccounts = {
   gasto: Cuenta | null;
+  /** Todas las cuentas de gasto/costo del asiento, sin ocultar ninguna. */
+  gastos: Cuenta[];
   iva: Cuenta | null;
+  /** Todas las cuentas de IVA del asiento. */
+  ivas: Cuenta[];
   payable: Cuenta | null;
   retenciones: Cuenta[];
+  /** Retenciones separadas por tipo, tomadas del asiento real. */
+  retefuente: Cuenta[];
+  reteiva: Cuenta[];
+  reteica: Cuenta[];
+  otrasRetenciones: Cuenta[];
   costCenter: string | null;
   debit: number;
   credit: number;
@@ -76,12 +85,14 @@ const esLineaIva = (code: string, name?: string | null) => esIva(code) || /\biva
 /** Clasifica el comprobante ya almacenado en cuentas de gasto/costo, IVA y por pagar. */
 export function classifyJournal(rows: JournalRow[]): DraftAccounts {
   const out: DraftAccounts = {
-    gasto: null, iva: null, payable: null, retenciones: [],
+    gasto: null, gastos: [], iva: null, ivas: [], payable: null, retenciones: [],
+    retefuente: [], reteiva: [], reteica: [], otrasRetenciones: [],
     costCenter: null, debit: 0, credit: 0, lines: rows.length,
   };
   let mayorGasto = -1;
   let mayorPasivo = -1;
   let mayorIva = -1;
+  const push = (list: Cuenta[], c: Cuenta) => { if (!list.some((x) => x.code === c.code)) list.push(c); };
   for (const r of rows) {
     const code = String(r.account_code ?? "").trim();
     const debit = Number(r.debit || 0);
@@ -90,10 +101,16 @@ export function classifyJournal(rows: JournalRow[]): DraftAccounts {
     out.credit += credit;
     if (!out.costCenter && r.cost_center) out.costCenter = r.cost_center;
     if (esRetencion(code)) {
-      if (!out.retenciones.some((x) => x.code === code)) out.retenciones.push({ code, name: r.account_name });
+      const c = { code, name: r.account_name };
+      push(out.retenciones, c);
+      if (code.startsWith("2365")) push(out.retefuente, c);
+      else if (code.startsWith("2367")) push(out.reteiva, c);
+      else if (code.startsWith("2368")) push(out.reteica, c);
+      else push(out.otrasRetenciones, c);
       continue;
     }
     if (debit > 0 && esLineaIva(code, r.account_name)) {
+      push(out.ivas, { code, name: r.account_name });
       if (debit > mayorIva) { mayorIva = debit; out.iva = { code, name: r.account_name }; }
       continue;
     }
@@ -102,6 +119,7 @@ export function classifyJournal(rows: JournalRow[]): DraftAccounts {
       continue;
     }
     if (debit > 0) {
+      push(out.gastos, { code, name: r.account_name });
       if (debit > mayorGasto) { mayorGasto = debit; out.gasto = { code, name: r.account_name }; }
     }
   }
