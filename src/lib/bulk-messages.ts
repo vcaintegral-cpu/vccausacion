@@ -25,8 +25,8 @@ export function codigoTecnico(item: BulkItem): string {
 
 /** Mensaje comprensible para el usuario final. */
 export function mensajeAmigable(item: BulkItem): string {
-  if (item.status === "duplicate") return TEXTOS.DUPLICATE!;
+  if (item.status === "duplicate") return TEXTOS["DUPLICATE"]!;
   if (item.status === "requires_review") return "La factura se leyó pero necesita revisión manual antes de causarla.";
   if (item.status !== "error") return "";
-  return TEXTOS[codigoTecnico(item)] ?? TEXTOS.UNKNOWN_ERROR!;
+  return TEXTOS[codigoTecnico(item)] ?? TEXTOS["UNKNOWN_ERROR"]!;
 }
