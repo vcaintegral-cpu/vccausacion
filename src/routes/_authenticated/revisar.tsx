@@ -22,6 +22,17 @@ import {
   type IvaTreatmentDecision,
 } from "@/lib/iva-treatment";
 import { IvaTreatmentPanel } from "@/components/iva-treatment-panel";
+import { retencionesReportadas } from "@/lib/retenciones";
+import {
+  buildRetenciones,
+  emptyRetBlocks,
+  erroresRetenciones,
+  seedRetBlocks,
+  totalRetenciones,
+  type RetBlocks,
+  type TaxLike as TaxLikeRet,
+} from "@/lib/retenciones-multi";
+import { RetencionesPanel } from "@/components/retenciones-panel";
 import { type LearningRule } from "@/lib/learning";
 import { ITEM_TYPES, isValidItemType, normalizeItemType } from "@/lib/item-type";
 import { cop, fecha } from "@/lib/format";
