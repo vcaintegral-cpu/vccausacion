@@ -268,6 +268,8 @@ function Causar() {
     // Cuenta por pagar corregida manualmente antes: se respeta y no se recalcula.
     if (inv['payable_manual'] && inv['payable_account'])
       setPayableManual({ code: String(inv['payable_account']), name: "" });
+    // Otra factura: sus retenciones se vuelven a leer desde su propio documento.
+    setRetTocado(false);
     setHeader({
       ...emptyHeader(),
       prefix: inv['prefix'] ?? "",
@@ -734,6 +736,7 @@ function Causar() {
         }
       }
       // La forma de pago siempre es crédito; el plazo sale de la fecha de vencimiento.
+      setRetTocado(false);
       setHeader({
         ...emptyHeader(),
         ...rest,
