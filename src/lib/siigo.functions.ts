@@ -1658,6 +1658,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         _links?: { self?: { href?: string } };
       };
       let payloadEnviado: unknown = payload;
+      // Valor de payments realmente aceptado por Siigo (puede llevar centavos si Siigo
+      // recalculó la retención). Se usa en la verificación posterior.
+      let valorPagoEnviado = conciliableSiigo;
       // NO se reintenta alterando el total de la compra: el total siempre es Subtotal + IVA.
       // Único reintento permitido: cuando Siigo rechaza el CONCILIABLE de payments
       // (invalid_total_payments) porque, en esta estructura, no descuenta las
@@ -1684,6 +1687,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           );
           const payloadExacto = construirPayload(totalDocumentoSiigo, exacto, true);
           payloadEnviado = payloadExacto;
+          valorPagoEnviado = exacto;
           res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadExacto);
         } else if (conciliableSiigo !== totalFactura) {
           console.log(
@@ -1694,6 +1698,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           );
           const payloadBruto = construirPayload(totalDocumentoSiigo, totalFactura);
           payloadEnviado = payloadBruto;
+          valorPagoEnviado = totalFactura;
           res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadBruto);
         } else {
           throw e;
@@ -1735,7 +1740,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             neto_local: netoAPagar,
             retenciones_local: retenciones,
           });
-          if (Math.abs(r2(pagoSiigo - conciliableSiigo)) !== 0) {
+          if (Math.abs(pagoSiigo - valorPagoEnviado) > 1) {
             throw new Error("El payment devuelto por Siigo no coincide con el total conciliable de la compra.");
           }
           if (retencionesSiigo.length > 0 && retSiigo <= 0) {
