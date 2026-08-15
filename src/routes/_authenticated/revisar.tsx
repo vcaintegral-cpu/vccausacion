@@ -11,6 +11,7 @@ import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy"
 import { useActiveCompany } from "@/lib/active-company";
 import { buildJournal, totals, type JournalLine, type Retenciones } from "@/lib/accounting";
 import { applyPucToPayable, learnPayableAccount, usePayableAccount } from "@/lib/payable-account";
+import { aprenderDeCausacion } from "@/lib/learning-rules";
 import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
 import {
   applyIvaTreatment,
@@ -512,6 +513,27 @@ function Revisar() {
           ivaAccount: ivaFinal.account || ivaDetalle[0]?.account_code || null,
           treatment: ivaFinal.treatment,
         });
+      }
+      // Regla contable integral con la estructura realmente causada.
+      try {
+        const { data: auth } = await supabase.auth.getUser();
+        await aprenderDeCausacion({
+          companyId: header.company_id,
+          invoiceId: header.id,
+          userId: auth.user?.id ?? null,
+          providerNit: header.provider_nit,
+          providerName: header.provider_name,
+          costCenter: header.cost_center ?? null,
+          lines,
+          retBlocks,
+          ivaTreatment: ivaFinal?.treatment ?? null,
+          ivaAccount: ivaFinal?.account || ivaDetalle[0]?.account_code || null,
+          ivaRate: Number(lines[0]?.iva ?? 0) || null,
+          payableAccount: payable?.code ?? null,
+          paymentForm: header.payment_form ?? null,
+        });
+      } catch (e) {
+        console.warn("[aprendizaje] no se pudo guardar la regla", e);
       }
       setOk({ number: res.siigoNumber, id: res.siigoId, date: res.syncedAt, url: res.documentUrl });
       toast.success(res.error ?? "Factura sincronizada correctamente.");
