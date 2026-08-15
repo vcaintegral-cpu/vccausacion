@@ -546,15 +546,23 @@ function Causar() {
       ivaTotal,
       taxes: impuestosRet as unknown as TaxRate[],
     });
-    setRetBlocks(
-      seedRetBlocks({
-        reportado,
-        baseGravable,
-        ivaTotal,
-        taxes: impuestosRet as unknown as TaxLike[],
-        puc: (config?.accounts ?? []) as PucAccount[],
-      }),
-    );
+    const semilla = seedRetBlocks({
+      reportado,
+      baseGravable,
+      ivaTotal,
+      taxes: impuestosRet as unknown as TaxLike[],
+      puc: (config?.accounts ?? []) as PucAccount[],
+    });
+    // Si la regla aprendida del proveedor ya conoce la cuenta de una retención,
+    // se usa solo cuando la semilla no logró resolverla (nunca cambia valores).
+    const aprendida = reglaProveedor?.rule;
+    if (aprendida) {
+      for (const k of ["retefuente", "reteiva", "reteica"] as const) {
+        const cuenta = aprendida[`${k}_account`];
+        if (semilla[k].apply && !semilla[k].account_code && cuenta) semilla[k].account_code = cuenta;
+      }
+    }
+    setRetBlocks(semilla);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     retTocado,
@@ -566,6 +574,7 @@ function Causar() {
     ivaTotal,
     impuestosRet.length,
     config?.accounts,
+    reglaProveedor?.rule.id,
   ]);
 
   // IVA: la cuenta sale del registro exacto del impuesto elegido en cada renglón.
