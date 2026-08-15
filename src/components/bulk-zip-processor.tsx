@@ -75,6 +75,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   const [diag, setDiag] = useState<BulkDiagnosis | null>(null);
   const [detalle, setDetalle] = useState<null | "errores" | "duplicados" | "procesadas" | "revision">(null);
   const [tecnicos, setTecnicos] = useState<Record<string, boolean>>({});
+  const [abierto, setAbierto] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const historial = useQuery({
@@ -421,16 +422,16 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" onClick={() => setDetalle("procesadas")}>
+              <Button size="sm" onClick={() => { setDetalle("procesadas"); setAbierto(true); }}>
                 Ver detalles
               </Button>
               {stats.failed > 0 ? (
-                <Button size="sm" variant="outline" onClick={() => setDetalle("errores")}>
+                <Button size="sm" variant="outline" onClick={() => { setDetalle("errores"); setAbierto(true); }}>
                   Ver errores
                 </Button>
               ) : null}
               {stats.dup > 0 ? (
-                <Button size="sm" variant="outline" onClick={() => setDetalle("duplicados")}>
+                <Button size="sm" variant="outline" onClick={() => { setDetalle("duplicados"); setAbierto(true); }}>
                   Ver duplicados
                 </Button>
               ) : null}
@@ -492,7 +493,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
             <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
               <AlertTriangle className="size-3.5 text-warning" />
               <span>{stats.failed + stats.review} facturas requieren revisión</span>
-              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => setDetalle("errores")}>
+              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => { setDetalle("errores"); setAbierto(true); }}>
                 Ver errores
               </Button>
             </div>
@@ -501,7 +502,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       ) : null}
 
       {/* DETALLE COMPLETO — modal amplio con secciones plegables. */}
-      <Dialog open={!!upload && !!detalle} onOpenChange={(o) => (o ? null : setDetalle(null))}>
+      <Dialog open={!!upload && abierto} onOpenChange={setAbierto}>
         <DialogContent className="max-h-[85vh] max-w-5xl overflow-auto">
           <DialogHeader>
             <DialogTitle className="text-sm">Detalle de carga · {upload?.file_name}</DialogTitle>
