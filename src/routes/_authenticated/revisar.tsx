@@ -110,6 +110,9 @@ function Revisar() {
   const [centroTocado, setCentroTocado] = useState(false);
   // Cuentas confirmadas contra la base (company_id + código) cuando no vienen en el listado local.
   const [cuentasVerificadas, setCuentasVerificadas] = useState<Record<string, { exists: boolean; name: string | null }>>({});
+  // Retenciones múltiples e independientes de ESTA factura.
+  const [retBlocks, setRetBlocks] = useState<RetBlocks>(emptyRetBlocks());
+  const [retTocado, setRetTocado] = useState(false);
 
   const { data } = useQuery({
     queryKey: ["revisar", id],
@@ -142,6 +145,7 @@ function Revisar() {
       setHeader(data.invoice);
       // Una sola fuente de verdad: el tipo de ítem se normaliza al cargar y nunca se degrada a gasto.
       setLines(data.lines.map((l) => ({ ...l, item_type: normalizeItemType(l.item_type) })));
+      setRetTocado(false);
     }
   }, [data]);
 
@@ -205,28 +209,27 @@ function Revisar() {
   const impuestosRet = impuestos.filter((t) => String(t.kind).startsWith("rete"));
   const puc = (data?.accounts ?? []) as PucAccount[];
 
-  // Cada retención usa la cuenta del registro exacto seleccionado en el renglón.
-  const retenciones: Retenciones = useMemo(() => {
-    const r: Retenciones = { retefuente: 0, reteiva: 0, reteica: 0, autorretencion: 0, detalle: [] };
-    lines.forEach((l) => {
-      const amount = roundCOP(l.retention);
-      if (!amount) return;
-      const tx = findTaxById(impuestosRet, l.ret_tax_id);
-      const kind = String(tx?.kind ?? "retefuente");
-      const key = kind === "reteiva" ? "reteiva" : kind === "reteica" ? "reteica" : "retefuente";
-      r[key] += amount;
-      const cuenta = tx ? resolveTaxAccount(tx, puc) : null;
-      r.detalle.push({
-        kind: key,
-        name: tx?.name ?? "Retención sin impuesto seleccionado",
-        rate: Number(tx?.rate ?? 0),
-        base: roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
-        amount,
-        account_code: cuenta?.error ? "" : cuenta?.code ?? "",
-      });
+  // Retefuente, ReteIVA y ReteICA son independientes y pueden coexistir.
+  const retenciones: Retenciones = useMemo(() => buildRetenciones(retBlocks), [retBlocks]);
+  const erroresRet = useMemo(() => erroresRetenciones(retBlocks), [retBlocks]);
+  const ivaHeader = roundCOP(header?.iva ?? 0);
+  const retLineas = useMemo(() => roundCOP(lines.reduce((s, l) => s + roundCOP(l.retention), 0)), [lines]);
+
+  // Semilla desde la factura guardada; el usuario puede corregirla libremente.
+  useEffect(() => {
+    if (retTocado || !header) return;
+    const reportado = retencionesReportadas({
+      header: { retefuente: header.retefuente, reteiva: header.reteiva, reteica: header.reteica },
+      lineRetention: retLineas,
+      baseGravable: base,
+      ivaTotal: ivaHeader,
+      taxes: impuestosRet as unknown as TaxLikeRet[],
     });
-    return r;
-  }, [lines, impuestosRet, puc]);
+    setRetBlocks(
+      seedRetBlocks({ reportado, baseGravable: base, ivaTotal: ivaHeader, taxes: impuestosRet as unknown as TaxLikeRet[], puc }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retTocado, header?.id, header?.retefuente, header?.reteiva, header?.reteica, retLineas, base, ivaHeader, impuestosRet.length, puc]);
 
   const ivaGroups = useMemo(
     () => buildIvaGroups(lines.map((l) => ({ tax: findTaxById(impuestosIva, l.iva_tax_id), amount: Number(l.iva || 0) })), puc),
@@ -276,15 +279,9 @@ function Revisar() {
 
   const erroresImpuestos = useMemo(() => {
     const out = [...ivaGroups.errors];
-    lines.forEach((l, i) => {
-      if (!Number(l.retention || 0)) return;
-      const tx = findTaxById(impuestosRet, l.ret_tax_id);
-      if (!tx) { out.push(`Renglón ${i + 1}: hay retención sin impuesto seleccionado.`); return; }
-      const r = resolveTaxAccount(tx, puc);
-      if (r.error && !out.includes(r.error)) out.push(r.error);
-    });
+    for (const e of erroresRet) if (!out.includes(e)) out.push(e);
     return out;
-  }, [ivaGroups.errors, lines, impuestosRet, puc]);
+  }, [ivaGroups.errors, erroresRet]);
 
   // Contrapartida: obligación por pagar de esta empresa con este proveedor.
   const { data: payableBase } = usePayableAccount(companyId, header?.provider_nit);
