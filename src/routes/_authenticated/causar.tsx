@@ -38,7 +38,7 @@ import {
   type TaxLike,
 } from "@/lib/retenciones-multi";
 import { RetencionesPanel } from "@/components/retenciones-panel";
-import { aprenderDeCausacion } from "@/lib/learning-rules";
+import { aprenderDeCausacion, buscarRegla, fetchCompanyRules } from "@/lib/learning-rules";
 import {
   applyIvaTreatment,
   fetchIvaEvidence,
