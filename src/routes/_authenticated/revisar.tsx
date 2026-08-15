@@ -234,7 +234,7 @@ function Revisar() {
       lineRetention: retLineas,
       baseGravable: base,
       ivaTotal: ivaHeader,
-      taxes: impuestosRet as unknown as TaxLikeRet[],
+      taxes: impuestosRet as never,
     });
     setRetBlocks(
       seedRetBlocks({ reportado, baseGravable: base, ivaTotal: ivaHeader, taxes: impuestosRet as unknown as TaxLikeRet[], puc }),
