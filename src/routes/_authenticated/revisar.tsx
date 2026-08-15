@@ -367,7 +367,7 @@ function Revisar() {
     if (retenciones.retefuente < 0 || retenciones.reteiva < 0 || retenciones.reteica < 0) e.push("Las retenciones no pueden ser negativas.");
     if (t.diferencia !== 0)
       e.push(
-        `La causación no está cuadrada. Existe una diferencia de ${cop(t.diferencia)} por redondeo. Revise los valores antes de enviar a Siigo.`,
+        `El asiento no está cuadrado. Revise los valores tributarios y contables. Diferencia: ${cop(t.diferencia)}`,
       );
     if (base <= 0) e.push("La base gravable debe ser mayor a cero.");
     return e;

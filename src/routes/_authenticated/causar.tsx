@@ -825,7 +825,7 @@ function Causar() {
     if (status === "aprobado" && erroresCentro.length > 0) { toast.error(erroresCentro[0]!); return; }
     if (t.diferencia !== 0) {
       toast.error(
-        `La causación no está cuadrada. Existe una diferencia de ${cop(t.diferencia)} por redondeo. Revise los valores antes de enviar a Siigo.`,
+        `El asiento no está cuadrado. Revise los valores tributarios y contables. Diferencia: ${cop(t.diferencia)}`,
       );
       return;
     }
