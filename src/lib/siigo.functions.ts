@@ -1566,7 +1566,11 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         console.log("VALOR RETEFUENTE:", r.value);
       }
       console.log("PAYMENT:", conciliableSiigo);
-      const construirPayload = (totalDocumento: number, valorPago: number = conciliableSiigo) =>
+      const construirPayload = (
+        totalDocumento: number,
+        valorPago: number = conciliableSiigo,
+        valorPagoExacto = false,
+      ) =>
         buildSiigoPurchasePayload({
         documentId,
         date: fechaDoc,
@@ -1581,6 +1585,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         paymentId,
         purchaseTotal: totalDocumento,
         paymentValue: valorPago,
+        paymentValueExact: valorPagoExacto,
         paymentDueDate: dueDate,
         retentions: retencionesEnDocumento.map((r) => ({ id: r.id, value: r.value })),
         });
