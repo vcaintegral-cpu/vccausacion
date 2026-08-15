@@ -129,7 +129,8 @@ export function alertasBorrador(inv: DraftInvoice, acc: DraftAccounts | undefine
   if (!payableCode) a.push({ level: "error", message: "Proveedor sin cuenta por pagar." });
   else if (pucCodes.size && !pucCodes.has(payableCode)) a.push({ level: "error", message: `Cuenta por pagar ${payableCode} no existe en el PUC.` });
   else if (!isPayableCode(payableCode)) a.push({ level: "error", message: `La cuenta ${payableCode} no es una cuenta por pagar válida (grupos 22 o 23).` });
-  if (Math.abs(acc.debit - acc.credit) > 1) a.push({ level: "error", message: "Débitos y créditos no cuadran." });
+  if (Math.abs(acc.debit - acc.credit) >= EPS_COP)
+    a.push({ level: "error", message: "El asiento no está cuadrado. Revise los valores tributarios y contables." });
   if (inv.processing_at) a.push({ level: "warn", message: "La factura está siendo procesada." });
   if (inv.posting_error) a.push({ level: "warn", message: inv.posting_error });
   if (a.length === 0) a.push({ level: "ok", message: "Recomendación completa." });
