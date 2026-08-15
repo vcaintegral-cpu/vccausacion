@@ -4,13 +4,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CheckCircle2, Download, Layers, Loader2, RefreshCw, Sparkles, Trash2, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  Copy,
+  Download,
+  Layers,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+  XCircle,
+} from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { cop, fechaHora } from "@/lib/format";
+import { codigoTecnico, mensajeAmigable } from "@/lib/bulk-messages";
 import { diagnoseItem, type BulkDiagnosis } from "@/lib/bulk-diagnostics";
 import { readZipContents, type BulkConfig } from "@/lib/bulk-invoices";
 import {
@@ -57,6 +73,9 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   const progress = useBulkProgress();
   const [forzar, setForzar] = useState(false);
   const [diag, setDiag] = useState<BulkDiagnosis | null>(null);
+  const [detalle, setDetalle] = useState<null | "errores" | "duplicados" | "procesadas" | "revision">(null);
+  const [tecnicos, setTecnicos] = useState<Record<string, boolean>>({});
+  const [abierto, setAbierto] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const historial = useQuery({
@@ -269,6 +288,8 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   async function abrirProceso(u: BulkUpload) {
     setUpload(u);
     setItems(await listItems(u.id));
+    setDetalle("procesadas");
+    setAbierto(true);
   }
 
   /** Prueba SIN IA: recupera el primer PDF desde Storage y lo lee con el mismo lector individual. */
@@ -341,7 +362,15 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     URL.revokeObjectURL(url);
   }
 
-  const terminado = upload && !running && stats.total > 0 && stats.pending === 0 && stats.active === 0;
+  const errores = items.filter((i) => i.status === "error");
+  const duplicados = items.filter((i) => i.status === "duplicate");
+  const procesadas = items.filter((i) => i.status === "completed");
+  const revision = items.filter((i) => i.status === "requires_review" || (i.status === "completed" && i.needs_review));
+  const pendientes = items.filter((i) =>
+    ["pending", "downloading", "reading", "ocr", "extracting_data", "validating_company", "ready_for_accounting", "processing"].includes(
+      i.status,
+    ),
+  );
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-card p-5">
@@ -384,36 +413,146 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
 
       {upload ? (
         <div className="space-y-3 rounded-md border border-border p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-sm font-semibold">{upload.file_name}</p>
+          {/* RESUMEN COMPACTO — el detalle no se despliega automáticamente. */}
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">
+                {running ? "Carga masiva en proceso" : "Carga finalizada"} · {upload.file_name}
+              </p>
               <p className="text-xs text-muted-foreground">
                 {UPLOAD_LABEL[upload.status]} · {fechaHora(upload.created_at)}
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={() => { setDetalle("procesadas"); setAbierto(true); }}>
+                Ver detalles
+              </Button>
+              {stats.failed > 0 ? (
+                <Button size="sm" variant="outline" onClick={() => { setDetalle("errores"); setAbierto(true); }}>
+                  Ver errores
+                </Button>
+              ) : null}
+              {stats.dup > 0 ? (
+                <Button size="sm" variant="outline" onClick={() => { setDetalle("duplicados"); setAbierto(true); }}>
+                  Ver duplicados
+                </Button>
+              ) : null}
               {!running && stats.pending > 0 ? (
                 <Button size="sm" variant="outline" onClick={() => continuar()}>
                   <RefreshCw className="size-4" /> Continuar procesamiento
                 </Button>
               ) : null}
-              {!running && stats.failed + stats.review + stats.active > 0 ? (
+              {!running && stats.failed + stats.review > 0 ? (
                 <Button size="sm" variant="outline" onClick={() => void reintentarErrores()}>
-                  <RefreshCw className="size-4" /> Reintentar pendientes ({stats.failed + stats.review + stats.active})
+                  <RefreshCw className="size-4" /> Reintentar pendientes ({stats.failed + stats.review})
                 </Button>
               ) : null}
-              {stats.total > 0 ? (
-                <Button size="sm" variant="outline" onClick={descargarReporte}>
-                  <Download className="size-4" /> Descargar reporte
-                </Button>
-              ) : null}
-              <Button size="sm" variant="outline" disabled={running || !!busy} onClick={() => void eliminarProceso(upload)}>
-                <Trash2 className="size-4" /> Eliminar carga
-              </Button>
-              <Button size="sm" variant="outline" disabled={running || !!busy} onClick={() => void diagnosticar()}>
-                <RefreshCw className="size-4" /> Diagnóstico sin IA
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <Badge variant="secondary">{stats.total} archivos</Badge>
+            <span className="inline-flex items-center gap-1 text-success">
+              <CheckCircle2 className="size-3.5" /> {stats.done} procesadas
+            </span>
+            {stats.active > 0 ? (
+              <span className="inline-flex items-center gap-1 text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" /> {stats.active} en proceso
+              </span>
+            ) : null}
+            {stats.failed > 0 ? (
+              <span className="inline-flex items-center gap-1 text-destructive">
+                <XCircle className="size-3.5" /> {stats.failed} con error
+              </span>
+            ) : null}
+            {stats.dup > 0 ? (
+              <span className="inline-flex items-center gap-1 text-muted-foreground">
+                <Copy className="size-3.5" /> {stats.dup} duplicadas
+              </span>
+            ) : null}
+            {stats.review > 0 ? (
+              <span className="inline-flex items-center gap-1 text-warning">
+                <AlertTriangle className="size-3.5" /> {stats.review} requieren revisión
+              </span>
+            ) : null}
+          </div>
+
+          {running || stats.pending > 0 ? (
+            <div>
+              <div className="mb-1 flex justify-between text-xs text-muted-foreground">
+                <span>
+                  Procesando facturas… {stats.done + stats.failed + stats.dup + stats.review} de {stats.total}
+                </span>
+                <span>{stats.percent}%</span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                <div className="h-full bg-primary transition-all" style={{ width: `${stats.percent}%` }} />
+              </div>
+            </div>
+          ) : null}
+
+          {stats.failed + stats.review > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
+              <AlertTriangle className="size-3.5 text-warning" />
+              <span>{stats.failed + stats.review} facturas requieren revisión</span>
+              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => { setDetalle("errores"); setAbierto(true); }}>
+                Ver errores
               </Button>
             </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* DETALLE COMPLETO — modal amplio con secciones plegables. */}
+      <Dialog open={!!upload && abierto} onOpenChange={setAbierto}>
+        <DialogContent className="max-h-[85vh] max-w-5xl overflow-auto">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Detalle de carga · {upload?.file_name}</DialogTitle>
+          </DialogHeader>
+
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[
+              ["Total PDF", String(stats.total)],
+              ["Procesadas", String(stats.done)],
+              ["En proceso", String(stats.active)],
+              ["Pendientes", String(stats.pending)],
+              ["Con error", String(stats.failed)],
+              ["Duplicadas", String(stats.dup)],
+              ["No compatibles", String(upload?.skipped_files ?? 0)],
+              ["Requieren revisión", String(stats.review)],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-md border border-border p-2">
+                <p className="text-[11px] text-muted-foreground">{label}</p>
+                <p className="text-sm font-semibold">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {stats.total > 0 ? (
+              <Button size="sm" variant="outline" onClick={descargarReporte}>
+                <Download className="size-4" /> Descargar reporte
+              </Button>
+            ) : null}
+            {!running && stats.failed + stats.review > 0 ? (
+              <Button size="sm" variant="outline" onClick={() => void reintentarErrores()}>
+                <RefreshCw className="size-4" /> Reintentar pendientes
+              </Button>
+            ) : null}
+            <Button size="sm" variant="outline" disabled={running || !!busy} onClick={() => void diagnosticar()}>
+              <RefreshCw className="size-4" /> Diagnóstico sin IA
+            </Button>
+            {upload ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-destructive"
+                disabled={running || !!busy}
+                onClick={() => void eliminarProceso(upload)}
+              >
+                <Trash2 className="size-4" /> Eliminar carga
+              </Button>
+            ) : null}
           </div>
 
           {diag ? (
@@ -432,151 +571,173 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
             </div>
           ) : null}
 
-          <div>
-            <div className="mb-1 flex justify-between text-xs text-muted-foreground">
-              <span>
-                {stats.done + stats.failed + stats.dup + stats.review} de {stats.total}
-              </span>
-              <span>
-                {stats.percent}%
-                {stats.eta !== null ? ` · faltan ~${Math.round(stats.eta / 1000)}s` : ""}
-              </span>
-            </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-              <div className="h-full bg-primary transition-all" style={{ width: `${stats.percent}%` }} />
-            </div>
-          </div>
+          <Accordion
+            type="single"
+            collapsible
+            value={detalle ?? ""}
+            onValueChange={(v) => setDetalle((v || null) as typeof detalle)}
+          >
+            <AccordionItem value="errores">
+              <AccordionTrigger className="text-xs font-semibold">
+                Archivos con error ({errores.length})
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="max-h-72 space-y-2 overflow-auto pr-1">
+                  {errores.length === 0 ? <p className="text-xs text-muted-foreground">Sin errores.</p> : null}
+                  {errores.map((i) => (
+                    <div key={i.id} className="rounded-md border border-border p-2 text-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{i.file_name}</p>
+                          <p className="truncate text-muted-foreground">
+                            {i.invoice_number ?? "Sin número"} · {i.provider_name ?? "Proveedor no identificado"}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button size="sm" variant="outline" onClick={() => void reintentar([i.id])} disabled={running}>
+                            <RefreshCw className="size-3.5" /> Reintentar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2"
+                            onClick={() => setTecnicos((t) => ({ ...t, [i.id]: !t[i.id] }))}
+                          >
+                            <ChevronDown className="size-3.5" /> Ver detalles técnicos
+                          </Button>
+                        </div>
+                      </div>
+                      <p className="mt-1 text-destructive">{mensajeAmigable(i)}</p>
+                      {tecnicos[i.id] ? (
+                        <div className="mt-1 rounded-md bg-muted/40 p-2 text-[11px] leading-5 text-muted-foreground">
+                          <p>Código técnico: {codigoTecnico(i)}</p>
+                          <p>Etapa: {i.stage ?? "—"}</p>
+                          <p>ID del proceso: {i.id}</p>
+                          <p>Mensaje original: {i.error_message ?? i.user_message ?? "—"}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
 
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {[
-              ["Total PDF", String(stats.total)],
-              ["Procesadas", String(stats.done)],
-              ["En proceso", String(stats.active)],
-              ["Pendientes", String(stats.pending)],
-              ["Con error", String(stats.failed)],
-              ["Duplicadas", String(stats.dup)],
-              ["No compatibles", String(upload.skipped_files)],
-              ["Requieren revisión", String(stats.review)],
-            ].map(([label, value]) => (
-              <div key={label} className="rounded-md border border-border p-2">
-                <p className="text-[11px] text-muted-foreground">{label}</p>
-                <p className="text-sm font-semibold">{value}</p>
-              </div>
-            ))}
-          </div>
+            <AccordionItem value="duplicados">
+              <AccordionTrigger className="text-xs font-semibold">Duplicados ({duplicados.length})</AccordionTrigger>
+              <AccordionContent>
+                <div className="max-h-72 space-y-1 overflow-auto pr-1">
+                  {duplicados.length === 0 ? <p className="text-xs text-muted-foreground">Sin duplicados.</p> : null}
+                  {duplicados.map((i) => (
+                    <div key={i.id} className="rounded-md border border-border p-2 text-xs">
+                      <p className="truncate font-medium">{i.invoice_number ?? i.file_name}</p>
+                      <p className="text-muted-foreground">→ Ya existe · Ya fue procesada · No se volverá a causar</p>
+                    </div>
+                  ))}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
 
-          <ul className="max-h-64 space-y-1 overflow-auto rounded-md border border-border p-2">
-            {items.map((i) => (
-              <li key={i.id} className="flex items-start gap-2 text-xs">
-                {i.status === "completed" ? (
-                  <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />
-                ) : i.status === "error" ? (
-                  <XCircle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-                ) : i.status === "reading" || i.status === "processing" ? (
-                  <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin text-muted-foreground" />
-                ) : (
-                  <Layers className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                )}
-                <span className="w-52 truncate font-medium">{i.file_name}</span>
-                <span className="text-muted-foreground">{ITEM_LABEL[i.status]}</span>
-                <span className="flex-1 truncate text-muted-foreground">
-                  {i.status === "completed"
-                    ? `${i.invoice_number ?? ""} · ${cop(Number(i.invoice_total ?? 0))}`
-                    : `${ITEM_LABEL[i.status]}${i.stage ? ` · ${i.stage.replaceAll("_", " ")}` : ""}${i.user_message ? ` · ${i.user_message}` : ""}`}
-                </span>
-                {i.status === "completed" ? (
-                  <span className={i.needs_review ? "text-warning" : "text-success"}>
-                    {i.needs_review ? "Revisar" : "Automática"} · {Math.round(Number(i.score ?? 0) * 100)}%
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-
-          {terminado ? (
-            <div className="space-y-1">
-              <p className="text-xs font-semibold">Verificación de lectura por documento</p>
-              <div className="max-h-72 overflow-auto rounded-md border border-border">
-                <table className="w-full text-[11px]">
-                  <thead className="bg-muted/50 text-left">
-                    <tr>
-                      {["Archivo", "Proveedor", "Comprador", "NIT comprador", "Factura", "Estado"].map((h) => (
-                        <th key={h} className="px-2 py-1 font-medium">
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((i) => (
-                      <tr key={i.id} className="border-t border-border">
-                        <td className="max-w-44 truncate px-2 py-1">{i.file_name}</td>
-                        <td className="max-w-32 truncate px-2 py-1">{i.provider_name ?? "—"}</td>
-                        <td className="max-w-32 truncate px-2 py-1">{i.buyer_name ?? "—"}</td>
-                        <td className="px-2 py-1">{i.buyer_nit ?? "—"}</td>
-                        <td className="px-2 py-1">{i.invoice_number ?? "—"}</td>
-                        <td className="px-2 py-1">
-                           {i.status === "completed" ? (i.read_status ?? "Leída") : `${ITEM_LABEL[i.status]} · ${(i.stage ?? "sin etapa").replaceAll("_", " ")}`}
-                        </td>
+            <AccordionItem value="procesadas">
+              <AccordionTrigger className="text-xs font-semibold">Procesadas ({procesadas.length})</AccordionTrigger>
+              <AccordionContent>
+                <div className="max-h-72 overflow-auto rounded-md border border-border">
+                  <table className="w-full text-[11px]">
+                    <thead className="sticky top-0 bg-muted/50 text-left">
+                      <tr>
+                        {["Archivo", "Proveedor", "Comprador", "Factura", "Total", "Estado"].map((h) => (
+                          <th key={h} className="px-2 py-1 font-medium">
+                            {h}
+                          </th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : null}
+                    </thead>
+                    <tbody>
+                      {procesadas.map((i) => (
+                        <tr key={i.id} className="border-t border-border">
+                          <td className="max-w-44 truncate px-2 py-1">{i.file_name}</td>
+                          <td className="max-w-32 truncate px-2 py-1">{i.provider_name ?? "—"}</td>
+                          <td className="max-w-32 truncate px-2 py-1">{i.buyer_name ?? "—"}</td>
+                          <td className="px-2 py-1">{i.invoice_number ?? "—"}</td>
+                          <td className="px-2 py-1">{cop(Number(i.invoice_total ?? 0))}</td>
+                          <td className="px-2 py-1">{i.read_status ?? ITEM_LABEL[i.status]}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
 
-          {terminado ? (
-            <p className="text-xs text-muted-foreground">
-              Procesamiento terminado · Archivos en el comprimido: {upload.files_found} · PDF encontrados:{" "}
-              {upload.pdf_found} · Procesados: {stats.done} · Con error: {stats.failed} · No compatibles:{" "}
-              {upload.skipped_files}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
+            <AccordionItem value="revision">
+              <AccordionTrigger className="text-xs font-semibold">
+                Requieren revisión ({revision.length})
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="max-h-72 space-y-1 overflow-auto pr-1">
+                  {revision.length === 0 ? <p className="text-xs text-muted-foreground">Ninguna.</p> : null}
+                  {revision.map((i) => (
+                    <div key={i.id} className="rounded-md border border-border p-2 text-xs">
+                      <p className="truncate font-medium">{i.file_name}</p>
+                      <p className="text-muted-foreground">
+                        {i.invoice_number ?? "—"} · confianza {Math.round(Number(i.score ?? 0) * 100)}%
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="pendientes">
+              <AccordionTrigger className="text-xs font-semibold">
+                Pendientes y en proceso ({pendientes.length})
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="max-h-72 space-y-1 overflow-auto pr-1">
+                  {pendientes.length === 0 ? <p className="text-xs text-muted-foreground">Ninguna.</p> : null}
+                  {pendientes.map((i) => (
+                    <div key={i.id} className="flex items-center gap-2 rounded-md border border-border p-2 text-xs">
+                      <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                      <span className="truncate font-medium">{i.file_name}</span>
+                      <span className="text-muted-foreground">{ITEM_LABEL[i.status]}</span>
+                    </div>
+                  ))}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </DialogContent>
+      </Dialog>
 
       {(historial.data ?? []).length > 0 ? (
         <div className="space-y-1">
           <p className="text-xs font-semibold">Historial de cargas</p>
-          <div className="overflow-auto rounded-md border border-border">
-            <table className="w-full text-xs">
-              <thead className="bg-muted/50 text-left">
-                <tr>
-                  {["Fecha", "Archivo", "Total", "Procesados", "Errores", "Estado", ""].map((h) => (
-                    <th key={h} className="px-2 py-1 font-medium">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(historial.data ?? []).map((u) => (
-                  <tr key={u.id} className="border-t border-border">
-                    <td className="px-2 py-1">{fechaHora(u.created_at)}</td>
-                    <td className="max-w-40 truncate px-2 py-1">{u.file_name}</td>
-                    <td className="px-2 py-1">{u.pdf_found}</td>
-                    <td className="px-2 py-1">{u.processed_count}</td>
-                    <td className="px-2 py-1">{u.error_count}</td>
-                    <td className="px-2 py-1">{UPLOAD_LABEL[u.status]}</td>
-                    <td className="px-2 py-1">
-                      <Button size="sm" variant="ghost" onClick={() => void abrirProceso(u)}>
-                        Ver detalle
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive"
-                        disabled={running || !!busy}
-                        onClick={() => void eliminarProceso(u)}
-                      >
-                        <Trash2 className="size-4" /> Eliminar
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="max-h-64 space-y-1 overflow-auto pr-1">
+            {(historial.data ?? []).map((u) => (
+              <div
+                key={u.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-xs"
+              >
+                <span className="min-w-0 truncate text-muted-foreground">
+                  {fechaHora(u.created_at)} · <span className="font-medium text-foreground">{u.file_name}</span> ·{" "}
+                  {u.pdf_found} archivos · {u.processed_count} procesadas · {u.error_count} errores ·{" "}
+                  {UPLOAD_LABEL[u.status]}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => void abrirProceso(u)}>
+                    Ver detalle
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-destructive"
+                    disabled={running || !!busy}
+                    onClick={() => void eliminarProceso(u)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       ) : null}
