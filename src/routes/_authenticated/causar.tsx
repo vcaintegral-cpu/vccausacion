@@ -532,6 +532,39 @@ function Causar() {
   const retenciones = useMemo(() => buildRetenciones(retBlocks), [retBlocks]);
   const erroresRet = useMemo(() => erroresRetenciones(retBlocks), [retBlocks]);
 
+  // Semilla: lo que reporta el documento (encabezado o renglones). Mientras el
+  // usuario no edite la sección, las tres retenciones se recalculan solas.
+  useEffect(() => {
+    if (retTocado) return;
+    const reportado = retencionesReportadas({
+      header: { retefuente: header.retefuente, reteiva: header.reteiva, reteica: header.reteica },
+      lineRetention: retencionLineas,
+      baseGravable,
+      ivaTotal,
+      taxes: impuestosRet as unknown as TaxRate[],
+    });
+    setRetBlocks(
+      seedRetBlocks({
+        reportado,
+        baseGravable,
+        ivaTotal,
+        taxes: impuestosRet as unknown as TaxLike[],
+        puc: (config?.accounts ?? []) as PucAccount[],
+      }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    retTocado,
+    header.retefuente,
+    header.reteiva,
+    header.reteica,
+    retencionLineas,
+    baseGravable,
+    ivaTotal,
+    impuestosRet.length,
+    config?.accounts,
+  ]);
+
   // IVA: la cuenta sale del registro exacto del impuesto elegido en cada renglón.
   const ivaGroups = useMemo(
     () =>
@@ -549,15 +582,10 @@ function Causar() {
   const erroresImpuestos = useMemo(() => {
     const puc = (config?.accounts ?? []) as PucAccount[];
     const out = [...ivaGroups.errors];
-    lines.forEach((l, i) => {
-      if (!Number(l.retention || 0)) return;
-      const tx = findTaxById(impuestosRet as unknown as TaxRecord[], lineTax[i]?.ret) as TaxRecord | null;
-      if (!tx) { out.push(`Renglón ${i + 1}: hay retención sin impuesto seleccionado.`); return; }
-      const r = resolveTaxAccount(tx, puc);
-      if (r.error && !out.includes(r.error)) out.push(r.error);
-    });
+    for (const e of erroresRet) if (!out.includes(e)) out.push(e);
+    void puc;
     return out;
-  }, [ivaGroups.errors, lines, impuestosRet, lineTax, config?.accounts]);
+  }, [ivaGroups.errors, erroresRet, config?.accounts]);
 
   // Centros de costo: dependen de la configuración de la empresa y de la cuenta contable.
   const { data: costPolicy } = useCostCenterPolicy(companyId);
