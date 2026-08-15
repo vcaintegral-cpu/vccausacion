@@ -27,6 +27,17 @@ import {
   type LineDecisions,
 } from "@/lib/causacion-engine";
 import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
+import { retencionesReportadas } from "@/lib/retenciones";
+import {
+  buildRetenciones,
+  emptyRetBlocks,
+  erroresRetenciones,
+  seedRetBlocks,
+  totalRetenciones,
+  type RetBlocks,
+  type TaxLike,
+} from "@/lib/retenciones-multi";
+import { RetencionesPanel } from "@/components/retenciones-panel";
 import {
   applyIvaTreatment,
   fetchIvaEvidence,
@@ -148,6 +159,9 @@ function Causar() {
   const [plazoTocado, setPlazoTocado] = useState(false);
   // Trazabilidad de la sugerencia automática por renglón (motor de causación).
   const [decisiones, setDecisiones] = useState<LineDecisions>({});
+  // Retenciones múltiples e independientes de ESTA factura.
+  const [retBlocks, setRetBlocks] = useState<RetBlocks>(emptyRetBlocks());
+  const [retTocado, setRetTocado] = useState(false);
 
   // El plazo de crédito se recalcula con la fecha de vencimiento, salvo edición manual.
   useEffect(() => {
@@ -254,6 +268,8 @@ function Causar() {
     // Cuenta por pagar corregida manualmente antes: se respeta y no se recalcula.
     if (inv['payable_manual'] && inv['payable_account'])
       setPayableManual({ code: String(inv['payable_account']), name: "" });
+    // Otra factura: sus retenciones se vuelven a leer desde su propio documento.
+    setRetTocado(false);
     setHeader({
       ...emptyHeader(),
       prefix: inv['prefix'] ?? "",
@@ -513,27 +529,43 @@ function Causar() {
   const impuestosIva = impuestos.filter((t) => String(t.kind) === "iva" || String(t.kind) === "impoconsumo");
   const impuestosRet = impuestos.filter((t) => String(t.kind).startsWith("rete"));
 
-  const retenciones = useMemo(() => {
-    const r = { retefuente: 0, reteiva: 0, reteica: 0, autorretencion: 0, detalle: [] as any[] };
-    lines.forEach((l, i) => {
-      const amount = roundCOP(l.retention);
-      if (!amount) return;
-      const base = roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0));
-      const tx = impuestosRet.find((t) => String(t.id) === lineTax[i]?.ret);
-      const kind = (String(tx?.kind ?? "retefuente") as "retefuente" | "reteiva" | "reteica");
-      const key = kind === "reteiva" ? "reteiva" : kind === "reteica" ? "reteica" : "retefuente";
-      r[key] += amount;
-      r.detalle.push({
-        kind: key,
-        name: tx?.name ?? "Retención de la factura",
-        rate: Number(tx?.rate ?? 0),
-        base,
-        amount,
-        account_code: (tx as any)?.account_code ?? null,
-      });
+  // Las retenciones de la factura salen de la sección RETENCIONES: Retefuente,
+  // ReteIVA y ReteICA son independientes y pueden coexistir en la misma factura.
+  const retenciones = useMemo(() => buildRetenciones(retBlocks), [retBlocks]);
+  const erroresRet = useMemo(() => erroresRetenciones(retBlocks), [retBlocks]);
+
+  // Semilla: lo que reporta el documento (encabezado o renglones). Mientras el
+  // usuario no edite la sección, las tres retenciones se recalculan solas.
+  useEffect(() => {
+    if (retTocado) return;
+    const reportado = retencionesReportadas({
+      header: { retefuente: header.retefuente, reteiva: header.reteiva, reteica: header.reteica },
+      lineRetention: retencionLineas,
+      baseGravable,
+      ivaTotal,
+      taxes: impuestosRet as unknown as TaxRate[],
     });
-    return r;
-  }, [lines, impuestosRet, lineTax]);
+    setRetBlocks(
+      seedRetBlocks({
+        reportado,
+        baseGravable,
+        ivaTotal,
+        taxes: impuestosRet as unknown as TaxLike[],
+        puc: (config?.accounts ?? []) as PucAccount[],
+      }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    retTocado,
+    header.retefuente,
+    header.reteiva,
+    header.reteica,
+    retencionLineas,
+    baseGravable,
+    ivaTotal,
+    impuestosRet.length,
+    config?.accounts,
+  ]);
 
   // IVA: la cuenta sale del registro exacto del impuesto elegido en cada renglón.
   const ivaGroups = useMemo(
@@ -552,15 +584,10 @@ function Causar() {
   const erroresImpuestos = useMemo(() => {
     const puc = (config?.accounts ?? []) as PucAccount[];
     const out = [...ivaGroups.errors];
-    lines.forEach((l, i) => {
-      if (!Number(l.retention || 0)) return;
-      const tx = findTaxById(impuestosRet as unknown as TaxRecord[], lineTax[i]?.ret) as TaxRecord | null;
-      if (!tx) { out.push(`Renglón ${i + 1}: hay retención sin impuesto seleccionado.`); return; }
-      const r = resolveTaxAccount(tx, puc);
-      if (r.error && !out.includes(r.error)) out.push(r.error);
-    });
+    for (const e of erroresRet) if (!out.includes(e)) out.push(e);
+    void puc;
     return out;
-  }, [ivaGroups.errors, lines, impuestosRet, lineTax, config?.accounts]);
+  }, [ivaGroups.errors, erroresRet, config?.accounts]);
 
   // Centros de costo: dependen de la configuración de la empresa y de la cuenta contable.
   const { data: costPolicy } = useCostCenterPolicy(companyId);
@@ -709,6 +736,7 @@ function Causar() {
         }
       }
       // La forma de pago siempre es crédito; el plazo sale de la fecha de vencimiento.
+      setRetTocado(false);
       setHeader({
         ...emptyHeader(),
         ...rest,
@@ -1488,21 +1516,32 @@ function Causar() {
             <dl className="mt-3 space-y-1.5 text-sm">
               <Row k="Base gravable" v={cop(baseGravable)} />
               <Row k="IVA" v={cop(ivaTotal)} />
-              <Row k="Retefuente" v={cop(retenciones.retefuente)} />
-              <Row k="ReteIVA" v={cop(retenciones.reteiva)} />
-              <Row k="ReteICA" v={cop(retenciones.reteica)} />
+              <Row k="Retefuente" v={retBlocks.retefuente.apply ? cop(retenciones.retefuente) : "—"} />
+              <Row k="ReteIVA" v={retBlocks.reteiva.apply ? cop(retenciones.reteiva) : "—"} />
+              <Row k="ReteICA" v={retBlocks.reteica.apply ? cop(retenciones.reteica) : "—"} />
+              <Row k="Total retenciones" v={cop(totalRetenciones(retBlocks))} />
               <Row k="Total factura" v={cop(roundCOP(baseGravable + ivaTotal + roundCOP(header.impoconsumo)))} />
               <Row
                 k="Neto a pagar"
                 v={cop(
                   netoAPagarCOP(
                     roundCOP(baseGravable + ivaTotal + roundCOP(header.impoconsumo)),
-                    roundCOP(retenciones.retefuente) + roundCOP(retenciones.reteiva) + roundCOP(retenciones.reteica),
+                    totalRetenciones(retBlocks),
                   ),
                 )}
               />
             </dl>
           </div>
+
+          <RetencionesPanel
+            blocks={retBlocks}
+            taxes={impuestosRet as unknown as TaxLike[]}
+            accounts={(config?.accounts ?? []) as PucAccount[]}
+            baseGravable={baseGravable}
+            ivaTotal={ivaTotal}
+            errors={erroresRet}
+            onChange={(next) => { setRetTocado(true); setRetBlocks(next); }}
+          />
 
           <IvaTreatmentPanel
             decision={ivaFinal}
