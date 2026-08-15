@@ -26,10 +26,30 @@ import {
   type EtapaMasiva,
   type DraftAccounts,
   type DraftInvoice,
+  type Cuenta,
   type JournalRow,
   type ResultadoFactura,
 } from "@/lib/draft-review";
 import { Button } from "@/components/ui/button";
+
+/** Muestra código + nombre de todas las cuentas de una categoría del asiento. */
+function Cuentas({ items, nombres }: { items: Cuenta[] | undefined; nombres: Map<string, string> }) {
+  const list = (items ?? []).filter((c) => !!c?.code);
+  if (list.length === 0) return <span className="text-xs text-muted-foreground">—</span>;
+  return (
+    <div className="space-y-1">
+      {list.map((c) => {
+        const name = c.name ?? nombres.get(c.code) ?? "";
+        return (
+          <div key={c.code}>
+            <span className="font-mono text-xs">{c.code}</span>
+            {name && <div className="max-w-[180px] truncate text-[11px] text-muted-foreground" title={name}>{name}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -127,13 +147,19 @@ function Borradores() {
       const accounts = new Map<string, DraftAccounts>();
       for (const [id, rows] of porFactura) accounts.set(id, classifyJournal(rows));
       const puc = await fetchCompanyPuc(companyId!);
-      return { invoices, accounts, pucCodes: new Set(puc.map((p) => p.code)) };
+      return {
+        invoices,
+        accounts,
+        pucCodes: new Set(puc.map((p) => p.code)),
+        pucNames: new Map(puc.map((p) => [p.code, p.name])),
+      };
     },
   });
 
   const invoices = data?.invoices ?? [];
   const accounts = data?.accounts ?? new Map<string, DraftAccounts>();
   const pucCodes = data?.pucCodes ?? new Set<string>();
+  const pucNames = data?.pucNames ?? new Map<string, string>();
 
   const proveedores = useMemo(
     () => [...new Set(invoices.map((i) => i.provider_name).filter((x): x is string => !!x))].sort(),
@@ -152,7 +178,15 @@ function Borradores() {
         if (hasta && (r.issue_date ?? "") > hasta) return false;
         if (cuenta) {
           const a = accounts.get(r.id);
-          const codes = [a?.gasto?.code, a?.iva?.code, a?.payable?.code].filter(Boolean).join(" ");
+          const codes = [
+            ...(a?.gastos ?? []).map((x) => x.code),
+            ...(a?.ivas ?? []).map((x) => x.code),
+            ...(a?.retenciones ?? []).map((x) => x.code),
+            a?.payable?.code,
+            r.payable_account,
+          ]
+            .filter(Boolean)
+            .join(" ");
           if (!codes.includes(cuenta.trim())) return false;
         }
         return true;
@@ -343,7 +377,7 @@ function Borradores() {
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border bg-card">
-        <table className="w-full min-w-[1400px] text-sm">
+        <table className="w-full min-w-[2000px] text-sm">
           <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-3 py-2">
@@ -358,6 +392,10 @@ function Borradores() {
               <th className="px-3 py-2 text-right font-medium">Total</th>
               <th className="px-3 py-2 font-medium">Cuenta gasto/costo</th>
               <th className="px-3 py-2 font-medium">Cuenta IVA</th>
+              <th className="px-3 py-2 font-medium">Cuenta Retefuente</th>
+              <th className="px-3 py-2 font-medium">Cuenta ReteIVA</th>
+              <th className="px-3 py-2 font-medium">Cuenta ReteICA</th>
+              <th className="px-3 py-2 font-medium">Otras retenciones</th>
               <th className="px-3 py-2 font-medium">Tratamiento IVA</th>
               <th className="px-3 py-2 font-medium">Cuenta CxP</th>
               <th className="px-3 py-2 font-medium">Origen cuenta por pagar</th>
@@ -393,14 +431,12 @@ function Borradores() {
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.subtotal)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.iva)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.total)}</td>
-                  <td className="px-3 py-2">
-                    <span className="font-mono text-xs">{acc?.gasto?.code ?? "—"}</span>
-                    <div className="max-w-[180px] truncate text-[11px] text-muted-foreground">{acc?.gasto?.name ?? ""}</div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className="font-mono text-xs">{acc?.iva?.code ?? "—"}</span>
-                    <div className="max-w-[180px] truncate text-[11px] text-muted-foreground">{acc?.iva?.name ?? ""}</div>
-                  </td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.gastos} nombres={pucNames} /></td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.ivas} nombres={pucNames} /></td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.retefuente} nombres={pucNames} /></td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.reteiva} nombres={pucNames} /></td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.reteica} nombres={pucNames} /></td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.otrasRetenciones} nombres={pucNames} /></td>
                   <td className="px-3 py-2 text-[11px] text-muted-foreground">
                     {Number(r.iva || 0) > 0
                       ? acc?.iva?.code
@@ -409,8 +445,16 @@ function Borradores() {
                       : "Sin IVA"}
                   </td>
                   <td className="px-3 py-2">
-                    <span className="font-mono text-xs">{acc?.payable?.code ?? r.payable_account ?? "—"}</span>
-                    <div className="max-w-[180px] truncate text-[11px] text-muted-foreground">{acc?.payable?.name ?? ""}</div>
+                    <Cuentas
+                      items={
+                        acc?.payable
+                          ? [acc.payable]
+                          : r.payable_account
+                            ? [{ code: r.payable_account, name: null }]
+                            : []
+                      }
+                      nombres={pucNames}
+                    />
                   </td>
                   <td className="px-3 py-2 text-[11px] text-muted-foreground">{origenPayable(r)}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{acc?.costCenter ?? r.cost_center ?? "—"}</td>
