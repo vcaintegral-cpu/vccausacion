@@ -14,6 +14,8 @@ import { ESTADO_LABEL, estadoUnico, type EstadoFactura } from "@/lib/invoice-dup
 import { siigoSyncInvoice } from "@/lib/siigo.functions";
 import { IVA_TREATMENT_LABEL, treatmentForAccount } from "@/lib/iva-treatment";
 import { PAYABLE_SOURCE_LABEL, type PayableSource } from "@/lib/payable-account";
+import { deshacerSincronizacion, fetchSyncHistory, type SyncEvento } from "@/lib/draft-sync";
+import { useDraftsRealtime } from "@/lib/realtime-drafts";
 import {
   alertasBorrador,
   accionDisponible,
@@ -67,7 +69,7 @@ export const Route = createFileRoute("/_authenticated/borradores")({
 });
 
 const COLS =
-  "id, company_id, prefix, number, issue_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual";
+  "id, company_id, prefix, number, issue_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id";
 
 /** Origen visible de la cuenta por pagar del borrador. */
 const origenPayable = (i: DraftInvoice) => {
@@ -116,6 +118,12 @@ function Borradores() {
   const [avance, setAvance] = useState<{ hechas: number; total: number } | null>(null);
   const [traza, setTraza] = useState<DraftInvoice | null>(null);
   const [resultados, setResultados] = useState<ResultadoFactura[] | null>(null);
+  const [historialOpen, setHistorialOpen] = useState(false);
+
+  // Tiempo real: los cambios contables de otras sesiones se reflejan solos.
+  useDraftsRealtime(companyId, () => {
+    void queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+  });
 
   const { data, isLoading } = useQuery({
     queryKey: ["borradores", companyId],
@@ -339,6 +347,13 @@ function Borradores() {
         >
           Todas · {invoices.length}
         </button>
+        <button
+          type="button"
+          onClick={() => setHistorialOpen(true)}
+          className="ml-auto inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 font-medium text-muted-foreground hover:text-foreground"
+        >
+          <History className="size-3.5" /> Historial de sincronizaciones
+        </button>
       </div>
 
       {busy && avance && (
@@ -424,6 +439,14 @@ function Borradores() {
                   <td className="px-3 py-2 font-mono text-xs">
                     {etiquetaFactura(r)}
                     {r.voucher_number && <div className="text-[11px] text-muted-foreground">Comprobante {r.voucher_number}</div>}
+                    {r.sync_applied_at && (
+                      <div
+                        className="mt-1 inline-block rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300"
+                        title={`Configuración contable copiada desde ${r.sync_source_label ?? "otro borrador"} el ${fecha(r.sync_applied_at.slice(0, 10))}`}
+                      >
+                        Actualizado automáticamente
+                      </div>
+                    )}
                   </td>
                   <td className="max-w-[220px] truncate px-3 py-2" title={r.provider_name ?? ""}>{r.provider_name ?? "—"}</td>
                   <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{r.provider_nit ?? "—"}</td>
@@ -546,6 +569,94 @@ function Borradores() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <SyncHistoryDialog
+        companyId={companyId}
+        open={historialOpen}
+        onOpenChange={setHistorialOpen}
+        onChanged={() => void queryClient.invalidateQueries({ queryKey: ["borradores", companyId] })}
+      />
     </div>
+  );
+}
+
+/** Historial de sincronizaciones contables entre borradores, con opción de deshacer. */
+function SyncHistoryDialog({
+  companyId,
+  open,
+  onOpenChange,
+  onChanged,
+}: {
+  companyId: string | null | undefined;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onChanged: () => void;
+}) {
+  const [undoing, setUndoing] = useState<string | null>(null);
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ["draft-sync-history", companyId],
+    enabled: !!companyId && open,
+    queryFn: () => fetchSyncHistory(companyId!),
+  });
+  const eventos: SyncEvento[] = data ?? [];
+
+  async function deshacer(id: string) {
+    setUndoing(id);
+    try {
+      const res = await deshacerSincronizacion(id);
+      if (!res.ok) { toast.error(res.message ?? "No fue posible deshacer la sincronización."); return; }
+      toast.success(res.message ?? "Sincronización deshecha.");
+      await refetch();
+      onChanged();
+    } finally {
+      setUndoing(null);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Historial de sincronizaciones</DialogTitle>
+        </DialogHeader>
+        {isLoading && <p className="text-sm text-muted-foreground">Cargando historial…</p>}
+        {!isLoading && eventos.length === 0 && (
+          <p className="text-sm text-muted-foreground">Todavía no se han aplicado cambios contables a varios borradores a la vez.</p>
+        )}
+        <div className="max-h-96 space-y-2 overflow-y-auto">
+          {eventos.map((ev) => (
+            <div key={ev.id} className="rounded-md border border-border p-3 text-xs">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium">
+                    {ev.provider_name ?? "Proveedor sin nombre"}
+                    {ev.provider_nit ? ` · NIT ${ev.provider_nit}` : ""}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {fecha(ev.created_at.slice(0, 10))} · desde {ev.source_label ?? "—"} · {ev.invoice_count} borrador(es)
+                    {ev.undone_at ? " · deshecha" : ""}
+                  </p>
+                </div>
+                {!ev.undone_at && (
+                  <Button size="sm" variant="outline" onClick={() => void deshacer(ev.id)} disabled={undoing === ev.id}>
+                    {undoing === ev.id ? <Loader2 className="size-3.5 animate-spin" /> : <Undo2 className="size-3.5" />} Deshacer
+                  </Button>
+                )}
+              </div>
+              <ul className="mt-2 space-y-0.5 font-mono text-[11px] text-muted-foreground">
+                {(ev.changes ?? []).map((c, i) => (
+                  <li key={`${ev.id}-${i}`}>{c.label}: {c.old || "—"} → {c.new}</li>
+                ))}
+              </ul>
+              {(ev.affected ?? []).length > 0 && (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Facturas: {(ev.affected ?? []).map((a) => a.label).join(", ")}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

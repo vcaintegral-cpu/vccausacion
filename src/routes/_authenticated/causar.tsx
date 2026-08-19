@@ -63,6 +63,9 @@ import { netoAPagarCOP, roundCOP } from "@/lib/money";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { BulkZipProcessor } from "@/components/bulk-zip-processor";
 import { IvaTreatmentPanel } from "@/components/iva-treatment-panel";
+import { DraftSyncDialog, type DraftSyncRequest } from "@/components/draft-sync-dialog";
+import { diffSnapshots, fetchBorradoresDelProveedor, fetchDraftSnapshot, type DraftSnapshot } from "@/lib/draft-sync";
+import { useDraftsRealtime } from "@/lib/realtime-drafts";
 import {
   ESTADO_LABEL,
   estadoUnico,
@@ -163,6 +166,12 @@ function Causar() {
   // Retenciones múltiples e independientes de ESTA factura.
   const [retBlocks, setRetBlocks] = useState<RetBlocks>(emptyRetBlocks());
   const [retTocado, setRetTocado] = useState(false);
+  // Sincronización contable con los demás borradores del mismo proveedor.
+  const [syncRequest, setSyncRequest] = useState<DraftSyncRequest | null>(null);
+  const [avisoRemoto, setAvisoRemoto] = useState(false);
+
+  // Tiempo real: si otra sesión cambia este borrador, se avisa sin recargar.
+  useDraftsRealtime(companyId, () => { if (editingId) setAvisoRemoto(true); });
 
   // El plazo de crédito se recalcula con la fecha de vencimiento, salvo edición manual.
   useEffect(() => {
@@ -869,6 +878,11 @@ function Causar() {
       const { data: auth } = await supabase.auth.getUser();
       const userId = auth.user?.id;
 
+      // Configuración contable ANTES de guardar: permite detectar exactamente
+      // qué cuentas cambió el usuario en este borrador.
+      const configAntes: DraftSnapshot | null =
+        editingId && status === "borrador" ? await fetchDraftSnapshot(editingId) : null;
+
       let filePath: string | null = null;
       if (file && userId) {
         const path = `${userId}/${companyId}/${Date.now()}-${file.name.replace(/[^\w.-]/g, "_")}`;
@@ -1084,6 +1098,34 @@ function Causar() {
       }
 
       toast.success(status === "aprobado" ? "Comprobante aprobado." : "Comprobante guardado en borrador.");
+
+      // ¿La configuración contable cambió y hay más borradores del mismo proveedor?
+      if (configAntes && editingId) {
+        try {
+          const cambios = diffSnapshots(configAntes, await fetchDraftSnapshot(editingId));
+          if (cambios.length > 0) {
+            const otros = await fetchBorradoresDelProveedor({
+              companyId,
+              providerNit: header.provider_nit,
+              excludeInvoiceId: editingId,
+            });
+            if (otros.length > 0) {
+              setSyncRequest({
+                companyId,
+                invoiceId: editingId,
+                invoiceLabel: [header.prefix, header.number].filter(Boolean).join("-") || "Sin número",
+                providerNit: header.provider_nit || null,
+                providerName: header.provider_name || null,
+                changes: cambios,
+                drafts: otros,
+              });
+              return; // la navegación ocurre al cerrar la confirmación
+            }
+          }
+        } catch (e) {
+          console.warn("[sincronizacion] no fue posible revisar los borradores del proveedor", e);
+        }
+      }
       navigate({ to: "/facturas" });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "No fue posible guardar el comprobante.";
@@ -1732,6 +1774,20 @@ function Causar() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <DraftSyncDialog
+        request={syncRequest}
+        onClose={() => { setSyncRequest(null); navigate({ to: "/facturas" }); }}
+      />
+
+      {avisoRemoto && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-lg border border-border bg-card px-4 py-2 text-xs shadow-lg">
+          Este borrador cambió en otra sesión.{" "}
+          <button type="button" className="font-medium text-primary underline" onClick={() => window.location.reload()}>
+            Ver los datos actualizados
+          </button>
+        </div>
+      )}
     </div>
   );
 }
