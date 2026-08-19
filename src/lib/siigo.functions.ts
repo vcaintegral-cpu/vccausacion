@@ -1629,7 +1629,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         paymentValue: valorPago,
         paymentValueExact: valorPagoExacto,
         paymentDueDate: dueDate,
-        retentions: retencionesEnDocumento.map((r) => ({ id: r.id, value: r.value })),
+        // Se envía el valor que Siigo calcula con su porcentaje oficial: si enviamos
+        // otro, Siigo concilia con el suyo y rechaza la forma de pago.
+        retentions: retencionesEnDocumento.map((r) => ({
+          id: r.id,
+          value: valorSiigoPorTaxId.get(String(r.id)) ?? r.value,
+        })),
         });
       const payload = construirPayload(totalDocumentoSiigo);
       siigoAttemptTrace = {
