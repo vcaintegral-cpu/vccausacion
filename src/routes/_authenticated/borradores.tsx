@@ -439,6 +439,14 @@ function Borradores() {
                   <td className="px-3 py-2 font-mono text-xs">
                     {etiquetaFactura(r)}
                     {r.voucher_number && <div className="text-[11px] text-muted-foreground">Comprobante {r.voucher_number}</div>}
+                    {r.sync_applied_at && (
+                      <div
+                        className="mt-1 inline-block rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300"
+                        title={`Configuración contable copiada desde ${r.sync_source_label ?? "otro borrador"} el ${fecha(r.sync_applied_at.slice(0, 10))}`}
+                      >
+                        Actualizado automáticamente
+                      </div>
+                    )}
                   </td>
                   <td className="max-w-[220px] truncate px-3 py-2" title={r.provider_name ?? ""}>{r.provider_name ?? "—"}</td>
                   <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{r.provider_nit ?? "—"}</td>
