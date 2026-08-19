@@ -63,6 +63,9 @@ import { netoAPagarCOP, roundCOP } from "@/lib/money";
 import { InvoicePdfPasswordError, prepareInvoiceFile } from "@/lib/invoice-file";
 import { BulkZipProcessor } from "@/components/bulk-zip-processor";
 import { IvaTreatmentPanel } from "@/components/iva-treatment-panel";
+import { DraftSyncDialog, type DraftSyncRequest } from "@/components/draft-sync-dialog";
+import { diffSnapshots, fetchBorradoresDelProveedor, fetchDraftSnapshot, type DraftSnapshot } from "@/lib/draft-sync";
+import { useDraftsRealtime } from "@/lib/realtime-drafts";
 import {
   ESTADO_LABEL,
   estadoUnico,
