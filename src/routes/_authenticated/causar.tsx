@@ -878,6 +878,11 @@ function Causar() {
       const { data: auth } = await supabase.auth.getUser();
       const userId = auth.user?.id;
 
+      // Configuración contable ANTES de guardar: permite detectar exactamente
+      // qué cuentas cambió el usuario en este borrador.
+      const configAntes: DraftSnapshot | null =
+        editingId && status === "borrador" ? await fetchDraftSnapshot(editingId) : null;
+
       let filePath: string | null = null;
       if (file && userId) {
         const path = `${userId}/${companyId}/${Date.now()}-${file.name.replace(/[^\w.-]/g, "_")}`;
