@@ -1578,6 +1578,29 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       console.log("[siigo][validacion] Retenciones:", retenciones);
       console.log("[siigo][validacion] Neto proveedor:", netoAPagar);
       console.log("[siigo][validacion] Débitos:", totalDebitos, "Créditos:", totalCreditos);
+
+      // VALIDACIÓN BLOQUEANTE DE FORMA DE PAGO Y CUENTA POR PAGAR.
+      // VALOR CXP = NETO A PAGAR = TOTAL FACTURA − TODAS LAS RETENCIONES.
+      const valorCxP = r2(
+        resolvedJournal
+          .filter((l) => Number(l.credit ?? 0) > 0 && isPayableCode(l.account_code))
+          .reduce((acc, l) => acc + Number(l.credit ?? 0), 0),
+      );
+      const validacionPago: ValidacionPago = validarFormaPago({
+        subtotal,
+        iva,
+        otrosImpuestos: impoconsumo,
+        totalRetenciones: retenciones,
+        valorCxP,
+        valorPago: conciliableSiigo,
+        formaPago,
+        fechaFactura: fechaDoc,
+        vencimiento: dueDate,
+        diasCredito,
+      });
+      console.log("[siigo][forma-pago] Validación previa:", validacionPago);
+      if (!validacionPago.ok) throw new Error(validacionPago.mensaje ?? "Forma de pago inconsistente.");
+
       for (const r of retencionesSiigo) {
         console.log("SIIGO TAX ID RETEFUENTE:", r.id);
         console.log("CUENTA CONTABLE RETEFUENTE:", retencionesTrace.find((t) => t.tipo === r.tipo)?.cuenta ?? null);
