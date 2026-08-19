@@ -1713,44 +1713,42 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // (invalid_total_payments) porque, en esta estructura, no descuenta las
       // retenciones del documento. Se reenvía el mismo documento con payments = total
       // bruto. Nunca se altera el total de la factura ni el asiento contable.
-      let res: SiigoPurchaseResponse;
-      try {
-        res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payload);
-      } catch (e) {
-        const raw = e instanceof Error ? e.message : JSON.stringify(e);
-        if (!raw.includes("invalid_total_payments")) throw e;
-        // Siigo informa en el propio error el total conciliable que espera, con decimales
-        // ("The total purchase calculated is 4935450.96"). Ese valor es el que debe llevar
-        // payments[0].value: nuestro neto redondeado a pesos difiere en centavos porque
-        // Siigo recalcula la retención con su propio porcentaje oficial.
-        const calculado = /total purchase calculated is\s*(-?\d+(?:\.\d+)?)/i.exec(raw)?.[1];
-        if (calculado) {
-          const exacto = Number(calculado);
-          console.log(
-            "[siigo][payments] Siigo rechazó el conciliable",
-            conciliableSiigo,
-            "→ reintento con el conciliable exacto informado por Siigo:",
-            exacto,
+      // Reintentos SOLO sobre el conciliable de payments (nunca sobre el total de la
+      // factura, el asiento ni las retenciones): cuando Siigo recalcula una retención
+      // con centavos distintos, informa en el error el conciliable exacto que espera y
+      // se reenvía el MISMO documento con ese valor.
+      let res: SiigoPurchaseResponse | null = null;
+      let intentoValor = conciliableSiigo;
+      let intentoExacto = false;
+      let ultimoError: unknown = null;
+      const intentos: Array<{ valor: number; error: string | null }> = [];
+      for (let intento = 0; intento < 3 && res == null; intento += 1) {
+        const payloadIntento = intento === 0 ? payload : construirPayload(totalDocumentoSiigo, intentoValor, intentoExacto);
+        payloadEnviado = payloadIntento;
+        valorPagoEnviado = intentoValor;
+        try {
+          res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadIntento);
+          intentos.push({ valor: intentoValor, error: null });
+        } catch (e) {
+          const raw = e instanceof Error ? e.message : JSON.stringify(e);
+          intentos.push({ valor: intentoValor, error: raw });
+          ultimoError = e;
+          if (!raw.includes("invalid_total_payments")) throw e;
+          const exacto = conciliableInformadoPorSiigo(raw);
+          if (exacto != null && Math.abs(exacto - intentoValor) > 0.0001) {
+            console.log("[siigo][payments] Siigo rechazó", intentoValor, "→ conciliable informado por Siigo:", exacto);
+            intentoValor = exacto;
+            intentoExacto = true;
+            continue;
+          }
+          // Sin valor informado: el rechazo no se puede corregir automáticamente.
+          throw new Error(
+            mensajeDiferenciaPagos({ ...validacionPago, valorPago: intentoValor }, raw),
           );
-          const payloadExacto = construirPayload(totalDocumentoSiigo, exacto, true);
-          payloadEnviado = payloadExacto;
-          valorPagoEnviado = exacto;
-          res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadExacto);
-        } else if (conciliableSiigo !== totalFactura) {
-          console.log(
-            "[siigo][payments] Siigo rechazó el conciliable",
-            conciliableSiigo,
-            "→ reintento con el total bruto",
-            totalFactura,
-          );
-          const payloadBruto = construirPayload(totalDocumentoSiigo, totalFactura);
-          payloadEnviado = payloadBruto;
-          valorPagoEnviado = totalFactura;
-          res = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", payloadBruto);
-        } else {
-          throw e;
         }
       }
+      if (res == null) throw ultimoError ?? new Error("Siigo no aceptó la forma de pago de la factura.");
+      siigoAttemptTrace = { ...siigoAttemptTrace, intentos_payments: intentos } as typeof siigoAttemptTrace;
       siigoAttemptTrace = { ...siigoAttemptTrace, resultado: "aceptado", response: res };
       console.log("[siigo][causacion] Respuesta completa de Siigo:", JSON.stringify(res, null, 2));
       // Verificación posterior obligatoria: se consulta el documento creado en Siigo.
