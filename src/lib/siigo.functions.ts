@@ -4,6 +4,8 @@ import { resolveOperationalAccount, validarCuenta } from "@/lib/puc-hierarchy";
 import { mensajeSiigoAmigable } from "@/lib/siigo-errors";
 import {
   conciliableInformadoPorSiigo,
+  calculateNetPayable,
+  validarCuadreNeto,
   mensajeDiferenciaPagos,
   retencionCalculadaPorSiigo,
   validarFormaPago,
@@ -1095,10 +1097,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           enviarEnRetentions: true,
         },
       ].filter((retention) => retention.amount > 0);
-      const retenciones = retencionesPorTipo.reduce(
-        (sum, retention) => sum + retention.amount,
-        0,
-      );
+      // Retenciones declaradas en el encabezado de la factura (fuente inicial).
+      const retencionesEncabezado: Array<{ kind: string; label: string; value: number }> =
+        retencionesPorTipo.map((r) => ({ kind: r.kind, label: r.label, value: r.amount }));
+      // Total de retenciones y neto: SIEMPRE por la función única. Se recalcula más
+      // abajo cuando las retenciones se resuelven renglón por renglón.
+      let netoDocumento = calculateNetPayable({ subtotal: 0, retenciones: retencionesEncabezado });
+      let retenciones = netoDocumento.totalRetenciones;
 
       // Pesos colombianos: valores enteros en toda la conciliación con Siigo.
       const r2 = roundCOP;
@@ -1125,8 +1130,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         retentions: retenciones,
       });
       const totalFactura = totalesSiigo.totalFactura;
-      const netoAPagar = totalesSiigo.netoAPagar;
-      const netoSiigo = roundCOP(netoAPagar);
+      let netoAPagar = totalesSiigo.netoAPagar;
 
       if (totalFactura <= 0) {
         throw new Error(
@@ -1436,6 +1440,22 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           porcentajePorTaxId.set(String(r.id), Number(tax.percentage ?? 0));
         }
       }
+      // FUENTE ÚNICA DE VERDAD DE LAS RETENCIONES DEL DOCUMENTO.
+      // Si la factura resolvió sus retenciones renglón por renglón (por ID de impuesto),
+      // esas son las retenciones reales; si no, las del encabezado. En ambos casos el
+      // total y el neto salen de la misma función, para cualquier combinación de tipos.
+      const retencionesDelDocumento: Array<{ kind: string; label: string; value: number }> =
+        retencionesSeleccionadas.length > 0
+          ? retencionesSeleccionadas.map((r) => ({ kind: r.kind, label: r.nombre, value: r.valor }))
+          : retencionesEncabezado;
+      netoDocumento = calculateNetPayable({
+        subtotal,
+        taxes: iva + impoconsumo,
+        retenciones: retencionesDelDocumento,
+      });
+      retenciones = netoDocumento.totalRetenciones;
+      netoAPagar = netoDocumento.netoAPagar;
+
       console.log("[siigo][retenciones] Diagnóstico:", {
         empresa: inv.company_id,
         factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
@@ -1587,6 +1607,10 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           .filter((l) => Number(l.credit ?? 0) > 0 && isPayableCode(l.account_code))
           .reduce((acc, l) => acc + Number(l.credit ?? 0), 0),
       );
+      // VALIDACIÓN DE CUADRE UNIVERSAL: aplica a toda factura (con o sin retenciones,
+      // individual o masiva). Si hay diferencia, la factura NO se envía a Siigo.
+      const cuadre = validarCuadreNeto({ neto: netoDocumento, valorCxP });
+      if (!cuadre.ok) throw new Error(cuadre.mensaje ?? "Error de validación antes de enviar a Siigo");
       const validacionPago: ValidacionPago = validarFormaPago({
         subtotal,
         iva,
