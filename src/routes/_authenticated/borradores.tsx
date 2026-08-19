@@ -14,6 +14,8 @@ import { ESTADO_LABEL, estadoUnico, type EstadoFactura } from "@/lib/invoice-dup
 import { siigoSyncInvoice } from "@/lib/siigo.functions";
 import { IVA_TREATMENT_LABEL, treatmentForAccount } from "@/lib/iva-treatment";
 import { PAYABLE_SOURCE_LABEL, type PayableSource } from "@/lib/payable-account";
+import { deshacerSincronizacion, fetchSyncHistory, type SyncEvento } from "@/lib/draft-sync";
+import { useDraftsRealtime } from "@/lib/realtime-drafts";
 import {
   alertasBorrador,
   accionDisponible,
