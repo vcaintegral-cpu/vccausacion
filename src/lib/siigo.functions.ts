@@ -1097,10 +1097,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           enviarEnRetentions: true,
         },
       ].filter((retention) => retention.amount > 0);
-      const retenciones = retencionesPorTipo.reduce(
-        (sum, retention) => sum + retention.amount,
-        0,
-      );
+      // Retenciones declaradas en el encabezado de la factura (fuente inicial).
+      const retencionesEncabezado: Array<{ kind: string; label: string; value: number }> =
+        retencionesPorTipo.map((r) => ({ kind: r.kind, label: r.label, value: r.amount }));
+      // Total de retenciones y neto: SIEMPRE por la función única. Se recalcula más
+      // abajo cuando las retenciones se resuelven renglón por renglón.
+      let netoDocumento = calculateNetPayable({ subtotal: 0, retenciones: retencionesEncabezado });
+      let retenciones = netoDocumento.totalRetenciones;
 
       // Pesos colombianos: valores enteros en toda la conciliación con Siigo.
       const r2 = roundCOP;
@@ -1127,8 +1130,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         retentions: retenciones,
       });
       const totalFactura = totalesSiigo.totalFactura;
-      const netoAPagar = totalesSiigo.netoAPagar;
-      const netoSiigo = roundCOP(netoAPagar);
+      let netoAPagar = totalesSiigo.netoAPagar;
 
       if (totalFactura <= 0) {
         throw new Error(
