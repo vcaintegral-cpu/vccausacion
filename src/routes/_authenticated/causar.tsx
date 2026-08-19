@@ -166,6 +166,12 @@ function Causar() {
   // Retenciones múltiples e independientes de ESTA factura.
   const [retBlocks, setRetBlocks] = useState<RetBlocks>(emptyRetBlocks());
   const [retTocado, setRetTocado] = useState(false);
+  // Sincronización contable con los demás borradores del mismo proveedor.
+  const [syncRequest, setSyncRequest] = useState<DraftSyncRequest | null>(null);
+  const [avisoRemoto, setAvisoRemoto] = useState(false);
+
+  // Tiempo real: si otra sesión cambia este borrador, se avisa sin recargar.
+  useDraftsRealtime(companyId, () => { if (editingId) setAvisoRemoto(true); });
 
   // El plazo de crédito se recalcula con la fecha de vencimiento, salvo edición manual.
   useEffect(() => {
