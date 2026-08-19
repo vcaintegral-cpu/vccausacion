@@ -347,6 +347,13 @@ function Borradores() {
         >
           Todas · {invoices.length}
         </button>
+        <button
+          type="button"
+          onClick={() => setHistorialOpen(true)}
+          className="ml-auto inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 font-medium text-muted-foreground hover:text-foreground"
+        >
+          <History className="size-3.5" /> Historial de sincronizaciones
+        </button>
       </div>
 
       {busy && avance && (
