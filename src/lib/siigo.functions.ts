@@ -1890,13 +1890,19 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       return { ok: true, siigoId, siigoNumber, documentUrl, syncedAt, status: "sincronizada", error: null };
     } catch (e) {
       const raw = e instanceof Error ? e.message : JSON.stringify(e);
-      const message = mensajeSiigoAmigable(raw);
+      // Los mensajes ya redactados por la validación de forma de pago se conservan tal cual.
+      const yaLegible = /^Factura no (causada|enviada)/.test(raw);
+      const message = yaLegible ? raw : mensajeSiigoAmigable(raw);
       console.error("[siigo][causacion] error:", message);
       const failedTrace = {
         ...siigoAttemptTrace,
         resultado: "rechazado",
+        // Trazabilidad completa del rechazo, sin necesidad de revisar el código.
+        factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
+        proveedor: { nombre: inv.provider_name ?? null, nit: inv.provider_nit ?? null },
         error: message,
         error_raw: raw,
+        codigo_error_siigo: /"code"\s*:\s*"([^"]+)"/.exec(raw)?.[1] ?? null,
         fallo_at: new Date().toISOString(),
       } as unknown as Json;
       await supabase
