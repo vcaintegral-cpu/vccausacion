@@ -1607,6 +1607,10 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           .filter((l) => Number(l.credit ?? 0) > 0 && isPayableCode(l.account_code))
           .reduce((acc, l) => acc + Number(l.credit ?? 0), 0),
       );
+      // VALIDACIÓN DE CUADRE UNIVERSAL: aplica a toda factura (con o sin retenciones,
+      // individual o masiva). Si hay diferencia, la factura NO se envía a Siigo.
+      const cuadre = validarCuadreNeto({ neto: netoDocumento, valorCxP });
+      if (!cuadre.ok) throw new Error(cuadre.mensaje ?? "Error de validación antes de enviar a Siigo");
       const validacionPago: ValidacionPago = validarFormaPago({
         subtotal,
         iva,
