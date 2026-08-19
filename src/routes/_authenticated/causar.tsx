@@ -1098,6 +1098,34 @@ function Causar() {
       }
 
       toast.success(status === "aprobado" ? "Comprobante aprobado." : "Comprobante guardado en borrador.");
+
+      // ¿La configuración contable cambió y hay más borradores del mismo proveedor?
+      if (configAntes && editingId) {
+        try {
+          const cambios = diffSnapshots(configAntes, await fetchDraftSnapshot(editingId));
+          if (cambios.length > 0) {
+            const otros = await fetchBorradoresDelProveedor({
+              companyId,
+              providerNit: header.provider_nit,
+              excludeInvoiceId: editingId,
+            });
+            if (otros.length > 0) {
+              setSyncRequest({
+                companyId,
+                invoiceId: editingId,
+                invoiceLabel: [header.prefix, header.number].filter(Boolean).join("-") || "Sin número",
+                providerNit: header.provider_nit || null,
+                providerName: header.provider_name || null,
+                changes: cambios,
+                drafts: otros,
+              });
+              return; // la navegación ocurre al cerrar la confirmación
+            }
+          }
+        } catch (e) {
+          console.warn("[sincronizacion] no fue posible revisar los borradores del proveedor", e);
+        }
+      }
       navigate({ to: "/facturas" });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "No fue posible guardar el comprobante.";
