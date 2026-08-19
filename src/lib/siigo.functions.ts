@@ -1440,6 +1440,22 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           porcentajePorTaxId.set(String(r.id), Number(tax.percentage ?? 0));
         }
       }
+      // FUENTE ÚNICA DE VERDAD DE LAS RETENCIONES DEL DOCUMENTO.
+      // Si la factura resolvió sus retenciones renglón por renglón (por ID de impuesto),
+      // esas son las retenciones reales; si no, las del encabezado. En ambos casos el
+      // total y el neto salen de la misma función, para cualquier combinación de tipos.
+      const retencionesDelDocumento: Array<{ kind: string; label: string; value: number }> =
+        retencionesSeleccionadas.length > 0
+          ? retencionesSeleccionadas.map((r) => ({ kind: r.kind, label: r.nombre, value: r.valor }))
+          : retencionesEncabezado;
+      netoDocumento = calculateNetPayable({
+        subtotal,
+        taxes: iva + impoconsumo,
+        retenciones: retencionesDelDocumento,
+      });
+      retenciones = netoDocumento.totalRetenciones;
+      netoAPagar = netoDocumento.netoAPagar;
+
       console.log("[siigo][retenciones] Diagnóstico:", {
         empresa: inv.company_id,
         factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
