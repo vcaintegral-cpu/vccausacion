@@ -1774,6 +1774,20 @@ function Causar() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <DraftSyncDialog
+        request={syncRequest}
+        onClose={() => { setSyncRequest(null); navigate({ to: "/facturas" }); }}
+      />
+
+      {avisoRemoto && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-lg border border-border bg-card px-4 py-2 text-xs shadow-lg">
+          Este borrador cambió en otra sesión.{" "}
+          <button type="button" className="font-medium text-primary underline" onClick={() => window.location.reload()}>
+            Ver los datos actualizados
+          </button>
+        </div>
+      )}
     </div>
   );
 }
