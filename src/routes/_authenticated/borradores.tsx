@@ -569,6 +569,94 @@ function Borradores() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <SyncHistoryDialog
+        companyId={companyId}
+        open={historialOpen}
+        onOpenChange={setHistorialOpen}
+        onChanged={() => void queryClient.invalidateQueries({ queryKey: ["borradores", companyId] })}
+      />
     </div>
+  );
+}
+
+/** Historial de sincronizaciones contables entre borradores, con opción de deshacer. */
+function SyncHistoryDialog({
+  companyId,
+  open,
+  onOpenChange,
+  onChanged,
+}: {
+  companyId: string | null | undefined;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onChanged: () => void;
+}) {
+  const [undoing, setUndoing] = useState<string | null>(null);
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ["draft-sync-history", companyId],
+    enabled: !!companyId && open,
+    queryFn: () => fetchSyncHistory(companyId!),
+  });
+  const eventos: SyncEvento[] = data ?? [];
+
+  async function deshacer(id: string) {
+    setUndoing(id);
+    try {
+      const res = await deshacerSincronizacion(id);
+      if (!res.ok) { toast.error(res.message ?? "No fue posible deshacer la sincronización."); return; }
+      toast.success(res.message ?? "Sincronización deshecha.");
+      await refetch();
+      onChanged();
+    } finally {
+      setUndoing(null);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Historial de sincronizaciones</DialogTitle>
+        </DialogHeader>
+        {isLoading && <p className="text-sm text-muted-foreground">Cargando historial…</p>}
+        {!isLoading && eventos.length === 0 && (
+          <p className="text-sm text-muted-foreground">Todavía no se han aplicado cambios contables a varios borradores a la vez.</p>
+        )}
+        <div className="max-h-96 space-y-2 overflow-y-auto">
+          {eventos.map((ev) => (
+            <div key={ev.id} className="rounded-md border border-border p-3 text-xs">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium">
+                    {ev.provider_name ?? "Proveedor sin nombre"}
+                    {ev.provider_nit ? ` · NIT ${ev.provider_nit}` : ""}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {fecha(ev.created_at.slice(0, 10))} · desde {ev.source_label ?? "—"} · {ev.invoice_count} borrador(es)
+                    {ev.undone_at ? " · deshecha" : ""}
+                  </p>
+                </div>
+                {!ev.undone_at && (
+                  <Button size="sm" variant="outline" onClick={() => void deshacer(ev.id)} disabled={undoing === ev.id}>
+                    {undoing === ev.id ? <Loader2 className="size-3.5 animate-spin" /> : <Undo2 className="size-3.5" />} Deshacer
+                  </Button>
+                )}
+              </div>
+              <ul className="mt-2 space-y-0.5 font-mono text-[11px] text-muted-foreground">
+                {(ev.changes ?? []).map((c, i) => (
+                  <li key={`${ev.id}-${i}`}>{c.label}: {c.old || "—"} → {c.new}</li>
+                ))}
+              </ul>
+              {(ev.affected ?? []).length > 0 && (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Facturas: {(ev.affected ?? []).map((a) => a.label).join(", ")}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
