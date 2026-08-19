@@ -38,6 +38,10 @@ export type DraftInvoice = {
   payable_account?: string | null;
   payable_source?: string | null;
   payable_manual?: boolean | null;
+  /** Marcas de la sincronización contable entre borradores del mismo proveedor. */
+  sync_source_label?: string | null;
+  sync_applied_at?: string | null;
+  sync_event_id?: string | null;
 };
 
 export type JournalRow = {
