@@ -1442,29 +1442,39 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         total_antes_de_retencion: totalFactura,
         total_despues_de_retencion: netoAPagar,
       });
-      const fechaDoc = inv.issue_date ?? new Date().toISOString().slice(0, 10);
-      const soloFecha = (valor: string | null | undefined, respaldo: string) => {
-        const texto = String(valor ?? "").trim();
-        const iso = /^(\d{4}-\d{2}-\d{2})/.exec(texto)?.[1];
-        if (iso) return iso;
-        // Formatos DD/MM/YYYY se normalizan al formato exigido por Siigo.
-        const dmy = /^(\d{2})[\/-](\d{2})[\/-](\d{4})$/.exec(texto);
-        if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
-        return respaldo;
-      };
-      const dueDate = esCredito ? soloFecha(inv.due_date, fechaDoc) : fechaDoc;
+      // Fecha base = SIEMPRE la fecha real de la factura, nunca la de creación del registro.
+      const vencimiento = vencimientoDeFactura({
+        issueDate: inv.issue_date,
+        dueDate: inv.due_date,
+        paymentForm: inv.payment_form,
+      });
+      const fechaDoc = vencimiento.issueDate;
+      // Contado: vence el mismo día de la factura. Crédito: fecha factura + días de crédito.
+      const dueDate = esCredito ? vencimiento.dueDate : fechaDoc;
+      const diasCredito = esCredito ? vencimiento.dias : 0;
       // La API de esta cuenta rechaza Retefuente en retentions[] y la acepta como
       // impuesto de renglón; en esa estructura payments concilia contra el neto.
       const sumaRetencionesEnviadas = r2(retencionesSiigo.reduce((acc, r) => acc + r.value, 0));
       // Siigo NO usa el valor de retención que enviamos para conciliar: recalcula cada
-      // retención con su porcentaje oficial sobre la base (subtotal, o IVA en ReteIVA).
-      // El conciliable de payments es Total factura − retenciones recalculadas por Siigo.
+      // retención con su porcentaje oficial. Las retenciones de renglón (Retefuente en
+      // items[].taxes) las calcula y redondea RENGLÓN POR RENGLÓN; calcularlas sobre el
+      // subtotal agregado producía diferencias de centavos → invalid_total_payments.
+      const basesRenglones = items.map((it) => ({
+        base: Number(it.quantity || 1) * Number(it.price || 0) - Number(it.discount || 0),
+      }));
       const retencionesRecalculadas = retencionesSiigo.map((r) => {
         const pct = porcentajePorTaxId.get(String(r.id)) ?? 0;
+        const enRenglon = r.kind === "retefuente";
         const base = r.kind === "reteiva" ? iva : subtotal;
-        const calculado = pct > 0 ? r2((base * pct) / 100) : r2(r.value);
-        return { ...r, porcentaje: pct, base, valor_siigo: calculado };
+        const calculado = retencionCalculadaPorSiigo({
+          retencion: { ...r, porcentaje: pct, enRenglon },
+          renglones: basesRenglones,
+          subtotal,
+          iva,
+        });
+        return { ...r, porcentaje: pct, base, enRenglon, valor_siigo: calculado };
       });
+      const valorSiigoPorTaxId = new Map(retencionesRecalculadas.map((r) => [String(r.id), r.valor_siigo]));
       const sumaRetencionesSiigo = r2(
         retencionesRecalculadas.reduce((acc, r) => acc + r.valor_siigo, 0),
       );
