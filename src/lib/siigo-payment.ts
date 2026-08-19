@@ -160,7 +160,7 @@ export function validarFormaPago(params: {
   const totalRetenciones = roundCOP(params.totalRetenciones);
   const netoAPagar = roundCOP(totalFactura - totalRetenciones);
   const valorCxP = roundCOP(params.valorCxP);
-  const diferencia = roundCOP(netoAPagar - valorCxP);
+  const diferencia = roundCOP(valorCxP - netoAPagar);
   const base: Omit<ValidacionPago, "ok" | "mensaje"> = {
     totalFactura,
     totalRetenciones,
@@ -210,7 +210,7 @@ export function mensajeDiferenciaPagos(v: ValidacionPago, detalleTecnico?: strin
     `Retenciones: ${cop(v.totalRetenciones)}`,
     `Neto a pagar: ${cop(v.netoAPagar)}`,
     `Valor CxP enviado: ${cop(v.valorPago)}`,
-    `Diferencia: ${cop(roundCOP(v.netoAPagar - v.valorPago))}`,
+    `Diferencia: ${cop(roundCOP(v.valorPago - v.netoAPagar))}`,
     `Forma de pago: ${v.formaPago}`,
     `Vencimiento: ${v.vencimiento}`,
   ];
