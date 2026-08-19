@@ -91,6 +91,66 @@ export type RetencionSiigo = {
 
 export type BaseRenglon = { base: number };
 
+/** Retención aplicada a una factura, sin importar su tipo ni su origen. */
+export type RetencionAplicada = { kind: string; label?: string; value: number };
+
+export type NetoAPagar = {
+  totalFactura: number;
+  totalRetenciones: number;
+  netoAPagar: number;
+  detalle: Array<{ kind: string; label: string; value: number }>;
+};
+
+/**
+ * FUNCIÓN ÚNICA de la aplicación para el valor realmente pendiente de pago.
+ *
+ *   TOTAL FACTURA = subtotal + impuestos − descuentos
+ *   NETO A PAGAR  = TOTAL FACTURA − TODAS las retenciones
+ *
+ * Recorre dinámicamente cualquier cantidad y combinación de retenciones
+ * (retefuente, reteiva, reteica, otras). Sin retenciones, el neto es el total.
+ * No depende del proveedor, la empresa, el número ni la fecha de la factura.
+ */
+export function calculateNetPayable(params: {
+  subtotal: number;
+  taxes?: number;
+  descuentos?: number;
+  retenciones: RetencionAplicada[];
+}): NetoAPagar {
+  const totalFactura = roundCOP(
+    roundCOP(params.subtotal) + roundCOP(params.taxes ?? 0) - roundCOP(params.descuentos ?? 0),
+  );
+  const detalle = (params.retenciones ?? [])
+    .map((r) => ({ kind: String(r.kind ?? "otras"), label: r.label ?? String(r.kind ?? "Retención"), value: roundCOP(r.value) }))
+    .filter((r) => r.value > 0);
+  const totalRetenciones = roundCOP(detalle.reduce((acc, r) => acc + r.value, 0));
+  return { totalFactura, totalRetenciones, netoAPagar: roundCOP(totalFactura - totalRetenciones), detalle };
+}
+
+/**
+ * Validación de cuadre obligatoria previa a cualquier envío a Siigo.
+ * Aplica a toda factura: individual, masiva, con o sin retenciones.
+ */
+export function validarCuadreNeto(params: {
+  neto: NetoAPagar;
+  valorCxP: number;
+}): { ok: boolean; diferencia: number; mensaje: string | null } {
+  const diferencia = roundCOP(roundCOP(params.valorCxP) - params.neto.netoAPagar);
+  if (Math.abs(diferencia) < EPS_COP) return { ok: true, diferencia: 0, mensaje: null };
+  return {
+    ok: false,
+    diferencia,
+    mensaje: [
+      "Error de validación antes de enviar a Siigo",
+      `Total factura: ${cop(params.neto.totalFactura)}`,
+      `Total retenciones: ${cop(params.neto.totalRetenciones)}`,
+      `Neto calculado: ${cop(params.neto.netoAPagar)}`,
+      `Cuenta por pagar: ${cop(roundCOP(params.valorCxP))}`,
+      `Diferencia: ${cop(diferencia)}`,
+    ].join("\n"),
+  };
+}
+
 /**
  * Valor que Siigo calculará para cada retención.
  *
