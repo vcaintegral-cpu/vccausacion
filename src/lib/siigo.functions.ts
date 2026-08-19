@@ -2,6 +2,14 @@ import { esCeroCOP, roundCOP } from "@/lib/money";
 import { createServerFn } from "@tanstack/react-start";
 import { resolveOperationalAccount, validarCuenta } from "@/lib/puc-hierarchy";
 import { mensajeSiigoAmigable } from "@/lib/siigo-errors";
+import {
+  conciliableInformadoPorSiigo,
+  mensajeDiferenciaPagos,
+  retencionCalculadaPorSiigo,
+  validarFormaPago,
+  vencimientoDeFactura,
+  type ValidacionPago,
+} from "@/lib/siigo-payment";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "./company-validation";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { normalizeItemType } from "@/lib/item-type";
