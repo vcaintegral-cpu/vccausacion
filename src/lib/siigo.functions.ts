@@ -13,6 +13,7 @@ import {
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "./company-validation";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { normalizeItemType } from "@/lib/item-type";
+import { isPayableCode } from "@/lib/accounting";
 import type { Database, Json } from "@/integrations/supabase/types";
 
 export type SiigoStatus = {
