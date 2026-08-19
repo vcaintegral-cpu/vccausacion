@@ -67,7 +67,7 @@ export const Route = createFileRoute("/_authenticated/borradores")({
 });
 
 const COLS =
-  "id, company_id, prefix, number, issue_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual";
+  "id, company_id, prefix, number, issue_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id";
 
 /** Origen visible de la cuenta por pagar del borrador. */
 const origenPayable = (i: DraftInvoice) => {
@@ -116,6 +116,12 @@ function Borradores() {
   const [avance, setAvance] = useState<{ hechas: number; total: number } | null>(null);
   const [traza, setTraza] = useState<DraftInvoice | null>(null);
   const [resultados, setResultados] = useState<ResultadoFactura[] | null>(null);
+  const [historialOpen, setHistorialOpen] = useState(false);
+
+  // Tiempo real: los cambios contables de otras sesiones se reflejan solos.
+  useDraftsRealtime(companyId, () => {
+    void queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+  });
 
   const { data, isLoading } = useQuery({
     queryKey: ["borradores", companyId],
