@@ -4,6 +4,8 @@ import { resolveOperationalAccount, validarCuenta } from "@/lib/puc-hierarchy";
 import { mensajeSiigoAmigable } from "@/lib/siigo-errors";
 import {
   conciliableInformadoPorSiigo,
+  calculateNetPayable,
+  validarCuadreNeto,
   mensajeDiferenciaPagos,
   retencionCalculadaPorSiigo,
   validarFormaPago,
