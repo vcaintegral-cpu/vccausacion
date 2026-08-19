@@ -570,6 +570,81 @@ export type Database = {
           },
         ]
       }
+      draft_sync_events: {
+        Row: {
+          action: string
+          affected: Json
+          changes: Json
+          company_id: string
+          conflicts: Json
+          created_at: string
+          created_by: string | null
+          event_key: string
+          id: string
+          invoice_count: number
+          provider_name: string | null
+          provider_nit: string | null
+          result: string | null
+          source_invoice_id: string | null
+          source_label: string | null
+          undone_at: string | null
+          undone_by: string | null
+        }
+        Insert: {
+          action?: string
+          affected?: Json
+          changes?: Json
+          company_id: string
+          conflicts?: Json
+          created_at?: string
+          created_by?: string | null
+          event_key: string
+          id?: string
+          invoice_count?: number
+          provider_name?: string | null
+          provider_nit?: string | null
+          result?: string | null
+          source_invoice_id?: string | null
+          source_label?: string | null
+          undone_at?: string | null
+          undone_by?: string | null
+        }
+        Update: {
+          action?: string
+          affected?: Json
+          changes?: Json
+          company_id?: string
+          conflicts?: Json
+          created_at?: string
+          created_by?: string | null
+          event_key?: string
+          id?: string
+          invoice_count?: number
+          provider_name?: string | null
+          provider_nit?: string | null
+          result?: string | null
+          source_invoice_id?: string | null
+          source_label?: string | null
+          undone_at?: string | null
+          undone_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "draft_sync_events_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "draft_sync_events_source_invoice_id_fkey"
+            columns: ["source_invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoice_events: {
         Row: {
           action: string
@@ -797,6 +872,10 @@ export type Database = {
           siigo_trace: Json | null
           status: string
           subtotal: number
+          sync_applied_at: string | null
+          sync_event_id: string | null
+          sync_source_invoice_id: string | null
+          sync_source_label: string | null
           total: number
           updated_at: string
           voucher_number: string | null
@@ -859,6 +938,10 @@ export type Database = {
           siigo_trace?: Json | null
           status?: string
           subtotal?: number
+          sync_applied_at?: string | null
+          sync_event_id?: string | null
+          sync_source_invoice_id?: string | null
+          sync_source_label?: string | null
           total?: number
           updated_at?: string
           voucher_number?: string | null
@@ -921,6 +1004,10 @@ export type Database = {
           siigo_trace?: Json | null
           status?: string
           subtotal?: number
+          sync_applied_at?: string | null
+          sync_event_id?: string | null
+          sync_source_invoice_id?: string | null
+          sync_source_label?: string | null
           total?: number
           updated_at?: string
           voucher_number?: string | null
@@ -1787,6 +1874,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      apply_draft_sync_changes: {
+        Args: { _changes: Json; _invoice_id: string; _reverse?: boolean }
+        Returns: number
+      }
       cancel_upload_jobs: { Args: { _upload_id: string }; Returns: number }
       claim_jobs: {
         Args: { _job_type?: string; _limit?: number; _worker_id: string }
@@ -1893,6 +1984,16 @@ export type Database = {
       }
       return_invoice_to_draft: { Args: { _invoice_id: string }; Returns: Json }
       revert_invoice_posting: { Args: { _invoice_id: string }; Returns: Json }
+      sync_provider_drafts: {
+        Args: {
+          _changes: Json
+          _event_key: string
+          _known?: Json
+          _source_invoice_id: string
+        }
+        Returns: Json
+      }
+      undo_provider_draft_sync: { Args: { _event_id: string }; Returns: Json }
     }
     Enums: {
       [_ in never]: never
