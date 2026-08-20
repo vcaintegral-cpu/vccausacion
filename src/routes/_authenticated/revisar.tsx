@@ -775,21 +775,52 @@ function Revisar() {
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
+  /**
+   * Copia TODA la configuración del primer renglón al resto: producto,
+   * descripción, cuenta contable, tipo de ítem, IVA y retención.
+   * Los impuestos se recalculan sobre la base propia de cada renglón para no
+   * romper el cuadre de la factura.
+   */
   function aplicarATodos() {
     const first = lines[0];
     if (!first) return;
+    if (lines.length < 2) {
+      toast.info("La factura solo tiene un renglón.");
+      return;
+    }
+    const ivaTax = findTaxById(impuestosIva, first.iva_tax_id ?? null);
+    const retTax = findTaxById(impuestosRet, first.ret_tax_id ?? null);
     setLines((prev) =>
-      prev.map((l) => ({
-        ...l,
-        account_code: first.account_code,
-        account_name: first.account_name,
-        item_type: first.item_type,
-        iva: first.iva,
-        retention: first.retention,
-      })),
+      prev.map((l, idx) => {
+        if (idx === 0) return l;
+        const baseLinea =
+          Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+        const iva = ivaTax
+          ? roundCOP((baseLinea * Number(ivaTax.rate)) / 100)
+          : Number(first.iva_tax_id ? 0 : l.iva);
+        const baseRet = String(retTax?.kind) === "reteiva" ? iva : baseLinea;
+        const retention = retTax
+          ? roundCOP((baseRet * Number(retTax.rate)) / 100)
+          : Number(first.ret_tax_id ? 0 : l.retention);
+        return {
+          ...l,
+          code: first.code,
+          description: first.description,
+          account_code: first.account_code,
+          account_name: first.account_name,
+          item_type: normalizeItemType(first.item_type),
+          iva_tax_id: first.iva_tax_id ?? null,
+          ret_tax_id: first.ret_tax_id ?? null,
+          iva,
+          retention,
+        };
+      }),
     );
-    toast.success("Cuenta, tipo de ítem, IVA y retención copiados a todos los renglones.");
+    toast.success(
+      `Producto, descripción, cuenta, tipo de ítem, IVA y retención copiados a ${lines.length - 1} renglón(es).`,
+    );
   }
+
 
   if (!id)
     return (
