@@ -3,7 +3,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, PackageSearch, Send, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ExternalLink,
+  Loader2,
+  PackageSearch,
+  Send,
+  Sparkles,
+} from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { fetchCompanyPuc } from "@/lib/puc-data";
@@ -12,7 +20,13 @@ import { useActiveCompany } from "@/lib/active-company";
 import { buildJournal, totals, type JournalLine, type Retenciones } from "@/lib/accounting";
 import { applyPucToPayable, learnPayableAccount, usePayableAccount } from "@/lib/payable-account";
 import { aprenderDeCausacion } from "@/lib/learning-rules";
-import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
+import {
+  buildIvaGroups,
+  findTaxById,
+  resolveTaxAccount,
+  taxTrace,
+  type TaxRecord,
+} from "@/lib/tax-selection";
 import {
   applyIvaTreatment,
   fetchIvaEvidence,
@@ -39,23 +53,41 @@ import { ITEM_TYPES, isValidItemType, normalizeItemType } from "@/lib/item-type"
 import { cop, fecha } from "@/lib/format";
 import { netoAPagarCOP, roundCOP } from "@/lib/money";
 import { suggestCostCenter } from "@/lib/cost-center";
-import { costCentersEnabled, costCenterForCompany, useCostCenterPolicy, validateCostCenter } from "@/lib/cost-center-config";
+import {
+  costCentersEnabled,
+  costCenterForCompany,
+  useCostCenterPolicy,
+  validateCostCenter,
+} from "@/lib/cost-center-config";
 import { checkInvoiceCompany, motivoBloqueoEmpresa } from "@/lib/company-validation";
 import { siigoCreateProduct, siigoFindProduct, siigoSyncInvoice } from "@/lib/siigo.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/_authenticated/revisar")({
-  validateSearch: (search: Record<string, unknown>) => ({ id: String(search['id'] ?? "") }),
+  validateSearch: (search: Record<string, unknown>) => ({ id: String(search["id"] ?? "") }),
   head: () => ({
     meta: [
       { title: "Revisar y causar factura en Siigo" },
-      { name: "description", content: "Valida cuentas, centros de costo, impuestos y retenciones antes de enviar el comprobante contable a Siigo." },
+      {
+        name: "description",
+        content:
+          "Valida cuentas, centros de costo, impuestos y retenciones antes de enviar el comprobante contable a Siigo.",
+      },
       { property: "og:title", content: "Revisar y causar factura en Siigo" },
-      { property: "og:description", content: "Revisión previa, validaciones y resumen contable antes de sincronizar." },
+      {
+        property: "og:description",
+        content: "Revisión previa, validaciones y resumen contable antes de sincronizar.",
+      },
     ],
   }),
   component: Revisar,
@@ -116,12 +148,24 @@ function Revisar() {
   const [header, setHeader] = useState<InvRow | null>(null);
   const [lines, setLines] = useState<LineRow[]>([]);
   const [sending, setSending] = useState(false);
-  const [ok, setOk] = useState<{ number: string | null; id: string | null; date: string | null; url: string | null } | null>(null);
-  const [inventario, setInventario] = useState<{ index: number; query: string; results: { id: string; code: string; name: string }[] | null; busy: boolean } | null>(null);
+  const [ok, setOk] = useState<{
+    number: string | null;
+    id: string | null;
+    date: string | null;
+    url: string | null;
+  } | null>(null);
+  const [inventario, setInventario] = useState<{
+    index: number;
+    query: string;
+    results: { id: string; code: string; name: string }[] | null;
+    busy: boolean;
+  } | null>(null);
   const [centroSugerido, setCentroSugerido] = useState<string | null>(null);
   const [centroTocado, setCentroTocado] = useState(false);
   // Cuentas confirmadas contra la base (company_id + código) cuando no vienen en el listado local.
-  const [cuentasVerificadas, setCuentasVerificadas] = useState<Record<string, { exists: boolean; name: string | null }>>({});
+  const [cuentasVerificadas, setCuentasVerificadas] = useState<
+    Record<string, { exists: boolean; name: string | null }>
+  >({});
   // Retenciones múltiples e independientes de ESTA factura.
   const [retBlocks, setRetBlocks] = useState<RetBlocks>(emptyRetBlocks());
   const [retTocado, setRetTocado] = useState(false);
@@ -133,13 +177,28 @@ function Revisar() {
       const [inv, ln, centers, accounts, learning, taxes] = await Promise.all([
         supabase.from("invoices").select("*").eq("id", id).single(),
         supabase.from("invoice_lines").select("*").eq("invoice_id", id).order("position"),
-        supabase.from("cost_centers").select("code, name").eq("company_id", companyId ?? "").order("code"),
+        supabase
+          .from("cost_centers")
+          .select("code, name")
+          .eq("company_id", companyId ?? "")
+          .order("code"),
         fetchCompanyPuc(companyId ?? ""),
-        supabase.from("learning_rules").select("*").eq("company_id", companyId ?? ""),
-        supabase.from("tax_rates").select("*").eq("company_id", companyId ?? "").order("name"),
+        supabase
+          .from("learning_rules")
+          .select("*")
+          .eq("company_id", companyId ?? ""),
+        supabase
+          .from("tax_rates")
+          .select("*")
+          .eq("company_id", companyId ?? "")
+          .order("name"),
       ]);
       if (inv.error) throw inv.error;
-      const company = await supabase.from("companies").select("id, name, nit").eq("id", companyId ?? "").maybeSingle();
+      const company = await supabase
+        .from("companies")
+        .select("id, name, nit")
+        .eq("id", companyId ?? "")
+        .maybeSingle();
       return {
         invoice: inv.data as unknown as InvRow,
         company: company.data ?? null,
@@ -166,9 +225,9 @@ function Revisar() {
     const company = header?.company_id;
     if (!company) return;
     const conocidas = new Set((data?.accounts ?? []).map((a) => a.code));
-    const faltantes = [...new Set(lines.map((l) => l.account_code).filter((c): c is string => !!c))].filter(
-      (c) => !conocidas.has(c) && !(c in cuentasVerificadas),
-    );
+    const faltantes = [
+      ...new Set(lines.map((l) => l.account_code).filter((c): c is string => !!c)),
+    ].filter((c) => !conocidas.has(c) && !(c in cuentasVerificadas));
     if (faltantes.length === 0) return;
     let cancelado = false;
     void supabase
@@ -178,16 +237,22 @@ function Revisar() {
       .in("code", faltantes)
       .then(({ data: rows }) => {
         if (cancelado) return;
-        const encontrado = new Map((rows ?? []).map((r) => [r.code as string, (r.name ?? null) as string | null]));
+        const encontrado = new Map(
+          (rows ?? []).map((r) => [r.code as string, (r.name ?? null) as string | null]),
+        );
         setCuentasVerificadas((prev) => {
           const next = { ...prev };
           for (const code of faltantes) {
-            next[code] = encontrado.has(code) ? { exists: true, name: encontrado.get(code) ?? null } : { exists: false, name: null };
+            next[code] = encontrado.has(code)
+              ? { exists: true, name: encontrado.get(code) ?? null }
+              : { exists: false, name: null };
           }
           return next;
         });
       });
-    return () => { cancelado = true; };
+    return () => {
+      cancelado = true;
+    };
   }, [lines, data?.accounts, header?.company_id, cuentasVerificadas]);
 
   /** Centro de costo sugerido por el historial del proveedor en esta empresa. */
@@ -199,17 +264,27 @@ function Revisar() {
     void suggestCostCenter({ companyId: company, providerNit: nit }).then((s) => {
       if (cancelado || !s) return;
       setCentroSugerido(s.detail);
-      console.log("[revision] centro de costo sugerido:", { proveedor: nit, centro: s.code, origen: s.origin });
-      setHeader((prev) => (!prev || centroTocado || prev.cost_center ? prev : { ...prev, cost_center: s.code }));
+      console.log("[revision] centro de costo sugerido:", {
+        proveedor: nit,
+        centro: s.code,
+        origen: s.origin,
+      });
+      setHeader((prev) =>
+        !prev || centroTocado || prev.cost_center ? prev : { ...prev, cost_center: s.code },
+      );
     });
-    return () => { cancelado = true; };
+    return () => {
+      cancelado = true;
+    };
   }, [header?.provider_nit, header?.company_id, centroTocado]);
 
   const base = useMemo(
     () =>
       roundCOP(
         lines.reduce(
-          (s, l) => s + roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
+          (s, l) =>
+            s +
+            roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
           0,
         ),
       ),
@@ -217,7 +292,9 @@ function Revisar() {
   );
 
   const impuestos = (data?.taxes ?? []) as TaxRecord[];
-  const impuestosIva = impuestos.filter((t) => String(t.kind) === "iva" || String(t.kind) === "impoconsumo");
+  const impuestosIva = impuestos.filter(
+    (t) => String(t.kind) === "iva" || String(t.kind) === "impoconsumo",
+  );
   const impuestosRet = impuestos.filter((t) => String(t.kind).startsWith("rete"));
   const puc = (data?.accounts ?? []) as PucAccount[];
 
@@ -225,7 +302,10 @@ function Revisar() {
   const retenciones: Retenciones = useMemo(() => buildRetenciones(retBlocks), [retBlocks]);
   const erroresRet = useMemo(() => erroresRetenciones(retBlocks), [retBlocks]);
   const ivaHeader = roundCOP(header?.iva ?? 0);
-  const retLineas = useMemo(() => roundCOP(lines.reduce((s, l) => s + roundCOP(l.retention), 0)), [lines]);
+  const retLineas = useMemo(
+    () => roundCOP(lines.reduce((s, l) => s + roundCOP(l.retention), 0)),
+    [lines],
+  );
 
   // Semilla desde la factura guardada; el usuario puede corregirla libremente.
   useEffect(() => {
@@ -238,13 +318,37 @@ function Revisar() {
       taxes: impuestosRet as never,
     });
     setRetBlocks(
-      seedRetBlocks({ reportado, baseGravable: base, ivaTotal: ivaHeader, taxes: impuestosRet as unknown as TaxLikeRet[], puc }),
+      seedRetBlocks({
+        reportado,
+        baseGravable: base,
+        ivaTotal: ivaHeader,
+        taxes: impuestosRet as unknown as TaxLikeRet[],
+        puc,
+      }),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [retTocado, header?.id, header?.retefuente, header?.reteiva, header?.reteica, retLineas, base, ivaHeader, impuestosRet.length, puc]);
+  }, [
+    retTocado,
+    header?.id,
+    header?.retefuente,
+    header?.reteiva,
+    header?.reteica,
+    retLineas,
+    base,
+    ivaHeader,
+    impuestosRet.length,
+    puc,
+  ]);
 
   const ivaGroups = useMemo(
-    () => buildIvaGroups(lines.map((l) => ({ tax: findTaxById(impuestosIva, l.iva_tax_id), amount: Number(l.iva || 0) })), puc),
+    () =>
+      buildIvaGroups(
+        lines.map((l) => ({
+          tax: findTaxById(impuestosIva, l.iva_tax_id),
+          amount: Number(l.iva || 0),
+        })),
+        puc,
+      ),
     [lines, impuestosIva, puc],
   );
 
@@ -260,14 +364,19 @@ function Revisar() {
     staleTime: 5 * 60 * 1000,
     queryFn: () => fetchIvaEvidence(companyId!, header?.provider_nit ?? null),
   });
-  const [ivaOverride, setIvaOverride] = useState<{ treatment: IvaTreatment; account: string } | null>(null);
+  const [ivaOverride, setIvaOverride] = useState<{
+    treatment: IvaTreatment;
+    account: string;
+  } | null>(null);
   const ivaDecision = useMemo<IvaTreatmentDecision | null>(() => {
     if (!ivaConfig || !ivaEvidence) return null;
     return resolveIvaTreatment({
       config: ivaConfig,
       evidence: ivaEvidence,
       providerNit: header?.provider_nit ?? null,
-      expenseAccounts: [...new Set(lines.map((l) => String(l.account_code ?? "").trim()).filter(Boolean))],
+      expenseAccounts: [
+        ...new Set(lines.map((l) => String(l.account_code ?? "").trim()).filter(Boolean)),
+      ],
       concepts: lines.map((l) => l.description ?? ""),
       puc,
       taxAccount: ivaGroups.groups[0]?.account_code ?? null,
@@ -287,7 +396,10 @@ function Revisar() {
       warning: null,
     };
   }, [ivaDecision, ivaOverride, puc]);
-  const ivaDetalle = useMemo(() => applyIvaTreatment(ivaGroups.groups, ivaFinal), [ivaGroups.groups, ivaFinal]);
+  const ivaDetalle = useMemo(
+    () => applyIvaTreatment(ivaGroups.groups, ivaFinal),
+    [ivaGroups.groups, ivaFinal],
+  );
 
   const erroresImpuestos = useMemo(() => {
     const out = [...ivaGroups.errors];
@@ -323,13 +435,28 @@ function Revisar() {
         ivaDetalle: ivaDetalle,
         payableAccount: payable,
       }),
-    [lines, header?.iva, header?.impoconsumo, header?.cost_center, retenciones, ivaDetalle, costPolicy, payable],
+    [
+      lines,
+      header?.iva,
+      header?.impoconsumo,
+      header?.cost_center,
+      retenciones,
+      ivaDetalle,
+      costPolicy,
+      payable,
+    ],
   );
   const operationalJournal = useMemo(() => {
     const puc = (data?.accounts ?? []) as PucAccount[];
     return journal.map((line) => {
       const resolution = resolveOperationalAccount(puc, line.account_code);
-      return resolution.operationalAccount ? { ...line, account_code: resolution.operationalAccount, account_name: resolution.operational?.name ?? line.account_name } : line;
+      return resolution.operationalAccount
+        ? {
+            ...line,
+            account_code: resolution.operationalAccount,
+            account_name: resolution.operational?.name ?? line.account_name,
+          }
+        : line;
     });
   }, [journal, data?.accounts]);
   const t = totals(operationalJournal);
@@ -346,21 +473,30 @@ function Revisar() {
     lines.forEach((l, i) => {
       if (!l.account_code) e.push(`Renglón ${i + 1}: falta la cuenta contable.`);
       else {
-        const resolution = resolveOperationalAccount((data?.accounts ?? []) as PucAccount[], l.account_code);
+        const resolution = resolveOperationalAccount(
+          (data?.accounts ?? []) as PucAccount[],
+          l.account_code,
+        );
         if (!resolution.valid) {
-          e.push(`Renglón ${i + 1}: ${resolution.message ?? `la cuenta ${l.account_code} no es operativa.`}`);
+          e.push(
+            `Renglón ${i + 1}: ${resolution.message ?? `la cuenta ${l.account_code} no es operativa.`}`,
+          );
           return;
         }
         const verificada = cuentasVerificadas[l.account_code];
         // Solo se marca inexistente cuando la base confirmó que no está (company_id + código).
         if (!pucCodes.has(l.account_code) && verificada && !verificada.exists) {
-          e.push(`Renglón ${i + 1}: la cuenta ${l.account_code} no existe en el PUC de la empresa.`);
+          e.push(
+            `Renglón ${i + 1}: la cuenta ${l.account_code} no existe en el PUC de la empresa.`,
+          );
         }
       }
       if (!isValidItemType(l.item_type)) e.push(`Renglón ${i + 1}: tipo de ítem inválido.`);
       const tipo = normalizeItemType(l.item_type);
       if ((tipo === "producto" || tipo === "servicio") && !String(l.code ?? "").trim()) {
-        e.push(`Renglón ${i + 1}: el producto no tiene código válido de Siigo. Sincronice los productos con Siigo antes de causar.`);
+        e.push(
+          `Renglón ${i + 1}: el producto no tiene código válido de Siigo. Sincronice los productos con Siigo antes de causar.`,
+        );
       }
     });
     e.push(
@@ -373,14 +509,26 @@ function Revisar() {
     );
     if (Number(header.iva) < 0) e.push("El IVA no puede ser negativo.");
     e.push(...erroresImpuestos);
-    if (retenciones.retefuente < 0 || retenciones.reteiva < 0 || retenciones.reteica < 0) e.push("Las retenciones no pueden ser negativas.");
+    if (retenciones.retefuente < 0 || retenciones.reteiva < 0 || retenciones.reteica < 0)
+      e.push("Las retenciones no pueden ser negativas.");
     if (Math.abs(t.diferencia) >= 0.005)
       e.push(
         `El asiento no está cuadrado. Revise los valores tributarios y contables. Diferencia: ${cop(t.diferencia)}`,
       );
     if (base <= 0) e.push("La base gravable debe ser mayor a cero.");
     return e;
-  }, [header, lines, data?.accounts, data?.company, cuentasVerificadas, retenciones, t.diferencia, base, erroresImpuestos, costPolicy]);
+  }, [
+    header,
+    lines,
+    data?.accounts,
+    data?.company,
+    cuentasVerificadas,
+    retenciones,
+    t.diferencia,
+    base,
+    erroresImpuestos,
+    costPolicy,
+  ]);
 
   async function guardarCambios() {
     if (!header) return;
@@ -398,50 +546,66 @@ function Revisar() {
         total: roundCOP(base + roundCOP(header.iva) + roundCOP(header.impoconsumo)),
       })
       .eq("id", header.id);
-    if (invoiceError) throw new Error(`No se pudieron guardar las retenciones de la factura: ${invoiceError.message}`);
+    if (invoiceError)
+      throw new Error(
+        `No se pudieron guardar las retenciones de la factura: ${invoiceError.message}`,
+      );
 
     const lineUpdates = await Promise.all(
       lines.map((l) =>
         supabase
           .from("invoice_lines")
-          .update((() => {
-            const ivaTax = findTaxById(impuestosIva, l.iva_tax_id);
-            const retTax = findTaxById(impuestosRet, l.ret_tax_id);
-            const ivaTrace = ivaTax ? taxTrace(ivaTax, resolveTaxAccount(ivaTax, puc).code || null) : null;
-            const retTrace = retTax ? taxTrace(retTax, resolveTaxAccount(retTax, puc).code || null) : null;
-            return {
-            account_code: l.account_code,
-            account_name: l.account_name,
-            item_type: l.item_type,
-            iva: roundCOP(l.iva),
-            retention: roundCOP(l.retention),
-            iva_tax_id: ivaTrace?.tax_id ?? null,
-            iva_tax_name: ivaTrace?.tax_name ?? null,
-            iva_tax_rate: ivaTrace?.tax_rate ?? null,
-            iva_account_code: ivaTrace?.account_code ?? null,
-            iva_operational_account: ivaTrace?.operational_account ?? null,
-            iva_siigo_id: ivaTrace?.siigo_id ?? null,
-            iva_siigo_name: ivaTrace?.siigo_name ?? null,
-            ret_tax_id: retTrace?.tax_id ?? null,
-            ret_tax_kind: retTrace?.tax_type ?? null,
-            ret_tax_name: retTrace?.tax_name ?? null,
-            ret_tax_rate: retTrace?.tax_rate ?? null,
-            ret_account_code: retTrace?.account_code ?? null,
-            ret_operational_account: retTrace?.operational_account ?? null,
-            ret_siigo_id: retTrace?.siigo_id ?? null,
-            ret_siigo_name: retTrace?.siigo_name ?? null,
-            };
-          })())
+          .update(
+            (() => {
+              const ivaTax = findTaxById(impuestosIva, l.iva_tax_id);
+              const retTax = findTaxById(impuestosRet, l.ret_tax_id);
+              const ivaTrace = ivaTax
+                ? taxTrace(ivaTax, resolveTaxAccount(ivaTax, puc).code || null)
+                : null;
+              const retTrace = retTax
+                ? taxTrace(retTax, resolveTaxAccount(retTax, puc).code || null)
+                : null;
+              return {
+                account_code: l.account_code,
+                account_name: l.account_name,
+                item_type: l.item_type,
+                iva: roundCOP(l.iva),
+                retention: roundCOP(l.retention),
+                iva_tax_id: ivaTrace?.tax_id ?? null,
+                iva_tax_name: ivaTrace?.tax_name ?? null,
+                iva_tax_rate: ivaTrace?.tax_rate ?? null,
+                iva_account_code: ivaTrace?.account_code ?? null,
+                iva_operational_account: ivaTrace?.operational_account ?? null,
+                iva_siigo_id: ivaTrace?.siigo_id ?? null,
+                iva_siigo_name: ivaTrace?.siigo_name ?? null,
+                ret_tax_id: retTrace?.tax_id ?? null,
+                ret_tax_kind: retTrace?.tax_type ?? null,
+                ret_tax_name: retTrace?.tax_name ?? null,
+                ret_tax_rate: retTrace?.tax_rate ?? null,
+                ret_account_code: retTrace?.account_code ?? null,
+                ret_operational_account: retTrace?.operational_account ?? null,
+                ret_siigo_id: retTrace?.siigo_id ?? null,
+                ret_siigo_name: retTrace?.siigo_name ?? null,
+              };
+            })(),
+          )
           .eq("id", l.id),
       ),
     );
     const lineError = lineUpdates.find((result) => result.error)?.error;
-    if (lineError) throw new Error(`No se pudieron guardar los impuestos de los renglones: ${lineError.message}`);
+    if (lineError)
+      throw new Error(
+        `No se pudieron guardar los impuestos de los renglones: ${lineError.message}`,
+      );
 
-    const { error: deleteJournalError } = await supabase.from("journal_lines").delete().eq("invoice_id", header.id);
-    if (deleteJournalError) throw new Error(`No se pudo actualizar el asiento contable: ${deleteJournalError.message}`);
+    const { error: deleteJournalError } = await supabase
+      .from("journal_lines")
+      .delete()
+      .eq("invoice_id", header.id);
+    if (deleteJournalError)
+      throw new Error(`No se pudo actualizar el asiento contable: ${deleteJournalError.message}`);
     const { error: insertJournalError } = await supabase.from("journal_lines").insert(
-       operationalJournal.map((j, i) => ({
+      operationalJournal.map((j, i) => ({
         invoice_id: header.id,
         company_id: header.company_id,
         account_code: j.account_code,
@@ -452,7 +616,10 @@ function Revisar() {
         position: i,
       })),
     );
-    if (insertJournalError) throw new Error(`No se pudo guardar el asiento contable actualizado: ${insertJournalError.message}`);
+    if (insertJournalError)
+      throw new Error(
+        `No se pudo guardar el asiento contable actualizado: ${insertJournalError.message}`,
+      );
   }
 
   async function causar() {
@@ -469,7 +636,10 @@ function Revisar() {
         cost_center: header.cost_center ?? null,
       }),
     );
-    if (errores.length > 0) { toast.error("Corrige los errores antes de enviar la factura."); return; }
+    if (errores.length > 0) {
+      toast.error("Corrige los errores antes de enviar la factura.");
+      return;
+    }
     setSending(true);
     try {
       await guardarCambios();
@@ -505,7 +675,10 @@ function Revisar() {
       );
       console.log("============================================");
       const res = await sync({ data: { invoiceId: header.id } });
-      if (!res.ok) { toast.error(res.error ?? "Siigo rechazó el comprobante."); return; }
+      if (!res.ok) {
+        toast.error(res.error ?? "Siigo rechazó el comprobante.");
+        return;
+      }
       // Aprendizaje: la cuenta por pagar aprobada queda asociada al proveedor DENTRO de esta empresa.
       await learnPayableAccount(header.company_id, header.provider_nit, payable?.code);
       // Aprendizaje del tratamiento del IVA aprobado para este proveedor y concepto.
@@ -544,7 +717,9 @@ function Revisar() {
       toast.success(res.error ?? "Factura sincronizada correctamente.");
       await queryClient.invalidateQueries({ queryKey: ["invoices", companyId] });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "No fue posible causar la factura en Siigo.");
+      toast.error(
+        err instanceof Error ? err.message : "No fue posible causar la factura en Siigo.",
+      );
     } finally {
       setSending(false);
     }
@@ -556,11 +731,15 @@ function Revisar() {
     const query = l.code || l.description || "";
     setInventario({ index, query, results: null, busy: true });
     try {
-      const results = await findProduct({ data: { query, companyId: header?.company_id ?? companyId ?? "" } });
+      const results = await findProduct({
+        data: { query, companyId: header?.company_id ?? companyId ?? "" },
+      });
       setInventario({ index, query, results, busy: false });
     } catch (err) {
       setInventario({ index, query, results: [], busy: false });
-      toast.error(err instanceof Error ? err.message : "No fue posible consultar productos en Siigo.");
+      toast.error(
+        err instanceof Error ? err.message : "No fue posible consultar productos en Siigo.",
+      );
     }
   }
 
@@ -581,7 +760,9 @@ function Revisar() {
       toast.success(`Producto creado en Siigo con el código ${p.code}.`);
       setInventario(null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "No fue posible crear el producto en Siigo.");
+      toast.error(
+        err instanceof Error ? err.message : "No fue posible crear el producto en Siigo.",
+      );
       setInventario({ ...inventario, busy: false });
     }
   }
@@ -594,12 +775,22 @@ function Revisar() {
     const first = lines[0];
     if (!first) return;
     setLines((prev) =>
-      prev.map((l) => ({ ...l, account_code: first.account_code, account_name: first.account_name, item_type: first.item_type, iva: first.iva, retention: first.retention })),
+      prev.map((l) => ({
+        ...l,
+        account_code: first.account_code,
+        account_name: first.account_name,
+        item_type: first.item_type,
+        iva: first.iva,
+        retention: first.retention,
+      })),
     );
     toast.success("Cuenta, tipo de ítem, IVA y retención copiados a todos los renglones.");
   }
 
-  if (!id) return <p className="text-sm text-muted-foreground">Selecciona una factura desde el historial.</p>;
+  if (!id)
+    return (
+      <p className="text-sm text-muted-foreground">Selecciona una factura desde el historial.</p>
+    );
   if (!header) return <p className="text-sm text-muted-foreground">Cargando la factura…</p>;
 
   return (
@@ -607,10 +798,12 @@ function Revisar() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">
-            Revisión y causación · {[header.prefix, header.number].filter(Boolean).join("-") || "Sin número"}
+            Revisión y causación ·{" "}
+            {[header.prefix, header.number].filter(Boolean).join("-") || "Sin número"}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {header.provider_name ?? "Sin proveedor"} · {fecha(header.issue_date)} · Estado Siigo: {header.siigo_status}
+            {header.provider_name ?? "Sin proveedor"} · {fecha(header.issue_date)} · Estado Siigo:{" "}
+            {header.siigo_status}
           </p>
         </div>
         <Button asChild variant="outline">
@@ -620,46 +813,74 @@ function Revisar() {
 
       <div className="grid gap-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2 xl:grid-cols-4">
         {usaCentros && (
-        <div className="space-y-1.5">
-          <Label className="text-xs">Centro de costo</Label>
-          <select
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-            value={header.cost_center ?? ""}
-            onChange={(e) => { setCentroTocado(true); setHeader({ ...header, cost_center: e.target.value }); }}
-          >
-            <option value="">Sin centro de costo</option>
-            {(data?.centers ?? []).map((c) => (
-              <option key={c.code} value={c.code}>
-                {c.code} · {c.name}
-              </option>
-            ))}
-          </select>
-          {centroSugerido && !centroTocado && <p className="text-xs text-muted-foreground">{centroSugerido}</p>}
-        </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Centro de costo</Label>
+            <select
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              value={header.cost_center ?? ""}
+              onChange={(e) => {
+                setCentroTocado(true);
+                setHeader({ ...header, cost_center: e.target.value });
+              }}
+            >
+              <option value="">Sin centro de costo</option>
+              {(data?.centers ?? []).map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.code} · {c.name}
+                </option>
+              ))}
+            </select>
+            {centroSugerido && !centroTocado && (
+              <p className="text-xs text-muted-foreground">{centroSugerido}</p>
+            )}
+          </div>
         )}
         <div className="space-y-1.5">
           <Label className="text-xs">Forma de pago</Label>
-          <Input value={header.payment_form ?? ""} onChange={(e) => setHeader({ ...header, payment_form: e.target.value })} />
+          <Input
+            value={header.payment_form ?? ""}
+            onChange={(e) => setHeader({ ...header, payment_form: e.target.value })}
+          />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">IVA</Label>
-          <Input type="number" value={header.iva} onChange={(e) => setHeader({ ...header, iva: Number(e.target.value) })} />
+          <Input
+            type="number"
+            value={header.iva}
+            onChange={(e) => setHeader({ ...header, iva: Number(e.target.value) })}
+          />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Retefuente</Label>
-          <Input type="number" value={header.retefuente} onChange={(e) => setHeader({ ...header, retefuente: Number(e.target.value) })} />
+          <Input
+            type="number"
+            value={header.retefuente}
+            onChange={(e) => setHeader({ ...header, retefuente: Number(e.target.value) })}
+          />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">ReteIVA</Label>
-          <Input type="number" value={header.reteiva} onChange={(e) => setHeader({ ...header, reteiva: Number(e.target.value) })} />
+          <Input
+            type="number"
+            value={header.reteiva}
+            onChange={(e) => setHeader({ ...header, reteiva: Number(e.target.value) })}
+          />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">ReteICA</Label>
-          <Input type="number" value={header.reteica} onChange={(e) => setHeader({ ...header, reteica: Number(e.target.value) })} />
+          <Input
+            type="number"
+            value={header.reteica}
+            onChange={(e) => setHeader({ ...header, reteica: Number(e.target.value) })}
+          />
         </div>
         <div className="space-y-1.5 sm:col-span-2">
           <Label className="text-xs">Observaciones</Label>
-          <Textarea rows={2} value={header.notes ?? ""} onChange={(e) => setHeader({ ...header, notes: e.target.value })} />
+          <Textarea
+            rows={2}
+            value={header.notes ?? ""}
+            onChange={(e) => setHeader({ ...header, notes: e.target.value })}
+          />
         </div>
       </div>
 
@@ -692,15 +913,22 @@ function Revisar() {
                       value={l.account_code ?? ""}
                       onChange={(e) => {
                         const acc = (data?.accounts ?? []).find((a) => a.code === e.target.value);
-                        setLine(i, { account_code: e.target.value, account_name: acc?.name ?? null });
+                        setLine(i, {
+                          account_code: e.target.value,
+                          account_name: acc?.name ?? null,
+                        });
                       }}
                     >
                       <option value="">Seleccionar…</option>
-                      {l.account_code && !(data?.accounts ?? []).some((a) => a.code === l.account_code) && (
-                        <option value={l.account_code}>
-                          {l.account_code} · {l.account_name ?? cuentasVerificadas[l.account_code]?.name ?? "Cuenta del renglón"}
-                        </option>
-                      )}
+                      {l.account_code &&
+                        !(data?.accounts ?? []).some((a) => a.code === l.account_code) && (
+                          <option value={l.account_code}>
+                            {l.account_code} ·{" "}
+                            {l.account_name ??
+                              cuentasVerificadas[l.account_code]?.name ??
+                              "Cuenta del renglón"}
+                          </option>
+                        )}
                       {(data?.accounts ?? []).map((a) => (
                         <option key={a.code} value={a.code}>
                           {a.code} · {a.name}
@@ -724,22 +952,36 @@ function Revisar() {
                         ))}
                       </select>
                       {normalizeItemType(l.item_type) === "producto" && (
-                        <Button variant="ghost" size="icon" title="Buscar en Siigo" onClick={() => buscarProducto(i)}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Buscar en Siigo"
+                          onClick={() => buscarProducto(i)}
+                        >
                           <PackageSearch className="size-4" />
                         </Button>
                       )}
                     </div>
                   </td>
                   <td className="px-3 py-1.5 w-28">
-                    <Input type="number" value={l.iva} onChange={(e) => setLine(i, { iva: Number(e.target.value) })} />
+                    <Input
+                      type="number"
+                      value={l.iva}
+                      onChange={(e) => setLine(i, { iva: Number(e.target.value) })}
+                    />
                     <select
                       className="mt-1 h-8 w-full rounded-md border border-input bg-background px-1 text-xs"
                       value={l.iva_tax_id ?? ""}
                       onChange={(e) => {
                         const id = e.target.value || null;
                         const tx = findTaxById(impuestosIva, id);
-                        const baseLinea = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
-                        setLine(i, { iva_tax_id: id, iva: tx ? roundCOP((baseLinea * Number(tx.rate)) / 100) : 0 });
+                        const baseLinea =
+                          Number(l.quantity || 0) * Number(l.unit_value || 0) -
+                          Number(l.discount || 0);
+                        setLine(i, {
+                          iva_tax_id: id,
+                          iva: tx ? roundCOP((baseLinea * Number(tx.rate)) / 100) : 0,
+                        });
                       }}
                     >
                       <option value="">Sin impuesto</option>
@@ -751,7 +993,11 @@ function Revisar() {
                     </select>
                   </td>
                   <td className="px-3 py-1.5 w-28">
-                    <Input type="number" value={l.retention} onChange={(e) => setLine(i, { retention: Number(e.target.value) })} />
+                    <Input
+                      type="number"
+                      value={l.retention}
+                      onChange={(e) => setLine(i, { retention: Number(e.target.value) })}
+                    />
                     <select
                       className="mt-1 h-8 w-full rounded-md border border-input bg-background px-1 text-xs"
                       value={l.ret_tax_id ?? ""}
@@ -761,8 +1007,12 @@ function Revisar() {
                         const baseLinea =
                           String(tx?.kind) === "reteiva"
                             ? Number(l.iva || 0)
-                            : Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
-                        setLine(i, { ret_tax_id: id, retention: tx ? roundCOP((baseLinea * Number(tx.rate)) / 100) : 0 });
+                            : Number(l.quantity || 0) * Number(l.unit_value || 0) -
+                              Number(l.discount || 0);
+                        setLine(i, {
+                          ret_tax_id: id,
+                          retention: tx ? roundCOP((baseLinea * Number(tx.rate)) / 100) : 0,
+                        });
                       }}
                     >
                       <option value="">Sin retención</option>
@@ -774,7 +1024,9 @@ function Revisar() {
                     </select>
                   </td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">
-                    {cop(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0))}
+                    {cop(
+                      Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
+                    )}
                   </td>
                 </tr>
               ))}
@@ -800,7 +1052,10 @@ function Revisar() {
         <div className="rounded-lg border border-border bg-card p-5">
           <h2 className="text-sm font-semibold">Resumen contable</h2>
           <dl className="mt-3 space-y-1.5 text-sm">
-            <Row k="Proveedor" v={`${header.provider_name ?? "—"} (${header.provider_nit ?? "—"})`} />
+            <Row
+              k="Proveedor"
+              v={`${header.provider_name ?? "—"} (${header.provider_nit ?? "—"})`}
+            />
             {usaCentros && <Row k="Centro de costo" v={header.cost_center || "—"} />}
             <Row
               k="Tipos de ítem"
@@ -809,8 +1064,14 @@ function Revisar() {
             <Row k="Cuentas" v={[...new Set(lines.map((l) => l.account_code ?? "—"))].join(", ")} />
             <Row k="Subtotal" v={cop(base)} />
             <Row k="IVA" v={cop(Number(header.iva))} />
-            <Row k="Total factura" v={cop(roundCOP(base + roundCOP(header.iva) + roundCOP(header.impoconsumo)))} />
-            <Row k="Retefuente" v={retBlocks.retefuente.apply ? cop(retenciones.retefuente) : "—"} />
+            <Row
+              k="Total factura"
+              v={cop(roundCOP(base + roundCOP(header.iva) + roundCOP(header.impoconsumo)))}
+            />
+            <Row
+              k="Retefuente"
+              v={retBlocks.retefuente.apply ? cop(retenciones.retefuente) : "—"}
+            />
             <Row k="ReteIVA" v={retBlocks.reteiva.apply ? cop(retenciones.reteiva) : "—"} />
             <Row k="ReteICA" v={retBlocks.reteica.apply ? cop(retenciones.reteica) : "—"} />
             <Row k="Total retenciones" v={cop(totalRetenciones(retBlocks))} />
@@ -833,7 +1094,10 @@ function Revisar() {
           baseGravable={base}
           ivaTotal={ivaHeader}
           errors={erroresRet}
-          onChange={(next) => { setRetTocado(true); setRetBlocks(next); }}
+          onChange={(next) => {
+            setRetTocado(true);
+            setRetBlocks(next);
+          }}
         />
 
         <IvaTreatmentPanel
@@ -846,22 +1110,30 @@ function Revisar() {
         />
 
         <div className="overflow-hidden rounded-lg border border-border bg-card">
-          <div className="border-b border-border px-5 py-3 text-sm font-semibold">Asiento contable generado</div>
+          <div className="border-b border-border px-5 py-3 text-sm font-semibold">
+            Asiento contable generado
+          </div>
           <table className="w-full text-sm">
             <tbody className="divide-y divide-border">
-               {operationalJournal.map((j, i) => (
+              {operationalJournal.map((j, i) => (
                 <tr key={i}>
                   <td className="px-4 py-1.5 font-mono text-xs">{j.account_code}</td>
                   <td className="px-4 py-1.5 text-muted-foreground">{j.account_name}</td>
-                  <td className="px-4 py-1.5 text-right font-mono tabular-nums">{j.debit ? cop(j.debit) : ""}</td>
-                  <td className="px-4 py-1.5 text-right font-mono tabular-nums">{j.credit ? cop(j.credit) : ""}</td>
+                  <td className="px-4 py-1.5 text-right font-mono tabular-nums">
+                    {j.debit ? cop(j.debit) : ""}
+                  </td>
+                  <td className="px-4 py-1.5 text-right font-mono tabular-nums">
+                    {j.credit ? cop(j.credit) : ""}
+                  </td>
                 </tr>
               ))}
             </tbody>
             <tfoot className="border-t border-border bg-muted/40 text-xs">
               <tr>
                 <td className="px-4 py-2 font-medium" colSpan={2}>
-                  {Math.abs(t.diferencia) < 0.005 ? "Comprobante cuadrado" : `Descuadre ${cop(t.diferencia)}`}
+                  {Math.abs(t.diferencia) < 0.005
+                    ? "Comprobante cuadrado"
+                    : `Descuadre ${cop(t.diferencia)}`}
                 </td>
                 <td className="px-4 py-2 text-right font-mono">{cop(t.debito)}</td>
                 <td className="px-4 py-2 text-right font-mono">{cop(t.credito)}</td>
@@ -912,7 +1184,9 @@ function Revisar() {
               await guardarCambios();
               toast.success("Cambios guardados.");
             } catch (error) {
-              toast.error(error instanceof Error ? error.message : "No fue posible guardar los cambios.");
+              toast.error(
+                error instanceof Error ? error.message : "No fue posible guardar los cambios.",
+              );
             }
           }}
         >
@@ -932,13 +1206,17 @@ function Revisar() {
           {inventario?.busy && <p className="text-sm text-muted-foreground">Consultando Siigo…</p>}
           {!inventario?.busy && (inventario?.results?.length ?? 0) > 0 && (
             <div className="space-y-2 text-sm">
-              <p className="text-muted-foreground">El producto ya existe en Siigo. Se usará el código existente.</p>
+              <p className="text-muted-foreground">
+                El producto ya existe en Siigo. Se usará el código existente.
+              </p>
               {inventario!.results!.map((p) => (
                 <button
                   key={p.id || p.code}
                   className="w-full rounded-md border border-border px-3 py-2 text-left hover:bg-muted/40"
                   onClick={() => {
-                    setLines((prev) => prev.map((x, i) => (i === inventario!.index ? { ...x, code: p.code } : x)));
+                    setLines((prev) =>
+                      prev.map((x, i) => (i === inventario!.index ? { ...x, code: p.code } : x)),
+                    );
                     setInventario(null);
                   }}
                 >
@@ -949,7 +1227,9 @@ function Revisar() {
           )}
           {!inventario?.busy && inventario?.results?.length === 0 && (
             <div className="space-y-3 text-sm">
-              <p className="text-muted-foreground">El producto no existe en Siigo. ¿Deseas crearlo?</p>
+              <p className="text-muted-foreground">
+                El producto no existe en Siigo. ¿Deseas crearlo?
+              </p>
               <Button onClick={crearProducto}>Crear producto automáticamente en Siigo</Button>
             </div>
           )}
