@@ -558,7 +558,11 @@ function Revisar() {
           .update(
             (() => {
               const ivaTax = findTaxById(impuestosIva, l.iva_tax_id);
-              const retTax = findTaxById(impuestosRet, l.ret_tax_id);
+              // El panel de retenciones múltiples es la fuente vigente después de
+              // una corrección manual. Una línea solo admite un impuesto y no puede
+              // representar simultáneamente Retefuente, ReteIVA y ReteICA; se limpia
+              // entonces la selección histórica para que Siigo no reutilice su valor.
+              const retTax = retTocado ? null : findTaxById(impuestosRet, l.ret_tax_id);
               const ivaTrace = ivaTax
                 ? taxTrace(ivaTax, resolveTaxAccount(ivaTax, puc).code || null)
                 : null;
@@ -570,7 +574,7 @@ function Revisar() {
                 account_name: l.account_name,
                 item_type: l.item_type,
                 iva: roundCOP(l.iva),
-                retention: roundCOP(l.retention),
+                retention: retTocado ? 0 : roundCOP(l.retention),
                 iva_tax_id: ivaTrace?.tax_id ?? null,
                 iva_tax_name: ivaTrace?.tax_name ?? null,
                 iva_tax_rate: ivaTrace?.tax_rate ?? null,
