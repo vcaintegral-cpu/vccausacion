@@ -1187,7 +1187,37 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           valor: (prev?.valor ?? 0) + Number(l.retention ?? 0),
         });
       }
-      const retencionesSeleccionadas = [...retencionesPorTaxId.values()];
+      const retencionesSeleccionadasCandidatas = [...retencionesPorTaxId.values()];
+      // El panel de revisión guarda las retenciones múltiples en el encabezado y
+      // reconstruye el asiento. invoice_lines conserva una sola selección histórica
+      // por renglón, por lo que no puede representar simultáneamente Retefuente,
+      // ReteIVA y ReteICA. Solo se reutilizan esas selecciones si sus valores todavía
+      // coinciden por tipo con el encabezado actual; de lo contrario se resuelven de
+      // nuevo desde las retenciones vigentes de la factura.
+      const kindsRetencion = new Set([
+        ...retencionesPorTipo.map((r) => r.kind),
+        ...retencionesSeleccionadasCandidatas.map((r) => r.kind),
+      ]);
+      const seleccionesCoincidenConEncabezado =
+        retencionesSeleccionadasCandidatas.length > 0 &&
+        [...kindsRetencion].every((kind) => {
+          const encabezado = retencionesPorTipo
+            .filter((r) => r.kind === kind)
+            .reduce((sum, r) => sum + r.amount, 0);
+          const renglones = retencionesSeleccionadasCandidatas
+            .filter((r) => r.kind === kind)
+            .reduce((sum, r) => sum + r.valor, 0);
+          return Math.abs(roundCOP(encabezado - renglones)) < 0.005;
+        });
+      const retencionesSeleccionadas = seleccionesCoincidenConEncabezado
+        ? retencionesSeleccionadasCandidatas
+        : [];
+      if (retencionesSeleccionadasCandidatas.length > 0 && !seleccionesCoincidenConEncabezado) {
+        console.warn("[siigo][retenciones] Se ignoraron selecciones antiguas de renglón; se usa el encabezado actualizado.", {
+          encabezado: retencionesPorTipo.map((r) => ({ kind: r.kind, value: r.amount })),
+          renglones: retencionesSeleccionadasCandidatas.map((r) => ({ kind: r.kind, value: r.valor })),
+        });
+      }
       for (const r of retencionesSeleccionadas) {
         retencionesSiigo.push({ id: r.siigoId, value: r.valor, tipo: r.nombre, kind: r.kind });
         retencionesTrace.push({

@@ -384,7 +384,7 @@ function Revisar() {
 
   async function guardarCambios() {
     if (!header) return;
-    await supabase
+    const { error: invoiceError } = await supabase
       .from("invoices")
       .update({
         cost_center: costCenterForCompany(costPolicy ?? null, header.cost_center),
@@ -398,8 +398,9 @@ function Revisar() {
         total: roundCOP(base + roundCOP(header.iva) + roundCOP(header.impoconsumo)),
       })
       .eq("id", header.id);
+    if (invoiceError) throw new Error(`No se pudieron guardar las retenciones de la factura: ${invoiceError.message}`);
 
-    await Promise.all(
+    const lineUpdates = await Promise.all(
       lines.map((l) =>
         supabase
           .from("invoice_lines")
@@ -434,9 +435,12 @@ function Revisar() {
           .eq("id", l.id),
       ),
     );
+    const lineError = lineUpdates.find((result) => result.error)?.error;
+    if (lineError) throw new Error(`No se pudieron guardar los impuestos de los renglones: ${lineError.message}`);
 
-    await supabase.from("journal_lines").delete().eq("invoice_id", header.id);
-    await supabase.from("journal_lines").insert(
+    const { error: deleteJournalError } = await supabase.from("journal_lines").delete().eq("invoice_id", header.id);
+    if (deleteJournalError) throw new Error(`No se pudo actualizar el asiento contable: ${deleteJournalError.message}`);
+    const { error: insertJournalError } = await supabase.from("journal_lines").insert(
        operationalJournal.map((j, i) => ({
         invoice_id: header.id,
         company_id: header.company_id,
@@ -448,6 +452,7 @@ function Revisar() {
         position: i,
       })),
     );
+    if (insertJournalError) throw new Error(`No se pudo guardar el asiento contable actualizado: ${insertJournalError.message}`);
   }
 
   async function causar() {
@@ -903,8 +908,12 @@ function Revisar() {
         <Button
           variant="outline"
           onClick={async () => {
-            await guardarCambios();
-            toast.success("Cambios guardados.");
+            try {
+              await guardarCambios();
+              toast.success("Cambios guardados.");
+            } catch (error) {
+              toast.error(error instanceof Error ? error.message : "No fue posible guardar los cambios.");
+            }
           }}
         >
           Guardar cambios
