@@ -91,6 +91,7 @@ async function prepararArchivo(file: File, password?: string): Promise<PreparedI
         .map((i) => (typeof (i as { str?: string }).str === "string" ? (i as { str: string }).str : ""))
         .join(" ")}\n`;
       page.cleanup();
+      await respirar();
     }
   } catch {
     digital = "";
@@ -102,23 +103,29 @@ async function prepararArchivo(file: File, password?: string): Promise<PreparedI
 
   // 2) PDF escaneado: se renderizan las páginas para que la IA las lea como imagen.
   const images: Array<{ dataUrl: string; mimeType: string }> = [];
+  const puedeOffscreen = typeof OffscreenCanvas !== "undefined";
 
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const initialViewport = page.getViewport({ scale: 1 });
     const scale = Math.min(1.6, MAX_RENDER_WIDTH / initialViewport.width);
     const viewport = page.getViewport({ scale });
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    const context = canvas.getContext("2d", { alpha: false });
+    const width = Math.ceil(viewport.width);
+    const height = Math.ceil(viewport.height);
+    const canvas: HTMLCanvasElement | OffscreenCanvas = puedeOffscreen
+      ? new OffscreenCanvas(width, height)
+      : Object.assign(document.createElement("canvas"), { width, height });
+    const context = canvas.getContext("2d", { alpha: false }) as CanvasRenderingContext2D | null;
     if (!context) throw new Error("No fue posible preparar las páginas del PDF.");
     context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvas, canvasContext: context, viewport }).promise;
-    images.push({ dataUrl: canvas.toDataURL("image/jpeg", 0.72), mimeType: "image/jpeg" });
+    context.fillRect(0, 0, width, height);
+    await page.render({ canvas: canvas as unknown as HTMLCanvasElement, canvasContext: context, viewport }).promise;
+    images.push({ dataUrl: await canvasToJpeg(canvas), mimeType: "image/jpeg" });
     page.cleanup();
+    if (!puedeOffscreen) (canvas as HTMLCanvasElement).width = 0;
+    await respirar();
   }
+
 
   await loadingTask.destroy();
   if (images.length === 0) throw new Error("El PDF no contiene páginas que se puedan leer.");
