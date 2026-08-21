@@ -73,11 +73,22 @@ const EMPTY: BulkProgress = {
 
 let snapshot: BulkProgress = EMPTY;
 const listeners = new Set<() => void>();
+// Se avisa a la interfaz como máximo 4 veces por segundo: el avance sigue siendo
+// inmediato en memoria, pero la pantalla no se vuelve a dibujar en cada paso.
+let avisoPendiente = false;
+
+function notificar() {
+  avisoPendiente = false;
+  for (const l of listeners) l();
+}
 
 function emit(patch: Partial<BulkProgress>) {
   snapshot = { ...snapshot, ...patch };
-  for (const l of listeners) l();
+  if (avisoPendiente) return;
+  avisoPendiente = true;
+  setTimeout(notificar, 250);
 }
+
 
 function subscribe(listener: () => void) {
   listeners.add(listener);
