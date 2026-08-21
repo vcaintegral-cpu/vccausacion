@@ -95,3 +95,30 @@ export function buildIvaGroups(entries: IvaEntry[], puc: PucAccount[]): { groups
   }
   return { groups: [...map.values()], errors };
 }
+
+/**
+ * Cuenta contable del impoconsumo. Nunca usa una cuenta mayor:
+ * 1) la cuenta del impuesto de tipo "impoconsumo" configurado en Administración,
+ * 2) en su defecto, la cuenta operativa (auxiliar) resuelta contra el PUC.
+ * Si la cuenta configurada es una cuenta padre, se resuelve a su auxiliar operativa.
+ */
+export function resolveImpoconsumoAccount(
+  taxes: TaxRecord[],
+  puc: PucAccount[],
+  fallbackCode = "521595",
+): TaxAccountResolution {
+  const tax = taxes.find(
+    (t) => String(t.kind) === "impoconsumo" && t.active !== false && String(t.account_code ?? "").trim(),
+  );
+  if (tax) return resolveTaxAccount(tax, puc);
+  const code = String(fallbackCode ?? "").trim();
+  if (!code || puc.length === 0) return { code, name: "Impoconsumo", error: null };
+  const r = resolveOperationalAccount(puc, code);
+  if (r.valid && r.operationalAccount)
+    return { code: r.operationalAccount, name: r.operational?.name ?? "Impoconsumo", error: null };
+  return {
+    code,
+    name: "Impoconsumo",
+    error: `Impoconsumo (cuenta ${code}): ${r.message ?? "la cuenta no permite movimiento."} Configure la cuenta del impoconsumo en Administración → Retenciones.`,
+  };
+}
