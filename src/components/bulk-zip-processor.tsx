@@ -511,17 +511,210 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
         </div>
       ) : null}
 
-      {/* DETALLE COMPLETO — se despliega hacia abajo dentro de la misma pantalla. */}
-      {upload && abierto ? (
-        <div className="space-y-3 rounded-md border border-border bg-card p-3">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold">Detalle de carga · {upload.file_name}</p>
-            <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setAbierto(false)}>Cerrar</Button>
+      {/* DETALLE COMPLETO — modal amplio con secciones plegables. */}
+      <Dialog open={!!upload && abierto} onOpenChange={setAbierto}>
+        <DialogContent className="max-h-[85vh] max-w-5xl overflow-auto">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Detalle de carga · {upload?.file_name}</DialogTitle>
+          </DialogHeader>
+
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[
+              ["Total PDF", String(stats.total)],
+              ["Procesadas", String(stats.done)],
+              ["En proceso", String(stats.active)],
+              ["Pendientes", String(stats.pending)],
+              ["Con error", String(stats.failed)],
+              ["Duplicadas", String(stats.dup)],
+              ["No compatibles", String(upload?.skipped_files ?? 0)],
+              ["Requieren revisión", String(stats.review)],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-md border border-border p-2">
+                <p className="text-[11px] text-muted-foreground">{label}</p>
+                <p className="text-sm font-semibold">{value}</p>
+              </div>
+            ))}
           </div>
-...
+
+          <div className="flex flex-wrap gap-2">
+            {stats.total > 0 ? (
+              <Button size="sm" variant="outline" onClick={descargarReporte}>
+                <Download className="size-4" /> Descargar reporte
+              </Button>
+            ) : null}
+            {!running && stats.failed + stats.review > 0 ? (
+              <Button size="sm" variant="outline" onClick={() => void reintentarErrores()}>
+                <RefreshCw className="size-4" /> Reintentar pendientes
+              </Button>
+            ) : null}
+            <Button size="sm" variant="outline" disabled={running || !!busy} onClick={() => void diagnosticar()}>
+              <RefreshCw className="size-4" /> Diagnóstico sin IA
+            </Button>
+            {upload ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-destructive"
+                disabled={running || !!busy}
+                onClick={() => void eliminarProceso(upload)}
+              >
+                <Trash2 className="size-4" /> Eliminar carga
+              </Button>
+            ) : null}
+          </div>
+
+          {diag ? (
+            <div className="rounded-md border border-border bg-muted/30 p-3 text-[11px] leading-5">
+              <p className="mb-1 text-xs font-semibold">Diagnóstico del PDF (sin IA) · {diag.fileName}</p>
+              <p>Bucket: {diag.bucket}</p>
+              <p>Storage path: {diag.storagePath ?? "—"}</p>
+              <p>Existe: {diag.exists ? "SI" : "NO"}</p>
+              <p>Descarga: {diag.downloadOk ? "OK" : "ERROR"}</p>
+              <p>Tamaño: {diag.sizeBytes ?? 0} bytes</p>
+              <p>MIME: {diag.mimeType ?? "—"}</p>
+              <p>PDF válido: {diag.pdfValid ? "OK" : "NO"}</p>
+              <p>Texto extraído: {diag.textChars} caracteres ({diag.readMode})</p>
+              <p>Etapa: {diag.stage} · Código: {diag.code}</p>
+              <p>Mensaje: {diag.message}</p>
+            </div>
+          ) : null}
+
+          <Accordion
+            type="single"
+            collapsible
+            value={detalle ?? ""}
+            onValueChange={(v) => setDetalle((v || null) as typeof detalle)}
+          >
+            <AccordionItem value="errores">
+              <AccordionTrigger className="text-xs font-semibold">
+                Archivos con error ({errores.length})
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="max-h-72 space-y-2 overflow-auto pr-1">
+                  {errores.length === 0 ? <p className="text-xs text-muted-foreground">Sin errores.</p> : null}
+                  {errores.map((i) => (
+                    <div key={i.id} className="rounded-md border border-border p-2 text-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{i.file_name}</p>
+                          <p className="truncate text-muted-foreground">
+                            {i.invoice_number ?? "Sin número"} · {i.provider_name ?? "Proveedor no identificado"}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button size="sm" variant="outline" onClick={() => void reintentar([i.id])} disabled={running}>
+                            <RefreshCw className="size-3.5" /> Reintentar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2"
+                            onClick={() => setTecnicos((t) => ({ ...t, [i.id]: !t[i.id] }))}
+                          >
+                            <ChevronDown className="size-3.5" /> Ver detalles técnicos
+                          </Button>
+                        </div>
+                      </div>
+                      <p className="mt-1 text-destructive">{mensajeAmigable(i)}</p>
+                      {tecnicos[i.id] ? (
+                        <div className="mt-1 rounded-md bg-muted/40 p-2 text-[11px] leading-5 text-muted-foreground">
+                          <p>Código técnico: {codigoTecnico(i)}</p>
+                          <p>Etapa: {i.stage ?? "—"}</p>
+                          <p>ID del proceso: {i.id}</p>
+                          <p>Mensaje original: {i.error_message ?? i.user_message ?? "—"}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="duplicados">
+              <AccordionTrigger className="text-xs font-semibold">Duplicados ({duplicados.length})</AccordionTrigger>
+              <AccordionContent>
+                <div className="max-h-72 space-y-1 overflow-auto pr-1">
+                  {duplicados.length === 0 ? <p className="text-xs text-muted-foreground">Sin duplicados.</p> : null}
+                  {duplicados.map((i) => (
+                    <div key={i.id} className="rounded-md border border-border p-2 text-xs">
+                      <p className="truncate font-medium">{i.invoice_number ?? i.file_name}</p>
+                      <p className="text-muted-foreground">→ Ya existe · Ya fue procesada · No se volverá a causar</p>
+                    </div>
+                  ))}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="procesadas">
+              <AccordionTrigger className="text-xs font-semibold">Procesadas ({procesadas.length})</AccordionTrigger>
+              <AccordionContent>
+                <div className="max-h-72 overflow-auto rounded-md border border-border">
+                  <table className="w-full text-[11px]">
+                    <thead className="sticky top-0 bg-muted/50 text-left">
+                      <tr>
+                        {["Archivo", "Proveedor", "Comprador", "Factura", "Total", "Estado"].map((h) => (
+                          <th key={h} className="px-2 py-1 font-medium">
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {procesadas.map((i) => (
+                        <tr key={i.id} className="border-t border-border">
+                          <td className="max-w-44 truncate px-2 py-1">{i.file_name}</td>
+                          <td className="max-w-32 truncate px-2 py-1">{i.provider_name ?? "—"}</td>
+                          <td className="max-w-32 truncate px-2 py-1">{i.buyer_name ?? "—"}</td>
+                          <td className="px-2 py-1">{i.invoice_number ?? "—"}</td>
+                          <td className="px-2 py-1">{cop(Number(i.invoice_total ?? 0))}</td>
+                          <td className="px-2 py-1">{i.read_status ?? ITEM_LABEL[i.status]}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="revision">
+              <AccordionTrigger className="text-xs font-semibold">
+                Requieren revisión ({revision.length})
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="max-h-72 space-y-1 overflow-auto pr-1">
+                  {revision.length === 0 ? <p className="text-xs text-muted-foreground">Ninguna.</p> : null}
+                  {revision.map((i) => (
+                    <div key={i.id} className="rounded-md border border-border p-2 text-xs">
+                      <p className="truncate font-medium">{i.file_name}</p>
+                      <p className="text-muted-foreground">
+                        {i.invoice_number ?? "—"} · confianza {Math.round(Number(i.score ?? 0) * 100)}%
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="pendientes">
+              <AccordionTrigger className="text-xs font-semibold">
+                Pendientes y en proceso ({pendientes.length})
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="max-h-72 space-y-1 overflow-auto pr-1">
+                  {pendientes.length === 0 ? <p className="text-xs text-muted-foreground">Ninguna.</p> : null}
+                  {pendientes.map((i) => (
+                    <div key={i.id} className="flex items-center gap-2 rounded-md border border-border p-2 text-xs">
+                      <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                      <span className="truncate font-medium">{i.file_name}</span>
+                      <span className="text-muted-foreground">{ITEM_LABEL[i.status]}</span>
+                    </div>
+                  ))}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
           </Accordion>
-        </div>
-      ) : null}
+        </DialogContent>
+      </Dialog>
 
       {(historial.data ?? []).length > 0 ? (
         <div className="space-y-1">
