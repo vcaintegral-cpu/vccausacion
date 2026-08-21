@@ -1126,7 +1126,7 @@ function Causar() {
           console.warn("[sincronizacion] no fue posible revisar los borradores del proveedor", e);
         }
       }
-      navigate({ to: "/facturas" });
+      navigate({ to: "/borradores" });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "No fue posible guardar el comprobante.";
       toast.error(
@@ -1777,7 +1777,7 @@ function Causar() {
 
       <DraftSyncDialog
         request={syncRequest}
-        onClose={() => { setSyncRequest(null); navigate({ to: "/facturas" }); }}
+        onClose={() => { setSyncRequest(null); navigate({ to: "/borradores" }); }}
       />
 
       {avisoRemoto && (
