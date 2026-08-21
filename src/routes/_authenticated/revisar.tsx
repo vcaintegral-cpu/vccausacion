@@ -23,6 +23,7 @@ import { aprenderDeCausacion } from "@/lib/learning-rules";
 import {
   buildIvaGroups,
   findTaxById,
+  resolveImpoconsumoAccount,
   resolveTaxAccount,
   taxTrace,
   type TaxRecord,
@@ -413,6 +414,8 @@ function Revisar() {
     () => (payableBase ? applyPucToPayable(payableBase, puc) : null),
     [payableBase, puc],
   );
+  // El impoconsumo se registra en la cuenta auxiliar configurada, nunca en la mayor.
+  const impoconsumoCuenta = useMemo(() => resolveImpoconsumoAccount(impuestos, puc), [impuestos, puc]);
   const journal: JournalLine[] = useMemo(
     () =>
       buildJournal({
@@ -434,6 +437,7 @@ function Revisar() {
         costCenter: costCenterForCompany(costPolicy ?? null, header?.cost_center),
         ivaDetalle: ivaDetalle,
         payableAccount: payable,
+        impoconsumoAccount: impoconsumoCuenta,
       }),
     [
       lines,
@@ -444,6 +448,7 @@ function Revisar() {
       ivaDetalle,
       costPolicy,
       payable,
+      impoconsumoCuenta,
     ],
   );
   const operationalJournal = useMemo(() => {

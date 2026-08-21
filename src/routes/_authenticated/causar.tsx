@@ -26,7 +26,7 @@ import {
   registrarAprendizaje,
   type LineDecisions,
 } from "@/lib/causacion-engine";
-import { buildIvaGroups, findTaxById, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
+import { buildIvaGroups, findTaxById, resolveImpoconsumoAccount, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
 import { retencionesReportadas } from "@/lib/retenciones";
 import {
   buildRetenciones,
@@ -685,6 +685,11 @@ function Causar() {
     if (payableManual?.code) return manualPayable(payableManual.code, payableManual.name);
     return payableBase ? applyPucToPayable(payableBase, (config?.accounts ?? []) as PucAccount[]) : null;
   }, [payableBase, config?.accounts, payableManual]);
+  // El impoconsumo se registra en la cuenta auxiliar configurada, nunca en la mayor.
+  const impoconsumoCuenta = useMemo(
+    () => resolveImpoconsumoAccount(impuestos as TaxRecord[], (config?.accounts ?? []) as PucAccount[]),
+    [impuestos, config?.accounts],
+  );
   const journal = useMemo(
     () =>
       buildJournal({
@@ -695,8 +700,9 @@ function Causar() {
         costCenter: costCenterForCompany(costPolicy ?? null, header.cost_center),
         ivaDetalle: ivaDetalle,
         payableAccount: payable,
+        impoconsumoAccount: impoconsumoCuenta,
       }),
-    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaDetalle, costPolicy, payable],
+    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaDetalle, costPolicy, payable, impoconsumoCuenta],
   );
   const operationalJournal = useMemo(() => {
     const puc = (config?.accounts ?? []) as PucAccount[];

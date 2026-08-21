@@ -18,6 +18,7 @@ import {
   sameNit,
 } from "@/lib/company-validation";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
+import { resolveImpoconsumoAccount } from "@/lib/tax-selection";
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
@@ -404,6 +405,8 @@ export async function processInvoiceFile(params: {
     costCenter: centroFactura,
     ...(ivaDetalle ? { ivaDetalle } : {}),
     payableAccount: payable,
+    // El impoconsumo va a la cuenta auxiliar configurada, nunca a una cuenta mayor.
+    impoconsumoAccount: resolveImpoconsumoAccount(config.taxes as never, config.accounts),
   });
   const unresolvedAccounts: string[] = [];
   unresolvedAccounts.push(...erroresRetencion);
