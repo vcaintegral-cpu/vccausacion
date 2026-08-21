@@ -503,7 +503,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
             <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
               <AlertTriangle className="size-3.5 text-warning" />
               <span>{stats.failed + stats.review} facturas requieren revisión</span>
-              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => { setDetalle("errores"); setAbierto(true); }}>
+              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => toggleDetalle("errores")}>
                 Ver errores
               </Button>
             </div>
