@@ -662,6 +662,21 @@ function Borradores() {
         </DialogContent>
       </Dialog>
 
+      <PaymentReceiptDialog
+        open={pagoOpen}
+        onOpenChange={setPagoOpen}
+        companyId={companyId}
+        puc={puc}
+        facturas={pagoFacturas}
+        onDone={async (res) => {
+          setResultados(res.map((r) => ({ id: r.id, etiqueta: r.etiqueta, ok: r.ok, message: r.message })));
+          const ok = res.filter((r) => r.ok).length;
+          if (ok) toast.success(`${ok} recibo(s) de pago generado(s).`);
+          if (res.length - ok) toast.error(`${res.length - ok} factura(s) no se pudieron pagar.`);
+          await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+        }}
+      />
+
       <SyncHistoryDialog
         companyId={companyId}
         open={historialOpen}
