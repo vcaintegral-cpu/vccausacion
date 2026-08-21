@@ -57,7 +57,25 @@ function AuthPage() {
     return true;
   }
 
+  async function recuperarContrasena(): Promise<void> {
+    if (!email) {
+      toast.error("Escribe tu correo para enviarte el enlace de recuperación.");
+      return;
+    }
+    setLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    setLoading(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Te enviamos un correo con el enlace para restablecer tu contraseña.");
+  }
+
   async function signIn(e: React.FormEvent): Promise<void> {
+
     e.preventDefault();
     setLoading(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -144,7 +162,15 @@ function AuthPage() {
                 <Button type="submit" className="w-full" disabled={loading}>
                   Ingresar
                 </Button>
+                <button
+                  type="button"
+                  onClick={recuperarContrasena}
+                  className="w-full text-center text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                >
+                  ¿Olvidaste tu contraseña?
+                </button>
               </form>
+
             </TabsContent>
 
             <TabsContent value="signup">
