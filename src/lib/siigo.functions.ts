@@ -2348,7 +2348,11 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         syncedAt,
         status: "sincronizada",
         error: null,
+        supplierAction: tercero?.action ?? null,
+        supplierId: tercero?.id ?? null,
+        supplierMessage: tercero?.message ?? null,
       };
+
     } catch (e) {
       const raw = e instanceof Error ? e.message : JSON.stringify(e);
       // Los mensajes ya redactados por la validación de forma de pago se conservan tal cual.
