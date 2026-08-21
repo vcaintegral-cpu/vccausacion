@@ -2288,7 +2288,14 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const trace = {
         company_id: inv.company_id,
         factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
-        proveedor: { nit: inv.provider_nit, nombre: inv.provider_name ?? null },
+        proveedor: {
+          nit: inv.provider_nit,
+          nombre: inv.provider_name ?? null,
+          siigo_id: tercero?.id ?? null,
+          tercero: tercero?.action ?? null,
+          tercero_mensaje: tercero?.message ?? null,
+        },
+
         renglones: items.map((it) => ({
           descripcion: it.description,
           tipo_item: it.item_type,
