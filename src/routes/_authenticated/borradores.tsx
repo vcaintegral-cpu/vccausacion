@@ -158,10 +158,23 @@ function Borradores() {
       }
       const accounts = new Map<string, DraftAccounts>();
       for (const [id, rows] of porFactura) accounts.set(id, classifyJournal(rows));
+      // Valor de la cuenta por pagar de cada factura (base del recibo de pago).
+      const cxp = new Map<string, number>();
+      for (const inv of invoices) {
+        const payable = String(inv.payable_account ?? "").trim();
+        const desdeAsiento = (porFactura.get(inv.id) ?? [])
+          .filter((l) => payable && String(l.account_code ?? "").trim() === payable && Number(l.credit ?? 0) > 0)
+          .reduce((s, l) => s + Number(l.credit ?? 0), 0);
+        const fallback =
+          Number(inv.total ?? 0) - Number(inv.retefuente ?? 0) - Number(inv.reteiva ?? 0) - Number(inv.reteica ?? 0);
+        cxp.set(inv.id, roundCOP(desdeAsiento > 0 ? desdeAsiento : fallback));
+      }
       const puc = await fetchCompanyPuc(companyId!);
       return {
         invoices,
         accounts,
+        cxp,
+        puc,
         pucCodes: new Set(puc.map((p) => p.code)),
         pucNames: new Map(puc.map((p) => [p.code, p.name])),
       };
