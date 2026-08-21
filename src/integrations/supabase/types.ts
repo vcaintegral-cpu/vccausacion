@@ -836,6 +836,7 @@ export type Database = {
           iva: number
           notes: string | null
           number: string | null
+          paid_amount: number
           payable_account: string | null
           payable_confidence: number | null
           payable_manual: boolean
@@ -843,8 +844,11 @@ export type Database = {
           payable_suggested: string | null
           payable_updated_at: string | null
           payable_updated_by: string | null
+          payment_config: Json | null
+          payment_enabled: boolean
           payment_form: string | null
           payment_method: string | null
+          payment_status: string
           posted_at: string | null
           posted_by: string | null
           posting_error: string | null
@@ -902,6 +906,7 @@ export type Database = {
           iva?: number
           notes?: string | null
           number?: string | null
+          paid_amount?: number
           payable_account?: string | null
           payable_confidence?: number | null
           payable_manual?: boolean
@@ -909,8 +914,11 @@ export type Database = {
           payable_suggested?: string | null
           payable_updated_at?: string | null
           payable_updated_by?: string | null
+          payment_config?: Json | null
+          payment_enabled?: boolean
           payment_form?: string | null
           payment_method?: string | null
+          payment_status?: string
           posted_at?: string | null
           posted_by?: string | null
           posting_error?: string | null
@@ -968,6 +976,7 @@ export type Database = {
           iva?: number
           notes?: string | null
           number?: string | null
+          paid_amount?: number
           payable_account?: string | null
           payable_confidence?: number | null
           payable_manual?: boolean
@@ -975,8 +984,11 @@ export type Database = {
           payable_suggested?: string | null
           payable_updated_at?: string | null
           payable_updated_by?: string | null
+          payment_config?: Json | null
+          payment_enabled?: boolean
           payment_form?: string | null
           payment_method?: string | null
+          payment_status?: string
           posted_at?: string | null
           posted_by?: string | null
           posting_error?: string | null
@@ -1349,6 +1361,183 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_receipt_lines: {
+        Row: {
+          account_code: string
+          account_name: string | null
+          company_id: string
+          created_at: string
+          credit: number
+          debit: number
+          id: string
+          invoice_id: string
+          position: number
+          receipt_id: string
+        }
+        Insert: {
+          account_code: string
+          account_name?: string | null
+          company_id: string
+          created_at?: string
+          credit?: number
+          debit?: number
+          id?: string
+          invoice_id: string
+          position?: number
+          receipt_id: string
+        }
+        Update: {
+          account_code?: string
+          account_name?: string | null
+          company_id?: string
+          created_at?: string
+          credit?: number
+          debit?: number
+          id?: string
+          invoice_id?: string
+          position?: number
+          receipt_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_receipt_lines_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_receipt_lines_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_receipt_lines_receipt_id_fkey"
+            columns: ["receipt_id"]
+            isOneToOne: false
+            referencedRelation: "payment_receipts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_receipt_sequences: {
+        Row: {
+          company_id: string
+          created_at: string
+          last_number: number
+          prefix: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          last_number?: number
+          prefix?: string
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          last_number?: number
+          prefix?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_receipt_sequences_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: true
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_receipts: {
+        Row: {
+          account_code: string
+          account_name: string | null
+          amount: number
+          balance_after: number
+          balance_before: number
+          check_number: string | null
+          company_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          invoice_id: string
+          method: string
+          notes: string | null
+          payable_account: string | null
+          payment_date: string
+          receipt_number: string
+          siigo_error: string | null
+          siigo_id: string | null
+          siigo_status: string
+          status: string
+        }
+        Insert: {
+          account_code: string
+          account_name?: string | null
+          amount: number
+          balance_after?: number
+          balance_before?: number
+          check_number?: string | null
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id: string
+          method: string
+          notes?: string | null
+          payable_account?: string | null
+          payment_date: string
+          receipt_number: string
+          siigo_error?: string | null
+          siigo_id?: string | null
+          siigo_status?: string
+          status?: string
+        }
+        Update: {
+          account_code?: string
+          account_name?: string | null
+          amount?: number
+          balance_after?: number
+          balance_before?: number
+          check_number?: string | null
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id?: string
+          method?: string
+          notes?: string | null
+          payable_account?: string | null
+          payment_date?: string
+          receipt_number?: string
+          siigo_error?: string | null
+          siigo_id?: string | null
+          siigo_status?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_receipts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_receipts_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
             referencedColumns: ["id"]
           },
         ]
@@ -1921,6 +2110,19 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      create_payment_receipt: {
+        Args: {
+          _account_code: string
+          _account_name?: string
+          _amount?: number
+          _check_number?: string
+          _invoice_id: string
+          _method: string
+          _notes?: string
+          _payment_date: string
+        }
+        Returns: Json
+      }
       history_iva_treatment: {
         Args: { _company_id: string; _limit?: number; _nits?: string[] }
         Returns: {
@@ -1964,6 +2166,7 @@ export type Database = {
           uses: number
         }[]
       }
+      invoice_payable_amount: { Args: { _invoice_id: string }; Returns: number }
       is_company_admin: { Args: { _company_id: string }; Returns: boolean }
       is_company_member: { Args: { _company_id: string }; Returns: boolean }
       post_invoice: { Args: { _invoice_id: string }; Returns: Json }
