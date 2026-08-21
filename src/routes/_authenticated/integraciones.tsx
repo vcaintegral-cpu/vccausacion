@@ -22,6 +22,7 @@ import { useActiveCompany } from "@/lib/active-company";
 import { cop, fechaHora } from "@/lib/format";
 import {
   pucAccountsOverview,
+  siigoImportPaymentTypes,
   siigoImportProviders,
   siigoImportPuc,
   siigoImportTaxes,
@@ -59,6 +60,7 @@ function Integraciones() {
   const companyId = useActiveCompany();
   const checkStatus = useServerFn(siigoStatus);
   const importProviders = useServerFn(siigoImportProviders);
+  const importPaymentTypes = useServerFn(siigoImportPaymentTypes);
   const importPuc = useServerFn(siigoImportPuc);
   const listAccounts = useServerFn(pucAccountsOverview);
   const importTaxes = useServerFn(siigoImportTaxes);
