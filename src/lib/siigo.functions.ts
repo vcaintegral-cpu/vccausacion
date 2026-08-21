@@ -784,6 +784,18 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       );
     }
 
+    // Validación bloqueante: la compra en Siigo exige el número real de la
+    // factura del proveedor (nunca un consecutivo interno de la aplicación).
+    if (!String(inv.number ?? "").trim()) {
+      const sinNumero = "No se puede causar la factura porque no tiene número de factura del proveedor.";
+      await supabase
+        .from("invoices")
+        .update({ siigo_status: "error", siigo_error: sinNumero })
+        .eq("id", inv.id);
+      throw new Error(sinNumero);
+    }
+
+
     // Protección contra doble clic / envíos simultáneos.
     if (inv.siigo_status === "sincronizando") {
       throw new Error(
