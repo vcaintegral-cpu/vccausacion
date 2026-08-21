@@ -377,6 +377,13 @@ function Borradores() {
           <Button variant="ghost" onClick={() => void ejecutar("revertir")} disabled={!!busy || elegibles("revertir").length === 0}>
             {busy === "revertir" ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />} Revertir causación ({elegibles("revertir").length})
           </Button>
+          <Button
+            variant="secondary"
+            onClick={() => abrirPago(seleccionadas.filter((r) => r.payment_enabled))}
+            disabled={!!busy || seleccionadas.filter((r) => r.payment_enabled && pagable(r)).length === 0}
+          >
+            <Wallet className="size-4" /> Generar recibos ({seleccionadas.filter((r) => r.payment_enabled && pagable(r)).length})
+          </Button>
         </div>
       </div>
 
