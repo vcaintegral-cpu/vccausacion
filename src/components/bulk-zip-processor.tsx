@@ -23,7 +23,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { cop, fechaHora } from "@/lib/format";
 import { codigoTecnico, mensajeAmigable } from "@/lib/bulk-messages";
@@ -286,10 +285,23 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   }
 
   async function abrirProceso(u: BulkUpload) {
+    if (upload?.id === u.id && abierto) {
+      setAbierto(false);
+      return;
+    }
     setUpload(u);
     setItems(await listItems(u.id));
     setDetalle("procesadas");
     setAbierto(true);
+  }
+
+  function toggleDetalle(seccion: typeof detalle) {
+    if (abierto && detalle === seccion) {
+      setAbierto(false);
+    } else {
+      setDetalle(seccion);
+      setAbierto(true);
+    }
   }
 
   /** Prueba SIN IA: recupera el primer PDF desde Storage y lo lee con el mismo lector individual. */
@@ -424,16 +436,16 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" onClick={() => { setDetalle("procesadas"); setAbierto(true); }}>
-                Ver detalles
+              <Button size="sm" variant={abierto && detalle === "procesadas" ? "default" : "outline"} onClick={() => toggleDetalle("procesadas")}>
+                {abierto && detalle === "procesadas" ? "Ocultar detalles" : "Ver detalles"}
               </Button>
               {stats.failed > 0 ? (
-                <Button size="sm" variant="outline" onClick={() => { setDetalle("errores"); setAbierto(true); }}>
+                <Button size="sm" variant={abierto && detalle === "errores" ? "default" : "outline"} onClick={() => toggleDetalle("errores")}>
                   Ver errores
                 </Button>
               ) : null}
               {stats.dup > 0 ? (
-                <Button size="sm" variant="outline" onClick={() => { setDetalle("duplicados"); setAbierto(true); }}>
+                <Button size="sm" variant={abierto && detalle === "duplicados" ? "default" : "outline"} onClick={() => toggleDetalle("duplicados")}>
                   Ver duplicados
                 </Button>
               ) : null}
@@ -495,7 +507,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
             <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
               <AlertTriangle className="size-3.5 text-warning" />
               <span>{stats.failed + stats.review} facturas requieren revisión</span>
-              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => { setDetalle("errores"); setAbierto(true); }}>
+              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => toggleDetalle("errores")}>
                 Ver errores
               </Button>
             </div>
@@ -503,12 +515,13 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
         </div>
       ) : null}
 
-      {/* DETALLE COMPLETO — modal amplio con secciones plegables. */}
-      <Dialog open={!!upload && abierto} onOpenChange={setAbierto}>
-        <DialogContent className="max-h-[85vh] max-w-5xl overflow-auto">
-          <DialogHeader>
-            <DialogTitle className="text-sm">Detalle de carga · {upload?.file_name}</DialogTitle>
-          </DialogHeader>
+      {/* DETALLE COMPLETO — se despliega hacia abajo dentro de la misma pantalla. */}
+      {upload && abierto ? (
+        <div className="space-y-3 rounded-md border border-border bg-card p-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold">Detalle de carga · {upload.file_name}</p>
+            <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setAbierto(false)}>Cerrar</Button>
+          </div>
 
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
@@ -705,8 +718,8 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               </AccordionContent>
             </AccordionItem>
           </Accordion>
-        </DialogContent>
-      </Dialog>
+        </div>
+      ) : null}
 
       {(historial.data ?? []).length > 0 ? (
         <div className="space-y-1">
