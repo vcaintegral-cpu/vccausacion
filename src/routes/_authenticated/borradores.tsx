@@ -14,7 +14,10 @@ import { cop, fecha } from "@/lib/format";
 import { ESTADO_LABEL, estadoUnico, type EstadoFactura } from "@/lib/invoice-duplicates";
 import { siigoSyncInvoice } from "@/lib/siigo.functions";
 import { IVA_TREATMENT_LABEL, treatmentForAccount } from "@/lib/iva-treatment";
-import { PAYABLE_SOURCE_LABEL, type PayableSource } from "@/lib/payable-account";
+import { PAYABLE_SOURCE_LABEL, isPayableCode, learnPayableAccount, type PayableSource } from "@/lib/payable-account";
+import { AccountCombobox } from "@/components/account-combobox";
+import { METODO_LABEL, usePaymentTypes } from "@/lib/payment-types";
+
 import { deshacerSincronizacion, fetchSyncHistory, type SyncEvento } from "@/lib/draft-sync";
 import { useDraftsRealtime } from "@/lib/realtime-drafts";
 import {
@@ -83,7 +86,7 @@ export const Route = createFileRoute("/_authenticated/borradores")({
 });
 
 const COLS =
-  "id, company_id, prefix, number, issue_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id, paid_amount, payment_status, payment_enabled";
+  "id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id, paid_amount, payment_status, payment_enabled, payment_method, payment_type_id, payment_type_name, payment_form_manual";
 
 /** Origen visible de la cuenta por pagar del borrador. */
 const origenPayable = (i: DraftInvoice) => {
@@ -208,6 +211,10 @@ function Borradores() {
   const pucNames = data?.pucNames ?? new Map<string, string>();
   const cxpPorFactura = data?.cxp ?? new Map<string, number>();
   const puc = data?.puc ?? [];
+  // Solo cuentas por pagar (grupos 22 y 23) para el selector de CxP.
+  const cuentasPagar = useMemo(() => puc.filter((p) => isPayableCode(p.code)), [puc]);
+  const formasPago = usePaymentTypes(companyId).data ?? [];
+
 
   /** Saldo pendiente de la cuenta por pagar de una factura. */
   const saldoDe = (r: DraftInvoice) =>
@@ -230,6 +237,60 @@ function Borradores() {
     if (error) { toast.error(error.message); return; }
     await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
   }
+
+  /**
+   * Cambia SOLO la cuenta por pagar. Queda marcada como manual y nunca la
+   * sobrescribe la IA ni la forma de pago.
+   */
+  async function cambiarCxP(r: DraftInvoice, code: string, name: string | null) {
+    const codigo = code.trim();
+    if (codigo && !isPayableCode(codigo)) {
+      toast.error(`La cuenta ${codigo} no es una cuenta por pagar válida (grupos 22 o 23).`);
+      return;
+    }
+    const { error } = await supabase
+      .from("invoices")
+      .update({
+        payable_account: codigo || null,
+        payable_source: codigo ? "manual" : null,
+        payable_manual: !!codigo,
+        payable_updated_at: new Date().toISOString(),
+      })
+      .eq("id", r.id);
+    if (error) { toast.error(error.message); return; }
+    if (codigo) {
+      // La cuenta manual también actualiza el asiento para que Siigo reciba lo mismo.
+      const anterior = accounts.get(r.id)?.payable?.code;
+      if (anterior && anterior !== codigo)
+        await supabase
+          .from("journal_lines")
+          .update({ account_code: codigo, account_name: name ?? pucNames.get(codigo) ?? null })
+          .eq("invoice_id", r.id)
+          .eq("account_code", anterior)
+          .gt("credit", 0);
+      await learnPayableAccount(r.company_id, r.provider_nit, codigo);
+    }
+    toast.success("Cuenta por pagar actualizada.");
+    await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+  }
+
+  /** Cambia SOLO la forma de pago (Siigo). No toca la cuenta por pagar. */
+  async function cambiarFormaPago(r: DraftInvoice, siigoId: string) {
+    const forma = formasPago.find((f) => f.siigo_id === siigoId) ?? null;
+    const { error } = await supabase
+      .from("invoices")
+      .update({
+        payment_type_id: forma?.siigo_id ?? null,
+        payment_type_name: forma?.name ?? null,
+        payment_method: forma?.method ?? null,
+        payment_form_manual: !!forma,
+      })
+      .eq("id", r.id);
+    if (error) { toast.error(error.message); return; }
+    toast.success(forma ? `Forma de pago: ${forma.name}.` : "Forma de pago sin definir.");
+    await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+  }
+
 
   function abrirPago(facturas: DraftInvoice[]) {
     const objetivo = facturas.filter(pagable);
@@ -574,6 +635,8 @@ function Borradores() {
               <th className="px-3 py-2 font-medium">Tratamiento IVA</th>
               <th className="px-3 py-2 font-medium">Cuenta CxP</th>
               <th className="px-3 py-2 font-medium">Origen cuenta por pagar</th>
+              <th className="px-3 py-2 font-medium">Forma de pago</th>
+
               <th className="px-3 py-2 font-medium">Centro de costo</th>
               <th className="px-3 py-2 text-right font-medium">Saldo por pagar</th>
               <th className="px-3 py-2 font-medium">Generar recibo</th>
@@ -631,19 +694,56 @@ function Borradores() {
                       : "Sin IVA"}
                   </td>
                   <td className="px-3 py-2">
-                    <Cuentas
-                      items={
-                        acc?.payable
-                          ? [acc.payable]
-                          : r.payable_account
-                            ? [{ code: r.payable_account, name: null }]
-                            : []
-                      }
-                      nombres={pucNames}
-                    />
+                    {e === "borrador" || e === "error" ? (
+                      <AccountCombobox
+                        accounts={cuentasPagar}
+                        value={acc?.payable?.code ?? r.payable_account ?? ""}
+                        onChange={(code, name) => void cambiarCxP(r, code, name)}
+                        placeholder="Buscar cuenta por pagar…"
+                        className="min-w-[190px]"
+                      />
+                    ) : (
+                      <Cuentas
+                        items={
+                          acc?.payable
+                            ? [acc.payable]
+                            : r.payable_account
+                              ? [{ code: r.payable_account, name: null }]
+                              : []
+                        }
+                        nombres={pucNames}
+                      />
+                    )}
                   </td>
                   <td className="px-3 py-2 text-[11px] text-muted-foreground">{origenPayable(r)}</td>
+                  <td className="px-3 py-2">
+                    {e === "borrador" || e === "error" ? (
+                      <select
+                        className="h-9 w-full min-w-[170px] rounded-md border border-input bg-background px-2 text-xs"
+                        value={r.payment_type_id ?? ""}
+                        onChange={(ev) => void cambiarFormaPago(r, ev.target.value)}
+                        aria-label={`Forma de pago de ${etiquetaFactura(r)}`}
+                      >
+                        <option value="">Seleccionar…</option>
+                        {formasPago
+                          .filter((f) => f.active)
+                          .map((f) => (
+                            <option key={f.siigo_id} value={f.siigo_id}>
+                              {f.name} · {METODO_LABEL[f.method]}
+                            </option>
+                          ))}
+                      </select>
+                    ) : (
+                      <span className="text-xs">{r.payment_type_name ?? "—"}</span>
+                    )}
+                    {formasPago.length === 0 && (
+                      <div className="mt-1 text-[11px] text-amber-600">
+                        Sincroniza las formas de pago desde Integraciones.
+                      </div>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{acc?.costCenter ?? r.cost_center ?? "—"}</td>
+
                   <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">
                     {cop(saldoDe(r))}
                     {Number(r.paid_amount ?? 0) > 0 && (

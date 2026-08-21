@@ -386,6 +386,78 @@ export const siigoImportCostCenters = createServerFn({ method: "POST" })
     return { imported: toUpsert.length, skipped: rows.length - toUpsert.length };
   });
 
+/**
+ * Sincroniza las FORMAS DE PAGO reales de la empresa en Siigo (document_type=FC).
+ * Nunca se inventan formas de pago: solo se guardan las configuradas en Siigo.
+ */
+export const siigoImportPaymentTypes = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
+    type PayType = {
+      id?: number | string;
+      name?: string;
+      type?: string;
+      active?: boolean;
+      due_date?: boolean;
+      account?: { code?: string | number; name?: string } | null;
+      account_code?: string | number;
+    };
+    const res = await siigoGet<PayType[] | { results?: PayType[] }>("/v1/payment-types?document_type=FC");
+    const list = (Array.isArray(res) ? res : (res?.results ?? [])).filter((p) => p.id != null);
+    const norm = (v: unknown) =>
+      String(v ?? "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+    const rows = list.map((p) => {
+      const texto = `${norm(p.name)} ${norm(p.type)}`;
+      const contado = /contado|efectivo|caja|inmediat|cash/.test(texto);
+      return {
+        company_id: data.companyId,
+        siigo_id: String(p.id),
+        name: String(p.name ?? `Forma ${p.id}`).trim(),
+        method: contado ? "contado" : "credito",
+        type: p.type ? String(p.type) : null,
+        account_code: String(p.account?.code ?? p.account_code ?? "").trim() || null,
+        account_name: p.account?.name ?? null,
+        active: p.active !== false,
+        due_date_required: p.due_date === true || !contado,
+        raw: p as unknown as never,
+        synced_at: new Date().toISOString(),
+      };
+    });
+    if (rows.length === 0) return { imported: 0 };
+    const { error } = await context.supabase
+      .from("siigo_payment_types")
+      .upsert(rows, { onConflict: "company_id,siigo_id" });
+    if (error) throw new Error(error.message);
+    return { imported: rows.length };
+  });
+
+/** Formas de pago ya sincronizadas para la empresa (lectura para la interfaz). */
+export const siigoSyncedPaymentTypes = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    const { data: rows, error } = await context.supabase
+      .from("siigo_payment_types")
+      .select("siigo_id, name, method, account_code, account_name, active, due_date_required, synced_at")
+      .eq("company_id", data.companyId)
+      .order("name");
+    if (error) throw new Error(error.message);
+    return rows ?? [];
+  });
+
+
 /** Importa impuestos y retenciones desde Siigo sin pisar los definidos manualmente. */
 export const siigoImportTaxes = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -641,7 +713,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
       .select(
-        "id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, buyer_nit, buyer_name, notes, total, iva, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at, voucher_number",
+        "id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, buyer_nit, buyer_name, notes, total, iva, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, payment_method, payment_type_id, payment_type_name, payable_account, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at, voucher_number",
       )
       .eq("id", data.invoiceId)
       .single();
@@ -1194,9 +1266,66 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         );
       }
 
-      // Todas las compras se causan siempre a crédito en Siigo, aunque la factura diga contado.
-      const formaPago = "crédito";
-      const paymentId = await siigoPurchasePaymentTypeId(formaPago);
+      // FORMA DE PAGO: la elegida por el usuario en el borrador. Es un concepto
+      // independiente de la cuenta por pagar (CxP) y nunca la modifica.
+      const metodoFactura =
+        String((inv as { payment_method?: string | null }).payment_method ?? "").toLowerCase() === "contado"
+          ? "contado"
+          : "credito";
+      const formaSeleccionadaId = String((inv as { payment_type_id?: string | null }).payment_type_id ?? "").trim();
+      const formaSeleccionadaNombre =
+        String((inv as { payment_type_name?: string | null }).payment_type_name ?? "").trim() || null;
+
+      // Validación bloqueante: la forma de pago debe existir y estar activa en Siigo.
+      let paymentId: number | null = null;
+      let formaPago = formaSeleccionadaNombre ?? (metodoFactura === "contado" ? "contado" : "crédito");
+      if (formaSeleccionadaId) {
+        const { data: formaLocal } = await supabase
+          .from("siigo_payment_types")
+          .select("siigo_id, name, method, active")
+          .eq("company_id", inv.company_id)
+          .eq("siigo_id", formaSeleccionadaId)
+          .maybeSingle();
+        if (!formaLocal)
+          throw new Error(
+            "La factura no puede enviarse a Siigo porque la forma de pago seleccionada no está sincronizada. Sincroniza las formas de pago desde Integraciones.",
+          );
+        if (formaLocal.active === false)
+          throw new Error(`La forma de pago "${formaLocal.name}" está inactiva en Siigo.`);
+        if ((formaLocal.method === "contado" ? "contado" : "credito") !== metodoFactura)
+          throw new Error(
+            `El método de pago seleccionado no corresponde con la forma de pago "${formaLocal.name}".`,
+          );
+        paymentId = Number(formaSeleccionadaId);
+        if (!Number.isFinite(paymentId))
+          throw new Error(`La forma de pago "${formaLocal.name}" no tiene un identificador válido en Siigo.`);
+        formaPago = formaLocal.name;
+      } else {
+        paymentId = await siigoPurchasePaymentTypeId(formaPago);
+      }
+
+      // CUENTA POR PAGAR: es la cuenta de la obligación con el proveedor. No se
+      // deduce de la forma de pago ni se reemplaza por la cuenta configurada en ella.
+      const cuentaCxP = String((inv as { payable_account?: string | null }).payable_account ?? "").trim();
+      const lineaCxP = resolvedJournal.find(
+        (l) => String(l.account_code ?? "").trim() === cuentaCxP && Number(l.credit ?? 0) > 0,
+      );
+      if (!cuentaCxP)
+        throw new Error(
+          "La factura no puede enviarse a Siigo porque falta completar la cuenta CxP. Selecciónala en Borradores.",
+        );
+      if (!lineaCxP)
+        throw new Error(
+          `La cuenta CxP ${cuentaCxP} no coincide con la contabilización de la factura. Vuelve a guardar el borrador para regenerar el comprobante.`,
+        );
+      if (metodoFactura === "credito" && !String(inv.due_date ?? "").trim() && !String(inv.payment_form ?? "").trim())
+
+        throw new Error(
+          "La factura es a crédito y no tiene fecha de vencimiento válida. Revisa el vencimiento antes de causar en Siigo.",
+        );
+
+
+
       const retencionesPorTipo = [
         {
           kind: "retefuente",
@@ -1568,7 +1697,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         });
       }
 
-      const esCredito = formaPago === "crédito";
+      const esCredito = metodoFactura === "credito";
 
       // Validación bloqueante: toda retención con valor debe tener su ID real de Siigo.
       if (retencionesPorTipo.length > 0) {

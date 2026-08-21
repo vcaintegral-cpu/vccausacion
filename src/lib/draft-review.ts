@@ -46,6 +46,13 @@ export type DraftInvoice = {
   paid_amount?: number | null;
   payment_status?: string | null;
   payment_enabled?: boolean | null;
+  /** Forma de pago para Siigo. Es independiente de la cuenta por pagar. */
+  payment_method?: string | null;
+  payment_type_id?: string | null;
+  payment_type_name?: string | null;
+  payment_form_manual?: boolean | null;
+  due_date?: string | null;
+
 };
 
 export type JournalRow = {
