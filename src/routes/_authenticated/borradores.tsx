@@ -457,7 +457,11 @@ function Borradores() {
       ok: false,
       message: `Omitida: está en estado ${ESTADO_LABEL[estadoUnico(inv)]} y esta acción requiere otra etapa del flujo.`,
     }));
+    // Resumen del flujo de terceros en la causación masiva.
+    let tercerosCreados = 0;
+    let tercerosExistentes = 0;
     try {
+
       for (const inv of objetivo) {
         const etiqueta = etiquetaFactura(inv);
         try {
@@ -472,8 +476,20 @@ function Borradores() {
               out.push({ id: inv.id, etiqueta, ok: false, message: "Debe causarse internamente antes de causar en Siigo." });
             } else {
               const res = await sync({ data: { invoiceId: inv.id } });
-              out.push({ id: inv.id, etiqueta, ok: res.ok, message: res.ok ? `Siigo N° ${res.siigoNumber ?? res.siigoId ?? "creado"}.` : res.error ?? "Siigo rechazó el comprobante." });
+              if (res.supplierAction === "creado") tercerosCreados += 1;
+              else if (res.supplierAction === "encontrado") tercerosExistentes += 1;
+              const tercero =
+                res.supplierAction === "creado" ? " Tercero creado automáticamente en Siigo." : "";
+              out.push({
+                id: inv.id,
+                etiqueta,
+                ok: res.ok,
+                message: res.ok
+                  ? `Siigo N° ${res.siigoNumber ?? res.siigoId ?? "creado"}.${tercero}`
+                  : (res.error ?? "Siigo rechazó el comprobante."),
+              });
             }
+
           }
         } catch (err) {
           out.push({ id: inv.id, etiqueta, ok: false, message: err instanceof Error ? err.message : "Error inesperado." });
@@ -492,6 +508,11 @@ function Borradores() {
     const ok = out.filter((r) => r.ok).length;
     if (ok) toast.success(`${ok} factura(s) procesada(s) correctamente.`);
     if (out.length - ok) toast.error(`${out.length - ok} factura(s) requieren revisión.`);
+    if (tipo === "siigo" && (tercerosCreados || tercerosExistentes))
+      toast.info(
+        `Terceros en Siigo: ${tercerosCreados} creado(s) automáticamente · ${tercerosExistentes} ya existía(n).`,
+      );
+
   }
 
   if (!loadingCompanies && (companies ?? []).length === 0) return <EmptyCompany />;

@@ -2288,7 +2288,14 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const trace = {
         company_id: inv.company_id,
         factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
-        proveedor: { nit: inv.provider_nit, nombre: inv.provider_name ?? null },
+        proveedor: {
+          nit: inv.provider_nit,
+          nombre: inv.provider_name ?? null,
+          siigo_id: tercero?.id ?? null,
+          tercero: tercero?.action ?? null,
+          tercero_mensaje: tercero?.message ?? null,
+        },
+
         renglones: items.map((it) => ({
           descripcion: it.description,
           tipo_item: it.item_type,
@@ -2348,19 +2355,34 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         syncedAt,
         status: "sincronizada",
         error: null,
+        supplierAction: tercero?.action ?? null,
+        supplierId: tercero?.id ?? null,
+        supplierMessage: tercero?.message ?? null,
       };
+
     } catch (e) {
       const raw = e instanceof Error ? e.message : JSON.stringify(e);
       // Los mensajes ya redactados por la validación de forma de pago se conservan tal cual.
-      const yaLegible = /^Factura no (causada|enviada)/.test(raw);
-      const message = yaLegible ? raw : mensajeSiigoAmigable(raw);
+      const yaLegible =
+        /^Factura no (causada|enviada)/.test(raw) ||
+        /^No fue posible (crear|crear automáticamente) el tercero/.test(raw) ||
+        /^No se puede causar la factura porque no tiene número/.test(raw);
+      let message = yaLegible ? raw : mensajeSiigoAmigable(raw);
+      // Si el tercero ya estaba resuelto, el error corresponde a la compra.
+      if (tercero && !yaLegible)
+        message = `El tercero fue ${tercero.action} correctamente en Siigo, pero la factura no pudo causarse: ${message}`;
       console.error("[siigo][causacion] error:", message);
       const failedTrace = {
         ...siigoAttemptTrace,
         resultado: "rechazado",
         // Trazabilidad completa del rechazo, sin necesidad de revisar el código.
         factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
-        proveedor: { nombre: inv.provider_name ?? null, nit: inv.provider_nit ?? null },
+        proveedor: {
+          nombre: inv.provider_name ?? null,
+          nit: inv.provider_nit ?? null,
+          siigo_id: tercero?.id ?? null,
+          tercero: tercero?.action ?? "no_resuelto",
+        },
         error: message,
         error_raw: raw,
         codigo_error_siigo: /"code"\s*:\s*"([^"]+)"/.exec(raw)?.[1] ?? null,
@@ -2391,7 +2413,11 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         syncedAt: null,
         status: "error",
         error: message,
+        supplierAction: tercero?.action ?? null,
+        supplierId: tercero?.id ?? null,
+        supplierMessage: tercero?.message ?? null,
       };
+
     }
   });
 

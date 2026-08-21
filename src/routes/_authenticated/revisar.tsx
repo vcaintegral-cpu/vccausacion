@@ -679,10 +679,12 @@ function Revisar() {
       );
       console.log("============================================");
       const res = await sync({ data: { invoiceId: header.id } });
+      if (res.supplierMessage) toast.info(res.supplierMessage);
       if (!res.ok) {
         toast.error(res.error ?? "Siigo rechazó el comprobante.");
         return;
       }
+
       // Aprendizaje: la cuenta por pagar aprobada queda asociada al proveedor DENTRO de esta empresa.
       await learnPayableAccount(header.company_id, header.provider_nit, payable?.code);
       // Aprendizaje del tratamiento del IVA aprobado para este proveedor y concepto.
