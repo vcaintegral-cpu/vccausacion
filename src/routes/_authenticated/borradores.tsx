@@ -718,7 +718,33 @@ function Borradores() {
         </table>
       </div>
 
+      <Dialog open={borrarOpen} onOpenChange={(o) => !borrando && setBorrarOpen(o)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Eliminar borradores</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm">
+            {eliminables.length === 1
+              ? "¿Está seguro de eliminar la factura seleccionada? Esta acción eliminará la factura del listado de borradores."
+              : `¿Está seguro de eliminar las ${eliminables.length} facturas seleccionadas? Esta acción eliminará estas facturas del listado de borradores.`}
+          </p>
+          {seleccionadas.length > eliminables.length && (
+            <p className="text-xs text-muted-foreground">
+              {seleccionadas.length - eliminables.length} factura(s) seleccionadas no se eliminarán porque ya fueron aprobadas, causadas o sincronizadas.
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBorrarOpen(false)} disabled={borrando}>Cancelar</Button>
+            <Button variant="destructive" onClick={() => void eliminarSeleccionadas()} disabled={borrando}>
+              {borrando ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              {eliminables.length === 1 ? "Eliminar factura" : `Eliminar ${eliminables.length} facturas`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!traza} onOpenChange={(o) => !o && setTraza(null)}>
+
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Trazabilidad · {traza ? etiquetaFactura(traza) : ""}</DialogTitle>
