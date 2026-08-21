@@ -291,6 +291,15 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     setAbierto(true);
   }
 
+  function toggleDetalle(seccion: typeof detalle) {
+    if (abierto && detalle === seccion) {
+      setAbierto(false);
+    } else {
+      setDetalle(seccion);
+      setAbierto(true);
+    }
+  }
+
   /** Prueba SIN IA: recupera el primer PDF desde Storage y lo lee con el mismo lector individual. */
   async function diagnosticar() {
     if (!upload) return;
