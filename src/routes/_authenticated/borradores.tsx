@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, History, Loader2, Pencil, RotateCcw, Send, Stamp, Undo2 } from "lucide-react";
+import { CheckCircle2, History, Loader2, Pencil, RotateCcw, Send, Stamp, Undo2, Wallet } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
