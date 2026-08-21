@@ -401,6 +401,15 @@ function Revisar() {
     () => applyIvaTreatment(ivaGroups.groups, ivaFinal),
     [ivaGroups.groups, ivaFinal],
   );
+  /** Cuenta de IVA realmente contabilizada cuando se corrige manualmente o cambia el tratamiento. */
+  const cuentaIvaEfectiva = useMemo(
+    () =>
+      ivaFinal?.account && (ivaFinal.treatment !== "descontable" || ivaFinal.origin === "CORRECCION")
+        ? ivaFinal.account
+        : null,
+    [ivaFinal],
+  );
+
 
   const erroresImpuestos = useMemo(() => {
     const out = [...ivaGroups.errors];
