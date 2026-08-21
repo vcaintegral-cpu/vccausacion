@@ -688,7 +688,12 @@ export type SiigoSyncResult = {
   syncedAt: string | null;
   status: string;
   error: string | null;
+  /** Resultado del flujo de terceros: si el proveedor se encontró o se creó en Siigo. */
+  supplierAction?: "encontrado" | "creado" | null;
+  supplierId?: string | null;
+  supplierMessage?: string | null;
 };
+
 
 /** Envía a Siigo el comprobante contable ya aprobado de una factura. */
 export const siigoSyncInvoice = createServerFn({ method: "POST" })
@@ -778,6 +783,18 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         "La factura debe estar causada (con comprobante interno) antes de sincronizarla con Siigo.",
       );
     }
+
+    // Validación bloqueante: la compra en Siigo exige el número real de la
+    // factura del proveedor (nunca un consecutivo interno de la aplicación).
+    if (!String(inv.number ?? "").trim()) {
+      const sinNumero = "No se puede causar la factura porque no tiene número de factura del proveedor.";
+      await supabase
+        .from("invoices")
+        .update({ siigo_status: "error", siigo_error: sinNumero })
+        .eq("id", inv.id);
+      throw new Error(sinNumero);
+    }
+
 
     // Protección contra doble clic / envíos simultáneos.
     if (inv.siigo_status === "sincronizando") {
@@ -918,8 +935,52 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       iniciado_at: new Date().toISOString(),
       resultado: "preparando",
     };
+    let tercero: { id: string; action: "encontrado" | "creado"; message: string } | null = null;
     try {
+      // PASO 1 — TERCERO EN SIIGO: buscar por documento y crearlo automáticamente
+      // si no existe. Sin identificador de tercero no se envía la compra.
+      const { siigoEnsureCustomer, normalizeNit } = await import("./siigo-customers.server");
+      const { data: proveedorLocal } = await supabase
+        .from("providers")
+        .select("id, nit, name, address, city, phone, email, siigo_id")
+        .eq("company_id", inv.company_id)
+        .eq("nit", String(inv.provider_nit ?? ""))
+        .maybeSingle();
+      const ensured = await siigoEnsureCustomer({
+        nit: inv.provider_nit ?? proveedorLocal?.nit ?? null,
+        name: inv.provider_name ?? proveedorLocal?.name ?? null,
+        address: proveedorLocal?.address ?? null,
+        city: proveedorLocal?.city ?? null,
+        phone: proveedorLocal?.phone ?? null,
+        email: proveedorLocal?.email ?? null,
+      });
+      tercero = { id: ensured.id, action: ensured.action, message: ensured.message };
+      console.log("[siigo][terceros]", ensured.action, ensured.identification, "→", ensured.id);
+      // Relación persistida: en próximas facturas se reutiliza el tercero de Siigo.
+      await supabase.from("providers").upsert(
+        {
+          company_id: inv.company_id,
+          nit: String(inv.provider_nit ?? normalizeNit(inv.provider_nit)),
+          name: inv.provider_name ?? proveedorLocal?.name ?? "Sin nombre",
+          siigo_id: ensured.id,
+          siigo_synced_at: new Date().toISOString(),
+          siigo_sync_status: ensured.action,
+        },
+        { onConflict: "company_id,nit" },
+      );
+      siigoAttemptTrace = {
+        ...siigoAttemptTrace,
+        tercero: {
+          nit: inv.provider_nit,
+          nombre: inv.provider_name,
+          siigo_id: ensured.id,
+          resultado: ensured.action,
+          mensaje: ensured.message,
+        },
+      };
+
       const documentInfo = await siigoPurchaseDocumentInfo();
+
       const documentId = documentInfo.id;
       // Si el tipo de documento FC no numera automáticamente, Siigo exige `number`.
       let documentNumber: number | null = documentInfo.automaticNumber
