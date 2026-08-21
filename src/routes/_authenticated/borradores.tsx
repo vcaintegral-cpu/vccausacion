@@ -208,6 +208,10 @@ function Borradores() {
   const pucNames = data?.pucNames ?? new Map<string, string>();
   const cxpPorFactura = data?.cxp ?? new Map<string, number>();
   const puc = data?.puc ?? [];
+  // Solo cuentas por pagar (grupos 22 y 23) para el selector de CxP.
+  const cuentasPagar = useMemo(() => puc.filter((p) => isPayableCode(p.code)), [puc]);
+  const formasPago = usePaymentTypes(companyId).data ?? [];
+
 
   /** Saldo pendiente de la cuenta por pagar de una factura. */
   const saldoDe = (r: DraftInvoice) =>
