@@ -432,16 +432,16 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" onClick={() => { setDetalle("procesadas"); setAbierto(true); }}>
-                Ver detalles
+              <Button size="sm" variant={abierto && detalle === "procesadas" ? "default" : "outline"} onClick={() => toggleDetalle("procesadas")}>
+                {abierto && detalle === "procesadas" ? "Ocultar detalles" : "Ver detalles"}
               </Button>
               {stats.failed > 0 ? (
-                <Button size="sm" variant="outline" onClick={() => { setDetalle("errores"); setAbierto(true); }}>
+                <Button size="sm" variant={abierto && detalle === "errores" ? "default" : "outline"} onClick={() => toggleDetalle("errores")}>
                   Ver errores
                 </Button>
               ) : null}
               {stats.dup > 0 ? (
-                <Button size="sm" variant="outline" onClick={() => { setDetalle("duplicados"); setAbierto(true); }}>
+                <Button size="sm" variant={abierto && detalle === "duplicados" ? "default" : "outline"} onClick={() => toggleDetalle("duplicados")}>
                   Ver duplicados
                 </Button>
               ) : null}
