@@ -1832,6 +1832,9 @@ export type Database = {
           nit: string
           phone: string | null
           regime: string | null
+          siigo_id: string | null
+          siigo_sync_status: string | null
+          siigo_synced_at: string | null
         }
         Insert: {
           address?: string | null
@@ -1848,6 +1851,9 @@ export type Database = {
           nit: string
           phone?: string | null
           regime?: string | null
+          siigo_id?: string | null
+          siigo_sync_status?: string | null
+          siigo_synced_at?: string | null
         }
         Update: {
           address?: string | null
@@ -1864,6 +1870,9 @@ export type Database = {
           nit?: string
           phone?: string | null
           regime?: string | null
+          siigo_id?: string | null
+          siigo_sync_status?: string | null
+          siigo_synced_at?: string | null
         }
         Relationships: [
           {
