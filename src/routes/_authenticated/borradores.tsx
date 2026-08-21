@@ -312,6 +312,72 @@ function Borradores() {
     });
   }
 
+  // Mide el ancho real de la tabla para dimensionar la barra superior.
+  useLayoutEffect(() => {
+    const el = tablaRef.current;
+    if (!el) return;
+    const medir = () => setAnchoTabla(el.scrollWidth);
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    const inner = el.firstElementChild;
+    if (inner) ro.observe(inner);
+    return () => ro.disconnect();
+  }, [rows.length]);
+
+  useEffect(() => {
+    const tabla = tablaRef.current;
+    const barra = barraRef.current;
+    if (!tabla || !barra) return;
+    const espejo = (origen: HTMLDivElement, destino: HTMLDivElement) => () => {
+      if (sincronizando.current) { sincronizando.current = false; return; }
+      sincronizando.current = true;
+      destino.scrollLeft = origen.scrollLeft;
+    };
+    const a = espejo(barra, tabla);
+    const b = espejo(tabla, barra);
+    barra.addEventListener("scroll", a);
+    tabla.addEventListener("scroll", b);
+    return () => {
+      barra.removeEventListener("scroll", a);
+      tabla.removeEventListener("scroll", b);
+    };
+  }, [anchoTabla]);
+
+  /** Solo se eliminan facturas en estado Borrador; nunca aprobadas, causadas ni sincronizadas. */
+  const eliminables = seleccionadas.filter(
+    (r) => estadoUnico(r) === "borrador" && !r.voucher_number && r.siigo_status !== "sincronizada" && !r.siigo_id,
+  );
+
+  async function eliminarSeleccionadas() {
+    if (eliminables.length === 0) return;
+    setBorrando(true);
+    try {
+      const ids = eliminables.map((r) => r.id);
+      const { data: borradas, error } = await supabase
+        .from("invoices")
+        .delete()
+        .in("id", ids)
+        .eq("company_id", companyId!)
+        .eq("status", "borrador")
+        .is("voucher_number", null)
+        .neq("siigo_status", "sincronizada")
+        .select("id");
+      if (error) { toast.error(error.message); return; }
+      const n = (borradas ?? []).length;
+      setBorrarOpen(false);
+      setSel({});
+      await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+      await queryClient.invalidateQueries({ queryKey: ["invoices", companyId] });
+      if (n === 0) toast.error("No fue posible eliminar: las facturas ya no están en borrador.");
+      else toast.success(n === 1 ? "1 factura eliminada correctamente." : `${n} facturas eliminadas correctamente.`);
+    } finally {
+      setBorrando(false);
+    }
+  }
+
+
+
   async function ejecutar(tipo: EtapaMasiva) {
     // Protección contra doble clic: mientras haya un proceso activo no se inicia otro.
     if (busy || seleccionadas.length === 0) return;
