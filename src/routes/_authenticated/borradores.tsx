@@ -608,7 +608,7 @@ function Borradores() {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={17} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={23} className="px-4 py-8 text-center text-sm text-muted-foreground">
                   {isLoading ? "Cargando facturas…" : "No hay facturas que coincidan con el filtro."}
                 </td>
               </tr>
