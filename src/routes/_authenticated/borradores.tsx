@@ -123,6 +123,8 @@ function Borradores() {
   const [traza, setTraza] = useState<DraftInvoice | null>(null);
   const [resultados, setResultados] = useState<ResultadoFactura[] | null>(null);
   const [historialOpen, setHistorialOpen] = useState(false);
+  const [pagoOpen, setPagoOpen] = useState(false);
+  const [pagoFacturas, setPagoFacturas] = useState<FacturaPagable[]>([]);
 
   // Tiempo real: los cambios contables de otras sesiones se reflejan solos.
   useDraftsRealtime(companyId, () => {
