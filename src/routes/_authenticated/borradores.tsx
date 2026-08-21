@@ -69,7 +69,7 @@ export const Route = createFileRoute("/_authenticated/borradores")({
 });
 
 const COLS =
-  "id, company_id, prefix, number, issue_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id";
+  "id, company_id, prefix, number, issue_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id, paid_amount, payment_status, payment_enabled";
 
 /** Origen visible de la cuenta por pagar del borrador. */
 const origenPayable = (i: DraftInvoice) => {
