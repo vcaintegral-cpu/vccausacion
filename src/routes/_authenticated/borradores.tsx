@@ -231,6 +231,60 @@ function Borradores() {
     await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
   }
 
+  /**
+   * Cambia SOLO la cuenta por pagar. Queda marcada como manual y nunca la
+   * sobrescribe la IA ni la forma de pago.
+   */
+  async function cambiarCxP(r: DraftInvoice, code: string, name: string | null) {
+    const codigo = code.trim();
+    if (codigo && !isPayableCode(codigo)) {
+      toast.error(`La cuenta ${codigo} no es una cuenta por pagar válida (grupos 22 o 23).`);
+      return;
+    }
+    const { error } = await supabase
+      .from("invoices")
+      .update({
+        payable_account: codigo || null,
+        payable_source: codigo ? "manual" : null,
+        payable_manual: !!codigo,
+        payable_updated_at: new Date().toISOString(),
+      })
+      .eq("id", r.id);
+    if (error) { toast.error(error.message); return; }
+    if (codigo) {
+      // La cuenta manual también actualiza el asiento para que Siigo reciba lo mismo.
+      const anterior = accounts.get(r.id)?.payable?.code;
+      if (anterior && anterior !== codigo)
+        await supabase
+          .from("journal_lines")
+          .update({ account_code: codigo, account_name: name ?? pucNames.get(codigo) ?? null })
+          .eq("invoice_id", r.id)
+          .eq("account_code", anterior)
+          .gt("credit", 0);
+      await learnPayableAccount(r.company_id, r.provider_nit, codigo);
+    }
+    toast.success("Cuenta por pagar actualizada.");
+    await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+  }
+
+  /** Cambia SOLO la forma de pago (Siigo). No toca la cuenta por pagar. */
+  async function cambiarFormaPago(r: DraftInvoice, siigoId: string) {
+    const forma = formasPago.find((f) => f.siigo_id === siigoId) ?? null;
+    const { error } = await supabase
+      .from("invoices")
+      .update({
+        payment_type_id: forma?.siigo_id ?? null,
+        payment_type_name: forma?.name ?? null,
+        payment_method: forma?.method ?? null,
+        payment_form_manual: !!forma,
+      })
+      .eq("id", r.id);
+    if (error) { toast.error(error.message); return; }
+    toast.success(forma ? `Forma de pago: ${forma.name}.` : "Forma de pago sin definir.");
+    await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+  }
+
+
   function abrirPago(facturas: DraftInvoice[]) {
     const objetivo = facturas.filter(pagable);
     if (objetivo.length === 0) {
