@@ -59,7 +59,16 @@ function Cuentas({ items, nombres }: { items: Cuenta[] | undefined; nombres: Map
 }
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+
+/** Columnas congeladas: checkbox, factura, proveedor y NIT. */
+const STICKY = [
+  "sticky left-0 z-20 w-[44px] min-w-[44px]",
+  "sticky left-[44px] z-20 w-[150px] min-w-[150px]",
+  "sticky left-[194px] z-20 w-[220px] min-w-[220px]",
+  "sticky left-[414px] z-20 w-[120px] min-w-[120px] border-r border-border",
+];
+
 
 export const Route = createFileRoute("/_authenticated/borradores")({
   head: () => ({
