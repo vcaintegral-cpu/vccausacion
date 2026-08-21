@@ -732,7 +732,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     // con el NIT del comprador/adquiriente de la factura.
     const { data: empresa } = await supabase
       .from("companies")
-      .select("id, name, nit")
+      .select("id, name, nit, uses_cost_centers")
       .eq("id", inv.company_id)
       .maybeSingle();
     const chequeoEmpresa = checkInvoiceCompany(empresa, inv);
@@ -1322,14 +1322,24 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       if (items.length === 0)
         throw new Error("La factura no tiene renglones de gasto/costo para enviar a Siigo.");
 
-      // Centro de costo: solo se envía si la empresa los maneja. Si no, se omite el campo.
+      // Centro de costo: se envía cuando el tipo de documento FC de Siigo los maneja
+      // o cuando la empresa los usa. Si Siigo lo exige (cost_center_mandatory) y la
+      // factura no tiene uno válido, se bloquea con un mensaje claro en vez de dejar
+      // que Siigo responda un error técnico.
       const usaCentros =
+        documentInfo.costCenter ||
+        documentInfo.costCenterMandatory ||
         (empresa as { uses_cost_centers?: boolean | null } | null)?.uses_cost_centers === true;
       const centroEmpresa = usaCentros ? inv.cost_center : null;
-      const costCenterId = usaCentros ? await siigoCostCenterId(centroEmpresa) : null;
+      const costCenterId = centroEmpresa ? await siigoCostCenterId(centroEmpresa) : null;
       if (centroEmpresa && costCenterId == null) {
         throw new Error(
           `El centro de costo "${centroEmpresa}" no existe o no está activo en Siigo. Verifícalo antes de causar.`,
+        );
+      }
+      if (documentInfo.costCenterMandatory && costCenterId == null) {
+        throw new Error(
+          "Siigo exige centro de costo para las facturas de compra de esta empresa. Selecciona un centro de costo válido en la factura antes de causar.",
         );
       }
 
