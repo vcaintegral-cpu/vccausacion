@@ -19,7 +19,39 @@ export class InvoicePdfPasswordError extends Error {
   }
 }
 
-export async function prepareInvoiceFile(file: File, password?: string): Promise<PreparedInvoiceFile> {
+/** Deja respirar a la interfaz entre tareas pesadas para que la página no se congele. */
+const respirar = () => new Promise<void>((r) => setTimeout(r, 0));
+
+// La lectura de un PDF (texto o render) es trabajo pesado del navegador: se hace
+// de a una a la vez aunque el lote procese varias facturas en paralelo. Así la
+// aplicación sigue respondiendo y no aparece "La página no responde".
+let turno: Promise<unknown> = Promise.resolve();
+function enTurno<T>(tarea: () => Promise<T>): Promise<T> {
+  const siguiente = turno.then(tarea, tarea);
+  turno = siguiente.catch(() => undefined);
+  return siguiente;
+}
+
+/** Convierte el lienzo a JPEG sin bloquear el hilo principal cuando el navegador lo permite. */
+async function canvasToJpeg(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<string> {
+  if ("convertToBlob" in canvas) {
+    const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.72 });
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("No fue posible preparar las páginas del PDF."));
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsDataURL(blob);
+    });
+  }
+  return (canvas as HTMLCanvasElement).toDataURL("image/jpeg", 0.72);
+}
+
+export function prepareInvoiceFile(file: File, password?: string): Promise<PreparedInvoiceFile> {
+  return enTurno(() => prepararArchivo(file, password));
+}
+
+async function prepararArchivo(file: File, password?: string): Promise<PreparedInvoiceFile> {
+
   const extension = file.name.toLowerCase().split(".").pop() ?? "";
   const isXml = file.type.includes("xml") || extension === "xml";
   if (isXml) return { text: await file.text() };
@@ -59,6 +91,7 @@ export async function prepareInvoiceFile(file: File, password?: string): Promise
         .map((i) => (typeof (i as { str?: string }).str === "string" ? (i as { str: string }).str : ""))
         .join(" ")}\n`;
       page.cleanup();
+      await respirar();
     }
   } catch {
     digital = "";
@@ -70,23 +103,29 @@ export async function prepareInvoiceFile(file: File, password?: string): Promise
 
   // 2) PDF escaneado: se renderizan las páginas para que la IA las lea como imagen.
   const images: Array<{ dataUrl: string; mimeType: string }> = [];
+  const puedeOffscreen = typeof OffscreenCanvas !== "undefined";
 
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const initialViewport = page.getViewport({ scale: 1 });
     const scale = Math.min(1.6, MAX_RENDER_WIDTH / initialViewport.width);
     const viewport = page.getViewport({ scale });
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    const context = canvas.getContext("2d", { alpha: false });
+    const width = Math.ceil(viewport.width);
+    const height = Math.ceil(viewport.height);
+    const canvas: HTMLCanvasElement | OffscreenCanvas = puedeOffscreen
+      ? new OffscreenCanvas(width, height)
+      : Object.assign(document.createElement("canvas"), { width, height });
+    const context = canvas.getContext("2d", { alpha: false }) as CanvasRenderingContext2D | null;
     if (!context) throw new Error("No fue posible preparar las páginas del PDF.");
     context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvas, canvasContext: context, viewport }).promise;
-    images.push({ dataUrl: canvas.toDataURL("image/jpeg", 0.72), mimeType: "image/jpeg" });
+    context.fillRect(0, 0, width, height);
+    await page.render({ canvas: canvas as unknown as HTMLCanvasElement, canvasContext: context, viewport }).promise;
+    images.push({ dataUrl: await canvasToJpeg(canvas), mimeType: "image/jpeg" });
     page.cleanup();
+    if (!puedeOffscreen) (canvas as HTMLCanvasElement).width = 0;
+    await respirar();
   }
+
 
   await loadingTask.destroy();
   if (images.length === 0) throw new Error("El PDF no contiene páginas que se puedan leer.");
