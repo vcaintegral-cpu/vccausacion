@@ -114,7 +114,13 @@ function Integraciones() {
     },
     onError: (e: Error) => toast.error(e.message),
   });
+  const formasPago = useMutation({
+    mutationFn: () => importPaymentTypes({ data: { companyId: companyId! } }),
+    onSuccess: (r) => toast.success(`${r.imported} formas de pago sincronizadas desde Siigo.`),
+    onError: (e: Error) => toast.error(e.message),
+  });
   const guardar = useMutation({
+
     mutationFn: () => saveCreds({ data: { ...form, companyId: companyId! } }),
     onSuccess: (r) => {
       if (r.ok) {
