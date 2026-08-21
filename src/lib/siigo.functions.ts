@@ -701,7 +701,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     const {
       siigoGet,
       siigoPost,
-      siigoPurchaseDocumentId,
+      siigoPurchaseDocumentInfo,
+      siigoNextPurchaseNumber,
       siigoPurchasePaymentTypeId,
       siigoCostCenterId,
       calculateSiigoPurchaseTotals,
@@ -918,7 +919,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       resultado: "preparando",
     };
     try {
-      const documentId = await siigoPurchaseDocumentId();
+      const documentInfo = await siigoPurchaseDocumentInfo();
+      const documentId = documentInfo.id;
+      // Si el tipo de documento FC no numera automáticamente, Siigo exige `number`.
+      let documentNumber: number | null = documentInfo.automaticNumber
+        ? null
+        : await siigoNextPurchaseNumber(documentId, documentInfo.consecutive);
       type SiigoTax = {
         id?: number | string;
         name?: string;
@@ -1957,6 +1963,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       ) =>
         buildSiigoPurchasePayload({
           documentId,
+          documentNumber,
           date: fechaDoc,
           providerNit,
           invoicePrefix: inv.prefix,
@@ -2085,7 +2092,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       let intentoExacto = false;
       let ultimoError: unknown = null;
       const intentos: Array<{ valor: number; error: string | null }> = [];
-      for (let intento = 0; intento < 3 && res == null; intento += 1) {
+      for (let intento = 0; intento < 5 && res == null; intento += 1) {
         const payloadIntento =
           intento === 0
             ? payload
@@ -2099,6 +2106,20 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           const raw = e instanceof Error ? e.message : JSON.stringify(e);
           intentos.push({ valor: intentoValor, error: raw });
           ultimoError = e;
+          // Siigo exige consecutivo manual para este tipo de documento: se obtiene
+          // el siguiente número disponible y se reenvía el MISMO documento.
+          if (raw.includes("parameter_required") && /"number"/.test(raw)) {
+            const siguiente = await siigoNextPurchaseNumber(documentId, documentInfo.consecutive);
+            if (documentNumber == null || siguiente > documentNumber) documentNumber = siguiente;
+            else documentNumber += 1;
+            console.log("[siigo][consecutivo] Siigo requiere number →", documentNumber);
+            continue;
+          }
+          // Consecutivo ya usado: se avanza al siguiente y se reintenta.
+          if (documentNumber != null && /already exist|ya existe|duplicate/i.test(raw)) {
+            documentNumber += 1;
+            continue;
+          }
           if (!raw.includes("invalid_total_payments")) throw e;
           const exacto = conciliableInformadoPorSiigo(raw);
           if (exacto != null && Math.abs(exacto - intentoValor) > 0.0001) {

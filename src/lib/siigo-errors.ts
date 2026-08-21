@@ -3,6 +3,8 @@ export function mensajeSiigoAmigable(raw: string): string {
   const cuenta = /"?code"?:\s*"?(\d{4,10})/.exec(raw)?.[1] ?? /(\d{6,10}) cannot be used/.exec(raw)?.[1];
   const encabezado = "NO SE PUDO CAUSAR LA FACTURA EN SIIGO.";
 
+  if (raw.includes("parameter_required") && /"number"/.test(raw))
+    return `${encabezado}\nProblema: el tipo de documento de compra en Siigo no numera automáticamente y exige el consecutivo.\nAcción: el sistema toma el siguiente consecutivo disponible y reintenta. Si persiste, active la numeración automática del tipo FC en Siigo o verifique que el rango de numeración no esté agotado.`;
   if (raw.includes("account_not_allowed"))
     return `${encabezado}\nProblema: la cuenta ${cuenta ?? "seleccionada"} no permite movimiento porque tiene cuentas auxiliares o no es transaccional en Siigo.\nAcción: seleccione una cuenta auxiliar activa en el renglón y vuelva a causar.`;
   if (raw.includes("invalid_total_payments"))
