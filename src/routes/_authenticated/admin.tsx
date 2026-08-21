@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CostCentersPanel, HistoryPanel, ProvidersToolbar, PucPanel, TaxesPanel } from "@/components/accounting-data";
 import { ProductsPanel } from "@/components/products-panel";
 import { ProductCategoriesPanel } from "@/components/product-categories-panel";
+import { PaymentTypesPanel } from "@/components/payment-types-panel";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
@@ -209,6 +210,7 @@ function Admin() {
           <TabsTrigger value="terceros">Terceros</TabsTrigger>
           <TabsTrigger value="productos">Productos y servicios</TabsTrigger>
           <TabsTrigger value="categorias">Categorías</TabsTrigger>
+          <TabsTrigger value="formas-pago">Formas de pago</TabsTrigger>
           <TabsTrigger value="reglas">Reglas</TabsTrigger>
           <TabsTrigger value="impuestos">Retenciones</TabsTrigger>
           <TabsTrigger value="centros">Centros de costo</TabsTrigger>
@@ -246,6 +248,10 @@ function Admin() {
 
         <TabsContent value="categorias">
           {wrap(<ProductCategoriesPanel companyId={companyId} />)}
+        </TabsContent>
+
+        <TabsContent value="formas-pago">
+          {wrap(<PaymentTypesPanel companyId={companyId} />)}
         </TabsContent>
 
         <TabsContent value="reglas">
