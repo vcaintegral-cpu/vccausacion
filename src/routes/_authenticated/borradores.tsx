@@ -63,10 +63,10 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 
 /** Columnas congeladas: checkbox, factura, proveedor y NIT. */
 const STICKY = [
-  "sticky left-0 z-20 w-[44px] min-w-[44px]",
-  "sticky left-[44px] z-20 w-[150px] min-w-[150px]",
-  "sticky left-[194px] z-20 w-[220px] min-w-[220px]",
-  "sticky left-[414px] z-20 w-[120px] min-w-[120px] border-r border-border",
+  "sticky left-0 z-20 w-[44px] min-w-[44px] max-w-[44px]",
+  "sticky left-[44px] z-20 w-[150px] min-w-[150px] max-w-[150px]",
+  "sticky left-[194px] z-20 w-[220px] min-w-[220px] max-w-[220px]",
+  "sticky left-[414px] z-20 w-[120px] min-w-[120px] max-w-[120px] border-r border-border",
 ];
 
 
