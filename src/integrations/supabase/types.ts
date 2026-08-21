@@ -847,8 +847,11 @@ export type Database = {
           payment_config: Json | null
           payment_enabled: boolean
           payment_form: string | null
+          payment_form_manual: boolean
           payment_method: string | null
           payment_status: string
+          payment_type_id: string | null
+          payment_type_name: string | null
           posted_at: string | null
           posted_by: string | null
           posting_error: string | null
@@ -917,8 +920,11 @@ export type Database = {
           payment_config?: Json | null
           payment_enabled?: boolean
           payment_form?: string | null
+          payment_form_manual?: boolean
           payment_method?: string | null
           payment_status?: string
+          payment_type_id?: string | null
+          payment_type_name?: string | null
           posted_at?: string | null
           posted_by?: string | null
           posting_error?: string | null
@@ -987,8 +993,11 @@ export type Database = {
           payment_config?: Json | null
           payment_enabled?: boolean
           payment_form?: string | null
+          payment_form_manual?: boolean
           payment_method?: string | null
           payment_status?: string
+          payment_type_id?: string | null
+          payment_type_name?: string | null
           posted_at?: string | null
           posted_by?: string | null
           posting_error?: string | null
@@ -1966,6 +1975,62 @@ export type Database = {
           username?: string
         }
         Relationships: []
+      }
+      siigo_payment_types: {
+        Row: {
+          account_code: string | null
+          account_name: string | null
+          active: boolean
+          company_id: string
+          created_at: string
+          due_date_required: boolean
+          id: string
+          method: string
+          name: string
+          raw: Json | null
+          siigo_id: string
+          synced_at: string
+          type: string | null
+        }
+        Insert: {
+          account_code?: string | null
+          account_name?: string | null
+          active?: boolean
+          company_id: string
+          created_at?: string
+          due_date_required?: boolean
+          id?: string
+          method?: string
+          name: string
+          raw?: Json | null
+          siigo_id: string
+          synced_at?: string
+          type?: string | null
+        }
+        Update: {
+          account_code?: string | null
+          account_name?: string | null
+          active?: boolean
+          company_id?: string
+          created_at?: string
+          due_date_required?: boolean
+          id?: string
+          method?: string
+          name?: string
+          raw?: Json | null
+          siigo_id?: string
+          synced_at?: string
+          type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siigo_payment_types_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       tax_rates: {
         Row: {
