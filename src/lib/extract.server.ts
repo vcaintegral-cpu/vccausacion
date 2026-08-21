@@ -115,3 +115,51 @@ export async function extractInvoiceWithAi(data: ExtractInvoiceInput, apiKey: st
     throw new Error("La IA no pudo estructurar esta factura. Intenta nuevamente o usa una imagen más nítida.");
   }
 }
+const num = (v: unknown) => {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+};
+const money = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * El subtotal y el IVA impresos en el PDF mandan. Si los renglones (por leer
+ * "Precio unitario" en vez de "Precio unitario de venta") no suman lo impreso,
+ * se ajustan proporcionalmente para que la factura cargada al sistema conserve
+ * exactamente la base gravable y el IVA del documento.
+ */
+export function reconcileWithHeader(inv: ExtractedInvoice): ExtractedInvoice {
+  const lines = inv.lines ?? [];
+  if (lines.length === 0) return inv;
+
+  const baseDe = (l: (typeof lines)[number]) => money(num(l.quantity) * num(l.unit_value) - num(l.discount));
+  let base = money(lines.reduce((s, l) => s + baseDe(l), 0));
+  const subtotal = money(num(inv.subtotal));
+
+  if (subtotal > 0 && base > 0 && Math.abs(base - subtotal) > Math.max(1, subtotal * 0.005)) {
+    const factor = subtotal / base;
+    for (const l of lines) {
+      l.unit_value = money(num(l.unit_value) * factor);
+      l.discount = money(num(l.discount) * factor);
+      l.total = money(num(l.quantity) * num(l.unit_value) - num(l.discount));
+    }
+    base = money(lines.reduce((s, l) => s + baseDe(l), 0));
+  } else {
+    for (const l of lines) l.total = baseDe(l);
+  }
+
+  // El IVA total del encabezado se reparte proporcionalmente entre los renglones.
+  const ivaHeader = money(num(inv.iva));
+  const ivaLineas = money(lines.reduce((s, l) => s + num(l.iva), 0));
+  if (ivaHeader > 0 && base > 0 && Math.abs(ivaLineas - ivaHeader) > Math.max(1, ivaHeader * 0.005)) {
+    let asignado = 0;
+    lines.forEach((l, i) => {
+      if (i === lines.length - 1) l.iva = money(ivaHeader - asignado);
+      else {
+        l.iva = money((ivaHeader * baseDe(l)) / base);
+        asignado = money(asignado + num(l.iva));
+      }
+    });
+  }
+  inv.subtotal = subtotal > 0 ? subtotal : base;
+  return inv;
+}
