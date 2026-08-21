@@ -631,19 +631,56 @@ function Borradores() {
                       : "Sin IVA"}
                   </td>
                   <td className="px-3 py-2">
-                    <Cuentas
-                      items={
-                        acc?.payable
-                          ? [acc.payable]
-                          : r.payable_account
-                            ? [{ code: r.payable_account, name: null }]
-                            : []
-                      }
-                      nombres={pucNames}
-                    />
+                    {e === "borrador" || e === "error" ? (
+                      <AccountCombobox
+                        accounts={cuentasPagar}
+                        value={acc?.payable?.code ?? r.payable_account ?? ""}
+                        onChange={(code, name) => void cambiarCxP(r, code, name)}
+                        placeholder="Buscar cuenta por pagar…"
+                        className="min-w-[190px]"
+                      />
+                    ) : (
+                      <Cuentas
+                        items={
+                          acc?.payable
+                            ? [acc.payable]
+                            : r.payable_account
+                              ? [{ code: r.payable_account, name: null }]
+                              : []
+                        }
+                        nombres={pucNames}
+                      />
+                    )}
                   </td>
                   <td className="px-3 py-2 text-[11px] text-muted-foreground">{origenPayable(r)}</td>
+                  <td className="px-3 py-2">
+                    {e === "borrador" || e === "error" ? (
+                      <select
+                        className="h-9 w-full min-w-[170px] rounded-md border border-input bg-background px-2 text-xs"
+                        value={r.payment_type_id ?? ""}
+                        onChange={(ev) => void cambiarFormaPago(r, ev.target.value)}
+                        aria-label={`Forma de pago de ${etiquetaFactura(r)}`}
+                      >
+                        <option value="">Seleccionar…</option>
+                        {formasPago
+                          .filter((f) => f.active)
+                          .map((f) => (
+                            <option key={f.siigo_id} value={f.siigo_id}>
+                              {f.name} · {METODO_LABEL[f.method]}
+                            </option>
+                          ))}
+                      </select>
+                    ) : (
+                      <span className="text-xs">{r.payment_type_name ?? "—"}</span>
+                    )}
+                    {formasPago.length === 0 && (
+                      <div className="mt-1 text-[11px] text-amber-600">
+                        Sincroniza las formas de pago desde Integraciones.
+                      </div>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{acc?.costCenter ?? r.cost_center ?? "—"}</td>
+
                   <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">
                     {cop(saldoDe(r))}
                     {Number(r.paid_amount ?? 0) > 0 && (
