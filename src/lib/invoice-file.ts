@@ -19,7 +19,39 @@ export class InvoicePdfPasswordError extends Error {
   }
 }
 
-export async function prepareInvoiceFile(file: File, password?: string): Promise<PreparedInvoiceFile> {
+/** Deja respirar a la interfaz entre tareas pesadas para que la página no se congele. */
+const respirar = () => new Promise<void>((r) => setTimeout(r, 0));
+
+// La lectura de un PDF (texto o render) es trabajo pesado del navegador: se hace
+// de a una a la vez aunque el lote procese varias facturas en paralelo. Así la
+// aplicación sigue respondiendo y no aparece "La página no responde".
+let turno: Promise<unknown> = Promise.resolve();
+function enTurno<T>(tarea: () => Promise<T>): Promise<T> {
+  const siguiente = turno.then(tarea, tarea);
+  turno = siguiente.catch(() => undefined);
+  return siguiente;
+}
+
+/** Convierte el lienzo a JPEG sin bloquear el hilo principal cuando el navegador lo permite. */
+async function canvasToJpeg(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<string> {
+  if ("convertToBlob" in canvas) {
+    const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.72 });
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("No fue posible preparar las páginas del PDF."));
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsDataURL(blob);
+    });
+  }
+  return (canvas as HTMLCanvasElement).toDataURL("image/jpeg", 0.72);
+}
+
+export function prepareInvoiceFile(file: File, password?: string): Promise<PreparedInvoiceFile> {
+  return enTurno(() => prepararArchivo(file, password));
+}
+
+async function prepararArchivo(file: File, password?: string): Promise<PreparedInvoiceFile> {
+
   const extension = file.name.toLowerCase().split(".").pop() ?? "";
   const isXml = file.type.includes("xml") || extension === "xml";
   if (isXml) return { text: await file.text() };
