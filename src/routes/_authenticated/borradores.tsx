@@ -33,6 +33,10 @@ import {
   type ResultadoFactura,
 } from "@/lib/draft-review";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { PaymentReceiptDialog, type FacturaPagable } from "@/components/payment-receipt-dialog";
+import { ESTADO_PAGO_LABEL, saldoPendiente, type EstadoPago } from "@/lib/payments";
+import { roundCOP } from "@/lib/money";
 
 /** Muestra código + nombre de todas las cuentas de una categoría del asiento. */
 function Cuentas({ items, nombres }: { items: Cuenta[] | undefined; nombres: Map<string, string> }) {
