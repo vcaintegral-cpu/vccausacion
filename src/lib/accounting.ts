@@ -127,6 +127,8 @@ export function buildJournal(params: {
    * Una factura de compra NUNCA se causa contra bancos, caja ni cuentas de pago.
    */
   payableAccount?: { code: string; name?: string | null } | null;
+  /** Cuenta operativa del impoconsumo resuelta contra el PUC de la empresa. */
+  impoconsumoAccount?: { code: string; name?: string | null } | null;
 }): JournalLine[] {
   const { lines, iva, retenciones, provider, costCenter, ivaDetalle } = params;
   const impoconsumo = params.impoconsumo ?? 0;
@@ -159,7 +161,14 @@ export function buildJournal(params: {
   }
 
   if (impoconsumo > 0)
-    out.push({ account_code: "521595", account_name: "Impoconsumo", debit: round(impoconsumo), credit: 0, cost_center: costCenter ?? null });
+    out.push({
+      // El impoconsumo usa la cuenta operativa (auxiliar) configurada, nunca una cuenta mayor.
+      account_code: params.impoconsumoAccount?.code || "521595",
+      account_name: params.impoconsumoAccount?.name ?? "Impoconsumo",
+      debit: round(impoconsumo),
+      credit: 0,
+      cost_center: costCenter ?? null,
+    });
 
   const totalDebito = out.reduce((s, l) => s + l.debit, 0);
   const totalRet = retenciones.retefuente + retenciones.reteiva + retenciones.reteica;
