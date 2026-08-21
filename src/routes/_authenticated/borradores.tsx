@@ -135,6 +135,15 @@ function Borradores() {
   const [historialOpen, setHistorialOpen] = useState(false);
   const [pagoOpen, setPagoOpen] = useState(false);
   const [pagoFacturas, setPagoFacturas] = useState<FacturaPagable[]>([]);
+  const [borrarOpen, setBorrarOpen] = useState(false);
+  const [borrando, setBorrando] = useState(false);
+
+  // Desplazamiento horizontal sincronizado: barra superior ↔ contenedor de la tabla.
+  const tablaRef = useRef<HTMLDivElement | null>(null);
+  const barraRef = useRef<HTMLDivElement | null>(null);
+  const [anchoTabla, setAnchoTabla] = useState(0);
+  const sincronizando = useRef(false);
+
 
   // Tiempo real: los cambios contables de otras sesiones se reflejan solos.
   useDraftsRealtime(companyId, () => {
