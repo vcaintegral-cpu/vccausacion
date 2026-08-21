@@ -472,8 +472,20 @@ function Borradores() {
               out.push({ id: inv.id, etiqueta, ok: false, message: "Debe causarse internamente antes de causar en Siigo." });
             } else {
               const res = await sync({ data: { invoiceId: inv.id } });
-              out.push({ id: inv.id, etiqueta, ok: res.ok, message: res.ok ? `Siigo N° ${res.siigoNumber ?? res.siigoId ?? "creado"}.` : res.error ?? "Siigo rechazó el comprobante." });
+              if (res.supplierAction === "creado") tercerosCreados += 1;
+              else if (res.supplierAction === "encontrado") tercerosExistentes += 1;
+              const tercero =
+                res.supplierAction === "creado" ? " Tercero creado automáticamente en Siigo." : "";
+              out.push({
+                id: inv.id,
+                etiqueta,
+                ok: res.ok,
+                message: res.ok
+                  ? `Siigo N° ${res.siigoNumber ?? res.siigoId ?? "creado"}.${tercero}`
+                  : (res.error ?? "Siigo rechazó el comprobante."),
+              });
             }
+
           }
         } catch (err) {
           out.push({ id: inv.id, etiqueta, ok: false, message: err instanceof Error ? err.message : "Error inesperado." });
