@@ -508,6 +508,11 @@ function Borradores() {
     const ok = out.filter((r) => r.ok).length;
     if (ok) toast.success(`${ok} factura(s) procesada(s) correctamente.`);
     if (out.length - ok) toast.error(`${out.length - ok} factura(s) requieren revisión.`);
+    if (tipo === "siigo" && (tercerosCreados || tercerosExistentes))
+      toast.info(
+        `Terceros en Siigo: ${tercerosCreados} creado(s) automáticamente · ${tercerosExistentes} ya existía(n).`,
+      );
+
   }
 
   if (!loadingCompanies && (companies ?? []).length === 0) return <EmptyCompany />;
