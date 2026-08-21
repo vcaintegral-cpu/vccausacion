@@ -220,10 +220,19 @@ function Integraciones() {
             {provs.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
             Importar terceros
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => formasPago.mutate()}
+            disabled={!connected || !companyId || formasPago.isPending}
+          >
+            {formasPago.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+            Sincronizar formas de pago
+          </Button>
           <Button variant="secondary" onClick={() => compras.mutate()} disabled={!connected || compras.isPending}>
             {compras.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
             Ver facturas de compra
           </Button>
+
         </div>
         {connected && !companyId ? (
           <p className="mt-2 text-xs text-muted-foreground">Selecciona una empresa activa para importar datos.</p>
