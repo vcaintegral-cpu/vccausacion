@@ -109,7 +109,7 @@ export async function extractInvoiceWithAi(data: ExtractInvoiceInput, apiKey: st
   try {
     const parsed = JSON.parse(cleaned) as ExtractedInvoice;
     parsed.lines = Array.isArray(parsed.lines) ? parsed.lines : [];
-    return parsed;
+    return reconcileWithHeader(parsed);
   } catch {
     console.error("Respuesta IA de factura no parseable", raw.slice(0, 500));
     throw new Error("La IA no pudo estructurar esta factura. Intenta nuevamente o usa una imagen más nítida.");
