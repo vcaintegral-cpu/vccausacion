@@ -431,6 +431,10 @@ export type SiigoPurchaseDocumentInfo = {
   automaticNumber: boolean;
   /** Último consecutivo conocido del tipo de documento (si Siigo lo informa). */
   consecutive: number | null;
+  /** true = el tipo FC maneja centros de costo. */
+  costCenter: boolean;
+  /** true = Siigo EXIGE el centro de costo en el documento. */
+  costCenterMandatory: boolean;
 };
 
 export async function siigoPurchaseDocumentInfo(): Promise<SiigoPurchaseDocumentInfo> {
