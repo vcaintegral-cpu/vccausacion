@@ -545,16 +545,22 @@ function Borradores() {
         </select>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border bg-card">
+      {/* Barra de desplazamiento horizontal superior, sincronizada con la tabla. */}
+      <div ref={barraRef} className="overflow-x-auto overflow-y-hidden rounded-t-lg border border-b-0 border-border bg-card">
+        <div style={{ width: anchoTabla || 2000, height: 1 }} />
+      </div>
+
+      <div ref={tablaRef} className="max-h-[70vh] overflow-auto rounded-b-lg border border-border bg-card">
         <table className="w-full min-w-[2000px] text-sm">
-          <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+          <thead className="sticky top-0 z-30 bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
-              <th className="px-3 py-2">
+              <th className={`bg-muted px-3 py-2 ${STICKY[0]}`}>
                 <Checkbox checked={todasVisiblesMarcadas} onCheckedChange={(v) => marcarTodas(!!v)} aria-label="Seleccionar todos" />
               </th>
-              <th className="px-3 py-2 font-medium">Factura</th>
-              <th className="px-3 py-2 font-medium">Proveedor</th>
-              <th className="px-3 py-2 font-medium">NIT</th>
+              <th className={`bg-muted px-3 py-2 font-medium ${STICKY[1]}`}>Factura</th>
+              <th className={`bg-muted px-3 py-2 font-medium ${STICKY[2]}`}>Proveedor</th>
+              <th className={`bg-muted px-3 py-2 font-medium ${STICKY[3]}`}>NIT</th>
+
               <th className="px-3 py-2 font-medium">Fecha</th>
               <th className="px-3 py-2 text-right font-medium">Base</th>
               <th className="px-3 py-2 text-right font-medium">IVA</th>
