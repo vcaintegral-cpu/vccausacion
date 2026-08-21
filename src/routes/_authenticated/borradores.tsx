@@ -591,14 +591,14 @@ function Borradores() {
               const e = estadoUnico(r);
               return (
                 <tr key={r.id} className={`${fila} hover:bg-muted/30`}>
-                  <td className="px-3 py-2">
+                  <td className={`bg-card px-3 py-2 ${STICKY[0]}`}>
                     <Checkbox
                       checked={!!sel[r.id]}
                       onCheckedChange={(v) => setSel((prev) => ({ ...prev, [r.id]: !!v }))}
                       aria-label={`Seleccionar ${etiquetaFactura(r)}`}
                     />
                   </td>
-                  <td className="px-3 py-2 font-mono text-xs">
+                  <td className={`bg-card px-3 py-2 font-mono text-xs ${STICKY[1]}`}>
                     {etiquetaFactura(r)}
                     {r.voucher_number && <div className="text-[11px] text-muted-foreground">Comprobante {r.voucher_number}</div>}
                     {r.sync_applied_at && (
@@ -610,8 +610,9 @@ function Borradores() {
                       </div>
                     )}
                   </td>
-                  <td className="max-w-[220px] truncate px-3 py-2" title={r.provider_name ?? ""}>{r.provider_name ?? "—"}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{r.provider_nit ?? "—"}</td>
+                  <td className={`truncate bg-card px-3 py-2 ${STICKY[2]}`} title={r.provider_name ?? ""}>{r.provider_name ?? "—"}</td>
+                  <td className={`bg-card px-3 py-2 font-mono text-xs text-muted-foreground ${STICKY[3]}`}>{r.provider_nit ?? "—"}</td>
+
                   <td className="px-3 py-2 text-muted-foreground">{fecha(r.issue_date)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.subtotal)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.iva)}</td>
