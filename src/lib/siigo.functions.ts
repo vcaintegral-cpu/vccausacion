@@ -1302,6 +1302,27 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         paymentId = await siigoPurchasePaymentTypeId(formaPago);
       }
 
+      // CUENTA POR PAGAR: es la cuenta de la obligación con el proveedor. No se
+      // deduce de la forma de pago ni se reemplaza por la cuenta configurada en ella.
+      const cuentaCxP = String((inv as { payable_account?: string | null }).payable_account ?? "").trim();
+      const lineaCxP = journal.find(
+        (l) => String(l.account_code ?? "").trim() === cuentaCxP && Number(l.credit ?? 0) > 0,
+      );
+      if (!cuentaCxP)
+        throw new Error(
+          "La factura no puede enviarse a Siigo porque falta completar la cuenta CxP. Selecciónala en Borradores.",
+        );
+      if (!lineaCxP)
+        throw new Error(
+          `La cuenta CxP ${cuentaCxP} no coincide con la contabilización de la factura. Vuelve a guardar el borrador para regenerar el comprobante.`,
+        );
+      if (esCreditoSolicitado && !String(inv.due_date ?? "").trim() && !String(inv.payment_form ?? "").trim())
+        throw new Error(
+          "La factura es a crédito y no tiene fecha de vencimiento válida. Revisa el vencimiento antes de causar en Siigo.",
+        );
+
+
+
       const retencionesPorTipo = [
         {
           kind: "retefuente",
