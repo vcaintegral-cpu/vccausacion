@@ -127,6 +127,8 @@ export function buildJournal(params: {
    * Una factura de compra NUNCA se causa contra bancos, caja ni cuentas de pago.
    */
   payableAccount?: { code: string; name?: string | null } | null;
+  /** Cuenta operativa del impoconsumo resuelta contra el PUC de la empresa. */
+  impoconsumoAccount?: { code: string; name?: string | null } | null;
 }): JournalLine[] {
   const { lines, iva, retenciones, provider, costCenter, ivaDetalle } = params;
   const impoconsumo = params.impoconsumo ?? 0;
