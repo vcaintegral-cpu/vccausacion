@@ -386,6 +386,78 @@ export const siigoImportCostCenters = createServerFn({ method: "POST" })
     return { imported: toUpsert.length, skipped: rows.length - toUpsert.length };
   });
 
+/**
+ * Sincroniza las FORMAS DE PAGO reales de la empresa en Siigo (document_type=FC).
+ * Nunca se inventan formas de pago: solo se guardan las configuradas en Siigo.
+ */
+export const siigoImportPaymentTypes = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
+    type PayType = {
+      id?: number | string;
+      name?: string;
+      type?: string;
+      active?: boolean;
+      due_date?: boolean;
+      account?: { code?: string | number; name?: string } | null;
+      account_code?: string | number;
+    };
+    const res = await siigoGet<PayType[] | { results?: PayType[] }>("/v1/payment-types?document_type=FC");
+    const list = (Array.isArray(res) ? res : (res?.results ?? [])).filter((p) => p.id != null);
+    const norm = (v: unknown) =>
+      String(v ?? "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+    const rows = list.map((p) => {
+      const texto = `${norm(p.name)} ${norm(p.type)}`;
+      const contado = /contado|efectivo|caja|inmediat|cash/.test(texto);
+      return {
+        company_id: data.companyId,
+        siigo_id: String(p.id),
+        name: String(p.name ?? `Forma ${p.id}`).trim(),
+        method: contado ? "contado" : "credito",
+        type: p.type ? String(p.type) : null,
+        account_code: String(p.account?.code ?? p.account_code ?? "").trim() || null,
+        account_name: p.account?.name ?? null,
+        active: p.active !== false,
+        due_date_required: p.due_date === true || !contado,
+        raw: p as unknown as Record<string, unknown>,
+        synced_at: new Date().toISOString(),
+      };
+    });
+    if (rows.length === 0) return { imported: 0 };
+    const { error } = await context.supabase
+      .from("siigo_payment_types")
+      .upsert(rows, { onConflict: "company_id,siigo_id" });
+    if (error) throw new Error(error.message);
+    return { imported: rows.length };
+  });
+
+/** Formas de pago ya sincronizadas para la empresa (lectura para la interfaz). */
+export const siigoSyncedPaymentTypes = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    const { data: rows, error } = await context.supabase
+      .from("siigo_payment_types")
+      .select("siigo_id, name, method, account_code, account_name, active, due_date_required, synced_at")
+      .eq("company_id", data.companyId)
+      .order("name");
+    if (error) throw new Error(error.message);
+    return rows ?? [];
+  });
+
+
 /** Importa impuestos y retenciones desde Siigo sin pisar los definidos manualmente. */
 export const siigoImportTaxes = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
