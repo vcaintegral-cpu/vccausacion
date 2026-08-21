@@ -457,7 +457,11 @@ function Borradores() {
       ok: false,
       message: `Omitida: está en estado ${ESTADO_LABEL[estadoUnico(inv)]} y esta acción requiere otra etapa del flujo.`,
     }));
+    // Resumen del flujo de terceros en la causación masiva.
+    let tercerosCreados = 0;
+    let tercerosExistentes = 0;
     try {
+
       for (const inv of objetivo) {
         const etiqueta = etiquetaFactura(inv);
         try {
