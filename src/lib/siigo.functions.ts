@@ -428,7 +428,7 @@ export const siigoImportPaymentTypes = createServerFn({ method: "POST" })
         account_name: p.account?.name ?? null,
         active: p.active !== false,
         due_date_required: p.due_date === true || !contado,
-        raw: p as unknown as Record<string, unknown>,
+        raw: p as unknown as never,
         synced_at: new Date().toISOString(),
       };
     });
@@ -1277,7 +1277,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         String((inv as { payment_type_name?: string | null }).payment_type_name ?? "").trim() || null;
 
       // Validación bloqueante: la forma de pago debe existir y estar activa en Siigo.
-      let paymentId: number | string | null = null;
+      let paymentId: number | null = null;
       let formaPago = formaSeleccionadaNombre ?? (metodoFactura === "contado" ? "contado" : "crédito");
       if (formaSeleccionadaId) {
         const { data: formaLocal } = await supabase
@@ -1296,7 +1296,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           throw new Error(
             `El método de pago seleccionado no corresponde con la forma de pago "${formaLocal.name}".`,
           );
-        paymentId = /^\d+$/.test(formaSeleccionadaId) ? Number(formaSeleccionadaId) : formaSeleccionadaId;
+        paymentId = Number(formaSeleccionadaId);
+        if (!Number.isFinite(paymentId))
+          throw new Error(`La forma de pago "${formaLocal.name}" no tiene un identificador válido en Siigo.`);
         formaPago = formaLocal.name;
       } else {
         paymentId = await siigoPurchasePaymentTypeId(formaPago);
