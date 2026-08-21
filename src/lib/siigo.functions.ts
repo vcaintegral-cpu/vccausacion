@@ -1439,12 +1439,20 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const iva = r2(Number(inv.iva ?? 0) > 0 ? Number(inv.iva) : ivaLineas);
       // El total de la compra permanece bruto. Siigo exige que payments concilie
       // contra ese total y contabiliza las retenciones enviadas por separado.
-      const impoconsumo = r2(
+      // Impoconsumo: igual que subtotal e IVA, manda el valor del encabezado de la
+      // factura y solo si viene en 0 se recalcula desde los renglones. Antes se leía
+      // únicamente de los renglones y, cuando el impuesto estaba en el encabezado, el
+      // total quedaba por debajo del asiento y la validación de cuadre bloqueaba la causación.
+      const impoconsumoLineas = r2(
         (invoiceLines ?? []).reduce(
           (acc, l) => acc + Number((l as unknown as { impoconsumo?: number }).impoconsumo ?? 0),
           0,
         ),
       );
+      const impoconsumo = r2(
+        Number(inv.impoconsumo ?? 0) > 0 ? Number(inv.impoconsumo) : impoconsumoLineas,
+      );
+
       const totalesSiigo = calculateSiigoPurchaseTotals({
         subtotal,
         taxes: iva + impoconsumo,
