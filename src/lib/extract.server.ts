@@ -16,6 +16,11 @@ Reglas: los importes son números sin separadores ni símbolos. El NIT va sin d�
 "buyer_nit" y "buyer_name" son el NIT y la razón social del ADQUIRIENTE/COMPRADOR/CLIENTE (bloque "Adquiriente", "Cliente", "Señores", "Facturar a", "Datos del receptor"). Nunca uses el mismo NIT para proveedor y comprador: son dos empresas distintas. Si dudas, el emisor es quien cobra y el adquiriente es quien paga.
 No supongas impuestos: si la factura no muestra IVA, "iva" es 0. Usa exclusivamente los valores impresos en el documento.
 "retefuente", "reteiva" y "reteica" son las retenciones practicadas que aparecen impresas en la factura. Si la factura no muestra una retención, ese campo es 0. Nunca calcules ni estimes retenciones: solo transcribe las que estén impresas.
+PRECIO UNITARIO (regla crítica): en las facturas colombianas la columna "Precio unitario" suele ser un valor de lista o con IVA incluido y NO es la base gravable. Cuando exista una columna "Precio unitario de venta" (o "Valor venta", "Precio de venta", "Valor neto"), ESE es el valor real y corresponde al TOTAL de la línea por toda la cantidad, sin IVA. En ese caso:
+- "total" de la línea = ese valor de venta (base gravable de la línea, sin IVA).
+- "unit_value" = ese valor de venta DIVIDIDO por la cantidad (ej.: cantidad 8 y precio unitario de venta 40.336,13 -> unit_value = 5.042,02).
+- Nunca uses la columna "Precio unitario" cuando exista la de venta.
+Coherencia obligatoria: cantidad x unit_value - descuento debe ser igual al total de la línea, y la suma de los totales de las líneas debe ser igual al "subtotal" impreso en la factura. El "subtotal", el "iva" y el "total" del encabezado se transcriben EXACTAMENTE como están impresos en el PDF: nunca los recalcules ni los ajustes.
 Si un dato no aparece, usa null o 0. Nunca inventes valores.`;
 
 export type ExtractInvoiceInput = {
