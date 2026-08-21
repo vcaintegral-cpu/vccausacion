@@ -1266,9 +1266,42 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         );
       }
 
-      // Todas las compras se causan siempre a crédito en Siigo, aunque la factura diga contado.
-      const formaPago = "crédito";
-      const paymentId = await siigoPurchasePaymentTypeId(formaPago);
+      // FORMA DE PAGO: la elegida por el usuario en el borrador. Es un concepto
+      // independiente de la cuenta por pagar (CxP) y nunca la modifica.
+      const metodoFactura =
+        String((inv as { payment_method?: string | null }).payment_method ?? "").toLowerCase() === "contado"
+          ? "contado"
+          : "credito";
+      const formaSeleccionadaId = String((inv as { payment_type_id?: string | null }).payment_type_id ?? "").trim();
+      const formaSeleccionadaNombre =
+        String((inv as { payment_type_name?: string | null }).payment_type_name ?? "").trim() || null;
+
+      // Validación bloqueante: la forma de pago debe existir y estar activa en Siigo.
+      let paymentId: number | string | null = null;
+      let formaPago = formaSeleccionadaNombre ?? (metodoFactura === "contado" ? "contado" : "crédito");
+      if (formaSeleccionadaId) {
+        const { data: formaLocal } = await supabase
+          .from("siigo_payment_types")
+          .select("siigo_id, name, method, active")
+          .eq("company_id", inv.company_id)
+          .eq("siigo_id", formaSeleccionadaId)
+          .maybeSingle();
+        if (!formaLocal)
+          throw new Error(
+            "La factura no puede enviarse a Siigo porque la forma de pago seleccionada no está sincronizada. Sincroniza las formas de pago desde Integraciones.",
+          );
+        if (formaLocal.active === false)
+          throw new Error(`La forma de pago "${formaLocal.name}" está inactiva en Siigo.`);
+        if ((formaLocal.method === "contado" ? "contado" : "credito") !== metodoFactura)
+          throw new Error(
+            `El método de pago seleccionado no corresponde con la forma de pago "${formaLocal.name}".`,
+          );
+        paymentId = /^\d+$/.test(formaSeleccionadaId) ? Number(formaSeleccionadaId) : formaSeleccionadaId;
+        formaPago = formaLocal.name;
+      } else {
+        paymentId = await siigoPurchasePaymentTypeId(formaPago);
+      }
+
       const retencionesPorTipo = [
         {
           kind: "retefuente",
