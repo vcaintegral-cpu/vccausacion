@@ -1322,16 +1322,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       if (items.length === 0)
         throw new Error("La factura no tiene renglones de gasto/costo para enviar a Siigo.");
 
-      // Centro de costo: se envía cuando el tipo de documento FC de Siigo los maneja
-      // o cuando la empresa los usa. Si Siigo lo exige (cost_center_mandatory) y la
-      // factura no tiene uno válido, se bloquea con un mensaje claro en vez de dejar
-      // que Siigo responda un error técnico.
-      const usaCentros =
-        documentInfo.costCenter ||
-        documentInfo.costCenterMandatory ||
-        (empresa as { uses_cost_centers?: boolean | null } | null)?.uses_cost_centers === true;
+      // La configuración del tipo de documento FC en Siigo manda sobre la configuración
+      // contable local. Una empresa puede usar centros internamente, pero si este FC no
+      // los admite Siigo responde document_settings y rechaza toda la compra.
+      const usaCentros = documentInfo.costCenter || documentInfo.costCenterMandatory;
       const centroEmpresa = usaCentros ? inv.cost_center : null;
-      const costCenterId = centroEmpresa ? await siigoCostCenterId(centroEmpresa) : null;
+      let costCenterId = centroEmpresa ? await siigoCostCenterId(centroEmpresa) : null;
       if (centroEmpresa && costCenterId == null) {
         throw new Error(
           `El centro de costo "${centroEmpresa}" no existe o no está activo en Siigo. Verifícalo antes de causar.`,
@@ -2197,6 +2193,20 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           // Consecutivo ya usado: se avanza al siguiente y se reintenta.
           if (documentNumber != null && /already exist|ya existe|duplicate/i.test(raw)) {
             documentNumber += 1;
+            continue;
+          }
+          // Algunas empresas informan de forma incompleta la capacidad de centros de
+          // costo del FC. Si la API confirma que el documento no los admite, se elimina
+          // únicamente ese campo y se reintenta la misma factura una sola vez.
+          if (
+            costCenterId != null &&
+            raw.includes("document_settings") &&
+            /cost_center/i.test(raw)
+          ) {
+            console.warn(
+              "[siigo][centro-costo] El tipo FC no admite centro de costo; reintento sin ese campo.",
+            );
+            costCenterId = null;
             continue;
           }
           if (!raw.includes("invalid_total_payments")) throw e;
