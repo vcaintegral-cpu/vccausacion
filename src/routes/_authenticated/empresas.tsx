@@ -296,7 +296,7 @@ function Empresas() {
   }
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="w-full max-w-7xl space-y-6">
       <div>
         <h1 className="text-xl font-semibold">Empresas</h1>
         <p className="mt-1 text-sm text-muted-foreground">Cada empresa tiene su propio PUC, terceros e impuestos.</p>
@@ -316,15 +316,15 @@ function Empresas() {
         </Button>
       </form>
 
-      <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+      <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {(companies ?? []).map((c) => (
-          <li key={c.id} className="px-5 py-3">
+          <li key={c.id} className="rounded-lg border border-border bg-card p-5">
             <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">{c.name}</p>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{c.name}</p>
               <p className="font-mono text-xs text-muted-foreground">NIT {c.nit}</p>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               <Button variant="ghost" size="sm" onClick={() => setActiveCompany(c.id)}>
                 Activar
               </Button>
@@ -356,7 +356,7 @@ function Empresas() {
           </li>
         ))}
         {(companies ?? []).length === 0 && (
-          <li className="px-5 py-6 text-sm text-muted-foreground">Aún no has creado empresas.</li>
+          <li className="col-span-full rounded-lg border border-border bg-card px-5 py-6 text-sm text-muted-foreground">Aún no has creado empresas.</li>
         )}
       </ul>
     </div>
