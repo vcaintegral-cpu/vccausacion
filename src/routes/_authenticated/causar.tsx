@@ -665,6 +665,15 @@ function Causar() {
     };
   }, [ivaDecision, ivaOverride, config?.accounts]);
   const ivaDetalle = useMemo(() => applyIvaTreatment(ivaGroups.groups, ivaFinal), [ivaGroups.groups, ivaFinal]);
+  /** Cuenta de IVA que realmente se contabiliza cuando el usuario la corrige o cambia el tratamiento. */
+  const cuentaIvaEfectiva = useMemo(
+    () =>
+      ivaFinal?.account && (ivaFinal.treatment !== "descontable" || ivaFinal.origin === "CORRECCION")
+        ? ivaFinal.account
+        : null,
+    [ivaFinal],
+  );
+
 
   const usaCentros = costCentersEnabled(costPolicy ?? null);
   const erroresCentro = useMemo(
