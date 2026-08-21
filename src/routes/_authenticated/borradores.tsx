@@ -1,9 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, History, Loader2, Pencil, RotateCcw, Send, Stamp, Undo2, Wallet } from "lucide-react";
+import { CheckCircle2, History, Loader2, Pencil, RotateCcw, Send, Stamp, Trash2, Undo2, Wallet } from "lucide-react";
+
 
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
@@ -58,7 +59,16 @@ function Cuentas({ items, nombres }: { items: Cuenta[] | undefined; nombres: Map
 }
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+
+/** Columnas congeladas: checkbox, factura, proveedor y NIT. */
+const STICKY = [
+  "sticky left-0 z-20 w-[44px] min-w-[44px] max-w-[44px]",
+  "sticky left-[44px] z-20 w-[150px] min-w-[150px] max-w-[150px]",
+  "sticky left-[194px] z-20 w-[220px] min-w-[220px] max-w-[220px]",
+  "sticky left-[414px] z-20 w-[120px] min-w-[120px] max-w-[120px] border-r border-border",
+];
+
 
 export const Route = createFileRoute("/_authenticated/borradores")({
   head: () => ({
@@ -125,6 +135,15 @@ function Borradores() {
   const [historialOpen, setHistorialOpen] = useState(false);
   const [pagoOpen, setPagoOpen] = useState(false);
   const [pagoFacturas, setPagoFacturas] = useState<FacturaPagable[]>([]);
+  const [borrarOpen, setBorrarOpen] = useState(false);
+  const [borrando, setBorrando] = useState(false);
+
+  // Desplazamiento horizontal sincronizado: barra superior ↔ contenedor de la tabla.
+  const tablaRef = useRef<HTMLDivElement | null>(null);
+  const barraRef = useRef<HTMLDivElement | null>(null);
+  const [anchoTabla, setAnchoTabla] = useState(0);
+  const sincronizando = useRef(false);
+
 
   // Tiempo real: los cambios contables de otras sesiones se reflejan solos.
   useDraftsRealtime(companyId, () => {
@@ -293,6 +312,72 @@ function Borradores() {
     });
   }
 
+  // Mide el ancho real de la tabla para dimensionar la barra superior.
+  useLayoutEffect(() => {
+    const el = tablaRef.current;
+    if (!el) return;
+    const medir = () => setAnchoTabla(el.scrollWidth);
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    const inner = el.firstElementChild;
+    if (inner) ro.observe(inner);
+    return () => ro.disconnect();
+  }, [rows.length]);
+
+  useEffect(() => {
+    const tabla = tablaRef.current;
+    const barra = barraRef.current;
+    if (!tabla || !barra) return;
+    const espejo = (origen: HTMLDivElement, destino: HTMLDivElement) => () => {
+      if (sincronizando.current) { sincronizando.current = false; return; }
+      sincronizando.current = true;
+      destino.scrollLeft = origen.scrollLeft;
+    };
+    const a = espejo(barra, tabla);
+    const b = espejo(tabla, barra);
+    barra.addEventListener("scroll", a);
+    tabla.addEventListener("scroll", b);
+    return () => {
+      barra.removeEventListener("scroll", a);
+      tabla.removeEventListener("scroll", b);
+    };
+  }, [anchoTabla]);
+
+  /** Solo se eliminan facturas en estado Borrador; nunca aprobadas, causadas ni sincronizadas. */
+  const eliminables = seleccionadas.filter(
+    (r) => estadoUnico(r) === "borrador" && !r.voucher_number && r.siigo_status !== "sincronizada" && !r.siigo_id,
+  );
+
+  async function eliminarSeleccionadas() {
+    if (eliminables.length === 0) return;
+    setBorrando(true);
+    try {
+      const ids = eliminables.map((r) => r.id);
+      const { data: borradas, error } = await supabase
+        .from("invoices")
+        .delete()
+        .in("id", ids)
+        .eq("company_id", companyId!)
+        .eq("status", "borrador")
+        .is("voucher_number", null)
+        .neq("siigo_status", "sincronizada")
+        .select("id");
+      if (error) { toast.error(error.message); return; }
+      const n = (borradas ?? []).length;
+      setBorrarOpen(false);
+      setSel({});
+      await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+      await queryClient.invalidateQueries({ queryKey: ["invoices", companyId] });
+      if (n === 0) toast.error("No fue posible eliminar: las facturas ya no están en borrador.");
+      else toast.success(n === 1 ? "1 factura eliminada correctamente." : `${n} facturas eliminadas correctamente.`);
+    } finally {
+      setBorrando(false);
+    }
+  }
+
+
+
   async function ejecutar(tipo: EtapaMasiva) {
     // Protección contra doble clic: mientras haya un proceso activo no se inicia otro.
     if (busy || seleccionadas.length === 0) return;
@@ -365,6 +450,15 @@ function Borradores() {
           <Button onClick={() => void ejecutar("aprobar")} disabled={!!busy || elegibles("aprobar").length === 0}>
             {busy === "aprobar" ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Aprobar ({elegibles("aprobar").length})
           </Button>
+          <Button
+            variant="destructive"
+            onClick={() => setBorrarOpen(true)}
+            disabled={!!busy || eliminables.length === 0}
+            title="Eliminar facturas en borrador"
+          >
+            <Trash2 className="size-4" /> Eliminar ({eliminables.length})
+          </Button>
+
           <Button variant="secondary" onClick={() => void ejecutar("causar")} disabled={!!busy || elegibles("causar").length === 0}>
             {busy === "causar" ? <Loader2 className="size-4 animate-spin" /> : <Stamp className="size-4" />} Causar ({elegibles("causar").length})
           </Button>
@@ -451,16 +545,22 @@ function Borradores() {
         </select>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border bg-card">
+      {/* Barra de desplazamiento horizontal superior, sincronizada con la tabla. */}
+      <div ref={barraRef} className="overflow-x-auto overflow-y-hidden rounded-t-lg border border-b-0 border-border bg-card">
+        <div style={{ width: anchoTabla || 2000, height: 1 }} />
+      </div>
+
+      <div ref={tablaRef} className="max-h-[70vh] overflow-auto rounded-b-lg border border-border bg-card">
         <table className="w-full min-w-[2000px] text-sm">
-          <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+          <thead className="sticky top-0 z-30 bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
-              <th className="px-3 py-2">
+              <th className={`bg-muted px-3 py-2 ${STICKY[0]}`}>
                 <Checkbox checked={todasVisiblesMarcadas} onCheckedChange={(v) => marcarTodas(!!v)} aria-label="Seleccionar todos" />
               </th>
-              <th className="px-3 py-2 font-medium">Factura</th>
-              <th className="px-3 py-2 font-medium">Proveedor</th>
-              <th className="px-3 py-2 font-medium">NIT</th>
+              <th className={`bg-muted px-3 py-2 font-medium ${STICKY[1]}`}>Factura</th>
+              <th className={`bg-muted px-3 py-2 font-medium ${STICKY[2]}`}>Proveedor</th>
+              <th className={`bg-muted px-3 py-2 font-medium ${STICKY[3]}`}>NIT</th>
+
               <th className="px-3 py-2 font-medium">Fecha</th>
               <th className="px-3 py-2 text-right font-medium">Base</th>
               <th className="px-3 py-2 text-right font-medium">IVA</th>
@@ -491,14 +591,14 @@ function Borradores() {
               const e = estadoUnico(r);
               return (
                 <tr key={r.id} className={`${fila} hover:bg-muted/30`}>
-                  <td className="px-3 py-2">
+                  <td className={`bg-card px-3 py-2 ${STICKY[0]}`}>
                     <Checkbox
                       checked={!!sel[r.id]}
                       onCheckedChange={(v) => setSel((prev) => ({ ...prev, [r.id]: !!v }))}
                       aria-label={`Seleccionar ${etiquetaFactura(r)}`}
                     />
                   </td>
-                  <td className="px-3 py-2 font-mono text-xs">
+                  <td className={`bg-card px-3 py-2 font-mono text-xs ${STICKY[1]}`}>
                     {etiquetaFactura(r)}
                     {r.voucher_number && <div className="text-[11px] text-muted-foreground">Comprobante {r.voucher_number}</div>}
                     {r.sync_applied_at && (
@@ -510,8 +610,9 @@ function Borradores() {
                       </div>
                     )}
                   </td>
-                  <td className="max-w-[220px] truncate px-3 py-2" title={r.provider_name ?? ""}>{r.provider_name ?? "—"}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{r.provider_nit ?? "—"}</td>
+                  <td className={`truncate bg-card px-3 py-2 ${STICKY[2]}`} title={r.provider_name ?? ""}>{r.provider_name ?? "—"}</td>
+                  <td className={`bg-card px-3 py-2 font-mono text-xs text-muted-foreground ${STICKY[3]}`}>{r.provider_nit ?? "—"}</td>
+
                   <td className="px-3 py-2 text-muted-foreground">{fecha(r.issue_date)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.subtotal)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.iva)}</td>
@@ -617,7 +718,33 @@ function Borradores() {
         </table>
       </div>
 
+      <Dialog open={borrarOpen} onOpenChange={(o) => !borrando && setBorrarOpen(o)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Eliminar borradores</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm">
+            {eliminables.length === 1
+              ? "¿Está seguro de eliminar la factura seleccionada? Esta acción eliminará la factura del listado de borradores."
+              : `¿Está seguro de eliminar las ${eliminables.length} facturas seleccionadas? Esta acción eliminará estas facturas del listado de borradores.`}
+          </p>
+          {seleccionadas.length > eliminables.length && (
+            <p className="text-xs text-muted-foreground">
+              {seleccionadas.length - eliminables.length} factura(s) seleccionadas no se eliminarán porque ya fueron aprobadas, causadas o sincronizadas.
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBorrarOpen(false)} disabled={borrando}>Cancelar</Button>
+            <Button variant="destructive" onClick={() => void eliminarSeleccionadas()} disabled={borrando}>
+              {borrando ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              {eliminables.length === 1 ? "Eliminar factura" : `Eliminar ${eliminables.length} facturas`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!traza} onOpenChange={(o) => !o && setTraza(null)}>
+
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Trazabilidad · {traza ? etiquetaFactura(traza) : ""}</DialogTitle>
