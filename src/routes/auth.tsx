@@ -144,7 +144,15 @@ function AuthPage() {
                 <Button type="submit" className="w-full" disabled={loading}>
                   Ingresar
                 </Button>
+                <button
+                  type="button"
+                  onClick={recuperarContrasena}
+                  className="w-full text-center text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                >
+                  ¿Olvidaste tu contraseña?
+                </button>
               </form>
+
             </TabsContent>
 
             <TabsContent value="signup">
