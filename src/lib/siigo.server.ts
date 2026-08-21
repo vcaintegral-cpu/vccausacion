@@ -602,6 +602,8 @@ export function buildSiigoPurchasePayload(params: {
   providerBranch?: number;
   invoicePrefix: string | null;
   invoiceNumber: string | null;
+  /** Consecutivo del documento en Siigo. Obligatorio si el tipo FC no es automático. */
+  documentNumber?: number | null;
   observations: string | null;
   /** ID real del centro de costo en Siigo (nunca el código interno ni el nombre). */
   costCenterId?: number | null;
@@ -679,6 +681,8 @@ export function buildSiigoPurchasePayload(params: {
       },
     ],
   };
+  if (params.documentNumber != null && Number(params.documentNumber) > 0)
+    payload["number"] = Number(params.documentNumber);
   if (params.costCenterId != null) payload["cost_center"] = Number(params.costCenterId);
   if (params.retentions && params.retentions.length > 0) {
     // id = identificador del impuesto en Siigo (NUNCA la cuenta contable PUC).
