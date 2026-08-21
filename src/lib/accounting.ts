@@ -159,7 +159,14 @@ export function buildJournal(params: {
   }
 
   if (impoconsumo > 0)
-    out.push({ account_code: "521595", account_name: "Impoconsumo", debit: round(impoconsumo), credit: 0, cost_center: costCenter ?? null });
+    out.push({
+      // El impoconsumo usa la cuenta operativa (auxiliar) configurada, nunca una cuenta mayor.
+      account_code: params.impoconsumoAccount?.code || "521595",
+      account_name: params.impoconsumoAccount?.name ?? "Impoconsumo",
+      debit: round(impoconsumo),
+      credit: 0,
+      cost_center: costCenter ?? null,
+    });
 
   const totalDebito = out.reduce((s, l) => s + l.debit, 0);
   const totalRet = retenciones.retefuente + retenciones.reteiva + retenciones.reteica;
