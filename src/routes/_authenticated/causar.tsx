@@ -665,6 +665,15 @@ function Causar() {
     };
   }, [ivaDecision, ivaOverride, config?.accounts]);
   const ivaDetalle = useMemo(() => applyIvaTreatment(ivaGroups.groups, ivaFinal), [ivaGroups.groups, ivaFinal]);
+  /** Cuenta de IVA que realmente se contabiliza cuando el usuario la corrige o cambia el tratamiento. */
+  const cuentaIvaEfectiva = useMemo(
+    () =>
+      ivaFinal?.account && (ivaFinal.treatment !== "descontable" || ivaFinal.origin === "CORRECCION")
+        ? ivaFinal.account
+        : null,
+    [ivaFinal],
+  );
+
 
   const usaCentros = costCentersEnabled(costPolicy ?? null);
   const erroresCentro = useMemo(
@@ -1018,8 +1027,11 @@ function Causar() {
             iva_tax_id: ivaTrace?.tax_id ?? null,
             iva_tax_name: ivaTrace?.tax_name ?? null,
             iva_tax_rate: ivaTrace?.tax_rate ?? null,
-            iva_account_code: ivaTrace?.account_code ?? null,
-            iva_operational_account: ivaTrace?.operational_account ?? null,
+            // La cuenta de IVA guardada es la realmente usada en el asiento
+            // (incluida la corrección manual), para que la sincronización la detecte.
+            iva_account_code: cuentaIvaEfectiva ?? ivaTrace?.account_code ?? null,
+            iva_operational_account: cuentaIvaEfectiva ?? ivaTrace?.operational_account ?? null,
+
             iva_siigo_id: ivaTrace?.siigo_id ?? null,
             iva_siigo_name: ivaTrace?.siigo_name ?? null,
             ret_tax_id: retTrace?.tax_id ?? null,

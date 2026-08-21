@@ -340,9 +340,13 @@ export function applyIvaTreatment(
   if (!decision) return groups;
   if (decision.treatment === "descontable") {
     if (!decision.account) return groups;
-    // Solo se reemplaza cuando el módulo de impuestos no trajo cuenta.
+    // Una corrección manual manda sobre la cuenta del impuesto; en los demás casos
+    // solo se reemplaza cuando el módulo de impuestos no trajo cuenta.
+    if (decision.origin === "CORRECCION")
+      return groups.map((g) => ({ ...g, account_code: decision.account, account_name: decision.accountName || g.account_name }));
     return groups.map((g) => (g.account_code ? g : { ...g, account_code: decision.account, account_name: decision.accountName || g.account_name }));
   }
+
   if (!decision.account) return groups;
   const total = groups.reduce((s, g) => s + Number(g.amount || 0), 0);
   if (!total) return groups;
