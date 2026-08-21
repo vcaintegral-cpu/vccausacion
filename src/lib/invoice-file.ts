@@ -5,7 +5,7 @@ export type PreparedInvoiceFile = {
 };
 
 const MAX_PDF_PAGES = 8;
-const MAX_RENDER_WIDTH = 1800;
+const MAX_RENDER_WIDTH = 1400;
 /** Mínimo de caracteres de la capa de texto para considerar que el PDF es digital (sin OCR). */
 const MIN_DIGITAL_TEXT = 350;
 
@@ -74,7 +74,7 @@ export async function prepareInvoiceFile(file: File, password?: string): Promise
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const initialViewport = page.getViewport({ scale: 1 });
-    const scale = Math.min(2, MAX_RENDER_WIDTH / initialViewport.width);
+    const scale = Math.min(1.6, MAX_RENDER_WIDTH / initialViewport.width);
     const viewport = page.getViewport({ scale });
     const canvas = document.createElement("canvas");
     canvas.width = Math.ceil(viewport.width);
@@ -84,7 +84,7 @@ export async function prepareInvoiceFile(file: File, password?: string): Promise
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, canvas.width, canvas.height);
     await page.render({ canvas, canvasContext: context, viewport }).promise;
-    images.push({ dataUrl: canvas.toDataURL("image/jpeg", 0.9), mimeType: "image/jpeg" });
+    images.push({ dataUrl: canvas.toDataURL("image/jpeg", 0.72), mimeType: "image/jpeg" });
     page.cleanup();
   }
 
