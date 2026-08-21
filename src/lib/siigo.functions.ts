@@ -688,7 +688,12 @@ export type SiigoSyncResult = {
   syncedAt: string | null;
   status: string;
   error: string | null;
+  /** Resultado del flujo de terceros: si el proveedor se encontró o se creó en Siigo. */
+  supplierAction?: "encontrado" | "creado" | null;
+  supplierId?: string | null;
+  supplierMessage?: string | null;
 };
+
 
 /** Envía a Siigo el comprobante contable ya aprobado de una factura. */
 export const siigoSyncInvoice = createServerFn({ method: "POST" })
