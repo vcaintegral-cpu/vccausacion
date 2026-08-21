@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CostCentersPanel, HistoryPanel, ProvidersToolbar, PucPanel, TaxesPanel } from "@/components/accounting-data";
 import { ProductsPanel } from "@/components/products-panel";
 import { ProductCategoriesPanel } from "@/components/product-categories-panel";
+import { PaymentTypesPanel } from "@/components/payment-types-panel";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
