@@ -270,6 +270,9 @@ async function processItem(item: BulkItem, companyId: string, deps: Deps) {
   }
 }
 
+/** Facturas que se leen y causan al mismo tiempo dentro de un lote. */
+const CONCURRENCIA = 4;
+
 async function runUpload(job: QueuedUpload) {
   resetBulkBatch();
   const deps = await loadDeps(job.companyId);
@@ -288,16 +291,34 @@ async function runUpload(job: QueuedUpload) {
       active: 0,
     });
     // Una factura con error nunca detiene el lote: solo se toman las pendientes.
-    const next = items.find((i) => PENDING_STATUSES.includes(i.status));
-    if (!next) break;
-    emit({ active: 1, pending: Math.max(c.pending - 1, 0) });
-    await processItem(next, job.companyId, deps);
+    const pendientes = items.filter((i) => PENDING_STATUSES.includes(i.status));
+    if (pendientes.length === 0) break;
+
+    // Varias facturas en paralelo: la espera de la IA de una no bloquea a las demás.
+    let cursor = 0;
+    let activos = 0;
+    const worker = async () => {
+      for (;;) {
+        const item = pendientes[cursor++];
+        if (!item) return;
+        activos += 1;
+        emit({ active: activos, pending: Math.max(pendientes.length - cursor, 0) });
+        try {
+          await processItem(item, job.companyId, deps);
+        } finally {
+          activos -= 1;
+          emit({ active: activos });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCIA, pendientes.length) }, worker));
   }
 
   const items = await listItems(job.uploadId);
   await refreshUploadCounters(job.uploadId, items);
   emit({ active: 0, ...counters(items) });
 }
+
 
 async function drain() {
   try {
