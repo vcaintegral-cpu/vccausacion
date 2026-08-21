@@ -450,6 +450,15 @@ function Borradores() {
           <Button onClick={() => void ejecutar("aprobar")} disabled={!!busy || elegibles("aprobar").length === 0}>
             {busy === "aprobar" ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Aprobar ({elegibles("aprobar").length})
           </Button>
+          <Button
+            variant="destructive"
+            onClick={() => setBorrarOpen(true)}
+            disabled={!!busy || eliminables.length === 0}
+            title="Eliminar facturas en borrador"
+          >
+            <Trash2 className="size-4" /> Eliminar ({eliminables.length})
+          </Button>
+
           <Button variant="secondary" onClick={() => void ejecutar("causar")} disabled={!!busy || elegibles("causar").length === 0}>
             {busy === "causar" ? <Loader2 className="size-4 animate-spin" /> : <Stamp className="size-4" />} Causar ({elegibles("causar").length})
           </Button>
