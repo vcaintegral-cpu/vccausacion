@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, History, Loader2, Pencil, RotateCcw, Send, Stamp, Undo2 } from "lucide-react";
+import { CheckCircle2, History, Loader2, Pencil, RotateCcw, Send, Stamp, Undo2, Wallet } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
@@ -33,6 +33,10 @@ import {
   type ResultadoFactura,
 } from "@/lib/draft-review";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { PaymentReceiptDialog, type FacturaPagable } from "@/components/payment-receipt-dialog";
+import { ESTADO_PAGO_LABEL, saldoPendiente, type EstadoPago } from "@/lib/payments";
+import { roundCOP } from "@/lib/money";
 
 /** Muestra código + nombre de todas las cuentas de una categoría del asiento. */
 function Cuentas({ items, nombres }: { items: Cuenta[] | undefined; nombres: Map<string, string> }) {
@@ -69,7 +73,7 @@ export const Route = createFileRoute("/_authenticated/borradores")({
 });
 
 const COLS =
-  "id, company_id, prefix, number, issue_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id";
+  "id, company_id, prefix, number, issue_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id, paid_amount, payment_status, payment_enabled";
 
 /** Origen visible de la cuenta por pagar del borrador. */
 const origenPayable = (i: DraftInvoice) => {
@@ -119,6 +123,8 @@ function Borradores() {
   const [traza, setTraza] = useState<DraftInvoice | null>(null);
   const [resultados, setResultados] = useState<ResultadoFactura[] | null>(null);
   const [historialOpen, setHistorialOpen] = useState(false);
+  const [pagoOpen, setPagoOpen] = useState(false);
+  const [pagoFacturas, setPagoFacturas] = useState<FacturaPagable[]>([]);
 
   // Tiempo real: los cambios contables de otras sesiones se reflejan solos.
   useDraftsRealtime(companyId, () => {
@@ -154,10 +160,23 @@ function Borradores() {
       }
       const accounts = new Map<string, DraftAccounts>();
       for (const [id, rows] of porFactura) accounts.set(id, classifyJournal(rows));
+      // Valor de la cuenta por pagar de cada factura (base del recibo de pago).
+      const cxp = new Map<string, number>();
+      for (const inv of invoices) {
+        const payable = String(inv.payable_account ?? "").trim();
+        const desdeAsiento = (porFactura.get(inv.id) ?? [])
+          .filter((l) => payable && String(l.account_code ?? "").trim() === payable && Number(l.credit ?? 0) > 0)
+          .reduce((s, l) => s + Number(l.credit ?? 0), 0);
+        const fallback =
+          Number(inv.total ?? 0) - Number(inv.retefuente ?? 0) - Number(inv.reteiva ?? 0) - Number(inv.reteica ?? 0);
+        cxp.set(inv.id, roundCOP(desdeAsiento > 0 ? desdeAsiento : fallback));
+      }
       const puc = await fetchCompanyPuc(companyId!);
       return {
         invoices,
         accounts,
+        cxp,
+        puc,
         pucCodes: new Set(puc.map((p) => p.code)),
         pucNames: new Map(puc.map((p) => [p.code, p.name])),
       };
@@ -168,6 +187,40 @@ function Borradores() {
   const accounts = data?.accounts ?? new Map<string, DraftAccounts>();
   const pucCodes = data?.pucCodes ?? new Set<string>();
   const pucNames = data?.pucNames ?? new Map<string, string>();
+  const cxpPorFactura = data?.cxp ?? new Map<string, number>();
+  const puc = data?.puc ?? [];
+
+  /** Saldo pendiente de la cuenta por pagar de una factura. */
+  const saldoDe = (r: DraftInvoice) =>
+    saldoPendiente({ cxp: cxpPorFactura.get(r.id) ?? 0, pagado: Number(r.paid_amount ?? 0) });
+
+  /** El pago solo procede cuando la factura ya está causada y queda saldo. */
+  const pagable = (r: DraftInvoice) => !!r.voucher_number && saldoDe(r) > 0;
+
+  const aFacturaPagable = (r: DraftInvoice): FacturaPagable => ({
+    id: r.id,
+    etiqueta: etiquetaFactura(r),
+    proveedor: r.provider_name ?? "—",
+    nit: r.provider_nit ?? "",
+    saldo: saldoDe(r),
+  });
+
+  /** Interruptor ON/OFF del recibo: marca la factura para generar pago. */
+  async function alternarPago(r: DraftInvoice, activo: boolean) {
+    const { error } = await supabase.from("invoices").update({ payment_enabled: activo }).eq("id", r.id);
+    if (error) { toast.error(error.message); return; }
+    await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+  }
+
+  function abrirPago(facturas: DraftInvoice[]) {
+    const objetivo = facturas.filter(pagable);
+    if (objetivo.length === 0) {
+      toast.error("Solo se pueden pagar facturas ya causadas y con saldo pendiente en la cuenta por pagar.");
+      return;
+    }
+    setPagoFacturas(objetivo.map(aFacturaPagable));
+    setPagoOpen(true);
+  }
 
   const proveedores = useMemo(
     () => [...new Set(invoices.map((i) => i.provider_name).filter((x): x is string => !!x))].sort(),
@@ -324,6 +377,13 @@ function Borradores() {
           <Button variant="ghost" onClick={() => void ejecutar("revertir")} disabled={!!busy || elegibles("revertir").length === 0}>
             {busy === "revertir" ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />} Revertir causación ({elegibles("revertir").length})
           </Button>
+          <Button
+            variant="secondary"
+            onClick={() => abrirPago(seleccionadas.filter((r) => r.payment_enabled))}
+            disabled={!!busy || seleccionadas.filter((r) => r.payment_enabled && pagable(r)).length === 0}
+          >
+            <Wallet className="size-4" /> Generar recibos ({seleccionadas.filter((r) => r.payment_enabled && pagable(r)).length})
+          </Button>
         </div>
       </div>
 
@@ -415,6 +475,8 @@ function Borradores() {
               <th className="px-3 py-2 font-medium">Cuenta CxP</th>
               <th className="px-3 py-2 font-medium">Origen cuenta por pagar</th>
               <th className="px-3 py-2 font-medium">Centro de costo</th>
+              <th className="px-3 py-2 text-right font-medium">Saldo por pagar</th>
+              <th className="px-3 py-2 font-medium">Generar recibo</th>
               <th className="px-3 py-2 font-medium">Estado</th>
               <th className="px-3 py-2 font-medium">Advertencias</th>
               <th className="px-3 py-2 text-right font-medium">Editar</th>
@@ -481,6 +543,36 @@ function Borradores() {
                   </td>
                   <td className="px-3 py-2 text-[11px] text-muted-foreground">{origenPayable(r)}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{acc?.costCenter ?? r.cost_center ?? "—"}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">
+                    {cop(saldoDe(r))}
+                    {Number(r.paid_amount ?? 0) > 0 && (
+                      <div className="text-[11px] text-muted-foreground">Pagado {cop(Number(r.paid_amount ?? 0))}</div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={!!r.payment_enabled}
+                        onCheckedChange={(v) => void alternarPago(r, v)}
+                        disabled={!pagable(r)}
+                        aria-label={`Generar recibo de pago para ${etiquetaFactura(r)}`}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Generar recibo de pago"
+                        disabled={!pagable(r)}
+                        onClick={() => abrirPago([r])}
+                      >
+                        <Wallet className="size-4" />
+                      </Button>
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                      {!r.voucher_number
+                        ? "Requiere causación"
+                        : ESTADO_PAGO_LABEL[(r.payment_status ?? "pendiente") as EstadoPago]}
+                    </div>
+                  </td>
                   <td className="px-3 py-2">
                     <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${ESTADO_CLASS[e] ?? "bg-muted text-muted-foreground"}`}>
                       {ESTADO_LABEL[e] ?? e}
@@ -516,7 +608,7 @@ function Borradores() {
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={17} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={23} className="px-4 py-8 text-center text-sm text-muted-foreground">
                   {isLoading ? "Cargando facturas…" : "No hay facturas que coincidan con el filtro."}
                 </td>
               </tr>
@@ -569,6 +661,21 @@ function Borradores() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <PaymentReceiptDialog
+        open={pagoOpen}
+        onOpenChange={setPagoOpen}
+        companyId={companyId}
+        puc={puc}
+        facturas={pagoFacturas}
+        onDone={async (res) => {
+          setResultados(res.map((r) => ({ id: r.id, etiqueta: r.etiqueta, ok: r.ok, message: r.message })));
+          const ok = res.filter((r) => r.ok).length;
+          if (ok) toast.success(`${ok} recibo(s) de pago generado(s).`);
+          if (res.length - ok) toast.error(`${res.length - ok} factura(s) no se pudieron pagar.`);
+          await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+        }}
+      />
 
       <SyncHistoryDialog
         companyId={companyId}

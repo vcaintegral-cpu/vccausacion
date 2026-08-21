@@ -94,16 +94,26 @@ export async function generarRecibo(params: {
   if (config.medio === "cheque" && !String(config.cheque ?? "").trim()) {
     return { id: params.invoiceId, etiqueta: params.etiqueta, ok: false, message: "Indique el número del cheque." };
   }
-  const { data, error } = await supabase.rpc("create_payment_receipt", {
+  const args: {
+    _invoice_id: string;
+    _payment_date: string;
+    _method: string;
+    _account_code: string;
+    _amount: number;
+    _account_name?: string;
+    _check_number?: string;
+    _notes?: string;
+  } = {
     _invoice_id: params.invoiceId,
     _payment_date: config.fecha,
     _method: config.medio,
     _account_code: config.cuenta,
-    _account_name: config.cuentaNombre ?? null,
     _amount: roundCOP(config.valor),
-    _check_number: config.cheque ? config.cheque.trim() : null,
-    _notes: config.observaciones ? config.observaciones.trim() : null,
-  });
+  };
+  if (config.cuentaNombre) args._account_name = config.cuentaNombre;
+  if (config.cheque?.trim()) args._check_number = config.cheque.trim();
+  if (config.observaciones?.trim()) args._notes = config.observaciones.trim();
+  const { data, error } = await supabase.rpc("create_payment_receipt", args);
   if (error) return { id: params.invoiceId, etiqueta: params.etiqueta, ok: false, message: error.message };
   const res = (data ?? {}) as { ok?: boolean; code?: string; message?: string; receipt_number?: string; balance_after?: number };
   if (!res.ok) {

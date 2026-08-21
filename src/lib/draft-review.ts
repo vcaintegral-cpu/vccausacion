@@ -42,6 +42,10 @@ export type DraftInvoice = {
   sync_source_label?: string | null;
   sync_applied_at?: string | null;
   sync_event_id?: string | null;
+  /** Estado del recibo de pago (independiente de la causación). */
+  paid_amount?: number | null;
+  payment_status?: string | null;
+  payment_enabled?: boolean | null;
 };
 
 export type JournalRow = {
