@@ -574,6 +574,8 @@ function Borradores() {
               <th className="px-3 py-2 font-medium">Tratamiento IVA</th>
               <th className="px-3 py-2 font-medium">Cuenta CxP</th>
               <th className="px-3 py-2 font-medium">Origen cuenta por pagar</th>
+              <th className="px-3 py-2 font-medium">Forma de pago</th>
+
               <th className="px-3 py-2 font-medium">Centro de costo</th>
               <th className="px-3 py-2 text-right font-medium">Saldo por pagar</th>
               <th className="px-3 py-2 font-medium">Generar recibo</th>
