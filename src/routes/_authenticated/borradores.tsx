@@ -543,6 +543,36 @@ function Borradores() {
                   </td>
                   <td className="px-3 py-2 text-[11px] text-muted-foreground">{origenPayable(r)}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{acc?.costCenter ?? r.cost_center ?? "—"}</td>
+                  <td className="px-3 py-2 text-right font-mono text-xs tabular-nums">
+                    {cop(saldoDe(r))}
+                    {Number(r.paid_amount ?? 0) > 0 && (
+                      <div className="text-[11px] text-muted-foreground">Pagado {cop(Number(r.paid_amount ?? 0))}</div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={!!r.payment_enabled}
+                        onCheckedChange={(v) => void alternarPago(r, v)}
+                        disabled={!pagable(r)}
+                        aria-label={`Generar recibo de pago para ${etiquetaFactura(r)}`}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Generar recibo de pago"
+                        disabled={!pagable(r)}
+                        onClick={() => abrirPago([r])}
+                      >
+                        <Wallet className="size-4" />
+                      </Button>
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                      {!r.voucher_number
+                        ? "Requiere causación"
+                        : ESTADO_PAGO_LABEL[(r.payment_status ?? "pendiente") as EstadoPago]}
+                    </div>
+                  </td>
                   <td className="px-3 py-2">
                     <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${ESTADO_CLASS[e] ?? "bg-muted text-muted-foreground"}`}>
                       {ESTADO_LABEL[e] ?? e}
