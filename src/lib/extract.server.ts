@@ -16,6 +16,11 @@ Reglas: los importes son números sin separadores ni símbolos. El NIT va sin d�
 "buyer_nit" y "buyer_name" son el NIT y la razón social del ADQUIRIENTE/COMPRADOR/CLIENTE (bloque "Adquiriente", "Cliente", "Señores", "Facturar a", "Datos del receptor"). Nunca uses el mismo NIT para proveedor y comprador: son dos empresas distintas. Si dudas, el emisor es quien cobra y el adquiriente es quien paga.
 No supongas impuestos: si la factura no muestra IVA, "iva" es 0. Usa exclusivamente los valores impresos en el documento.
 "retefuente", "reteiva" y "reteica" son las retenciones practicadas que aparecen impresas en la factura. Si la factura no muestra una retención, ese campo es 0. Nunca calcules ni estimes retenciones: solo transcribe las que estén impresas.
+PRECIO UNITARIO (regla crítica): en las facturas colombianas la columna "Precio unitario" suele ser un valor de lista o con IVA incluido y NO es la base gravable. Cuando exista una columna "Precio unitario de venta" (o "Valor venta", "Precio de venta", "Valor neto"), ESE es el valor real y corresponde al TOTAL de la línea por toda la cantidad, sin IVA. En ese caso:
+- "total" de la línea = ese valor de venta (base gravable de la línea, sin IVA).
+- "unit_value" = ese valor de venta DIVIDIDO por la cantidad (ej.: cantidad 8 y precio unitario de venta 40.336,13 -> unit_value = 5.042,02).
+- Nunca uses la columna "Precio unitario" cuando exista la de venta.
+Coherencia obligatoria: cantidad x unit_value - descuento debe ser igual al total de la línea, y la suma de los totales de las líneas debe ser igual al "subtotal" impreso en la factura. El "subtotal", el "iva" y el "total" del encabezado se transcriben EXACTAMENTE como están impresos en el PDF: nunca los recalcules ni los ajustes.
 Si un dato no aparece, usa null o 0. Nunca inventes valores.`;
 
 export type ExtractInvoiceInput = {
@@ -104,9 +109,57 @@ export async function extractInvoiceWithAi(data: ExtractInvoiceInput, apiKey: st
   try {
     const parsed = JSON.parse(cleaned) as ExtractedInvoice;
     parsed.lines = Array.isArray(parsed.lines) ? parsed.lines : [];
-    return parsed;
+    return reconcileWithHeader(parsed);
   } catch {
     console.error("Respuesta IA de factura no parseable", raw.slice(0, 500));
     throw new Error("La IA no pudo estructurar esta factura. Intenta nuevamente o usa una imagen más nítida.");
   }
+}
+const num = (v: unknown) => {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+};
+const money = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * El subtotal y el IVA impresos en el PDF mandan. Si los renglones (por leer
+ * "Precio unitario" en vez de "Precio unitario de venta") no suman lo impreso,
+ * se ajustan proporcionalmente para que la factura cargada al sistema conserve
+ * exactamente la base gravable y el IVA del documento.
+ */
+export function reconcileWithHeader(inv: ExtractedInvoice): ExtractedInvoice {
+  const lines = inv.lines ?? [];
+  if (lines.length === 0) return inv;
+
+  const baseDe = (l: (typeof lines)[number]) => money(num(l.quantity) * num(l.unit_value) - num(l.discount));
+  let base = money(lines.reduce((s, l) => s + baseDe(l), 0));
+  const subtotal = money(num(inv.subtotal));
+
+  if (subtotal > 0 && base > 0 && Math.abs(base - subtotal) > Math.max(1, subtotal * 0.005)) {
+    const factor = subtotal / base;
+    for (const l of lines) {
+      l.unit_value = money(num(l.unit_value) * factor);
+      l.discount = money(num(l.discount) * factor);
+      l.total = money(num(l.quantity) * num(l.unit_value) - num(l.discount));
+    }
+    base = money(lines.reduce((s, l) => s + baseDe(l), 0));
+  } else {
+    for (const l of lines) l.total = baseDe(l);
+  }
+
+  // El IVA total del encabezado se reparte proporcionalmente entre los renglones.
+  const ivaHeader = money(num(inv.iva));
+  const ivaLineas = money(lines.reduce((s, l) => s + num(l.iva), 0));
+  if (ivaHeader > 0 && base > 0 && Math.abs(ivaLineas - ivaHeader) > Math.max(1, ivaHeader * 0.005)) {
+    let asignado = 0;
+    lines.forEach((l, i) => {
+      if (i === lines.length - 1) l.iva = money(ivaHeader - asignado);
+      else {
+        l.iva = money((ivaHeader * baseDe(l)) / base);
+        asignado = money(asignado + num(l.iva));
+      }
+    });
+  }
+  inv.subtotal = subtotal > 0 ? subtotal : base;
+  return inv;
 }
