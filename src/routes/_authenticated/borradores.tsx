@@ -187,6 +187,40 @@ function Borradores() {
   const accounts = data?.accounts ?? new Map<string, DraftAccounts>();
   const pucCodes = data?.pucCodes ?? new Set<string>();
   const pucNames = data?.pucNames ?? new Map<string, string>();
+  const cxpPorFactura = data?.cxp ?? new Map<string, number>();
+  const puc = data?.puc ?? [];
+
+  /** Saldo pendiente de la cuenta por pagar de una factura. */
+  const saldoDe = (r: DraftInvoice) =>
+    saldoPendiente({ cxp: cxpPorFactura.get(r.id) ?? 0, pagado: Number(r.paid_amount ?? 0) });
+
+  /** El pago solo procede cuando la factura ya está causada y queda saldo. */
+  const pagable = (r: DraftInvoice) => !!r.voucher_number && saldoDe(r) > 0;
+
+  const aFacturaPagable = (r: DraftInvoice): FacturaPagable => ({
+    id: r.id,
+    etiqueta: etiquetaFactura(r),
+    proveedor: r.provider_name ?? "—",
+    nit: r.provider_nit ?? "",
+    saldo: saldoDe(r),
+  });
+
+  /** Interruptor ON/OFF del recibo: marca la factura para generar pago. */
+  async function alternarPago(r: DraftInvoice, activo: boolean) {
+    const { error } = await supabase.from("invoices").update({ payment_enabled: activo }).eq("id", r.id);
+    if (error) { toast.error(error.message); return; }
+    await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+  }
+
+  function abrirPago(facturas: DraftInvoice[]) {
+    const objetivo = facturas.filter(pagable);
+    if (objetivo.length === 0) {
+      toast.error("Solo se pueden pagar facturas ya causadas y con saldo pendiente en la cuenta por pagar.");
+      return;
+    }
+    setPagoFacturas(objetivo.map(aFacturaPagable));
+    setPagoOpen(true);
+  }
 
   const proveedores = useMemo(
     () => [...new Set(invoices.map((i) => i.provider_name).filter((x): x is string => !!x))].sort(),
