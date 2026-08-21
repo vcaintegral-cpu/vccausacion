@@ -419,25 +419,56 @@ export type SiigoPurchaseItem = {
   cost_center_id?: number | null;
 };
 
-/** Tipo de documento de Factura de Compra (FC) configurado en Siigo. */
-export async function siigoPurchaseDocumentId(): Promise<number> {
-  const forced = (process.env["SIIGO_PURCHASE_DOCUMENT_ID"] ?? "").trim();
-  if (forced && /^\d+$/.test(forced)) return Number(forced);
+/**
+ * Tipo de documento de Factura de Compra (FC) configurado en Siigo, junto con la
+ * forma en que maneja el consecutivo. Cuando el consecutivo NO es automático,
+ * Siigo exige el campo `number` en el documento; sin él responde
+ * 400 parameter_required · "The field number is required".
+ */
+export type SiigoPurchaseDocumentInfo = {
+  id: number;
+  /** true = Siigo asigna el consecutivo; false = debemos enviar `number`. */
+  automaticNumber: boolean;
+  /** Último consecutivo conocido del tipo de documento (si Siigo lo informa). */
+  consecutive: number | null;
+};
 
-  type DocType = { id?: number; code?: string; name?: string; type?: string; active?: boolean };
+export async function siigoPurchaseDocumentInfo(): Promise<SiigoPurchaseDocumentInfo> {
+  const forced = (process.env["SIIGO_PURCHASE_DOCUMENT_ID"] ?? "").trim();
+
+  type DocType = {
+    id?: number;
+    code?: string;
+    name?: string;
+    type?: string;
+    active?: boolean;
+    automatic_number?: boolean;
+    consecutive?: number;
+  };
   const errors: string[] = [];
   for (const path of ["/v1/document-types?type=FC", "/v1/document-types"]) {
     try {
       const res = await siigoGet<DocType[] | { results?: DocType[] }>(path);
       const list: DocType[] = Array.isArray(res) ? res : (res?.results ?? []);
       const fc = list.filter((t) => String(t.type ?? "").toUpperCase() === "FC" || !t.type);
-      const pick = fc.find((t) => t.active !== false && t.id) ?? fc.find((t) => t.id);
-      if (pick?.id) return pick.id;
+      const pick =
+        (forced && /^\d+$/.test(forced) ? fc.find((t) => String(t.id) === forced) : undefined) ??
+        fc.find((t) => t.active !== false && t.id) ??
+        fc.find((t) => t.id);
+      if (pick?.id)
+        return {
+          id: pick.id,
+          automaticNumber: pick.automatic_number !== false,
+          consecutive: typeof pick.consecutive === "number" ? pick.consecutive : null,
+        };
       errors.push(`${path}: sin tipos de factura de compra (${JSON.stringify(list).slice(0, 400)})`);
     } catch (e) {
       errors.push(`${path}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
+  // Si el ID viene forzado por configuración, se usa aunque no se pueda leer el catálogo.
+  if (forced && /^\d+$/.test(forced))
+    return { id: Number(forced), automaticNumber: true, consecutive: null };
   throw new SiigoError({
     status: 0,
     url: "/v1/document-types?type=FC",
@@ -448,6 +479,34 @@ export async function siigoPurchaseDocumentId(): Promise<number> {
       errors.join(" | "),
   });
 }
+
+/** Tipo de documento de Factura de Compra (FC) configurado en Siigo. */
+export async function siigoPurchaseDocumentId(): Promise<number> {
+  return (await siigoPurchaseDocumentInfo()).id;
+}
+
+/**
+ * Siguiente consecutivo disponible para el tipo de documento FC.
+ * Se calcula con el mayor `number` ya usado en Siigo, sin depender de datos locales.
+ */
+export async function siigoNextPurchaseNumber(documentId: number, fallback: number | null): Promise<number> {
+  type P = { document?: { id?: number | string }; number?: number | string };
+  let mayor = 0;
+  try {
+    const res = await siigoGet<{ results?: P[] } | P[]>("/v1/purchases?page=1&page_size=100");
+    const list: P[] = Array.isArray(res) ? res : (res?.results ?? []);
+    for (const p of list) {
+      if (String(p.document?.id ?? "") !== String(documentId)) continue;
+      const n = Number(String(p.number ?? "").replace(/\D/g, ""));
+      if (Number.isFinite(n) && n > mayor) mayor = n;
+    }
+  } catch {
+    // Sin acceso al listado se usa el consecutivo informado por el tipo de documento.
+  }
+  const base = Math.max(mayor, fallback && fallback > 0 ? fallback : 0);
+  return base + 1;
+}
+
 
 /** Forma de pago de compras: intenta coincidir con la forma de pago de la factura. */
 export async function siigoPurchasePaymentTypeId(preferido?: string | null): Promise<number | null> {
