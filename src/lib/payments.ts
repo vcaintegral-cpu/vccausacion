@@ -99,10 +99,10 @@ export async function generarRecibo(params: {
     _payment_date: config.fecha,
     _method: config.medio,
     _account_code: config.cuenta,
-    _account_name: config.cuentaNombre ?? null,
+    _account_name: config.cuentaNombre ?? undefined,
     _amount: roundCOP(config.valor),
-    _check_number: config.cheque ? config.cheque.trim() : null,
-    _notes: config.observaciones ? config.observaciones.trim() : null,
+    _check_number: config.cheque ? config.cheque.trim() : undefined,
+    _notes: config.observaciones ? config.observaciones.trim() : undefined,
   });
   if (error) return { id: params.invoiceId, etiqueta: params.etiqueta, ok: false, message: error.message };
   const res = (data ?? {}) as { ok?: boolean; code?: string; message?: string; receipt_number?: string; balance_after?: number };
