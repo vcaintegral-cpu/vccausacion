@@ -14,7 +14,10 @@ import { cop, fecha } from "@/lib/format";
 import { ESTADO_LABEL, estadoUnico, type EstadoFactura } from "@/lib/invoice-duplicates";
 import { siigoSyncInvoice } from "@/lib/siigo.functions";
 import { IVA_TREATMENT_LABEL, treatmentForAccount } from "@/lib/iva-treatment";
-import { PAYABLE_SOURCE_LABEL, type PayableSource } from "@/lib/payable-account";
+import { PAYABLE_SOURCE_LABEL, isPayableCode, learnPayableAccount, type PayableSource } from "@/lib/payable-account";
+import { AccountCombobox } from "@/components/account-combobox";
+import { METODO_LABEL, usePaymentTypes } from "@/lib/payment-types";
+
 import { deshacerSincronizacion, fetchSyncHistory, type SyncEvento } from "@/lib/draft-sync";
 import { useDraftsRealtime } from "@/lib/realtime-drafts";
 import {
