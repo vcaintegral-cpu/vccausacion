@@ -431,6 +431,10 @@ export type SiigoPurchaseDocumentInfo = {
   automaticNumber: boolean;
   /** Último consecutivo conocido del tipo de documento (si Siigo lo informa). */
   consecutive: number | null;
+  /** true = el tipo FC maneja centros de costo. */
+  costCenter: boolean;
+  /** true = Siigo EXIGE el centro de costo en el documento. */
+  costCenterMandatory: boolean;
 };
 
 export async function siigoPurchaseDocumentInfo(): Promise<SiigoPurchaseDocumentInfo> {
@@ -444,6 +448,8 @@ export async function siigoPurchaseDocumentInfo(): Promise<SiigoPurchaseDocument
     active?: boolean;
     automatic_number?: boolean;
     consecutive?: number;
+    cost_center?: boolean;
+    cost_center_mandatory?: boolean;
   };
   const errors: string[] = [];
   for (const path of ["/v1/document-types?type=FC", "/v1/document-types"]) {
@@ -460,6 +466,8 @@ export async function siigoPurchaseDocumentInfo(): Promise<SiigoPurchaseDocument
           id: pick.id,
           automaticNumber: pick.automatic_number !== false,
           consecutive: typeof pick.consecutive === "number" ? pick.consecutive : null,
+          costCenter: pick.cost_center === true,
+          costCenterMandatory: pick.cost_center_mandatory === true,
         };
       errors.push(`${path}: sin tipos de factura de compra (${JSON.stringify(list).slice(0, 400)})`);
     } catch (e) {
@@ -468,7 +476,7 @@ export async function siigoPurchaseDocumentInfo(): Promise<SiigoPurchaseDocument
   }
   // Si el ID viene forzado por configuración, se usa aunque no se pueda leer el catálogo.
   if (forced && /^\d+$/.test(forced))
-    return { id: Number(forced), automaticNumber: true, consecutive: null };
+    return { id: Number(forced), automaticNumber: true, consecutive: null, costCenter: false, costCenterMandatory: false };
   throw new SiigoError({
     status: 0,
     url: "/v1/document-types?type=FC",
