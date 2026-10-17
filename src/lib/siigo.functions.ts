@@ -1,5 +1,5 @@
-import { validateStoredJournal } from "@/lib/source-values";
-import { purchaseLineErrors, purchaseReadbackErrors } from "@/lib/siigo-purchase-validation";
+import { effectiveSource, validateStoredJournal } from "@/lib/source-values";
+import { purchaseLineErrors, purchaseReadbackErrors, purchasePayloadErrors, resolvePurchaseInc } from "@/lib/siigo-purchase-validation";
 import { toCents } from "@/lib/money";
 import { esCeroCOP, roundCOP } from "@/lib/money";
 import { createServerFn } from "@tanstack/react-start";
@@ -1091,105 +1091,22 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           });
         }
       }
-      if (ivaTaxId == null && Number(inv.iva ?? 0) > 0 && ivaLineIndex >= 0) {
-        const ivaAccountLine = resolvedJournal[ivaLineIndex]?.account_code ?? "";
-        const rateFactura =
-          Number(inv.total ?? 0) > Number(inv.iva ?? 0)
-            ? Math.round((Number(inv.iva) / (Number(inv.total) - Number(inv.iva))) * 10000) / 100
-            : 0;
-        // 1) Identificador real guardado por empresa al sincronizar impuestos.
-        const { data: localTaxes } = await supabase
-          .from("tax_rates")
-          .select("kind, name, rate, active, siigo_id, siigo_name, account_code")
-          .eq("company_id", inv.company_id)
-          .eq("active", true)
-          .not("siigo_id", "is", null);
-        const esIva = (t: { kind: string | null; name: string | null }) =>
-          /iva|impuesto al valor/i.test(`${t.kind ?? ""} ${t.name ?? ""}`) &&
-          !/rete/i.test(`${t.kind ?? ""} ${t.name ?? ""}`);
-        const candidatasLocales = (localTaxes ?? []).filter(
-          (t) => esIva(t) && Math.abs(Number(t.rate ?? 0) - rateFactura) < 0.01,
-        );
-        const localElegida =
-          candidatasLocales.find((t) => /compra.*costo|costo.*compra/i.test(t.name ?? "")) ??
-          candidatasLocales.find((t) => /costo|compra/i.test(t.name ?? "")) ??
-          candidatasLocales.find((t) => t.account_code === ivaAccountLine) ??
-          candidatasLocales[0];
-        if (localElegida?.siigo_id) {
-          ivaTaxId = localElegida.siigo_id;
-          ivaTaxRate = Number(localElegida.rate ?? rateFactura);
-          ivaTaxName = localElegida.siigo_name ?? localElegida.name ?? null;
-          console.log("[siigo][iva] impuesto local:", {
-            cuenta: ivaAccountLine,
-            porcentaje: rateFactura,
-            siigo_id: localElegida.siigo_id,
-            nombre: localElegida.siigo_name ?? localElegida.name,
-            activo: true,
-          });
-        }
-        const response =
-          ivaTaxId != null
-            ? { results: [] as SiigoTax[] }
-            : await siigoGet<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
-        const taxes = (Array.isArray(response) ? response : (response.results ?? [])).filter(
-          (tax) =>
-            tax.active !== false &&
-            tax.id != null &&
-            /iva|value.added/i.test(`${tax.type ?? ""} ${tax.name ?? ""}`),
-        );
-        const readCode = (value: SiigoTax["account"]): string => {
-          if (value == null) return "";
-          if (typeof value === "object") return String(value.code ?? "").trim();
-          return String(value).trim();
-        };
-        const ivaAccount = ivaAccountLine;
-        const invoiceRate = rateFactura;
-        const tax =
-          taxes.find(
-            (candidate) =>
-              Number(candidate.percentage ?? 0) === invoiceRate &&
-              /compra.*costo|costo.*compra/i.test(candidate.name ?? ""),
-          ) ??
-          taxes.find(
-            (candidate) =>
-              Number(candidate.percentage ?? 0) === invoiceRate &&
-              /costo|compra/i.test(candidate.name ?? ""),
-          ) ??
-          taxes.find((candidate) =>
-            [candidate.account, candidate.accounting_account, candidate.account_code]
-              .map((value) => readCode(value as SiigoTax["account"]))
-              .includes(ivaAccount),
-          ) ??
-          taxes.find((candidate) => Number(candidate.percentage ?? 0) === invoiceRate);
-        if (ivaTaxId == null) {
-          if (!tax?.id) {
-            throw new Error(
-              `No se encontró en Siigo el impuesto correspondiente para esta empresa y tarifa (IVA ${invoiceRate}%). Sincronice nuevamente los impuestos desde Integraciones.`,
-            );
-          }
-          ivaTaxId = tax.id;
-          ivaTaxRate = invoiceRate;
-          ivaTaxName = tax.name ?? null;
-          console.log("[siigo][iva] impuesto tomado de /v1/taxes:", {
-            cuenta: ivaAccount,
-            porcentaje: invoiceRate,
-            siigo_id: tax.id,
-            nombre: tax.name,
-            activo: tax.active !== false,
-          });
-          // Se vincula el ID real a la configuración de impuestos de ESTA empresa.
-          await supabase
-            .from("tax_rates")
-            .update({
-              siigo_id: String(tax.id),
-              siigo_name: tax.name ?? null,
-              siigo_code: String(tax.id),
-              siigo_synced_at: new Date().toISOString(),
-            })
-            .eq("company_id", inv.company_id)
-            .eq("kind", "iva")
-            .eq("rate", invoiceRate);
-        }
+      // Resolve only source-declared rates; never use IVA / document total as a tariff.
+      const source = effectiveSource(inv.raw_extraction, inv.source_override);
+      const taxResponse = await siigoGet<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
+      const purchaseTaxes = (Array.isArray(taxResponse) ? taxResponse : taxResponse.results ?? [])
+        .filter(t => t.id != null && t.active !== false);
+      for (const line of lineasImpuesto ?? []) {
+        const position = Number(line.position ?? 0);
+        if (!(Number(line.iva) > 0) || ivaSiigoPorPosicion.has(position)) continue;
+        const rate = source?.lines[position]?.iva_rate ?? line.iva_tax_rate;
+        const matches = purchaseTaxes.filter(t => /iva/i.test(`${t.type ?? ""} ${t.name ?? ""}`)
+          && !/rete|withhold/i.test(`${t.type ?? ""} ${t.name ?? ""}`)
+          && rate != null && Number(t.percentage) === Number(rate));
+        const match = matches.length === 1 ? matches[0] : undefined;
+        if (match?.id == null) throw new Error(`Renglón ${position + 1}: seleccione el IVA exacto de la fuente. No se inferirá una tarifa del total de la factura.`);
+        ivaSiigoPorPosicion.set(position, match.id);
+        if (ivaTaxId == null) { ivaTaxId = match.id; ivaTaxRate = Number(match.percentage); ivaTaxName = match.name ?? null; }
       }
       if (!inv.provider_nit)
         throw new Error(
@@ -1202,7 +1119,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const { data: invoiceLines } = await supabase
         .from("invoice_lines")
         .select(
-          "code, description, quantity, unit_value, discount, iva, account_code, account_name, item_type, position",
+          "code, description, quantity, unit_value, discount, iva, impoconsumo, account_code, account_name, item_type, position",
         )
         .eq("invoice_id", data.invoiceId)
         .order("position");
@@ -1314,13 +1231,21 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               quantity: Number(l.quantity ?? 1) || 1,
               price: Number(l.unit_value ?? 0),
               discount: Number(l.discount ?? 0),
-              tax_ids:
-                Number(l.iva ?? 0) > 0
-                  ? (() => {
-                      const propio = ivaSiigoPorPosicion.get(Number(l.position ?? i));
-                      return propio != null ? [propio] : ivaTaxId != null ? [ivaTaxId] : [];
-                    })()
-                  : [],
+              tax_ids: (() => {
+                const ids: Array<string | number> = [];
+                const ivaId = ivaSiigoPorPosicion.get(Number(l.position ?? i));
+                if (Number(l.iva) > 0) {
+                  if (ivaId == null) throw new Error(`Renglón ${i + 1}: falta el IVA exacto de Siigo.`);
+                  ids.push(ivaId);
+                }
+                if (Number(l.impoconsumo) > 0) {
+                  const base = Number(l.quantity ?? 1) * Number(l.unit_value ?? 0) - Number(l.discount ?? 0);
+                  const incId = resolvePurchaseInc(purchaseTaxes, base, Number(l.impoconsumo));
+                  if (incId == null) throw new Error(`Renglón ${i + 1}: el INC de la fuente no coincide con un impuesto activo de Siigo. No se envió la factura.`);
+                  ids.push(incId);
+                }
+                return ids;
+              })(),
               // El tipo de ítem elegido en la revisión se conserva sin cambios.
               item_type: tipo,
             };
@@ -2082,6 +2007,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             value: valorSiigoPorTaxId.get(String(r.id)) ?? r.value,
           })),
         });
+      const forecastErrors = purchasePayloadErrors(itemsConRetencion, purchaseTaxes, { subtotal, iva, impoconsumo });
+      if (forecastErrors.length) throw new Error(forecastErrors.join("\n"));
       const payload = construirPayload(totalDocumentoSiigo);
       siigoAttemptTrace = {
         ...siigoAttemptTrace,
@@ -2233,7 +2160,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           }
           if (!raw.includes("invalid_total_payments")) throw e;
           const exacto = conciliableInformadoPorSiigo(raw);
-          if (exacto != null && Math.abs(exacto - intentoValor) > 0.0001) {
+          if (exacto != null && toCents(exacto) === toCents(valorCxP) && Math.abs(exacto - intentoValor) > 0.0001) {
             console.log(
               "[siigo][payments] Siigo rechazó",
               intentoValor,
