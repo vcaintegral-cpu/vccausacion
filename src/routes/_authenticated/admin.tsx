@@ -15,7 +15,6 @@ import { CostCentersPanel, HistoryPanel, ProvidersToolbar, PucPanel, TaxesPanel 
 import { ProductsPanel } from "@/components/products-panel";
 import { ProductCategoriesPanel } from "@/components/product-categories-panel";
 import { PaymentTypesPanel } from "@/components/payment-types-panel";
-import { PurchaseSettingsPanel } from "@/components/purchase-settings-panel";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
@@ -214,7 +213,6 @@ function Admin() {
           <TabsTrigger value="productos">Productos y servicios</TabsTrigger>
           <TabsTrigger value="categorias">Categorías</TabsTrigger>
           <TabsTrigger value="formas-pago">Formas de pago</TabsTrigger>
-          <TabsTrigger value="compras-excel">Compras Excel</TabsTrigger>
           <TabsTrigger value="reglas">Reglas</TabsTrigger>
           <TabsTrigger value="impuestos">Retenciones</TabsTrigger>
           <TabsTrigger value="centros">Centros de costo</TabsTrigger>
@@ -256,9 +254,6 @@ function Admin() {
 
         <TabsContent value="formas-pago">
           {wrap(<PaymentTypesPanel companyId={companyId} />)}
-        </TabsContent>
-        <TabsContent value="compras-excel">
-          {wrap(<PurchaseSettingsPanel key={companyId} companyId={companyId} />)}
         </TabsContent>
 
         <TabsContent value="reglas">
