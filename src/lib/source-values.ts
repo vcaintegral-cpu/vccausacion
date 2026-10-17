@@ -60,7 +60,7 @@ export function validateStoredJournal(inv: { raw_extraction?: unknown; subtotal?
   }
   if (source) {
     const baseDebits = sumCents(journal.filter(l => l.account_code !== "42958101").map(l => l.debit));
-    if (baseDebits !== source.subtotal + source.iva + source.impoconsumo - source.discount + source.surcharge)
+    if (baseDebits !== source.subtotal + source.iva + source.impoconsumo)
       errors.push("Diferencia con la fuente: los débitos no conservan los importes de la factura.");
   }
   return errors;

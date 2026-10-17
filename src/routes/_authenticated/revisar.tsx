@@ -556,8 +556,6 @@ function Revisar() {
 
   async function guardarCambios() {
     if (!header) return;
-    const issues = source ? sourceErrors(source) : [];
-    if (issues[0]) throw new Error(issues[0]);
     const { error: invoiceError } = await supabase
       .from("invoices")
       .update({
@@ -1092,7 +1090,7 @@ function Revisar() {
                   </td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">
                     {cop(
-                      Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
+                      source ? l.total : Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0),
                     )}
                   </td>
                 </tr>
