@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
-import { evaluarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
+import { evaluarCuenta, partitionSelectableAccounts, type PucAccount } from "@/lib/puc-hierarchy";
 
 export type PucOption = PucAccount;
 
@@ -23,15 +23,19 @@ export function AccountCombobox({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
   const [aviso, setAviso] = useState<{ code: string; nombre: string; mensaje: string; hijas: PucOption[] } | null>(null);
   const selected = useMemo(() => accounts.find((a) => a.code === value), [accounts, value]);
 
-  const esMovimiento = (a: PucOption) => evaluarCuenta(accounts, a.code).permiteMovimiento;
-  const ordenadas = useMemo(() => {
-    const mov = accounts.filter(esMovimiento);
-    const padres = accounts.filter((a) => !esMovimiento(a));
-    return { mov, padres };
-  }, [accounts]);
+  const ordenadas = useMemo(() => partitionSelectableAccounts(accounts), [accounts]);
+  const visibles = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    const matches = (account: PucOption) => `${account.code} ${account.name}`.toLocaleLowerCase().includes(query);
+    return {
+      mov: ordenadas.mov.filter(matches).slice(0, 80),
+      padres: ordenadas.padres.filter(matches).slice(0, 80),
+    };
+  }, [ordenadas, search]);
 
   const elegir = (a: PucOption) => {
     const evaluacion = evaluarCuenta(accounts, a.code);
@@ -54,6 +58,7 @@ export function AccountCombobox({
       open={open}
       onOpenChange={(o) => {
         setOpen(o);
+        if (!o) setSearch("");
         if (!o) setAviso(null);
       }}
     >
@@ -83,26 +88,27 @@ export function AccountCombobox({
                 <p className="text-xs text-muted-foreground">No hay auxiliares activas sincronizadas para esta cuenta.</p>
               ) : (
                 aviso.hijas.map((h) => (
-                  <button
+                  <Button
                     key={h.code}
                     type="button"
+                    variant="ghost"
                     className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-accent"
                     onClick={() => elegir(h)}
                   >
                     <span className="font-mono">{h.code}</span>
                     <span className="truncate text-muted-foreground">{h.name}</span>
-                  </button>
+                  </Button>
                 ))
               )}
             </div>
           </div>
         ) : null}
-        <Command filter={(itemValue, search) => (itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0)}>
-          <CommandInput placeholder={placeholder} />
+        <Command shouldFilter={false}>
+          <CommandInput placeholder={placeholder} value={search} onValueChange={setSearch} />
           <CommandList>
             <CommandEmpty>Sin resultados.</CommandEmpty>
             <CommandGroup heading="Cuentas de movimiento">
-              <CommandItem
+              {!search.trim() ? <CommandItem
                 value="__vacio__ ninguna"
                 onSelect={() => {
                   onChange("", null);
@@ -110,8 +116,8 @@ export function AccountCombobox({
                 }}
               >
                 <span className="text-muted-foreground">Sin cuenta</span>
-              </CommandItem>
-              {ordenadas.mov.map((a) => (
+              </CommandItem> : null}
+              {visibles.mov.map((a) => (
                 <CommandItem key={a.code} value={`${a.code} ${a.name}`} onSelect={() => elegir(a)}>
                   <Check className={cn("mr-2 size-3.5", value === a.code ? "opacity-100" : "opacity-0")} />
                   <span className="font-mono">{a.code}</span>
@@ -119,9 +125,9 @@ export function AccountCombobox({
                 </CommandItem>
               ))}
             </CommandGroup>
-            {ordenadas.padres.length > 0 ? (
+            {visibles.padres.length > 0 ? (
               <CommandGroup heading="Cuentas padre (solo consulta)">
-                {ordenadas.padres.map((a) => (
+                {visibles.padres.map((a) => (
                   <CommandItem
                     key={a.code}
                     value={`${a.code} ${a.name}`}
