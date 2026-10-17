@@ -145,7 +145,8 @@ export function buildJournal(params: {
     out.push({ account_code: code, account_name: g.name, debit: round(g.value), credit: 0, cost_center: costCenter ?? null });
 
   // El IVA usa EXCLUSIVAMENTE la cuenta del impuesto seleccionado; nunca una cuenta por defecto.
-  if (ivaDetalle && ivaDetalle.length > 0) {
+  // Un detalle vacío ([]) es una decisión explícita de NO contabilizar IVA (tratamiento N/A).
+  if (ivaDetalle !== undefined) {
     for (const d of ivaDetalle) {
       if (!d.amount) continue;
       out.push({

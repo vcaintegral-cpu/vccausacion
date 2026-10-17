@@ -91,6 +91,23 @@ export async function fetchProviderRules(companyId: string): Promise<ProviderRul
   return (data ?? []) as unknown as ProviderRule[];
 }
 
+// Caché en memoria por empresa: un lote de 100 facturas lee las reglas una sola vez.
+const rulesCache = new Map<string, Promise<ProviderRule[]>>();
+
+export function fetchProviderRulesCached(companyId: string): Promise<ProviderRule[]> {
+  if (!companyId) return Promise.resolve([]);
+  const hit = rulesCache.get(companyId);
+  if (hit) return hit;
+  const run = fetchProviderRules(companyId).catch(() => [] as ProviderRule[]);
+  rulesCache.set(companyId, run);
+  return run;
+}
+
+export function clearProviderRulesCache(companyId?: string) {
+  if (companyId) rulesCache.delete(companyId);
+  else rulesCache.clear();
+}
+
 const esTodas = (kw: string) => {
   const k = norm(kw).replace(/[()]/g, "");
   return k === "todas" || k === "todo" || k === "";
