@@ -43,23 +43,62 @@ export type PurchaseReadback = {
   items?: Array<{ taxes?: Array<{ id?: string | number; type?: string; value?: number }> }>;
 };
 
-/** Compare actual remote amounts, never the submitted payload or a single default tax ID. */
-export function purchaseReadbackErrors(doc: PurchaseReadback, expected: {
+export type ReadbackExpected = {
   total: number; iva: number; impoconsumo: number; retentions: number;
   returnedRetentions: number; payable: number; ivaIds: Array<string | number>;
-}): string[] {
+};
+export type ReadbackRow = { campo: string; origen: number; siigo: number | null; ok: boolean };
+
+/** Field-by-field comparison: gross vs gross (Siigo net + retentions) and net vs net (CxP). */
+export function purchaseReadbackComparison(doc: PurchaseReadback, expected: ReadbackExpected): ReadbackRow[] {
   const taxes = (doc.items ?? []).flatMap(item => item.taxes ?? []);
   const iva = sumCents(taxes.filter(t => expected.ivaIds.some(id => String(id) === String(t.id))).map(t => t.value));
   const inc = sumCents(taxes.filter(t => /consum/i.test(t.type ?? "")).map(t => t.value));
   const payable = doc.payments ? sumCents(doc.payments.map(p => p.value)) : null;
   const fields = [
     // Siigo purchase total is net of applied retentions; reconstruct the gross source total.
-    ["Total", toCents(expected.total), doc.total === undefined ? null : toCents(doc.total) + toCents(expected.returnedRetentions)],
+    ["Total bruto", toCents(expected.total), doc.total === undefined ? null : toCents(doc.total) + toCents(expected.returnedRetentions)],
     ["IVA", toCents(expected.iva), iva],
     ["INC", toCents(expected.impoconsumo), inc],
     ["Retenciones", toCents(expected.retentions), toCents(expected.returnedRetentions)],
-    ["CxP", toCents(expected.payable), payable],
+    ["CxP (neto)", toCents(expected.payable), payable],
   ] as const;
-  return fields.flatMap(([label, local, remote]) => local === remote ? []
-    : [`${label}: origen ${local / 100}, Siigo ${remote === null ? "no informado" : remote / 100}`]);
+  return fields.map(([campo, local, remote]) => ({ campo, origen: local / 100, siigo: remote === null ? null : remote / 100, ok: local === remote }));
+}
+
+/** Compare actual remote amounts, never the submitted payload or a single default tax ID. */
+export function purchaseReadbackErrors(doc: PurchaseReadback, expected: ReadbackExpected): string[] {
+  return purchaseReadbackComparison(doc, expected).filter(r => !r.ok).map(r =>
+    `${r.campo}: origen ${r.origen}, Siigo ${r.siigo === null ? "no informado" : r.siigo}`);
+}
+
+/** Expected values for re-reading an existing Siigo purchase, derived only from that remote document. */
+export function readbackExpectedFromDoc(doc: PurchaseReadback & { retentions?: Array<{ value?: number }> }, inv: {
+  total: number; iva: number; impoconsumo: number; retefuente: number; reteiva: number; reteica: number;
+}): ReadbackExpected {
+  const taxes = (doc.items ?? []).flatMap(item => item.taxes ?? []);
+  const returned = (sumCents((doc.retentions ?? []).map(r => r.value))
+    + sumCents(taxes.filter(t => /^rete/i.test(t.type ?? "")).map(t => t.value))) / 100;
+  const retentions = (toCents(inv.retefuente) + toCents(inv.reteiva) + toCents(inv.reteica)) / 100;
+  return {
+    total: inv.total, iva: inv.iva, impoconsumo: inv.impoconsumo, retentions,
+    returnedRetentions: returned, payable: (toCents(inv.total) - toCents(retentions)) / 100,
+    ivaIds: taxes.filter(t => /^iva$/i.test((t.type ?? "").trim())).map(t => t.id ?? ""),
+  };
+}
+
+export type SiigoErrorKind = "sin_crear" | "creado_diferencia" | "interrumpido";
+/** Error type is persisted; a remote identity always means the document exists in Siigo. */
+export function siigoErrorKind(inv: { siigo_status?: string | null; siigo_id?: string | null; siigo_number?: string | null; siigo_error_kind?: string | null }): SiigoErrorKind | null {
+  if (inv.siigo_status !== "error") return null;
+  if (inv.siigo_id || inv.siigo_number) return "creado_diferencia";
+  return inv.siigo_error_kind === "interrumpido" ? "interrumpido" : "sin_crear";
+}
+
+/** A "sincronizando" send older than five minutes was interrupted (app closed mid-send). */
+export const INTERRUPTED_AFTER_MS = 5 * 60 * 1000;
+export function isInterruptedSend(inv: { siigo_status?: string | null; siigo_last_attempt_at?: string | null }, now = Date.now()): boolean {
+  if (inv.siigo_status !== "sincronizando") return false;
+  const t = inv.siigo_last_attempt_at ? Date.parse(inv.siigo_last_attempt_at) : NaN;
+  return !Number.isFinite(t) || now - t > INTERRUPTED_AFTER_MS;
 }
