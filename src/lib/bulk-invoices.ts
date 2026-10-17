@@ -2,7 +2,7 @@ import { unzipSync } from "fflate";
 import { supabase } from "@/integrations/supabase/client";
 import { companyUsesCostCenters, costCenterForCompany, costCentersEnabled } from "@/lib/cost-center-config";
 import { prepareInvoiceFile } from "@/lib/invoice-file";
-import { captureSource, sourceErrors, alignJournalToSource } from "@/lib/source-values";
+import { captureSource, sourceErrors, sourceFromRaw, alignJournalToSource } from "@/lib/source-values";
 import { roundCOP, sumCOP } from "@/lib/money";
 import type { ExtractedInvoice } from "@/lib/extract.functions";
 import {
@@ -404,7 +404,7 @@ export async function computeDraftAccounting(params: {
   const reason = tomadas.length === 0 ? "Cuentas tomadas del catálogo o del borrador." : (peor?.reason ?? "");
   const baseGravable = roundCOP(
     lines.reduce(
-      (s, l) => s + roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
+      (s, l) => s + roundCOP(l.subtotal ?? Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
       0,
     ),
   );
@@ -577,10 +577,12 @@ export async function recalcularCuentasBorrador(
   if (inv.status !== "borrador" && inv.status !== "error")
     return { ok: false, message: "Solo se pueden recalcular facturas en borrador." };
   const raw = (inv.raw_extraction ?? null) as { ia?: ExtractedInvoice } | null;
-  const data = raw?.ia;
+  let data = raw?.ia;
   if (!data || !Array.isArray(data.lines))
     return { ok: false, message: "Esta factura no conserva la extracción original; no se puede recalcular." };
 
+  const source = sourceFromRaw(raw);
+  if (source) data = { ...data, subtotal: source.subtotal / 100, iva: source.iva / 100, impoconsumo: source.impoconsumo / 100, total: source.total / 100, discount: source.discount / 100, surcharge: source.surcharge / 100, lines: data.lines.map((l, i) => ({ ...l, subtotal: (source.lines[i]?.subtotal ?? 0) / 100, total: (source.lines[i]?.subtotal ?? 0) / 100, discount: source.source === "excel" ? 0 : l.discount })) };
   const { lines, ...header } = data;
   const acc = await computeDraftAccounting({
     companyId: inv.company_id as string,
@@ -610,7 +612,8 @@ export async function recalcularCuentasBorrador(
       retefuente: roundCOP(acc.retenciones.retefuente),
       reteiva: roundCOP(acc.retenciones.reteiva),
       reteica: roundCOP(acc.retenciones.reteica),
-      raw_extraction: { ...raw, account_decisions: acc.decisions } as never,
+      ...(source ? { subtotal: source.subtotal / 100, iva: source.iva / 100, impoconsumo: source.impoconsumo / 100, total: source.total / 100, discount: source.discount / 100 } : {}),
+      raw_extraction: { ...raw, ia: data, ...(source ? { valores_origen: source } : {}), account_decisions: acc.decisions } as never,
       ...payablePatch,
       updated_at: new Date().toISOString(),
     } as never)
@@ -643,7 +646,7 @@ export async function recalcularCuentasBorrador(
     if (!nueva) continue;
     await supabase
       .from("invoice_lines")
-      .update({ account_code: nueva.account_code, account_name: nueva.account_name ?? null } as never)
+      .update({ account_code: nueva.account_code, account_name: nueva.account_name ?? null, ...(source ? { total: nueva.subtotal ?? nueva.total, iva: nueva.iva, impoconsumo: nueva.impoconsumo } : {}) } as never)
       .eq("id", l.id);
   }
 

@@ -761,6 +761,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       inv.siigo_id ||
       inv.siigo_number
     ) {
+      if (inv.siigo_status !== "sincronizada" && inv.status !== "sincronizada" && inv.status !== "historico") throw new Error("Diferencia Siigo: ya existe un documento creado pendiente de verificar. No se reenviará.");
       return {
         ok: true,
         siigoId: inv.siigo_id ?? null,
