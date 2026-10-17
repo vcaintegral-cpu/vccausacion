@@ -48,3 +48,38 @@ describe("shared PDF and RECIBIDOS purchase gates", () => {
     expect(errors[0]).toContain("49679.68");
   });
 });
+import { isInterruptedSend, purchaseReadbackComparison, readbackExpectedFromDoc, siigoErrorKind } from "./siigo-purchase-validation";
+
+describe("Siigo error recovery", () => {
+  it("documents with a Siigo consecutive are 'created with difference', never retryable", () => {
+    expect(siigoErrorKind({ siigo_status: "error", siigo_id: "x", siigo_number: "FC-1-686", siigo_error_kind: "sin_crear" })).toBe("creado_diferencia");
+    expect(siigoErrorKind({ siigo_status: "error", siigo_id: null, siigo_number: null })).toBe("sin_crear");
+    expect(siigoErrorKind({ siigo_status: "error", siigo_error_kind: "interrumpido" })).toBe("interrumpido");
+    expect(siigoErrorKind({ siigo_status: "sincronizada", siigo_id: "x" })).toBeNull();
+  });
+
+  it("a send stuck in 'sincronizando' for more than 5 minutes is interrupted", () => {
+    const now = Date.parse("2026-10-17T23:00:00Z");
+    expect(isInterruptedSend({ siigo_status: "sincronizando", siigo_last_attempt_at: "2026-10-17T22:54:00Z" }, now)).toBe(true);
+    expect(isInterruptedSend({ siigo_status: "sincronizando", siigo_last_attempt_at: "2026-10-17T22:57:00Z" }, now)).toBe(false);
+  });
+
+  it("FE-3482 re-check compares gross vs gross and net vs net and matches", () => {
+    const doc = {
+      total: 1404000,
+      payments: [{ value: 1404000 }],
+      items: [{ taxes: [{ id: 2845, type: "IVA", value: 247000 }, { id: 2847, type: "Retefuente", value: 143000 }] }],
+      retentions: [],
+    };
+    const inv = { total: 1547000, iva: 247000, impoconsumo: 0, retefuente: 143000, reteiva: 0, reteica: 0 };
+    const rows = purchaseReadbackComparison(doc, readbackExpectedFromDoc(doc, inv));
+    expect(rows.every((r) => r.ok)).toBe(true);
+  });
+
+  it("FEPC-26918 re-check still reports the missing INC", () => {
+    const doc = { total: 73148.15, payments: [{ value: 73148.15 }], items: [{ taxes: [] }], retentions: [] };
+    const inv = { total: 79000, iva: 0, impoconsumo: 5851.85, retefuente: 0, reteiva: 0, reteica: 0 };
+    const bad = purchaseReadbackComparison(doc, readbackExpectedFromDoc(doc, inv)).filter((r) => !r.ok).map((r) => r.campo);
+    expect(bad).toContain("INC");
+  });
+});
