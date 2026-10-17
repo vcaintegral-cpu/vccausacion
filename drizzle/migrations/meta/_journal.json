@@ -57,6 +57,13 @@
       "when": 1792271813925,
       "tag": "0007_protect_invoice_source_values",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792272161252,
+      "tag": "0008_validate_complete_source_journal",
+      "breakpoints": true
     }
   ]
 }
