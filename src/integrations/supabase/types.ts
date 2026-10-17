@@ -918,15 +918,21 @@ export type Database = {
           retefuente: number
           reteica: number
           reteiva: number
+          siigo_attempts: number
           siigo_document_url: string | null
           siigo_error: string | null
+          siigo_error_kind: string | null
           siigo_id: string | null
           siigo_last_attempt_at: string | null
           siigo_number: string | null
+          siigo_reconciled_at: string | null
+          siigo_reconciled_by: string | null
+          siigo_reconciled_note: string | null
           siigo_status: string
           siigo_synced_at: string | null
           siigo_synced_by: string | null
           siigo_trace: Json | null
+          siigo_voided: Json
           source_override: Json | null
           source_values: Json | null
           status: string
@@ -996,15 +1002,21 @@ export type Database = {
           retefuente?: number
           reteica?: number
           reteiva?: number
+          siigo_attempts?: number
           siigo_document_url?: string | null
           siigo_error?: string | null
+          siigo_error_kind?: string | null
           siigo_id?: string | null
           siigo_last_attempt_at?: string | null
           siigo_number?: string | null
+          siigo_reconciled_at?: string | null
+          siigo_reconciled_by?: string | null
+          siigo_reconciled_note?: string | null
           siigo_status?: string
           siigo_synced_at?: string | null
           siigo_synced_by?: string | null
           siigo_trace?: Json | null
+          siigo_voided?: Json
           source_override?: Json | null
           source_values?: Json | null
           status?: string
@@ -1074,15 +1086,21 @@ export type Database = {
           retefuente?: number
           reteica?: number
           reteiva?: number
+          siigo_attempts?: number
           siigo_document_url?: string | null
           siigo_error?: string | null
+          siigo_error_kind?: string | null
           siigo_id?: string | null
           siigo_last_attempt_at?: string | null
           siigo_number?: string | null
+          siigo_reconciled_at?: string | null
+          siigo_reconciled_by?: string | null
+          siigo_reconciled_note?: string | null
           siigo_status?: string
           siigo_synced_at?: string | null
           siigo_synced_by?: string | null
           siigo_trace?: Json | null
+          siigo_voided?: Json
           source_override?: Json | null
           source_values?: Json | null
           status?: string
