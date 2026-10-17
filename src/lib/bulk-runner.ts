@@ -113,7 +113,7 @@ export function getBulkProgress() {
 // ----------------------------------------------------------------------------
 // Parámetros contables (se leen una vez por empresa y se reutilizan en el lote)
 // ----------------------------------------------------------------------------
-type Deps = { config: BulkConfig; knowledge: CompanyKnowledge };
+export type Deps = { config: BulkConfig; knowledge: CompanyKnowledge };
 const depsCache = new Map<string, Promise<Deps>>();
 
 async function fetchAll<T>(
@@ -131,7 +131,7 @@ async function fetchAll<T>(
   return out;
 }
 
-async function loadDeps(companyId: string): Promise<Deps> {
+export async function loadDeps(companyId: string): Promise<Deps> {
   const cached = depsCache.get(companyId);
   if (cached) return cached;
   const promise = (async (): Promise<Deps> => {
