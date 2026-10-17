@@ -42,6 +42,8 @@ import {
   ivaDetalleDesdeRegla,
   marcarUsoRegla,
   retencionDesdeRegla,
+  isValidExpenseAccount,
+  type ProviderRule,
 } from "@/lib/provider-rules";
 import { totals as totalesJournal } from "@/lib/accounting";
 
@@ -135,6 +137,12 @@ export type BulkConfig = {
   categories: { id?: string | null; name: string; kind: string; account_code: string | null; account_name: string | null }[];
   /** Conocimiento contable de la empresa (se lee una sola vez para todo el lote). */
   knowledge?: CompanyKnowledge;
+  batch?: {
+    company: { id: string; name: string; nit: string | null; uses_cost_centers: boolean | null; default_payable_account: string | null };
+    providers: Record<string, { nit: string; default_expense_account: string | null; default_payable_account: string | null; default_iva_account: string | null }>;
+    providerRules: ProviderRule[];
+    userId: string;
+  };
 };
 
 type ExtractFn = (args: { data: { fileName: string; mimeType: string } & Record<string, unknown> }) => Promise<unknown>;
@@ -222,6 +230,12 @@ export async function processInvoiceFile(params: {
   config: BulkConfig;
   extract: ExtractFn;
   knowledge?: CompanyKnowledge;
+  batch?: {
+    company: { id: string; name: string; nit: string | null; uses_cost_centers: boolean | null; default_payable_account: string | null };
+    providers: Record<string, { nit: string; default_expense_account: string | null; default_payable_account: string | null; default_iva_account: string | null }>;
+    providerRules: ProviderRule[];
+    userId: string;
+  };
   /** Ruta del PDF ya guardado en Storage: evita subir el archivo dos veces. */
   storagePath?: string | null;
   onStage?: StageCallback;
@@ -301,6 +315,7 @@ export type DraftAccounting = {
   reason: string;
   unresolvedAccounts: string[];
   alertas: string[];
+  decisions: import("@/lib/causacion-engine").LineDecisions;
 };
 
 /**
@@ -320,7 +335,9 @@ export async function computeDraftAccounting(params: {
   const { companyId, config, header, extracted } = params;
 
   let provider = null;
-  if (header.provider_nit) {
+  if (config.batch) {
+    provider = config.batch.providers[header.provider_nit ?? ""] ?? null;
+  } else if (header.provider_nit) {
     const { data: p } = await supabase
       .from("providers").select("*").eq("company_id", companyId).eq("nit", header.provider_nit).maybeSingle();
     provider = p;
@@ -349,14 +366,26 @@ export async function computeDraftAccounting(params: {
 
   // P1/P2: reglas por proveedor (NIT + palabra clave, luego "(todas)"). Una cuenta
   // fuera de los grupos de gasto válidos se descarta y la línea sigue al motor.
-  const providerRules = await fetchProviderRulesCached(companyId);
+  const providerRules = config.batch?.providerRules ?? await fetchProviderRulesCached(companyId);
   const conReglaProveedor = applyProviderRuleToLines(conCatalogo, providerRules, header.provider_nit);
-  const reglaProveedor = headerRule(providerRules, header.provider_nit) ?? conReglaProveedor.rule;
+  let reglaProveedor = headerRule(providerRules, header.provider_nit) ?? conReglaProveedor.rule;
 
   // Mismo motor inteligente que la causación individual.
   // Conocimiento base (reglas) + histórico resumido del proveedor de ESTA factura.
   const base = params.knowledge ?? config.knowledge ?? (await fetchCompanyKnowledge(companyId)) ?? emptyKnowledge();
   const conocimiento = await knowledgeForProvider(companyId, header.provider_nit, base);
+  const profile = conocimiento.profiles?.find((p) => sameNit(p.provider_nit, header.provider_nit));
+  if (!reglaProveedor && profile) {
+    reglaProveedor = {
+      id: "", company_id: companyId, provider_nit: header.provider_nit ?? "", provider_name: null,
+      keyword: "(todas)", expense_account: null, expense_account_name: null,
+      iva_treatment: profile.iva_account === "51157001" ? "asumido" : "descontable",
+      iva_account: profile.iva_account, inc_account: null, retention_account: profile.retention_account,
+      retention_rate: profile.retention_rate ? Number(profile.retention_rate.replace(",", ".")) : null,
+      retention_base: profile.aiu ? "AIU" : "Subtotal", payable_account: profile.payable_account,
+      source: "historial", times_used: 0, last_used_at: null, active: true,
+    };
+  }
   const { lines, decisions } = applyEngineToLines(conReglaProveedor.lines, {
     providerNit: header.provider_nit,
     knowledge: conocimiento,
@@ -428,11 +457,13 @@ export async function computeDraftAccounting(params: {
     }
   }
   // La empresa define si maneja centros de costo; si no, nunca se guarda ninguno.
-  const costPolicy = await companyUsesCostCenters(companyId);
+  const costPolicy = config.batch ? config.batch.company.uses_cost_centers : await companyUsesCostCenters(companyId);
   const centroFactura = costCenterForCompany(costPolicy, header.cost_center);
   // Contrapartida: primero la cuenta CxP de la regla del proveedor; si no hay,
   // el histórico de esta empresa con este proveedor.
-  const payableHistorico = applyPucToPayable(await fetchPayableAccount(companyId, header.provider_nit), config.accounts);
+  const payableHistorico = config.batch
+    ? { code: provider?.default_payable_account || config.batch.company.default_payable_account || "22050501", name: null, source: "fallback", confidence: 0.4 }
+    : applyPucToPayable(await fetchPayableAccount(companyId, header.provider_nit), config.accounts);
   const payable =
     reglaProveedor?.payable_account && isPayableCode(reglaProveedor.payable_account)
       ? { code: reglaProveedor.payable_account.trim(), name: null, source: "regla por proveedor", confidence: 1 }
@@ -444,7 +475,7 @@ export async function computeDraftAccounting(params: {
     !ivaDetalleRegla && ivaTotal > 0
       ? resolveIvaTreatment({
           config: await fetchIvaConfig(companyId),
-          evidence: await fetchIvaEvidence(companyId, header.provider_nit),
+          evidence: config.batch ? { history: [], rules: [] } : await fetchIvaEvidence(companyId, header.provider_nit),
           providerNit: header.provider_nit,
           expenseAccounts: [...new Set(lines.map((l) => String(l.account_code ?? "").trim()).filter(Boolean))],
           concepts: lines.map((l) => l.description ?? ""),
@@ -477,8 +508,8 @@ export async function computeDraftAccounting(params: {
   const cuadre = totalesJournal(journal);
   const ajuste = ajusteAlPeso(cuadre.debito, cuadre.credito);
   if (ajuste.linea) journal.push({ ...ajuste.linea, cost_center: centroFactura ?? null });
-  if (reglaProveedor) void marcarUsoRegla(reglaProveedor.id);
-  const unresolvedAccounts: string[] = [];
+  if (reglaProveedor?.id && !config.batch) void marcarUsoRegla(reglaProveedor.id);
+  const unresolvedAccounts: string[] = lines.flatMap((l, i) => isValidExpenseAccount(l.account_code) ? [] : [`Pendiente de cuenta: línea ${i + 1}.`]);
   unresolvedAccounts.push(...erroresRetencion);
   if (ajuste.descuadre)
     unresolvedAccounts.push(
@@ -518,6 +549,7 @@ export async function computeDraftAccounting(params: {
     reason,
     unresolvedAccounts,
     alertas,
+    decisions,
   };
 }
 
@@ -533,7 +565,7 @@ export async function recalcularCuentasBorrador(
 ): Promise<{ ok: boolean; message: string }> {
   const { data: inv, error } = await supabase
     .from("invoices")
-    .select("id, company_id, status, raw_extraction, payable_manual")
+    .select("id, company_id, status, raw_extraction, payable_manual, payable_account")
     .eq("id", invoiceId)
     .maybeSingle();
   if (error) return { ok: false, message: error.message };
@@ -553,6 +585,9 @@ export async function recalcularCuentasBorrador(
     extracted: lines,
   });
 
+  if (inv.payable_manual && inv.payable_account) {
+    acc.journal = acc.journal.map((j) => isPayableCode(j.account_code) && j.credit > 0 ? { ...j, account_code: inv.payable_account ?? j.account_code } : j);
+  }
   // La CxP manual del usuario manda: el recálculo no la pisa.
   const payablePatch = inv.payable_manual
     ? {}
@@ -571,6 +606,7 @@ export async function recalcularCuentasBorrador(
       retefuente: roundCOP(acc.retenciones.retefuente),
       reteiva: roundCOP(acc.retenciones.reteiva),
       reteica: roundCOP(acc.retenciones.reteica),
+      raw_extraction: { ...raw, account_decisions: acc.decisions } as never,
       ...payablePatch,
       updated_at: new Date().toISOString(),
     } as never)
@@ -600,7 +636,7 @@ export async function recalcularCuentasBorrador(
     .order("position");
   for (const l of lineasDb ?? []) {
     const nueva = acc.lines[l.position as number];
-    if (!nueva?.account_code) continue;
+    if (!nueva) continue;
     await supabase
       .from("invoice_lines")
       .update({ account_code: nueva.account_code, account_name: nueva.account_name ?? null } as never)
@@ -645,8 +681,8 @@ export async function saveExtractedInvoice(params: {
 
   // Cada factura del ZIP se valida individualmente: si el NIT del comprador no es el de la
   // empresa activa (o no se pudo leer), se rechaza y NO se crea borrador.
-  const { data: empresa } = await supabase
-    .from("companies").select("id, name, nit").eq("id", companyId).maybeSingle();
+  const empresa = config.batch?.company ?? (await supabase
+    .from("companies").select("id, name, nit").eq("id", companyId).maybeSingle()).data;
 
   if (!header.buyer_nit || !header.buyer_name) {
     throw new BulkInvoiceStageError(
@@ -696,8 +732,7 @@ export async function saveExtractedInvoice(params: {
   const alertas = [...acc.alertas];
   const operationalJournal = acc.journal;
 
-  const { data: auth } = await supabase.auth.getUser();
-  const userId = auth.user?.id;
+  const userId = config.batch?.userId ?? (await supabase.auth.getUser()).data.user?.id;
   let filePath: string | null = params.storagePath ?? null;
   if (!filePath && userId && params.file) {
     const path = `${userId}/${companyId}/${Date.now()}-${fileName.replace(/[^\w.-]/g, "_")}`;
@@ -705,7 +740,7 @@ export async function saveExtractedInvoice(params: {
     if (!upErr) filePath = path;
   }
 
-  if (header.provider_nit) {
+  if (header.provider_nit && !config.batch) {
     await supabase.from("providers").upsert(
       {
         company_id: companyId,
@@ -721,9 +756,9 @@ export async function saveExtractedInvoice(params: {
   }
 
   const total = roundCOP(baseGravable + ivaTotal + roundCOP(header.impoconsumo));
-  const { data: inv, error } = await supabase
-    .from("invoices")
-    .insert({
+  const invoiceRow = {
+      id: crypto.randomUUID(),
+      created_by: userId,
       company_id: companyId,
       prefix: header.prefix,
       number: header.number,
@@ -766,20 +801,15 @@ export async function saveExtractedInvoice(params: {
       // Trazabilidad de lectura: lo que devolvió la IA (o el adaptador Excel) y el texto extraído.
       raw_extraction: {
         ia: params.data,
+        account_decisions: acc.decisions,
         lectura: params.readMode,
         texto: textoDocumento ? textoDocumento.slice(0, 20000) : null,
         archivo: fileName,
         ...(params.rawExtraction ?? {}),
       } as never,
-    })
-    .select()
-    .single();
-  if (error) throw error;
-
-  await Promise.all([
-    supabase.from("invoice_lines").insert(
-      lines.map((l, i) => ({
-        invoice_id: inv.id,
+    };
+  const lineRows = lines.map((l, i) => ({
+        invoice_id: invoiceRow.id,
         company_id: companyId,
         code: l.code ?? null,
         description: l.description,
@@ -794,11 +824,9 @@ export async function saveExtractedInvoice(params: {
         account_name: l.account_name ?? null,
         item_type: l.item_type ?? "gasto",
         position: i,
-      })),
-    ),
-    supabase.from("journal_lines").insert(
-      operationalJournal.map((j, i) => ({
-        invoice_id: inv.id,
+      })),;
+  const journalRows = operationalJournal.map((j, i) => ({
+        invoice_id: invoiceRow.id,
         company_id: companyId,
         account_code: j.account_code,
         account_name: j.account_name,
@@ -806,12 +834,18 @@ export async function saveExtractedInvoice(params: {
         credit: roundCOP(j.credit),
         cost_center: acc.costCentersEnabled ? (j.cost_center ?? null) : null,
         position: i,
-      })),
-    ),
-  ]);
+      })),;
+  if (config.batch) {
+    await enqueueDraft({ invoice: invoiceRow, lines: lineRows, journal: journalRows });
+  } else {
+    const { error } = await supabase.from("invoices").insert(invoiceRow as never);
+    if (error) throw error;
+    const results = await Promise.all([supabase.from("invoice_lines").insert(lineRows), supabase.from("journal_lines").insert(journalRows)]);
+    for (const result of results) if (result.error) throw result.error;
+  }
 
   return {
-    invoiceId: inv.id as string,
+    invoiceId: invoiceRow.id,
     numero: [header.prefix, header.number].filter(Boolean).join("-") || fileName,
     total,
     score,
@@ -832,4 +866,36 @@ export async function saveExtractedInvoice(params: {
     issueDate: header.issue_date || null,
     readMode: params.readMode,
   };
+}
+
+// Batch writes are isolated by company; callers resolve only after all child rows are stored.
+type PendingDraft = { invoice: Record<string, unknown>; lines: Record<string, unknown>[]; journal: Record<string, unknown>[] };
+const draftQueues = new Map<string, { rows: { draft: PendingDraft; resolve: () => void; reject: (error: unknown) => void }[]; timer: ReturnType<typeof setTimeout> }>();
+function enqueueDraft(draft: PendingDraft): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const company = String(draft.invoice.company_id);
+    let queue = draftQueues.get(company);
+    if (!queue) {
+      queue = { rows: [], timer: setTimeout(() => void flushDrafts(company), 100) };
+      draftQueues.set(company, queue);
+    }
+    queue.rows.push({ draft, resolve, reject });
+    if (queue.rows.length >= 5) void flushDrafts(company);
+  });
+}
+async function flushDrafts(company: string) {
+  const queue = draftQueues.get(company);
+  if (!queue) return;
+  clearTimeout(queue.timer);
+  draftQueues.delete(company);
+  try {
+    const { error } = await supabase.from("invoices").insert(queue.rows.map((r) => r.draft.invoice) as never);
+    if (error) throw error;
+    const results = await Promise.all([
+      supabase.from("invoice_lines").insert(queue.rows.flatMap((r) => r.draft.lines) as never),
+      supabase.from("journal_lines").insert(queue.rows.flatMap((r) => r.draft.journal) as never),
+    ]);
+    for (const result of results) if (result.error) throw result.error;
+    for (const row of queue.rows) row.resolve();
+  } catch (error) { for (const row of queue.rows) row.reject(error); }
 }

@@ -17,6 +17,8 @@ import { errorCode } from "@/lib/bulk-diagnostics";
 import { BulkInvoiceStageError, processInvoiceFile, resetBulkBatch, saveExtractedInvoice, type BulkConfig, type InvoiceReadTrace } from "@/lib/bulk-invoices";
 import { parsePurchaseWorkbook, type PurchaseDocument } from "@/lib/purchase-excel";
 import { excelDocKey, excelDocToExtracted } from "@/lib/excel-invoice-adapter";
+import { fetchProviderRules } from "@/lib/provider-rules";
+import { fetchIvaConfig } from "@/lib/iva-treatment";
 import { fetchCompanyKnowledge, type CompanyKnowledge } from "@/lib/causacion-engine";
 import type { Rule, TaxRate } from "@/lib/accounting";
 import {
@@ -135,7 +137,7 @@ export async function loadDeps(companyId: string): Promise<Deps> {
   const cached = depsCache.get(companyId);
   if (cached) return cached;
   const promise = (async (): Promise<Deps> => {
-    const [rules, taxes, accounts, products, categories, knowledge] = await Promise.all([
+    const [rules, taxes, accounts, products, categories, knowledge, company, providers, providerRules, auth] = await Promise.all([
       supabase.from("accounting_rules").select("*").eq("company_id", companyId),
       supabase.from("tax_rates").select("*").eq("company_id", companyId),
       fetchCompanyPuc(companyId),
@@ -157,8 +159,15 @@ export async function loadDeps(companyId: string): Promise<Deps> {
           .range(from, to),
       ),
       fetchCompanyKnowledge(companyId),
+      supabase.from("companies").select("id,name,nit,uses_cost_centers,default_payable_account").eq("id",companyId).single(),
+      fetchAll((from,to) => supabase.from("providers").select("nit,default_expense_account,default_payable_account,default_iva_account").eq("company_id",companyId).range(from,to)),
+      fetchProviderRules(companyId),
+      supabase.auth.getUser(),
     ]);
+    if (company.error || !company.data || !auth.data.user) throw new Error("No se pudieron cargar los parámetros de la empresa.");
+    await fetchIvaConfig(companyId);
     const config: BulkConfig = {
+      batch: { company: company.data, providers: Object.fromEntries(providers.map((p) => [p.nit,p])), providerRules, userId: auth.data.user.id },
       accounts,
       rules: (rules.data ?? []) as unknown as Rule[],
       taxes: (taxes.data ?? []) as unknown as TaxRate[],
@@ -217,8 +226,7 @@ function parseExcelCached(storagePath: string, fileName: string, companyNit: str
 async function processExcelItem(item: BulkItem, companyId: string, deps: Deps) {
   const key = item.fingerprint?.startsWith("excel:") ? item.fingerprint.slice(6) : "";
   if (!item.storage_path || !key) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene el documento del Excel.");
-  const { data: empresa } = await supabase.from("companies").select("nit").eq("id", companyId).maybeSingle();
-  const docs = await parseExcelCached(item.storage_path, item.file_name, empresa?.nit ?? "");
+  const docs = await parseExcelCached(item.storage_path, item.file_name, deps.config.batch?.company.nit ?? "");
   const doc = docs.find((d) => excelDocKey(d) === key);
   if (!doc) throw new Error("El documento ya no está en el archivo Excel cargado.");
   const trace: InvoiceReadTrace = {
@@ -370,10 +378,11 @@ async function processItem(item: BulkItem, companyId: string, deps: Deps) {
 }
 
 /** Facturas que se leen y causan al mismo tiempo dentro de un lote. */
-const CONCURRENCIA = 4;
+export const CONCURRENCIA = 5;
 
 async function runUpload(job: QueuedUpload) {
   resetBulkBatch();
+  invalidateBulkDeps(job.companyId);
   const deps = await loadDeps(job.companyId);
   await updateUpload(job.uploadId, { status: "processing", finished_at: null });
 
@@ -406,7 +415,7 @@ async function runUpload(job: QueuedUpload) {
           await processItem(item, job.companyId, deps);
         } finally {
           activos -= 1;
-          emit({ active: activos });
+          emit({ active: activos, done: snapshot.done + 1 });
         }
       }
     };
