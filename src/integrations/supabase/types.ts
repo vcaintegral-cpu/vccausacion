@@ -832,6 +832,7 @@ export type Database = {
           file_path: string | null
           id: string
           impoconsumo: number
+          import_source: string | null
           issue_date: string | null
           iva: number
           notes: string | null
@@ -864,6 +865,7 @@ export type Database = {
           provider_name: string | null
           provider_nit: string | null
           provider_phone: string | null
+          purchase_import_data: Json | null
           raw_extraction: Json | null
           retefuente: number
           reteica: number
@@ -905,6 +907,7 @@ export type Database = {
           file_path?: string | null
           id?: string
           impoconsumo?: number
+          import_source?: string | null
           issue_date?: string | null
           iva?: number
           notes?: string | null
@@ -937,6 +940,7 @@ export type Database = {
           provider_name?: string | null
           provider_nit?: string | null
           provider_phone?: string | null
+          purchase_import_data?: Json | null
           raw_extraction?: Json | null
           retefuente?: number
           reteica?: number
@@ -978,6 +982,7 @@ export type Database = {
           file_path?: string | null
           id?: string
           impoconsumo?: number
+          import_source?: string | null
           issue_date?: string | null
           iva?: number
           notes?: string | null
@@ -1010,6 +1015,7 @@ export type Database = {
           provider_name?: string | null
           provider_nit?: string | null
           provider_phone?: string | null
+          purchase_import_data?: Json | null
           raw_extraction?: Json | null
           retefuente?: number
           reteica?: number
@@ -1831,6 +1837,7 @@ export type Database = {
           name: string
           nit: string
           phone: string | null
+          purchase_tax_profile: Json
           regime: string | null
           siigo_id: string | null
           siigo_sync_status: string | null
@@ -1850,6 +1857,7 @@ export type Database = {
           name: string
           nit: string
           phone?: string | null
+          purchase_tax_profile?: Json
           regime?: string | null
           siigo_id?: string | null
           siigo_sync_status?: string | null
@@ -1869,6 +1877,7 @@ export type Database = {
           name?: string
           nit?: string
           phone?: string | null
+          purchase_tax_profile?: Json
           regime?: string | null
           siigo_id?: string | null
           siigo_sync_status?: string | null
@@ -1956,6 +1965,96 @@ export type Database = {
             foreignKeyName: "puc_accounts_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      purchase_import_items: {
+        Row: {
+          choices: Json
+          company_id: string
+          created_at: string
+          document: Json
+          error_message: string | null
+          id: string
+          invoice_id: string | null
+          position: number
+          status: string
+          updated_at: string
+          upload_id: string
+        }
+        Insert: {
+          choices?: Json
+          company_id: string
+          created_at?: string
+          document: Json
+          error_message?: string | null
+          id?: string
+          invoice_id?: string | null
+          position: number
+          status?: string
+          updated_at?: string
+          upload_id: string
+        }
+        Update: {
+          choices?: Json
+          company_id?: string
+          created_at?: string
+          document?: Json
+          error_message?: string | null
+          id?: string
+          invoice_id?: string | null
+          position?: number
+          status?: string
+          updated_at?: string
+          upload_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_import_items_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_import_items_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_import_items_upload_id_fkey"
+            columns: ["upload_id"]
+            isOneToOne: false
+            referencedRelation: "bulk_uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      purchase_import_settings: {
+        Row: {
+          company_id: string
+          config: Json
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          config?: Json
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          config?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_import_settings_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: true
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
@@ -2183,6 +2282,15 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      confirm_excel_purchase: {
+        Args: {
+          _choices: Json
+          _item_id: string
+          _journal: Json
+          _retentions: Json
+        }
+        Returns: string
       }
       create_payment_receipt: {
         Args: {
