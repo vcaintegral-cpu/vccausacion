@@ -253,8 +253,8 @@ export async function processInvoiceFile(params: {
     data: cached.data,
     fileName: file.name,
     file,
-    companyId,
-    config,
+    companyId: params.companyId,
+    config: params.config,
     knowledge: params.knowledge,
     storagePath: params.storagePath,
     readMode: cached.lectura,
@@ -276,7 +276,7 @@ export async function saveExtractedInvoice(params: {
   file?: File | null;
   companyId: string;
   config: BulkConfig;
-  knowledge?: CompanyKnowledge;
+  knowledge?: CompanyKnowledge | undefined;
   storagePath?: string | null;
   readMode: "texto" | "imagen";
   texto?: string;
