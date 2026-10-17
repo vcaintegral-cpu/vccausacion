@@ -1,3 +1,4 @@
+import { isValidExpenseAccount } from "@/lib/provider-rules";
 import { roundCOP } from "@/lib/money";
 
 export type Rule = {
@@ -136,7 +137,7 @@ export function buildJournal(params: {
 
   const grouped = new Map<string, { name: string | null; value: number }>();
   for (const l of lines) {
-    const code = l.account_code || "519595";
+    const code = isValidExpenseAccount(l.account_code) ? (l.account_code ?? "") : "";
     const prev = grouped.get(code);
     const value = Number(l.quantity ?? 0) * Number(l.unit_value ?? 0) - Number(l.discount ?? 0);
     grouped.set(code, { name: l.account_name ?? prev?.name ?? null, value: (prev?.value ?? 0) + value });

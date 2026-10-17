@@ -1,5 +1,6 @@
 // Motor de aprendizaje contable. Siempre por empresa: las reglas nunca se comparten.
 import { suggestAccount, type ProviderConfig, type Rule } from "@/lib/accounting";
+import { isValidExpenseAccount } from "@/lib/provider-rules";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 
 export { ITEM_TYPES, normalizeItemType, isValidItemType } from "@/lib/item-type";
@@ -31,6 +32,8 @@ export type HistoryEvent = {
   account_code: string;
   /** Número de movimientos que representa este registro (histórico ya agrupado). */
   weight?: number;
+  voucher?: string | null;
+  entry_date?: string | null;
 };
 
 export type Suggestion = {
@@ -85,6 +88,7 @@ export function suggestSmart(params: {
   const nit = providerNit ? norm(providerNit) : null;
   // Una cuenta aprendida solo se usa si sigue siendo cuenta de movimiento válida de la empresa.
   const esMovimiento = (code: string) => {
+    if (!isValidExpenseAccount(code)) return false;
     if (puc.length === 0) return true;
     return resolveOperationalAccount(puc, code).valid;
   };
@@ -163,7 +167,7 @@ export function suggestSmart(params: {
   if (!esMovimiento(base.code)) {
     const resolution = resolveOperationalAccount(puc, base.code);
     return {
-      code: resolution.operationalAccount ?? "",
+      code: isValidExpenseAccount(base.code) ? (resolution.operationalAccount ?? "") : "",
       name: resolution.operational?.name ?? null,
       reason: resolution.message ?? `La cuenta sugerida ${base.code} no es una cuenta operativa válida en Siigo.`,
     };
