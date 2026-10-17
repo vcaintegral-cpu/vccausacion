@@ -53,6 +53,7 @@ import { AccountCombobox } from "@/components/account-combobox";
 import { CUENTA_PADRE_MSG, resolveOperationalAccount, validarCuenta, type PucAccount } from "@/lib/puc-hierarchy";
 import { costCentersEnabled, costCenterForCompany, useCostCenterPolicy, validateCostCenter } from "@/lib/cost-center-config";
 import { fetchCompanyPuc } from "@/lib/puc-data";
+import { applyProviderRuleToLines, fetchProviderRulesCached } from "@/lib/provider-rules";
 import { ProductCombobox, type ProductOption } from "@/components/product-combobox";
 import { BulkApply } from "@/components/bulk-apply";
 import { resolveProductAccount, SIN_CUENTA_MSG } from "@/lib/product-account";
@@ -809,11 +810,13 @@ function Causar() {
           catalogo.find((p) => norm(p.name) === norm(base.description ?? ""));
         return prod ? { ...base, item_type: prod.kind ?? base.item_type } : base;
       });
-      // Motor de causación: catálogo → aprendizaje → historial → reglas → PUC.
+      // Reglas del proveedor antes del historial, sin otra lectura con IA.
       const conocimiento = companyId
         ? await knowledgeForProvider(companyId, rest.provider_nit, knowledge ?? emptyKnowledge())
         : (knowledge ?? emptyKnowledge());
-      const motor = applyEngineToLines(conCatalogo, {
+      const providerRules = companyId ? await fetchProviderRulesCached(companyId) : [];
+      const ruled = applyProviderRuleToLines(conCatalogo, providerRules, rest.provider_nit);
+      const motor = applyEngineToLines(ruled.lines, {
         providerNit: rest.provider_nit,
         knowledge: conocimiento,
         products: catalogo,

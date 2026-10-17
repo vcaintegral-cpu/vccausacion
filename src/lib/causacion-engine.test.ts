@@ -5,6 +5,14 @@ import { classifyJournal, alertasBorrador, type DraftInvoice } from './draft-rev
 const line: Line = { description: 'Licencia derechos musicales', quantity: 1, unit_value: 8444445, discount: 0, iva: 0, retention: 0, impoconsumo: 0, total: 8444445 };
 const params = { providerNit: '860006810', knowledge: { learning: [], history: [] }, products: [], categories: [], rules: [], puc: [] };
 describe('reglas de causación solicitadas', () => {
+ it('elimina el nombre Bancolombia al rechazar la cuenta 11200502', () => {
+  const result = applyEngineToLines([{ ...line, account_code: '11200502', account_name: 'Bancolombia' }], params);
+  expect(result.lines[0]?.account_name).toBe('');
+ });
+ it('normaliza el NIT del historial sin confundirlo con otros proveedores', () => {
+  const result = resolveLineAccount({ ...params, line, providerNit: '811.016.618', knowledge: { learning: [], history: [{ provider_nit: '811.016.618', account_code: '51350501', concept: 'Aseo', voucher: 'FC-1-619', entry_date: '2026-06-06' }] } });
+  expect(result.code).toBe('51350501'); expect(result.origin).toBe('HISTORIAL');
+ });
  it('SAYCO sin historial no recibe Bancolombia ni gasto genérico', () => {
   const result = resolveLineAccount({ ...params, line, provider: { default_expense_account: '11200502' } });
   expect(result.code).toBe(''); expect(result.origin).toBe('NINGUNA');
