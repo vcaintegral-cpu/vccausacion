@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { purchaseLineErrors, purchaseReadbackErrors, purchasePayloadErrors, resolvePurchaseInc } from "./siigo-purchase-validation";
+import { isInterruptedSend, purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, readbackExpectedFromDoc, resolvePurchaseInc, siigoErrorKind } from "./siigo-purchase-validation";
 
 describe("shared PDF and RECIBIDOS purchase gates", () => {
   it("allows ATILA expense 51350501 without an origin restriction", () => {
@@ -48,8 +48,6 @@ describe("shared PDF and RECIBIDOS purchase gates", () => {
     expect(errors[0]).toContain("49679.68");
   });
 });
-import { isInterruptedSend, purchaseReadbackComparison, readbackExpectedFromDoc, siigoErrorKind } from "./siigo-purchase-validation";
-
 describe("Siigo error recovery", () => {
   it("documents with a Siigo consecutive are 'created with difference', never retryable", () => {
     expect(siigoErrorKind({ siigo_status: "error", siigo_id: "x", siigo_number: "FC-1-686", siigo_error_kind: "sin_crear" })).toBe("creado_diferencia");
