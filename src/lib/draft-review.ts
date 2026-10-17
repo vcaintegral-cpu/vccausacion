@@ -4,9 +4,11 @@
 import { supabase } from "@/integrations/supabase/client";
 import { estadoUnico, findExistingInvoice, type EstadoFactura } from "@/lib/invoice-duplicates";
 import { isPayableCode, learnPayableAccount } from "@/lib/payable-account";
+import { isValidExpenseAccount } from "@/lib/provider-rules";
 import { EPS_COP } from "@/lib/money";
 
 export type DraftInvoice = {
+  raw_extraction?: { account_decisions?: Record<string, { code: string; origin: string; reason: string }> };
   id: string;
   company_id: string;
   prefix: string | null;
@@ -156,6 +158,10 @@ export function alertasBorrador(inv: DraftInvoice, acc: DraftAccounts | undefine
   if (Number(inv.total || 0) <= 0) a.push({ level: "error", message: "Valor total inválido." });
   if (!acc.gasto) a.push({ level: "error", message: "Cuenta de gasto/costo faltante." });
   else if (pucCodes.size && !pucCodes.has(acc.gasto.code)) a.push({ level: "error", message: `Cuenta ${acc.gasto.code} no existe en el PUC.` });
+  for (const g of acc.gastos) {
+    if (!isValidExpenseAccount(g.code)) a.push({ level: "error", message: `Pendiente de cuenta: ${g.code || "sin cuenta"} no es gasto válido (5, 6, 7, 15, 16, 17).` });
+    else if (pucCodes.size && !pucCodes.has(g.code)) a.push({ level: "error", message: `Cuenta ${g.code} no existe en el PUC.` });
+  }
   if (Number(inv.iva || 0) > 0) {
     if (!acc.iva) a.push({ level: "error", message: "IVA sin cuenta." });
     else if (pucCodes.size && !pucCodes.has(acc.iva.code)) a.push({ level: "error", message: `Cuenta de IVA ${acc.iva.code} no existe en el PUC.` });
@@ -202,7 +208,7 @@ export async function aprobarBorrador(
   if (inv.status !== "borrador" && inv.status !== "error")
     return { id: inv.id, etiqueta, ok: false, message: "La factura ya no está en borrador." };
   if (inv.processing_at) return { id: inv.id, etiqueta, ok: false, message: "La factura está siendo procesada." };
-  if (fallas.length) return { id: inv.id, etiqueta, ok: false, message: fallas[0]!.message };
+  if (fallas[0]) return { id: inv.id, etiqueta, ok: false, message: fallas[0].message };
 
   const dup = await findExistingInvoice(
     inv.company_id,
