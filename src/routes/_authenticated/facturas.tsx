@@ -339,7 +339,7 @@ function Facturas() {
                 </td>
                 <td className="px-4 py-2">
                   <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${SIIGO_CLASS[r.siigo_status] ?? "bg-muted text-muted-foreground"}`}>
-                    {SIIGO_LABEL[r.siigo_status] ?? r.siigo_status}
+                    {r.siigo_status === "error" && (r.siigo_id || r.siigo_number) ? "Creada · con diferencia" : SIIGO_LABEL[r.siigo_status] ?? r.siigo_status}
                   </span>
                   {r.siigo_status === "sincronizada" && (
                     <div className="mt-0.5 text-[11px] text-muted-foreground">
