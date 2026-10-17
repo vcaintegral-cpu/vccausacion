@@ -28,7 +28,7 @@ import {
   registrarAprendizaje,
   type LineDecisions,
 } from "@/lib/causacion-engine";
-import { buildIvaGroups, findTaxById, resolveImpoconsumoAccount, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
+import { buildIvaGroups, findTaxById, findSourceIvaTax, resolveImpoconsumoAccount, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
 import { retencionesReportadas } from "@/lib/retenciones";
 import {
   buildRetenciones,
@@ -332,7 +332,8 @@ function Causar() {
     // El impuesto elegido se recupera por su identificador guardado, nunca por tarifa.
     const seleccion: Record<number, { iva?: string | undefined; ret?: string | undefined }> = {};
     (borrador.lines as Record<string, any>[]).forEach((l, i) => {
-      const ivaId = l["iva_tax_id"] ? String(l["iva_tax_id"]) : undefined;
+      const origin = (inv["source_override"] as SourceValues | null) ?? sourceFromRaw(inv["raw_extraction"]);
+      const ivaId = l["iva_tax_id"] ? String(l["iva_tax_id"]) : findSourceIvaTax(config.taxes as unknown as TaxRecord[], origin?.lines[i])?.id;
       const retId = l["ret_tax_id"] ? String(l["ret_tax_id"]) : undefined;
       if (ivaId || retId) seleccion[i] = { iva: ivaId, ret: retId };
     });
@@ -834,6 +835,13 @@ function Causar() {
         provider,
       });
       setLines(motor.lines);
+      const selectedTaxes: Record<number, { iva?: string }> = {};
+      const captured = captureSource(data, "pdf");
+      captured.lines.forEach((line, i) => {
+        const tax = findSourceIvaTax(impuestosIva as unknown as TaxRecord[], line);
+        if (tax) selectedTaxes[i] = { iva: tax.id };
+      });
+      setLineTax(selectedTaxes);
       setDecisiones(motor.decisions);
       setPasswordOpen(false);
       setPdfPassword("");
@@ -1557,7 +1565,7 @@ function Causar() {
                           setLineTax((p) => ({ ...p, [i]: { ...p[i], iva: id || undefined } }));
                           const tx = impuestosIva.find((t) => String(t.id) === id);
                           const base = (l.subtotal ?? roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)));
-                          setLine(i, { iva: tx ? roundCOP((base * Number(tx.rate)) / 100) : 0 });
+                          if (!source) setLine(i, { iva: tx ? roundCOP((base * Number(tx.rate)) / 100) : 0 });
                         }}
                       >
                         <option value="">Sin impuesto</option>
