@@ -22,6 +22,7 @@ import { resolveImpoconsumoAccount } from "@/lib/tax-selection";
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
+  isPayableCode,
   type Line,
   type Rule,
   type TaxRate,
@@ -513,6 +514,10 @@ export async function saveExtractedInvoice(params: {
   if (reglaProveedor) void marcarUsoRegla(reglaProveedor.id);
   const unresolvedAccounts: string[] = [];
   unresolvedAccounts.push(...erroresRetencion);
+  if (ajuste.descuadre)
+    unresolvedAccounts.push(
+      `No cuadra: la diferencia entre débitos y créditos es $${Math.abs(ajuste.descuadre).toLocaleString("es-CO")}, mayor a $1.`,
+    );
   const operationalJournal = journal.map((line) => {
     // Renglones sin cuenta (por ejemplo el IVA aún sin impuesto seleccionado) se guardan
     // tal cual: el borrador exige elegir el impuesto exacto antes de causar.
