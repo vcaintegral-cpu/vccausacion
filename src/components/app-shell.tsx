@@ -1,7 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, type ReactNode } from "react";
-import { Brain, Building2, ClipboardCheck, FileUp, FolderOpen, LayoutDashboard, ListChecks, LogOut, Plug, Settings2 } from "lucide-react";
+import { Brain, Building2, ClipboardCheck, FileUp, FolderOpen, LayoutDashboard, ListChecks, LogOut, Plug, Scale, Settings2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { BackgroundJobsPanel } from "@/components/background-jobs";
@@ -15,6 +15,7 @@ const NAV = [
   { to: "/causar", label: "Causar factura", icon: FileUp },
   { to: "/borradores", label: "Borradores", icon: ClipboardCheck },
   { to: "/facturas", label: "Historial", icon: ListChecks },
+  { to: "/pendientes-siigo", label: "Pendientes Siigo", icon: Scale },
   { to: "/documentos", label: "Documentos", icon: FolderOpen },
   { to: "/aprendizaje", label: "Aprendizaje contable", icon: Brain },
   { to: "/integraciones", label: "Integraciones", icon: Plug },
