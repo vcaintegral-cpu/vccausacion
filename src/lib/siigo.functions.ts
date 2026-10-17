@@ -1,4 +1,5 @@
 import { validateStoredJournal, sourceFromRaw } from "@/lib/source-values";
+import { purchaseLineErrors, purchaseReadbackErrors } from "@/lib/siigo-purchase-validation";
 import { toCents, sumCents } from "@/lib/money";
 import { esCeroCOP, roundCOP } from "@/lib/money";
 import { createServerFn } from "@tanstack/react-start";
@@ -721,14 +722,11 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
       .select(
-        "raw_extraction, source_override, discount, id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, buyer_nit, buyer_name, notes, total, iva, impoconsumo, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, payment_method, payment_type_id, payment_type_name, payable_account, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at, voucher_number, import_source",
+        "raw_extraction, source_override, discount, id, company_id, cufe, prefix, number, issue_date, due_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, buyer_nit, buyer_name, notes, total, iva, impoconsumo, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, payment_method, payment_type_id, payment_type_name, payable_account, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at, voucher_number, import_source",
       )
       .eq("id", data.invoiceId)
       .single();
     if (invErr || !inv) throw new Error(invErr?.message ?? "Factura no encontrada.");
-    if (inv.import_source?.startsWith("excel_") || sourceFromRaw(inv.raw_extraction)?.source === "excel") {
-      throw new Error("Esta compra viene de RECIBIDOS Excel. Exporte su comprobante desde el historial; el envío directo a Siigo todavía no está habilitado para este origen.");
-    }
 
     // La conexión de Siigo se resuelve con las credenciales de la empresa dueña de la factura.
     await siigoUseCompany(inv.company_id);
@@ -772,6 +770,20 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         error: `Esta factura ya fue causada en Siigo. Consecutivo: ${inv.siigo_number ?? inv.siigo_id}`,
       };
     }
+
+    if (inv.cufe?.trim()) {
+      const { data: duplicates, error: duplicateError } = await supabase.from("invoices")
+        .select("id, siigo_id, siigo_number, siigo_status")
+        .eq("company_id", inv.company_id).eq("cufe", inv.cufe.trim()).neq("id", inv.id);
+      if (duplicateError) throw new Error(duplicateError.message);
+      if (duplicates?.some(d => d.siigo_id || d.siigo_number || d.siigo_status === "sincronizada" || d.siigo_status === "sincronizando"))
+        throw new Error("El CUFE ya fue enviado a Siigo o tiene un envío en curso. No se enviará nuevamente.");
+    }
+    const { data: purchaseLines, error: purchaseLinesError } = await supabase.from("invoice_lines")
+      .select("account_code").eq("invoice_id", inv.id);
+    if (purchaseLinesError) throw new Error(purchaseLinesError.message);
+    const expenseErrors = purchaseLineErrors(purchaseLines ?? []);
+    if (expenseErrors.length) throw new Error(expenseErrors.join("\n"));
 
     const { data: journal, error: jErr } = await supabase
       .from("journal_lines")
@@ -957,10 +969,10 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const ensured = await siigoEnsureCustomer({
         nit: inv.provider_nit ?? proveedorLocal?.nit ?? null,
         name: inv.provider_name ?? proveedorLocal?.name ?? null,
-        address: proveedorLocal?.address ?? null,
-        city: proveedorLocal?.city ?? null,
-        phone: proveedorLocal?.phone ?? null,
-        email: proveedorLocal?.email ?? null,
+        address: proveedorLocal?.address ?? inv.provider_address ?? null,
+        city: proveedorLocal?.city ?? inv.provider_city ?? null,
+        phone: proveedorLocal?.phone ?? inv.provider_phone ?? null,
+        email: proveedorLocal?.email ?? inv.provider_email ?? null,
       });
       tercero = { id: ensured.id, action: ensured.action, message: ensured.message };
       console.log("[siigo][terceros]", ensured.action, ensured.identification, "→", ensured.id);
@@ -2285,14 +2297,11 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         neto_local: netoAPagar,
         retenciones_local: retenciones,
       });
-      const ivaReturned = sumCents((doc.items ?? []).flatMap(item => (item.taxes ?? []).filter(t => String(t.id) === String(ivaTaxId)).map(t => t.value)));
-      const mismatches: string[] = [];
-      if (doc.total === undefined || toCents(doc.total) !== toCents(inv.total)) mismatches.push(`Total: origen ${inv.total}, Siigo ${doc.total ?? "no informado"}`);
-      if (toCents(retSiigo) !== toCents(retenciones)) mismatches.push(`Retenciones: origen ${retenciones}, Siigo ${retSiigo}`);
-      if (toCents(inv.iva) !== ivaReturned) mismatches.push(`IVA: origen ${inv.iva}, Siigo ${ivaReturned / 100}`);
-      // INC must be verifiable, not silently assumed from the submitted value.
-      const incReturned = sumCents((doc.items ?? []).flatMap(item => (item.taxes ?? []).filter(t => /consum/i.test(t.type ?? "")).map(t => t.value)));
-      if (toCents(inv.impoconsumo) !== incReturned) mismatches.push(`INC: origen ${inv.impoconsumo}, Siigo ${incReturned / 100}`);
+      const mismatches = purchaseReadbackErrors(doc, {
+        total: inv.total, iva: inv.iva, impoconsumo: inv.impoconsumo,
+        retentions: retenciones, returnedRetentions: retSiigo, payable: valorCxP,
+        ivaIds: [...ivaSiigoPorPosicion.values(), ...(ivaTaxId == null ? [] : [ivaTaxId])],
+      });
       if (mismatches.length) {
         await supabase.from("invoices").update({ siigo_trace: { resultado: "Diferencia Siigo", diferencias: mismatches, siigo_verificacion: verificacion, valores: { total: inv.total, iva: inv.iva, impoconsumo: inv.impoconsumo } } as Json }).eq("id", inv.id);
         throw new Error("Diferencia Siigo: " + mismatches.join("; ") + ". No reenvíe el documento creado.");
