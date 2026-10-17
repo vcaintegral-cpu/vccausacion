@@ -824,7 +824,7 @@ export async function saveExtractedInvoice(params: {
         account_name: l.account_name ?? null,
         item_type: l.item_type ?? "gasto",
         position: i,
-      })),;
+      }));
   const journalRows = operationalJournal.map((j, i) => ({
         invoice_id: invoiceRow.id,
         company_id: companyId,
@@ -834,7 +834,7 @@ export async function saveExtractedInvoice(params: {
         credit: roundCOP(j.credit),
         cost_center: acc.costCentersEnabled ? (j.cost_center ?? null) : null,
         position: i,
-      })),;
+      }));
   if (config.batch) {
     await enqueueDraft({ invoice: invoiceRow, lines: lineRows, journal: journalRows });
   } else {
@@ -873,7 +873,7 @@ type PendingDraft = { invoice: Record<string, unknown>; lines: Record<string, un
 const draftQueues = new Map<string, { rows: { draft: PendingDraft; resolve: () => void; reject: (error: unknown) => void }[]; timer: ReturnType<typeof setTimeout> }>();
 function enqueueDraft(draft: PendingDraft): Promise<void> {
   return new Promise((resolve, reject) => {
-    const company = String(draft.invoice.company_id);
+    const company = String(draft.invoice['company_id']);
     let queue = draftQueues.get(company);
     if (!queue) {
       queue = { rows: [], timer: setTimeout(() => void flushDrafts(company), 100) };
