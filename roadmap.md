@@ -1,4 +1,5 @@
 # Compras desde Excel RECIBIDOS
+- [ ] Corregir y verificar el congelamiento al abrir una factura y seleccionar cuentas, sin cambiar reglas ni importes.
 - [x] Preservar importes de fuente y corregir descuento duplicado/redistribución PDF; 17 borradores recuperados del Excel original.
 - [x] Proteger valores y aprobación, conciliación y correcciones auditadas.
 - [x] Validar exportación Contai y controles previos/posteriores Siigo, bloqueando diferencias y reenvíos de documentos ya creados.
