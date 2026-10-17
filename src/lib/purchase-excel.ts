@@ -22,7 +22,7 @@ export type PurchaseHeader = {
 };
 export type PurchaseLine = { description: string; code: string; quantity: number; unit_value: number; subtotal: number; discount: number; surcharge: number; iva: number; ivaBase: number; ivaRate: number; impoconsumo: number; total: number };
 export type PurchaseDocument = { rowNumber: number; kind: 'purchase' | 'equivalent' | 'credit_note'; type: string; header: PurchaseHeader; lines: PurchaseLine[]; naturalPerson: boolean; period: string; rawHeader: Record<string, string | number>; rawLines: Record<string, string | number>[] };
-export type PurchaseChoices = { accounts: string[]; lineCostCenters?: string[]; costCenter: string; payableAccount: string; affectedInvoiceId: string; retentionSource: Partial<Record<RetKind, 'xml' | 'calculated'>>; aiuBase?: number; aiuReviewed?: boolean };
+export type PurchaseChoices = { accounts: string[]; lineCostCenters?: string[] | undefined; costCenter: string; payableAccount: string; affectedInvoiceId: string; retentionSource: Partial<Record<RetKind, 'xml' | 'calculated' | undefined>>; aiuBase?: number | undefined; aiuReviewed?: boolean | undefined };
 export const normalizeText = (s: unknown) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 export const normalizeNit = (s: unknown) => String(s ?? '').split('-')[0]?.replace(/\D/g, '') ?? '';
 export function nitDV(nit: string) {
@@ -78,7 +78,7 @@ export function documentAlerts(doc: PurchaseDocument) {
  return {errors,warnings,difference,aiu};
 }
 export function suggestHistoryAccount(description:string,nit:string,history:{provider_nit?:string|null;concept?:string|null;account_code:string;weight?:number}[],puc:PucAccount[]) {
- const valid=history.filter(h=>/^[1567]/.test(h.account_code)&&resolveOperationalAccount(puc,h.account_code).valid);
+ const valid=history.filter(h=>/^(1[456]|[567])/.test(h.account_code)&&resolveOperationalAccount(puc,h.account_code).valid);
  const same=valid.filter(h=>normalizeNit(h.provider_nit)===normalizeNit(nit));
  const words=normalizeText(description).split(/\W+/).filter(w=>w.length>3);
  const pool=same.length?same:valid.filter(h=>words.some(w=>normalizeText(h.concept).includes(w)));
@@ -88,8 +88,11 @@ export function suggestHistoryAccount(description:string,nit:string,history:{pro
 export function calculatePurchase(doc:PurchaseDocument,settings:PurchaseSettings,profile:ProviderTaxProfile,choices:PurchaseChoices,puc:PucAccount[],usesCostCenters:boolean) {
  const {errors:sourceErrors,warnings,difference,aiu}=documentAlerts(doc);const errors=[...sourceErrors];const h=doc.header;
  const retentions={retefuente:0,reteiva:0,reteica:0};const calculated={...retentions};const accounts={retefuente:'',reteiva:settings.reteivaAccount,reteica:''};
+ if(!Number.isFinite(settings.reteivaRate)||settings.reteivaRate<0||settings.reteivaRate>100)errors.push('Tarifa de reteIVA inválida.');
  const rule=settings.retentionRules.find(r=>normalizeText(r.concept)===normalizeText(profile.concept)&&!!profile.concept);
  const ica=settings.icaRules.find(r=>normalizeText(r.municipality)===normalizeText(profile.municipality)&&normalizeText(r.activity)===normalizeText(profile.activity));
+ if(rule){accounts.retefuente=rule.account;if([rule.minUVT,rule.declarantRate,rule.nonDeclarantRate].some(n=>!Number.isFinite(n)||n<0)||rule.declarantRate>100||rule.nonDeclarantRate>100)errors.push('Tabla de retención inválida.');}
+ if(ica){accounts.reteica=ica.account;if(!Number.isFinite(ica.perThousand)||ica.perThousand<0||ica.perThousand>1000)errors.push('Tarifa de reteICA inválida.');}
  if(doc.naturalPerson&&typeof profile.declarant!=='boolean')errors.push('Definir si es declarante');
  if(aiu&&(!choices.aiuReviewed||choices.aiuBase===undefined||!Number.isFinite(choices.aiuBase)||choices.aiuBase<0||choices.aiuBase>h.subtotal))errors.push('Revisar base AIU');
  const base=aiu?(choices.aiuBase??0):h.subtotal;
@@ -112,7 +115,7 @@ export function calculatePurchase(doc:PurchaseDocument,settings:PurchaseSettings
  const retained=kinds.reduce((s,k)=>s+retentions[k],0);const payable=Math.round(h.total)-retained-Math.round(h.advances);
  if(payable<0)errors.push('Retenciones y anticipos exceden el total.');
  const cash=normalizeText(h.payment_form).includes('contado');const paymentAccount=settings.paymentAccounts.find(p=>normalizeText(p.method)===normalizeText(h.payment_method))?.account??settings.cashAccount;
- add(cash?paymentAccount:choices.payableAccount||settings.payableAccount,payable,true,choices.costCenter);
+ add(cash?paymentAccount:choices.payableAccount||settings.payableAccount||settings.expensesPayableAccount,payable,true,choices.costCenter);
  add(settings.advanceAccount,h.advances,true,choices.costCenter);
  const balance=journal.reduce((s,l)=>s+l.debit-l.credit,0);
  if(balance!==0){if(Math.abs(difference)<=1&&Math.abs(balance)<=doc.lines.length+1){add(balance>0?settings.roundingIncomeAccount:settings.roundingExpenseAccount,Math.abs(balance),balance>0,choices.costCenter);}else errors.push('No cuadra con el XML');}
