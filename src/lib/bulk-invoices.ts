@@ -215,7 +215,7 @@ export async function processInvoiceFile(params: {
   storagePath?: string | null;
   onStage?: StageCallback;
 }): Promise<ProcessedInvoice> {
-  const { file, companyId, config, extract } = params;
+  const { file, extract } = params;
   const huella = await fileFingerprint(file);
   let cached = extraccionCache.get(huella);
   if (!cached) {
