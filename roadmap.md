@@ -1,4 +1,5 @@
 # Compras desde Excel RECIBIDOS
+- [ ] Corregir omisión de INC y bloquear diferencias de centavos antes de crear compras en Siigo; revisar tarifas IVA globales y conservar bloqueo de reenvíos ya creados (archivo de errores de Maira del 17 de octubre).
 - [x] Habilitar RECIBIDOS en el envío compartido a Siigo, con validaciones de fuente/cuentas/CUFE y verificación posterior de total/IVA/INC/retenciones/CxP; 42 pruebas aprobadas y prueba real ejecutada para AT-7796 y FE-2992, ambas bloqueadas antes de crear por diferencias.
 - [x] Resolver IVA de fuente sin identificador seleccionado y falso gasto inválido del ajuste documental; UNE guardada y reabierta con IVA 32.458,49 y total 218.310,00 sin esas alertas; 40 pruebas aprobadas.
 - [x] Corregir el congelamiento al abrir la factura UNE: índice compartido de cuentas y resultados acotados; pruebas contables y búsqueda/navegación con sesión real verificadas.
