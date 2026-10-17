@@ -6,7 +6,8 @@
 //  - Liberar envíos interrumpidos y buscar en Siigo si quedaron creados.
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import type { Json } from "@/integrations/supabase/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database, Json } from "@/integrations/supabase/types";
 import {
   INTERRUPTED_AFTER_MS,
   purchaseReadbackComparison,
@@ -15,7 +16,7 @@ import {
   type ReadbackRow,
 } from "@/lib/siigo-purchase-validation";
 
-type Supa = Parameters<Parameters<ReturnType<typeof createServerFn>["handler"]>[0]>[0] extends never ? never : any; // eslint-disable-line @typescript-eslint/no-explicit-any
+type Supa = SupabaseClient<Database>;
 
 const INV_COLS =
   "id, company_id, prefix, number, provider_nit, provider_name, issue_date, total, iva, impoconsumo, retefuente, reteiva, reteica, status, siigo_status, siigo_id, siigo_number, siigo_error_kind, siigo_trace, siigo_voided, siigo_last_attempt_at";
