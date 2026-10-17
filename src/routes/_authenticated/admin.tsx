@@ -214,6 +214,7 @@ function Admin() {
           <TabsTrigger value="categorias">Categorías</TabsTrigger>
           <TabsTrigger value="formas-pago">Formas de pago</TabsTrigger>
           <TabsTrigger value="reglas">Reglas</TabsTrigger>
+          <TabsTrigger value="reglas-proveedor">Reglas por proveedor</TabsTrigger>
           <TabsTrigger value="impuestos">Retenciones</TabsTrigger>
           <TabsTrigger value="centros">Centros de costo</TabsTrigger>
           <TabsTrigger value="historial">Historial contable</TabsTrigger>
