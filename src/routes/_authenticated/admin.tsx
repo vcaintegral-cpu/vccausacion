@@ -15,6 +15,7 @@ import { CostCentersPanel, HistoryPanel, ProvidersToolbar, PucPanel, TaxesPanel 
 import { ProductsPanel } from "@/components/products-panel";
 import { ProductCategoriesPanel } from "@/components/product-categories-panel";
 import { PaymentTypesPanel } from "@/components/payment-types-panel";
+import { ProviderRulesPanel } from "@/components/provider-rules-panel";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
