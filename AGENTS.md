@@ -14,3 +14,4 @@
 - Excel purchases export stored journal rows in the existing Contai format; direct Siigo posting stays blocked until its source-specific reversal, advances, and document mapping are supported.
 - The shared account engine validates expense groups at every assignment boundary and journal construction; approval is additionally guarded in PostgreSQL to prevent bypasses.
 - Bulk imports preload company purchase knowledge under user-scoped RLS, retain per-line provenance in raw extraction metadata, and persist bounded groups before marking items complete to avoid per-line network calls.
+- Rejected dynamic-module imports require an explicit document reload in the root error boundary; router invalidation cannot clear the browser's rejected module cache.
