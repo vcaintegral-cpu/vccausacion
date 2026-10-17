@@ -119,6 +119,33 @@ export const CUENTA_PADRE_MSG =
 
 export type AccountCheck = { ok: boolean; problema: string | null; cuenta: PucAccount | null };
 
+const selectorCache = new WeakMap<PucAccount[], { mov: PucAccount[]; padres: PucAccount[] }>();
+
+/** Same direct-movement rule as evaluarCuenta, indexed once for all selectors. */
+export function partitionSelectableAccounts(accounts: PucAccount[]) {
+  const cached = selectorCache.get(accounts);
+  if (cached) return cached;
+  const byCode = new Map(accounts.map((account) => [account.code, account]));
+  const activeParents = new Set<string>();
+  for (const account of accounts) {
+    if (!isActive(account)) continue;
+    let parent = account.parent_code ?? null;
+    const visited = new Set<string>([account.code]);
+    while (parent && !visited.has(parent)) {
+      activeParents.add(parent);
+      visited.add(parent);
+      parent = byCode.get(parent)?.parent_code ?? null;
+    }
+  }
+  const result = { mov: [] as PucAccount[], padres: [] as PucAccount[] };
+  for (const account of accounts) {
+    const direct = account.active !== false && account.is_movement !== false && !activeParents.has(account.code);
+    (direct ? result.mov : result.padres).push(account);
+  }
+  selectorCache.set(accounts, result);
+  return result;
+}
+
 export type ResultadoCuenta = "VÁLIDA" | "REQUIERE AUXILIAR" | "INACTIVA" | "NO ENCONTRADA" | "SIN CUENTA";
 
 export type OperationalAccountResult = {
