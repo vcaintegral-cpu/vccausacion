@@ -508,7 +508,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
           disabled={running || !!busy || selected.length === 0 || !companyId || loadingConfig || !config}
         >
           {running || busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-          {busy || (running ? "Procesando…" : loadingConfig ? "Cargando parámetros contables…" : "Procesar comprimido")}
+          {busy || (running ? "Procesando…" : loadingConfig ? "Cargando parámetros contables…" : "Procesar archivo")}
         </Button>
       </div>
 
