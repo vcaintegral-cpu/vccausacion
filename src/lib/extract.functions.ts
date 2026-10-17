@@ -3,6 +3,9 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { ExtractInvoiceInput } from "./extract.server";
 
 export type ExtractedLine = {
+  subtotal?: number;
+  iva_base?: number;
+  iva_rate?: number;
   code: string | null;
   description: string;
   quantity: number;
@@ -15,6 +18,7 @@ export type ExtractedLine = {
 };
 
 export type ExtractedInvoice = {
+  surcharge?: number;
   prefix: string | null;
   number: string | null;
   issue_date: string | null;

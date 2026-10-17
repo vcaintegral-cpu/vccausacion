@@ -1,3 +1,4 @@
+import { exportReconciliation } from "@/lib/export";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -98,7 +99,7 @@ export const Route = createFileRoute("/_authenticated/borradores")({
 const originLabel = (origin: string) => ({ REGLA: "Regla", APRENDIZAJE: "Historial NIT", HISTORIAL: "Historial NIT", HISTORIAL_DESCRIPCION: "Historial descripción", IA: "IA", NINGUNA: "Pendiente" }[origin] ?? origin);
 
 const COLS =
-  "raw_extraction, id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id, paid_amount, payment_status, payment_enabled, payment_method, payment_type_id, payment_type_name, payment_form_manual";
+  "source_override, siigo_trace, impoconsumo, discount, raw_extraction, id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id, paid_amount, payment_status, payment_enabled, payment_method, payment_type_id, payment_type_name, payment_form_manual";
 
 /** Origen visible de la cuenta por pagar del borrador. */
 const origenPayable = (i: DraftInvoice) => {
@@ -575,6 +576,19 @@ function Borradores() {
     if (out.length - ok) toast.error(`${out.length - ok} factura(s) no se pudieron recalcular.`);
   }
 
+  async function conciliarFuente() {
+    try {
+      const ids = seleccionadas.map(i => i.id);
+      const [invoices, journal] = await Promise.all([
+        supabase.from("invoices").select("*").in("id", ids),
+        supabase.from("journal_lines").select("*").in("invoice_id", ids).order("position"),
+      ]);
+      if (invoices.error) throw invoices.error;
+      if (journal.error) throw journal.error;
+      exportReconciliation(invoices.data ?? [], journal.data ?? []);
+    } catch (e) { toast.error(e instanceof Error ? e.message : "No se pudo conciliar."); }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -585,6 +599,7 @@ function Borradores() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="outline" disabled={!seleccionadas.length} onClick={() => void conciliarFuente()}><RefreshCw className="size-4" /> Conciliar con la fuente</Button>
           <Button variant="outline" onClick={() => marcarTodas(true)} disabled={rows.length === 0}>Seleccionar todos</Button>
           <Button variant="outline" onClick={() => setSel({})} disabled={seleccionadas.length === 0}>Deseleccionar todos</Button>
           <Button onClick={() => void ejecutar("aprobar")} disabled={!!busy || elegibles("aprobar").length === 0}>

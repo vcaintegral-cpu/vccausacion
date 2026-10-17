@@ -2,7 +2,8 @@ import { unzipSync } from "fflate";
 import { supabase } from "@/integrations/supabase/client";
 import { companyUsesCostCenters, costCenterForCompany, costCentersEnabled } from "@/lib/cost-center-config";
 import { prepareInvoiceFile } from "@/lib/invoice-file";
-import { roundCOP } from "@/lib/money";
+import { captureSource, sourceErrors, sourceFromRaw, alignJournalToSource } from "@/lib/source-values";
+import { roundCOP, sumCOP } from "@/lib/money";
 import type { ExtractedInvoice } from "@/lib/extract.functions";
 import {
   applyEngineToLines,
@@ -347,6 +348,7 @@ export async function computeDraftAccounting(params: {
     const base: Line = {
       description: l.description ?? "",
       quantity: Number(l.quantity || 0),
+      subtotal: l.subtotal ?? l.total,
       unit_value: Number(l.unit_value || 0),
       discount: Number(l.discount || 0),
       iva: Number(l.iva || 0),
@@ -402,12 +404,12 @@ export async function computeDraftAccounting(params: {
   const reason = tomadas.length === 0 ? "Cuentas tomadas del catálogo o del borrador." : (peor?.reason ?? "");
   const baseGravable = roundCOP(
     lines.reduce(
-      (s, l) => s + roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
+      (s, l) => s + roundCOP(l.subtotal ?? Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
       0,
     ),
   );
   const ivaLineas = roundCOP(lines.reduce((s, l) => s + roundCOP(l.iva), 0));
-  const ivaTotal = ivaLineas > 0 ? ivaLineas : roundCOP(header.iva);
+  const ivaTotal = roundCOP(header.iva);
   // Las retenciones salen ÚNICAMENTE de lo retenido en ESTA factura y se
   // resuelven desde cero por tipo (retefuente / reteiva / reteica). Una factura
   // sin retención no genera líneas 2365 / 2367 / 2368 ni valida esas cuentas.
@@ -490,7 +492,7 @@ export async function computeDraftAccounting(params: {
     (ivaDecision && ivaDecision.treatment !== "descontable"
       ? applyIvaTreatment([{ account_code: "", account_name: "IVA", amount: ivaTotal }], ivaDecision)
       : undefined);
-  const journal = buildJournal({
+  let journal = buildJournal({
     lines,
     iva: ivaTotal,
     impoconsumo: Number(header.impoconsumo || 0),
@@ -504,6 +506,7 @@ export async function computeDraftAccounting(params: {
       ? { code: reglaProveedor.inc_account, name: "Impuesto al consumo" }
       : resolveImpoconsumoAccount(config.taxes as never, config.accounts),
   });
+  journal = alignJournalToSource(journal, captureSource({ ...header, lines: extracted }, "pdf"), sumCOP(retenciones.retefuente, retenciones.reteiva, retenciones.reteica));
   // Cuadre: diferencias de $1 o menos (centavos del XML o recargo global) van a
   // 42958101 Ajuste al peso; una diferencia mayor deja el borrador "No cuadra".
   const cuadre = totalesJournal(journal);
@@ -566,7 +569,7 @@ export async function recalcularCuentasBorrador(
 ): Promise<{ ok: boolean; message: string }> {
   const { data: inv, error } = await supabase
     .from("invoices")
-    .select("id, company_id, status, raw_extraction, payable_manual, payable_account")
+    .select("id, company_id, status, raw_extraction, source_override, payable_manual, payable_account")
     .eq("id", invoiceId)
     .maybeSingle();
   if (error) return { ok: false, message: error.message };
@@ -574,10 +577,12 @@ export async function recalcularCuentasBorrador(
   if (inv.status !== "borrador" && inv.status !== "error")
     return { ok: false, message: "Solo se pueden recalcular facturas en borrador." };
   const raw = (inv.raw_extraction ?? null) as { ia?: ExtractedInvoice } | null;
-  const data = raw?.ia;
+  let data = raw?.ia;
   if (!data || !Array.isArray(data.lines))
     return { ok: false, message: "Esta factura no conserva la extracción original; no se puede recalcular." };
 
+  const source = (inv.source_override as ReturnType<typeof sourceFromRaw>) ?? sourceFromRaw(raw);
+  if (source) data = { ...data, subtotal: source.subtotal / 100, iva: source.iva / 100, impoconsumo: source.impoconsumo / 100, total: source.total / 100, discount: source.discount / 100, surcharge: source.surcharge / 100, lines: data.lines.map((l, i) => ({ ...l, subtotal: (source.lines[i]?.subtotal ?? 0) / 100, total: (source.lines[i]?.subtotal ?? 0) / 100, discount: source.source === "excel" ? 0 : l.discount })) };
   const { lines, ...header } = data;
   const acc = await computeDraftAccounting({
     companyId: inv.company_id as string,
@@ -607,6 +612,7 @@ export async function recalcularCuentasBorrador(
       retefuente: roundCOP(acc.retenciones.retefuente),
       reteiva: roundCOP(acc.retenciones.reteiva),
       reteica: roundCOP(acc.retenciones.reteica),
+      ...(source ? { subtotal: source.subtotal / 100, iva: source.iva / 100, impoconsumo: source.impoconsumo / 100, total: source.total / 100, discount: source.discount / 100 } : {}),
       raw_extraction: { ...raw, account_decisions: acc.decisions } as never,
       ...payablePatch,
       updated_at: new Date().toISOString(),
@@ -640,7 +646,7 @@ export async function recalcularCuentasBorrador(
     if (!nueva) continue;
     await supabase
       .from("invoice_lines")
-      .update({ account_code: nueva.account_code, account_name: nueva.account_name ?? null } as never)
+      .update({ account_code: nueva.account_code, account_name: nueva.account_name ?? null, ...(source ? { total: nueva.subtotal ?? nueva.total, iva: nueva.iva, impoconsumo: nueva.impoconsumo } : {}) } as never)
       .eq("id", l.id);
   }
 
@@ -719,7 +725,18 @@ export async function saveExtractedInvoice(params: {
     prefix: header.prefix,
     number: header.number,
   });
-  if (existente) throw new Error(mensajeDuplicado(existente));
+  if (existente) {
+    if (header.cufe) {
+      const previous = await supabase.from("invoices").select("raw_extraction").eq("id", existente.id).maybeSingle();
+      const original = sourceFromRaw(previous.data?.raw_extraction);
+      if (original?.source === "excel" && params.rawExtraction?.["fuente"] !== "excel_recibidos") {
+        const current = captureSource(params.data, "pdf");
+        const differences = (["subtotal", "iva", "impoconsumo", "total"] as const).filter(field => current[field] !== original[field]).map(field => `${field}: Excel ${(original[field] / 100).toFixed(2)}, PDF ${(current[field] / 100).toFixed(2)}`);
+        if (differences.length) throw new Error(`El mismo CUFE ya está en Excel. Diferencia con la fuente: ${differences.join("; ")}`);
+      }
+    }
+    throw new Error(mensajeDuplicado(existente));
+  }
 
   const acc = await computeDraftAccounting({
     companyId,
@@ -729,7 +746,9 @@ export async function saveExtractedInvoice(params: {
     knowledge: params.knowledge,
   });
   const { lines, baseGravable, ivaTotal, retenciones, centroFactura, payable, score, reason } = acc;
-  const unresolvedAccounts = [...acc.unresolvedAccounts];
+  const valoresOrigen = captureSource(params.data, params.rawExtraction?.["fuente"] === "excel_recibidos" ? "excel" : "pdf");
+  const sourceProblems = sourceErrors(valoresOrigen);
+  const unresolvedAccounts = [...acc.unresolvedAccounts, ...sourceProblems];
   const alertas = [...acc.alertas];
   const operationalJournal = acc.journal;
 
@@ -756,7 +775,7 @@ export async function saveExtractedInvoice(params: {
     );
   }
 
-  const total = roundCOP(baseGravable + ivaTotal + roundCOP(header.impoconsumo));
+  const total = roundCOP(header.total);
   const invoiceRow = {
       id: crypto.randomUUID(),
       created_by: userId,
@@ -780,7 +799,7 @@ export async function saveExtractedInvoice(params: {
       currency: header.currency || "COP",
       cost_center: centroFactura,
       notes: header.notes,
-      subtotal: baseGravable,
+      subtotal: roundCOP(header.subtotal),
       discount: roundCOP(header.discount),
       iva: ivaTotal,
       impoconsumo: roundCOP(header.impoconsumo),
@@ -788,6 +807,7 @@ export async function saveExtractedInvoice(params: {
       reteiva: roundCOP(retenciones.reteiva),
       reteica: roundCOP(retenciones.reteica),
       total,
+      posting_error: sourceProblems.length ? (valoresOrigen.source === "pdf" ? "Revisar lectura del PDF. " : "") + sourceProblems.join(" ") : null,
       status: "borrador",
       dian_status: header.cufe ? "con CUFE" : "sin CUFE",
       // Cuenta por pagar asignada automáticamente por NIT + histórico contable.
@@ -802,6 +822,8 @@ export async function saveExtractedInvoice(params: {
       // Trazabilidad de lectura: lo que devolvió la IA (o el adaptador Excel) y el texto extraído.
       raw_extraction: {
         ia: params.data,
+        valores_origen: valoresOrigen,
+        source_errors: sourceProblems,
         account_decisions: acc.decisions,
         lectura: params.readMode,
         texto: textoDocumento ? textoDocumento.slice(0, 20000) : null,
@@ -815,12 +837,12 @@ export async function saveExtractedInvoice(params: {
         code: l.code ?? null,
         description: l.description,
         quantity: Number(l.quantity || 0),
-        unit_value: roundCOP(l.unit_value),
+        unit_value: l.unit_value,
         discount: roundCOP(l.discount),
         iva: roundCOP(l.iva),
         retention: roundCOP(l.retention),
         impoconsumo: roundCOP(l.impoconsumo),
-        total: roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
+        total: roundCOP(l.subtotal ?? l.total),
         account_code: l.account_code ?? null,
         account_name: l.account_name ?? null,
         item_type: l.item_type ?? "gasto",

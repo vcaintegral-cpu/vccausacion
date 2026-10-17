@@ -813,6 +813,54 @@ export type Database = {
           },
         ]
       }
+      invoice_value_changes: {
+        Row: {
+          changed_at: string
+          changed_by: string
+          company_id: string
+          id: string
+          invoice_id: string
+          new_values: Json
+          previous_values: Json
+          reason: string
+        }
+        Insert: {
+          changed_at?: string
+          changed_by: string
+          company_id: string
+          id?: string
+          invoice_id: string
+          new_values: Json
+          previous_values: Json
+          reason: string
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string
+          company_id?: string
+          id?: string
+          invoice_id?: string
+          new_values?: Json
+          previous_values?: Json
+          reason?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_value_changes_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_value_changes_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoices: {
         Row: {
           approved_at: string | null
@@ -879,6 +927,8 @@ export type Database = {
           siigo_synced_at: string | null
           siigo_synced_by: string | null
           siigo_trace: Json | null
+          source_override: Json | null
+          source_values: Json | null
           status: string
           subtotal: number
           sync_applied_at: string | null
@@ -887,6 +937,7 @@ export type Database = {
           sync_source_label: string | null
           total: number
           updated_at: string
+          value_modified: boolean
           voucher_number: string | null
         }
         Insert: {
@@ -954,6 +1005,8 @@ export type Database = {
           siigo_synced_at?: string | null
           siigo_synced_by?: string | null
           siigo_trace?: Json | null
+          source_override?: Json | null
+          source_values?: Json | null
           status?: string
           subtotal?: number
           sync_applied_at?: string | null
@@ -962,6 +1015,7 @@ export type Database = {
           sync_source_label?: string | null
           total?: number
           updated_at?: string
+          value_modified?: boolean
           voucher_number?: string | null
         }
         Update: {
@@ -1029,6 +1083,8 @@ export type Database = {
           siigo_synced_at?: string | null
           siigo_synced_by?: string | null
           siigo_trace?: Json | null
+          source_override?: Json | null
+          source_values?: Json | null
           status?: string
           subtotal?: number
           sync_applied_at?: string | null
@@ -1037,6 +1093,7 @@ export type Database = {
           sync_source_label?: string | null
           total?: number
           updated_at?: string
+          value_modified?: boolean
           voucher_number?: string | null
         }
         Relationships: [
@@ -2381,6 +2438,10 @@ export type Database = {
           _retentions: Json
         }
         Returns: string
+      }
+      correct_invoice_source_values: {
+        Args: { _invoice_id: string; _reason: string; _values: Json }
+        Returns: undefined
       }
       create_payment_receipt: {
         Args: {

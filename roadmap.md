@@ -1,4 +1,10 @@
 # Compras desde Excel RECIBIDOS
+- [x] Preservar importes de fuente y corregir descuento duplicado/redistribución PDF; 17 borradores recuperados del Excel original.
+- [x] Proteger valores y aprobación, conciliación y correcciones auditadas.
+- [x] Validar exportación Contai y controles previos/posteriores Siigo, bloqueando diferencias y reenvíos de documentos ya creados.
+- [x] Pruebas monetarias y comprobación del flujo visible; 17 documentos suman 23.759.319,12 y conciliación sin diferencias.
+- [ ] Verificar un envío real y lectura posterior Siigo: requiere autorización para crear un documento contable real; RECIBIDOS sigue bloqueado para envío directo.
+- [ ] Verificar importación en Contai: requiere acceso al programa destino; archivo y centavos comprobados localmente.
 - [x] Bloquear cuentas bancarias/CxP como gasto, incluyendo borradores existentes.
 - [x] Priorizar historial por NIT y descripción, con origen visible y filtro.
 - [x] Precargar conocimiento por lote, procesar cinco en paralelo y guardar por grupo; progreso con tiempo.

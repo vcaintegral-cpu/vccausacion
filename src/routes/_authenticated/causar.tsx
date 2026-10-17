@@ -1,3 +1,5 @@
+import { captureSource, sourceFromRaw, sourceErrors, alignJournalToSource, type SourceValues } from "@/lib/source-values";
+import { SourceValuesCorrection } from "@/components/source-values-correction";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -153,6 +155,7 @@ function Causar() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [pdfPassword, setPdfPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const [source, setSource] = useState<SourceValues | null>(null);
   const [header, setHeader] = useState<Header>(emptyHeader());
   const [lines, setLines] = useState<Line[]>([]);
   // El aprendizaje ya no pregunta: se guarda automáticamente al aprobar.
@@ -251,7 +254,7 @@ function Causar() {
     () =>
       roundCOP(
         lines.reduce(
-          (s, l) => s + roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
+          (s, l) => s + roundCOP((l.subtotal ?? roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)))),
           0,
         ),
       ),
@@ -276,6 +279,7 @@ function Causar() {
     if (!borrador?.invoice || !config) return;
     if (editingId === borrador.invoice.id) return;
     const inv = borrador.invoice as Record<string, any>;
+    setSource((inv["source_override"] as SourceValues | null) ?? sourceFromRaw(inv["raw_extraction"]));
     setEditingId(inv['id'] as string);
     setExistingFile({ path: (inv['file_path'] as string) ?? null, name: (inv['file_name'] as string) ?? null });
     // Cuenta por pagar corregida manualmente antes: se respeta y no se recalcula.
@@ -313,6 +317,7 @@ function Causar() {
       code: l['code'] ?? null,
       description: l['description'] ?? "",
       quantity: Number(l['quantity'] ?? 0),
+      subtotal: sourceFromRaw(inv["raw_extraction"]) ? Number(l["total"] ?? 0) : undefined,
       unit_value: Number(l['unit_value'] ?? 0),
       discount: Number(l['discount'] ?? 0),
       iva: Number(l['iva'] ?? 0),
@@ -473,7 +478,7 @@ function Causar() {
     setLine(i, parcheDeTipo(actual, kind, true));
   }
 
-  const baseDe = (l: Line) => Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+  const baseDe = (l: Line) => (l.subtotal ?? roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)));
 
   /** Aplica el mismo tipo de ítem a todos los renglones, recalculando su cuenta. */
   function aplicarTipoTodos(kind: string) {
@@ -484,7 +489,7 @@ function Causar() {
   /** Aplica el mismo impuesto (IVA/impoconsumo) a todos los renglones. */
   function aplicarIvaTodos(id: string) {
     const tx = impuestosIva.find((t) => String(t.id) === id);
-    setLines((prev) => prev.map((l) => ({ ...l, iva: tx ? roundCOP((baseDe(l) * Number(tx.rate)) / 100) : 0 })));
+    if (!source) setLines((prev) => prev.map((l) => ({ ...l, iva: tx ? roundCOP((baseDe(l) * Number(tx.rate)) / 100) : 0 })));
     setLineTax((prev) => {
       const out = { ...prev };
       lines.forEach((_, i) => { out[i] = { ...out[i], iva: tx ? String(tx.id) : undefined }; });
@@ -534,7 +539,9 @@ function Causar() {
   }
   // Si la factura trae IVA en los renglones, ese es el IVA que se causa; si no, el del encabezado.
   const ivaLineas = useMemo(() => roundCOP(lines.reduce((s, l) => s + roundCOP(l.iva), 0)), [lines]);
-  const ivaTotal = ivaLineas > 0 ? ivaLineas : roundCOP(header.iva);
+  const ivaTotal = source ? roundCOP(header.iva) : ivaLineas > 0 ? ivaLineas : roundCOP(header.iva);
+  const sourceIssues = source ? sourceErrors(source) : [];
+  const invoiceTotal = source ? header.total : roundCOP(baseGravable + ivaTotal + roundCOP(header.impoconsumo));
   const retencionLineas = useMemo(() => roundCOP(lines.reduce((s, l) => s + roundCOP(l.retention), 0)), [lines]);
 
   // Solo se aplican los impuestos/retenciones elegidos en cada renglón.
@@ -704,7 +711,7 @@ function Causar() {
   );
   const journal = useMemo(
     () =>
-      buildJournal({
+      ((built) => source ? alignJournalToSource(built, source, retenciones.retefuente + retenciones.reteiva + retenciones.reteica) : built)(buildJournal({
         lines,
         iva: ivaTotal,
         impoconsumo: Number(header.impoconsumo || 0),
@@ -713,8 +720,8 @@ function Causar() {
         ivaDetalle: ivaDetalle,
         payableAccount: payable,
         impoconsumoAccount: impoconsumoCuenta,
-      }),
-    [lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaDetalle, costPolicy, payable, impoconsumoCuenta],
+      })),
+    [source, lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaDetalle, costPolicy, payable, impoconsumoCuenta],
   );
   const operationalJournal = useMemo(() => {
     const puc = (config?.accounts ?? []) as PucAccount[];
@@ -774,6 +781,7 @@ function Causar() {
       const data = (await extract({
         data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
       })) as ExtractedInvoice;
+      setSource(captureSource(data, "pdf"));
       const { lines: extracted, ...rest } = data;
       // Control de duplicados por empresa antes de crear cualquier borrador.
       if (companyId) {
@@ -844,6 +852,7 @@ function Causar() {
   }
 
   function setLine(i: number, patch: Partial<Line>) {
+    if (source && ["quantity", "unit_value", "discount", "iva", "impoconsumo", "total", "subtotal"].some(k => k in patch)) return;
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
@@ -865,6 +874,7 @@ function Causar() {
 
   async function guardar(status: "borrador" | "aprobado") {
     if (!companyId) return;
+    if (status === "aprobado" && sourceIssues[0]) { toast.error(sourceIssues[0]); return; }
     if (lines.length === 0) { toast.error("Agrega al menos un renglón."); return; }
     // Se revalida al guardar y al aprobar: no basta con deshabilitar los botones.
     const bloqueo = motivoBloqueoEmpresa(
@@ -877,7 +887,7 @@ function Causar() {
     }
     if (erroresImpuestos.length > 0) { toast.error(erroresImpuestos[0]!); return; }
     if (status === "aprobado" && erroresCentro.length > 0) { toast.error(erroresCentro[0]!); return; }
-    if (Math.abs(t.diferencia) >= 0.005) {
+    if (status === "aprobado" && Math.abs(t.diferencia) >= 0.005) {
       toast.error(
         `El asiento no está cuadrado. Revise los valores tributarios y contables. Diferencia: ${cop(t.diferencia)}`,
       );
@@ -930,7 +940,7 @@ function Causar() {
       const retefuente = roundCOP(retenciones.retefuente);
       const reteiva = roundCOP(retenciones.reteiva);
       const reteica = roundCOP(retenciones.reteica);
-      const total = roundCOP(baseGravable + ivaTotal + impoconsumoTotal);
+      const total = invoiceTotal;
       const netoAPagar = netoAPagarCOP(total, retefuente + reteiva + reteica);
       console.log("[causacion] TOTAL FACTURA:", total, "RETEFUENTE:", retefuente, "RETEIVA:", reteiva,
         "RETEICA:", reteica, "NETO A PAGAR:", netoAPagar, "TOTAL DÉBITOS:", t.debito, "TOTAL CRÉDITOS:", t.credito,
@@ -954,7 +964,7 @@ function Causar() {
           currency: header.currency || "COP",
           cost_center: costCenterForCompany(costPolicy ?? null, header.cost_center),
           notes: header.notes,
-          subtotal: baseGravable,
+          subtotal: source ? header.subtotal : baseGravable,
           discount: roundCOP(header.discount),
           iva: ivaTotal,
           impoconsumo: impoconsumoTotal,
@@ -962,7 +972,8 @@ function Causar() {
           reteiva,
           reteica,
           total,
-          status,
+          status: "borrador",
+          ...(source && !editingId ? { raw_extraction: { valores_origen: source, ia: { ...header, lines } } as never } : {}),
           dian_status: header.cufe ? "con CUFE" : "sin CUFE",
           // Cuenta por pagar: se determina por NIT + histórico, no por la descripción.
           ...(payable
@@ -1005,7 +1016,7 @@ function Causar() {
         inv = data as { id: string };
       }
 
-      await Promise.all([
+      const savedRows = await Promise.all([
         supabase.from("invoice_lines").insert(
           lines.map((l, i) => {
             const puc = (config?.accounts ?? []) as PucAccount[];
@@ -1019,12 +1030,12 @@ function Causar() {
             code: l.code ?? null,
             description: l.description,
             quantity: Number(l.quantity || 0),
-            unit_value: roundCOP(l.unit_value),
+            unit_value: l.unit_value,
             discount: roundCOP(l.discount),
             iva: roundCOP(l.iva),
             retention: roundCOP(l.retention),
             impoconsumo: roundCOP(l.impoconsumo),
-            total: roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
+            total: roundCOP(l.subtotal ?? l.total),
             account_code: l.account_code ?? null,
             account_name: l.account_name ?? null,
             item_type: normalizeItemType(l.item_type),
@@ -1063,6 +1074,12 @@ function Causar() {
           })),
         ),
       ]);
+
+      for (const result of savedRows) if (result.error) throw result.error;
+      if (status === "aprobado") {
+        const approved = await supabase.from("invoices").update({ status: "aprobado" }).eq("id", inv.id);
+        if (approved.error) throw approved.error;
+      }
 
       // El aprendizaje solo se registra cuando la causación queda aprobada.
       if (status === "aprobado") {
@@ -1169,6 +1186,7 @@ function Causar() {
       <Label className="text-xs">{label}</Label>
       <Input
         type={type}
+        readOnly={!!source && ["subtotal", "discount", "iva", "impoconsumo", "total"].includes(key)}
         value={String(header[key] ?? "")}
         onChange={(e) => setHeader({ ...header, [key]: type === "number" ? Number(e.target.value) : e.target.value })}
       />
@@ -1177,6 +1195,9 @@ function Causar() {
 
   return (
     <div className="space-y-6">
+      {sourceIssues.map(issue => <p key={issue} className="text-sm text-destructive">{source?.source === "pdf" ? "Revisar lectura del PDF. " : ""}{issue}</p>)}
+      {source && editingId && companyId && <SourceValuesCorrection source={source} invoiceId={editingId} companyId={companyId} />}
+      {borrador?.invoice?.["value_modified"] && <p className="text-sm text-destructive">Valor modificado manualmente</p>}
       <div>
         <h1 className="text-xl font-semibold">{editingId ? "Editar borrador" : "Causar factura"}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -1206,7 +1227,7 @@ function Causar() {
           {reading ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
           {reading ? "Preparando y leyendo…" : "Leer con IA"}
         </Button>
-        <Button variant="outline" onClick={() => setLines((p) => [...p, emptyLine()])}>
+        <Button disabled={!!source} variant="outline" onClick={() => setLines((p) => [...p, emptyLine()])}>
           <FileUp className="size-4" /> Renglón manual
         </Button>
       </div>
@@ -1488,13 +1509,13 @@ function Causar() {
                     </select>
                   </td>
                   <td className="px-3 py-1.5 w-24">
-                    <Input type="number" value={l.quantity} onChange={(e) => setLine(i, { quantity: Number(e.target.value) })} />
+                    <Input readOnly={!!source} type="number" value={l.quantity} onChange={(e) => setLine(i, { quantity: Number(e.target.value) })} />
                   </td>
                   <td className="px-3 py-1.5 w-32">
-                    <Input type="number" value={l.unit_value} onChange={(e) => setLine(i, { unit_value: Number(e.target.value) })} />
+                    <Input readOnly={!!source} type="number" value={l.unit_value} onChange={(e) => setLine(i, { unit_value: Number(e.target.value) })} />
                   </td>
                   <td className="px-3 py-1.5 w-28">
-                    <Input type="number" value={l.discount} onChange={(e) => setLine(i, { discount: Number(e.target.value) })} />
+                    <Input readOnly={!!source} type="number" value={l.discount} onChange={(e) => setLine(i, { discount: Number(e.target.value) })} />
                   </td>
                   <td className="px-3 py-1.5 w-56">
                     <AccountCombobox
@@ -1524,6 +1545,7 @@ function Causar() {
                       <Input
                         className="w-24"
                         type="number"
+                        readOnly={!!source}
                         value={l.iva}
                         onChange={(e) => setLine(i, { iva: Number(e.target.value) })}
                       />
@@ -1534,7 +1556,7 @@ function Causar() {
                           const id = e.target.value;
                           setLineTax((p) => ({ ...p, [i]: { ...p[i], iva: id || undefined } }));
                           const tx = impuestosIva.find((t) => String(t.id) === id);
-                          const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+                          const base = (l.subtotal ?? roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)));
                           setLine(i, { iva: tx ? roundCOP((base * Number(tx.rate)) / 100) : 0 });
                         }}
                       >
@@ -1562,7 +1584,7 @@ function Causar() {
                           const id = e.target.value;
                           setLineTax((p) => ({ ...p, [i]: { ...p[i], ret: id || undefined } }));
                           const tx = impuestosRet.find((t) => String(t.id) === id);
-                          const base = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+                          const base = (l.subtotal ?? roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)));
                           const baseRet = String(tx?.kind) === "reteiva" ? Number(l.iva || 0) : base;
                           setLine(i, { retention: tx ? roundCOP((baseRet * Number(tx.rate)) / 100) : 0 });
                         }}
@@ -1577,10 +1599,10 @@ function Causar() {
                     </div>
                   </td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">
-                    {cop(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0))}
+                    {cop((l.subtotal ?? roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0))))}
                   </td>
                   <td className="px-3 py-1.5">
-                    <Button variant="ghost" size="icon" onClick={() => setLines((p) => p.filter((_, idx) => idx !== i))}>
+                    <Button disabled={!!source} variant="ghost" size="icon" onClick={() => setLines((p) => p.filter((_, idx) => idx !== i))}>
                       <Trash2 className="size-4" />
                     </Button>
                   </td>
@@ -1605,12 +1627,12 @@ function Causar() {
               <Row k="ReteIVA" v={retBlocks.reteiva.apply ? cop(retenciones.reteiva) : "—"} />
               <Row k="ReteICA" v={retBlocks.reteica.apply ? cop(retenciones.reteica) : "—"} />
               <Row k="Total retenciones" v={cop(totalRetenciones(retBlocks))} />
-              <Row k="Total factura" v={cop(roundCOP(baseGravable + ivaTotal + roundCOP(header.impoconsumo)))} />
+              <Row k="Total factura" v={cop(invoiceTotal)} />
               <Row
                 k="Neto a pagar"
                 v={cop(
                   netoAPagarCOP(
-                    roundCOP(baseGravable + ivaTotal + roundCOP(header.impoconsumo)),
+                    invoiceTotal,
                     totalRetenciones(retBlocks),
                   ),
                 )}

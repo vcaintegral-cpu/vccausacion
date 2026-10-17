@@ -15,3 +15,4 @@
 - The shared account engine validates expense groups at every assignment boundary and journal construction; approval is additionally guarded in PostgreSQL to prevent bypasses.
 - Bulk imports preload company purchase knowledge under user-scoped RLS, retain per-line provenance in raw extraction metadata, and persist bounded groups before marking items complete to avoid per-line network calls.
 - Rejected dynamic-module imports require an explicit document reload in the root error boundary; router invalidation cannot clear the browser's rejected module cache.
+- Source snapshots store integer cents, database monetary columns store currency units, and all comparisons convert at the boundary; source-backed approval and exports validate the stored journal without changing invoice amounts.
