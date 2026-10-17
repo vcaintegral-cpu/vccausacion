@@ -75,14 +75,17 @@ export function purchaseReadbackErrors(doc: PurchaseReadback, expected: Readback
 /** Expected values for re-reading an existing Siigo purchase, derived only from that remote document. */
 export function readbackExpectedFromDoc(doc: PurchaseReadback & { retentions?: Array<{ value?: number }> }, inv: {
   total: number; iva: number; impoconsumo: number; retefuente: number; reteiva: number; reteica: number;
-}, incAsCost = 0): ReadbackExpected {
+}, incAsCost = 0, extra: { ivaAsCost?: number; providerRounding?: number } = {}): ReadbackExpected {
+  const ivaAsCost = toCents(extra.ivaAsCost ?? 0);
+  // Diferencia de redondeo registrada: Siigo tiene el total calculado de las líneas.
+  const total = (toCents(inv.total) - toCents(extra.providerRounding ?? 0)) / 100;
   const taxes = (doc.items ?? []).flatMap(item => item.taxes ?? []);
   const returned = (sumCents((doc.retentions ?? []).map(r => r.value))
     + sumCents(taxes.filter(t => /^rete/i.test(t.type ?? "")).map(t => t.value))) / 100;
   const retentions = (toCents(inv.retefuente) + toCents(inv.reteiva) + toCents(inv.reteica)) / 100;
   return {
-    total: inv.total, iva: inv.iva, impoconsumo: (toCents(inv.impoconsumo) - toCents(incAsCost)) / 100, retentions,
-    returnedRetentions: returned, payable: (toCents(inv.total) - toCents(retentions)) / 100,
+    total, iva: (toCents(inv.iva) - ivaAsCost) / 100, impoconsumo: (toCents(inv.impoconsumo) - toCents(incAsCost)) / 100, retentions,
+    returnedRetentions: returned, payable: (toCents(total) - toCents(retentions)) / 100,
     ivaIds: taxes.filter(t => /^iva$/i.test((t.type ?? "").trim())).map(t => t.id ?? ""),
   };
 }
@@ -115,7 +118,7 @@ const isInc = (t: PurchaseTax) => /consum/i.test(kindOf(t));
 const baseOf = (it: { quantity: number; price: number; discount?: number }) =>
   roundCOP(roundCOP(it.quantity) * roundCOP(it.price) - roundCOP(it.discount));
 
-export type AdaptResult<T> = { items: T[]; incAsCost: number; adjustment: number; notes: string[] };
+export type AdaptResult<T> = { items: T[]; incAsCost: number; adjustment: number; providerRounding: number; notes: string[] };
 
 /**
  * - IVA sobre base parcial (AIU, 1,9 %): divide el renglón en parte gravada + no gravada.
@@ -172,13 +175,18 @@ export function adaptPurchaseItems<T extends AdaptableItem>(
       // Siigo no descuenta items[].discount del total de la compra: el ajuste se resta del
       // valor de un renglón sin impuestos (mismo total, IVA y neto de la fuente).
       const idx = out.findIndex(it => it.tax_ids.length === 0 && toCents(baseOf(it)) > -diff);
-      if (idx < 0) throw new Error(`Ajuste al peso de ${diff / 100}: la factura no tiene un renglón sin IVA donde restarlo y Siigo no acepta valores negativos ni descuentos en compras. Requiere decisión manual. No se envió la factura.`);
+      if (idx < 0) {
+        // Diferencia de redondeo del proveedor: se envían los valores calculados de las
+        // líneas (sin tocar IVA, base ni retenciones) y la diferencia queda pendiente al pago.
+        notes.push(`Diferencia de redondeo del proveedor: ${diff / 100} (pendiente al pago).`);
+        return { items: out, incAsCost: incAsCost / 100, adjustment: 0, providerRounding: diff / 100, notes };
+      }
       const t = out[idx]!;
       out[idx] = { ...t, quantity: 1, discount: 0, price: roundCOP(baseOf(t) + diff / 100), description: `${t.description} (incluye ajuste al peso ${diff / 100})` };
     }
     notes.push(`Ajuste al peso del documento: ${diff / 100}.`);
   }
-  return { items: out, incAsCost: incAsCost / 100, adjustment: Math.abs(diff) <= 100 ? diff / 100 : 0, notes };
+  return { items: out, incAsCost: incAsCost / 100, adjustment: Math.abs(diff) <= 100 ? diff / 100 : 0, providerRounding: 0, notes };
 }
 
 /** Retefuente goes only on the rows whose bases reproduce the source value exactly. */
@@ -188,4 +196,15 @@ export function retefuenteRows(bases: number[], pct: number, target: number): nu
   if (per.reduce((a, b) => a + b, 0) === toCents(target)) return all;
   const single = per.findIndex(c => c === toCents(target));
   return single >= 0 ? [single] : all;
+}
+
+/** IVA capitalizado: un renglón adicional sin impuestos en la cuenta del activo; nunca lleva retención. */
+export function capitalizedIvaRow<T extends AdaptableItem>(ref: T, account: string, amount: number): T {
+  return { ...ref, type: "Account", code: account, account_code: account, quantity: 1, price: roundCOP(amount), discount: 0, tax_ids: [], item_type: "activo", description: "IVA 19% sobre utilidad (mayor valor del activo)" };
+}
+
+/** Rows that receive a line retention, excluding rows that must never carry one. */
+export function retentionRowsExcluding(bases: number[], pct: number, target: number, excluded: Set<number>): number[] {
+  const masked = bases.map((b, i) => (excluded.has(i) ? 0 : b));
+  return retefuenteRows(masked, pct, target).filter(i => !excluded.has(i));
 }
