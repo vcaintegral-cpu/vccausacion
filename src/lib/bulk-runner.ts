@@ -113,7 +113,7 @@ export function getBulkProgress() {
 // ----------------------------------------------------------------------------
 // Parámetros contables (se leen una vez por empresa y se reutilizan en el lote)
 // ----------------------------------------------------------------------------
-type Deps = { config: BulkConfig; knowledge: CompanyKnowledge };
+export type Deps = { config: BulkConfig; knowledge: CompanyKnowledge };
 const depsCache = new Map<string, Promise<Deps>>();
 
 async function fetchAll<T>(
