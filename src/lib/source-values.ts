@@ -43,7 +43,8 @@ export function compareSource(s: SourceValues, inv: { subtotal?: unknown; iva?: 
 export function alignJournalToSource(journal: JournalLine[], s: SourceValues, retained: number): JournalLine[] {
   const out = journal.filter(l => l.account_code !== "42958101").map(l => ({ ...l }));
   const payable = out.find(l => /^(22|23)/.test(l.account_code) && !/^236[578]/.test(l.account_code) && l.credit > 0);
-  if (payable) payable.credit = (s.total - toCents(retained)) / 100;
+  const advance = sumCents(out.filter(l => /^1330/.test(l.account_code)).map(l => l.credit));
+  if (payable) payable.credit = (s.total - toCents(retained) - advance) / 100;
   const diff = sumCents(out.map(l => l.debit)) - sumCents(out.map(l => l.credit));
   if (diff !== 0 && Math.abs(diff) <= 100) out.push({ account_code: "42958101", account_name: "Ajuste por redondeo del documento", debit: diff < 0 ? -diff / 100 : 0, credit: diff > 0 ? diff / 100 : 0 });
   return out;
