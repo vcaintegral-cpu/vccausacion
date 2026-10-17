@@ -415,7 +415,7 @@ async function runUpload(job: QueuedUpload) {
           await processItem(item, job.companyId, deps);
         } finally {
           activos -= 1;
-          emit({ active: activos, done: snapshot.done + 1 });
+          emit({ active: activos, ...counters(await listItems(job.uploadId)) });
         }
       }
     };

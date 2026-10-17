@@ -330,7 +330,7 @@ function Borradores() {
         if (proveedor && r.provider_name !== proveedor) return false;
         if (origen) {
           const acc = accounts.get(r.id);
-          const pending = !acc?.gasto || acc.gastos.some((g) => !isValidExpenseAccount(g.code));
+          const pending = !acc?.gasto || acc.gastos.some((g) => !isValidExpenseAccount(g.code)) || Object.values(r.raw_extraction?.account_decisions ?? {}).some((d) => !isValidExpenseAccount(d.code));
           const labels = Object.values(r.raw_extraction?.account_decisions ?? {}).map((d) => originLabel(d.origin));
           if (origen === "Pendiente" ? !pending : !labels.includes(origen)) return false;
         }
@@ -481,7 +481,8 @@ function Borradores() {
     let tercerosExistentes = 0;
     try {
 
-      for (const inv of objetivo) {
+      for (let offset = 0; offset < objetivo.length; offset += 5) {
+        await Promise.all(objetivo.slice(offset, offset + 5).map(async (inv) => {
         const etiqueta = etiquetaFactura(inv);
         try {
           if (tipo === "aprobar") out.push(await aprobarBorrador(inv, accounts.get(inv.id), pucCodes, etiqueta, userId));
@@ -515,6 +516,7 @@ function Borradores() {
         } finally {
           setAvance((p) => (p ? { ...p, hechas: p.hechas + 1 } : p));
         }
+        }));
       }
     } finally {
       setBusy(null);

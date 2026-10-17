@@ -181,7 +181,7 @@ export function resolveLineAccount(params: ResolveParams): AccountDecision {
   const nombrePuc = (code: string) => puc.find((p) => p.code === code)?.name ?? "";
   const operativa = (code: string) => isValidExpenseAccount(code) && (puc.length === 0 ? true : resolveOperationalAccount(puc, code).valid);
 
-  const nit = providerNit ? norm(providerNit) : null;
+  const nit = providerNit ? providerNit.replace(/\D/g, "") : null;
   const activas = knowledge.learning.filter((r) => r.active && operativa(r.account_code));
 
   // 5) historial real de causaciones: proveedor y conceptos similares.
@@ -190,7 +190,9 @@ export function resolveLineAccount(params: ResolveParams): AccountDecision {
     if (items.length === 0) return null;
     const counts = new Map<string, number>();
     for (const i of items) counts.set(i.account_code, (counts.get(i.account_code) ?? 0) + (i.weight ?? 1));
-    const [code, count] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]!;
+    const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (!top) return null;
+    const [code, count] = top;
     const total = items.reduce((s, i) => s + (i.weight ?? 1), 0);
     return { code, count, total };
   };
