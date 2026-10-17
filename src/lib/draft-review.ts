@@ -137,6 +137,7 @@ export function classifyJournal(rows: JournalRow[]): DraftAccounts {
     }
     if (debit > 0) {
       push(out.gastos, { code, name: r.account_name });
+      out.gastoDebit += debit;
       if (debit > mayorGasto) { mayorGasto = debit; out.gasto = { code, name: r.account_name }; }
     }
   }
@@ -167,6 +168,20 @@ export function alertasBorrador(inv: DraftInvoice, acc: DraftAccounts | undefine
   else if (!isPayableCode(payableCode)) a.push({ level: "error", message: `La cuenta ${payableCode} no es una cuenta por pagar válida (grupos 22 o 23).` });
   if (Math.abs(acc.debit - acc.credit) >= EPS_COP)
     a.push({ level: "error", message: "El asiento no está cuadrado. Revise los valores tributarios y contables." });
+  // Bloqueante: la suma de las líneas de gasto/costo debe igualar el subtotal del documento.
+  const subtotal = Number(inv.subtotal || 0);
+  if (subtotal > 0 && acc.gastoDebit > 0 && Math.abs(acc.gastoDebit - subtotal) >= EPS_COP)
+    a.push({ level: "error", message: "La suma de las líneas no coincide con el subtotal del documento." });
+  // Informativas: no bloquean la aprobación, solo piden confirmación visual.
+  if (inv.issue_date) {
+    const inicioMes = new Date();
+    inicioMes.setDate(1);
+    inicioMes.setHours(0, 0, 0, 0);
+    if (new Date(`${inv.issue_date}T00:00:00`) < inicioMes)
+      a.push({ level: "warn", message: "Posible gasto de periodo anterior: la fecha de la factura es de un mes pasado." });
+  }
+  if (acc.gastos.some((g) => g.code.startsWith("1330")))
+    a.push({ level: "warn", message: "Confirmar cruce de anticipo: el asiento usa una cuenta de anticipos (1330)." });
   if (inv.processing_at) a.push({ level: "warn", message: "La factura está siendo procesada." });
   if (inv.posting_error) a.push({ level: "warn", message: inv.posting_error });
   if (a.length === 0) a.push({ level: "ok", message: "Recomendación completa." });
