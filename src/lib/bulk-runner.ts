@@ -131,7 +131,7 @@ async function fetchAll<T>(
   return out;
 }
 
-async function loadDeps(companyId: string): Promise<Deps> {
+export async function loadDeps(companyId: string): Promise<Deps> {
   const cached = depsCache.get(companyId);
   if (cached) return cached;
   const promise = (async (): Promise<Deps> => {
