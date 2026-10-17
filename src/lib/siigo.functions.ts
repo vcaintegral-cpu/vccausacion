@@ -1,5 +1,5 @@
 import { effectiveSource, validateStoredJournal } from "@/lib/source-values";
-import { purchaseLineErrors, purchaseReadbackErrors, purchasePayloadErrors, resolvePurchaseInc } from "@/lib/siigo-purchase-validation";
+import { purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, resolvePurchaseInc } from "@/lib/siigo-purchase-validation";
 import { toCents } from "@/lib/money";
 import { esCeroCOP, roundCOP } from "@/lib/money";
 import { createServerFn } from "@tanstack/react-start";
@@ -2239,7 +2239,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         ivaIds: [...ivaSiigoPorPosicion.values(), ...(ivaTaxId == null ? [] : [ivaTaxId])],
       });
       if (mismatches.length) {
-        await supabase.from("invoices").update({ siigo_trace: { resultado: "Diferencia Siigo", diferencias: mismatches, siigo_verificacion: verificacion, valores: { total: inv.total, iva: inv.iva, impoconsumo: inv.impoconsumo } } as Json }).eq("id", inv.id);
+        await supabase.from("invoices").update({ siigo_trace: { resultado: "Diferencia Siigo", diferencias: mismatches, comparacion: purchaseReadbackComparison(doc, { total: inv.total, iva: inv.iva, impoconsumo: inv.impoconsumo, retentions: retenciones, returnedRetentions: retSiigo, payable: valorCxP, ivaIds: [...ivaSiigoPorPosicion.values(), ...(ivaTaxId == null ? [] : [ivaTaxId])] }), siigo_request: payloadEnviado, siigo_respuesta: res, siigo_verificacion: verificacion, valores: { total: inv.total, iva: inv.iva, impoconsumo: inv.impoconsumo } } as Json }).eq("id", inv.id);
         throw new Error("Diferencia Siigo: " + mismatches.join("; ") + ". No reenvíe el documento creado.");
       }
       if (Math.abs(pagoSiigo - valorPagoEnviado) > 0.005) {
