@@ -249,8 +249,45 @@ export async function processInvoiceFile(params: {
     };
     extraccionCache.set(huella, cached);
   }
-  const { lines: extracted, ...header } = cached.data;
-  const textoDocumento = cached.texto;
+  return saveExtractedInvoice({
+    data: cached.data,
+    fileName: file.name,
+    file,
+    companyId,
+    config,
+    knowledge: params.knowledge,
+    storagePath: params.storagePath,
+    readMode: cached.lectura,
+    texto: cached.texto,
+    onStage: params.onStage,
+  });
+}
+
+/**
+ * Guarda como borrador una factura ya extraída (por IA desde PDF o por el
+ * adaptador del Excel RECIBIDOS). Es UNA SOLA función de causación: el Excel
+ * entrega sus datos en la misma estructura ExtractedInvoice y pasa por aquí,
+ * con exactamente los mismos parámetros, reglas y resultados que el PDF.
+ */
+export async function saveExtractedInvoice(params: {
+  data: ExtractedInvoice;
+  fileName: string;
+  /** Archivo original a conservar en Storage (PDF). El Excel no adjunta archivo. */
+  file?: File | null;
+  companyId: string;
+  config: BulkConfig;
+  knowledge?: CompanyKnowledge;
+  storagePath?: string | null;
+  readMode: "texto" | "imagen";
+  texto?: string;
+  /** Trazabilidad adicional para raw_extraction (por ejemplo la fila del Excel). */
+  rawExtraction?: Record<string, unknown>;
+  onStage?: StageCallback;
+}): Promise<ProcessedInvoice> {
+  const { companyId, config } = params;
+  const fileName = params.fileName;
+  const { lines: extracted, ...header } = params.data;
+  const textoDocumento = params.texto ?? "";
 
   const trace: InvoiceReadTrace = {
     providerName: header.provider_name ?? null,
@@ -260,7 +297,7 @@ export async function processInvoiceFile(params: {
     invoiceNumber: [header.prefix, header.number].filter(Boolean).join("-") || null,
     issueDate: header.issue_date ?? null,
     text: textoDocumento ? textoDocumento.slice(0, 20000) : null,
-    readMode: cached.lectura,
+    readMode: params.readMode,
   };
   await params.onStage?.("validating_company", trace);
 
