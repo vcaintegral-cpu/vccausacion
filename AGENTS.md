@@ -19,3 +19,4 @@
 - Account selectors share a catalog-identity hierarchy index and filter the full catalog before bounding rendered results, avoiding repeated full accounting evaluations and oversized menus on the main thread.
 - Source-declared IVA rates resolve only an unambiguous active tax record and persist its exact ID without recalculating amounts; bounded, labeled document adjustments are classified separately from purchase expenses.
 - Siigo preflight forecasts taxes from serialized item precision and the live company tax catalog; readback reconstructs gross purchase totals from Siigo net totals plus actual retentions, without altering source values or resending existing identities.
+- Siigo error recovery state (error kind, attempts, request/response trace, voided consecutives) is persisted on the invoice and remote-identity rows are never resent or deleted (DB trigger), so recovery actions survive sessions and cannot duplicate Siigo documents.
