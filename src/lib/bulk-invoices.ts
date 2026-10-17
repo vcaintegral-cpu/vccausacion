@@ -187,17 +187,7 @@ async function fileFingerprint(file: File): Promise<string> {
 const norm = (s?: string | null) =>
   (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
-/** Lee una factura con IA y la guarda como borrador con su comprobante contable. */
-export async function processInvoiceFile(params: {
-  file: File;
-  companyId: string;
-  config: BulkConfig;
-  extract: ExtractFn;
-  knowledge?: CompanyKnowledge;
-  /** Ruta del PDF ya guardado en Storage: evita subir el archivo dos veces. */
-  storagePath?: string | null;
-  onStage?: (stage: "reading" | "ocr" | "extracting_data" | "validating_company" | "ready_for_accounting", trace?: InvoiceReadTrace) => Promise<void>;
-}): Promise<{
+export type ProcessedInvoice = {
   invoiceId: string;
   numero: string;
   total: number;
@@ -210,7 +200,21 @@ export async function processInvoiceFile(params: {
   buyerNit: string | null;
   issueDate: string | null;
   readMode: "texto" | "imagen";
-}> {
+};
+
+type StageCallback = (stage: "reading" | "ocr" | "extracting_data" | "validating_company" | "ready_for_accounting", trace?: InvoiceReadTrace) => Promise<void>;
+
+/** Lee una factura con IA y la guarda como borrador con su comprobante contable. */
+export async function processInvoiceFile(params: {
+  file: File;
+  companyId: string;
+  config: BulkConfig;
+  extract: ExtractFn;
+  knowledge?: CompanyKnowledge;
+  /** Ruta del PDF ya guardado en Storage: evita subir el archivo dos veces. */
+  storagePath?: string | null;
+  onStage?: StageCallback;
+}): Promise<ProcessedInvoice> {
   const { file, companyId, config, extract } = params;
   const huella = await fileFingerprint(file);
   let cached = extraccionCache.get(huella);
