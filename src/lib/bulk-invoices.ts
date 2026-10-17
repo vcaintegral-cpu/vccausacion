@@ -475,8 +475,8 @@ export async function saveExtractedInvoice(params: {
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth.user?.id;
   let filePath: string | null = params.storagePath ?? null;
-  if (!filePath && userId) {
-    const path = `${userId}/${companyId}/${Date.now()}-${file.name.replace(/[^\w.-]/g, "_")}`;
+  if (!filePath && userId && params.file) {
+    const path = `${userId}/${companyId}/${Date.now()}-${fileName.replace(/[^\w.-]/g, "_")}`;
     const { error: upErr } = await supabase.storage.from("facturas").upload(path, file);
     if (!upErr) filePath = path;
   }
@@ -538,13 +538,14 @@ export async function saveExtractedInvoice(params: {
       payable_confidence: payable.confidence,
       payable_updated_at: new Date().toISOString(),
       file_path: filePath,
-      file_name: file.name,
-      // Trazabilidad de lectura: lo que devolvió la IA y el texto extraído del documento.
+      file_name: fileName,
+      // Trazabilidad de lectura: lo que devolvió la IA (o el adaptador Excel) y el texto extraído.
       raw_extraction: {
-        ia: cached.data,
-        lectura: cached.lectura,
+        ia: params.data,
+        lectura: params.readMode,
         texto: textoDocumento ? textoDocumento.slice(0, 20000) : null,
-        archivo: file.name,
+        archivo: fileName,
+        ...(params.rawExtraction ?? {}),
       } as never,
     })
     .select()
@@ -587,7 +588,7 @@ export async function saveExtractedInvoice(params: {
 
   return {
     invoiceId: inv.id as string,
-    numero: [header.prefix, header.number].filter(Boolean).join("-") || file.name,
+    numero: [header.prefix, header.number].filter(Boolean).join("-") || fileName,
     total,
     score,
     // 95% o más: automática. 80–94%: sugerida y marcada para revisión. Menos de 80%: revisión obligatoria.
@@ -600,6 +601,6 @@ export async function saveExtractedInvoice(params: {
     buyerName: header.buyer_name ?? null,
     buyerNit: header.buyer_nit ?? null,
     issueDate: header.issue_date || null,
-    readMode: cached.lectura,
+    readMode: params.readMode,
   };
 }
