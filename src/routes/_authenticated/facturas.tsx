@@ -331,7 +331,7 @@ function Facturas() {
                   {siigoErrorKind(r) && (
                     <div className="mt-0.5 text-[11px] font-medium text-muted-foreground">{SIIGO_KIND_LABEL[siigoErrorKind(r)!]}</div>
                   )}
-                  {estadoUnico(r) === "error_siigo" && r.siigo_error && (
+                  {r.siigo_status === "error" && r.siigo_error && (
                     <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-destructive" title={r.siigo_error}>
                       {r.siigo_error}
                     </div>

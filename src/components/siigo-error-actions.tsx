@@ -34,7 +34,7 @@ export type SiigoErrorInvoice = {
 
 export const SIIGO_KIND_LABEL: Record<SiigoErrorKind, string> = {
   sin_crear: "Sin crear en Siigo",
-  creado_diferencia: "Creado con diferencia",
+  creado_diferencia: "Con diferencia en Siigo",
   interrumpido: "Envío interrumpido",
 };
 

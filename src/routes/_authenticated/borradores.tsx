@@ -955,7 +955,7 @@ function Borradores() {
                     <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${ESTADO_CLASS[e] ?? "bg-muted text-muted-foreground"}`}>
                       {e === "error_siigo" && r.siigo_error?.startsWith("Diferencia Siigo") ? "Diferencia Siigo" : ESTADO_LABEL[e] ?? e}
                     </span>
-                    {e === "error_siigo" && r.siigo_error && (
+                    {r.siigo_status === "error" && r.siigo_error && (
                       <div className="mt-0.5 max-w-[200px] truncate text-[11px] text-destructive" title={r.siigo_error}>{r.siigo_error}</div>
                     )}
                     {siigoErrorKind(r) && <div className="mt-0.5 text-[11px] font-medium text-muted-foreground">{SIIGO_KIND_LABEL[siigoErrorKind(r)!]}</div>}
