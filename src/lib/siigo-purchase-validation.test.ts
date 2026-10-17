@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { capitalizedIvaRow, retentionRowsExcluding } from "./siigo-purchase-validation";
 import { adaptPurchaseItems, retefuenteRows, isInterruptedSend, purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, readbackExpectedFromDoc, resolvePurchaseInc, siigoErrorKind } from "./siigo-purchase-validation";
 
 describe("shared PDF and RECIBIDOS purchase gates", () => {
