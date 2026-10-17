@@ -9,6 +9,7 @@ import { isValidExpenseAccount } from "@/lib/provider-rules";
 import { EPS_COP } from "@/lib/money";
 
 export type DraftInvoice = {
+  source_override?: import("@/lib/source-values").SourceValues | null;
   raw_extraction?: { account_decisions?: Record<string, { code: string; origin: string; reason: string }> };
   id: string;
   company_id: string;
@@ -152,7 +153,7 @@ export type Alerta = { level: "ok" | "warn" | "error"; message: string };
 /** Alertas visuales; no modifican la causación, solo indican qué revisar con el lápiz. */
 export function alertasBorrador(inv: DraftInvoice, acc: DraftAccounts | undefined, pucCodes: Set<string>): Alerta[] {
   const a: Alerta[] = [];
-  const source = sourceFromRaw(inv.raw_extraction);
+  const source = inv.source_override ?? sourceFromRaw(inv.raw_extraction);
   if (source) for (const message of [...sourceErrors(source), ...compareSource(source, inv)]) a.push({ level: "error", message });
   if (!acc || acc.lines === 0) { a.push({ level: "error", message: "Sin comprobante contable generado." }); return a; }
   if (!inv.provider_nit) a.push({ level: "error", message: "Proveedor sin NIT." });

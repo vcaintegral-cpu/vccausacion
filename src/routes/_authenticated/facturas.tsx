@@ -98,7 +98,7 @@ function Facturas() {
       const { data, error } = await supabase
         .from("invoices")
         .select(
-          "raw_extraction, impoconsumo, discount, id, prefix, number, issue_date, provider_nit, provider_name, cost_center, notes, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_synced_at, siigo_last_attempt_at, siigo_error, file_path, file_name",
+          "source_override, raw_extraction, impoconsumo, discount, id, prefix, number, issue_date, provider_nit, provider_name, cost_center, notes, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_synced_at, siigo_last_attempt_at, siigo_error, file_path, file_name",
         )
         .eq("company_id", companyId!)
         .order("issue_date", { ascending: false });

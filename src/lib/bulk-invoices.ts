@@ -569,7 +569,7 @@ export async function recalcularCuentasBorrador(
 ): Promise<{ ok: boolean; message: string }> {
   const { data: inv, error } = await supabase
     .from("invoices")
-    .select("id, company_id, status, raw_extraction, payable_manual, payable_account")
+    .select("id, company_id, status, raw_extraction, source_override, payable_manual, payable_account")
     .eq("id", invoiceId)
     .maybeSingle();
   if (error) return { ok: false, message: error.message };
