@@ -56,6 +56,7 @@ type Inv = {
   siigo_status: string;
   siigo_id: string | null;
   siigo_number: string | null;
+  siigo_pending_label?: string | null;
   siigo_synced_at: string | null;
   siigo_last_attempt_at: string | null;
   siigo_error?: string | null;
@@ -123,7 +124,7 @@ function Facturas() {
       const { data, error } = await supabase
         .from("invoices")
         .select(
-          "source_override, raw_extraction, impoconsumo, discount, id, prefix, number, issue_date, provider_nit, provider_name, cost_center, notes, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_synced_at, siigo_last_attempt_at, siigo_error, siigo_error_kind, siigo_trace, siigo_attempts, siigo_reconciled_at, file_path, file_name",
+          "source_override, raw_extraction, impoconsumo, discount, id, prefix, number, issue_date, provider_nit, provider_name, cost_center, notes, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_synced_at, siigo_last_attempt_at, siigo_error, siigo_error_kind, siigo_trace, siigo_attempts, siigo_reconciled_at, siigo_pending_label, file_path, file_name",
         )
         .eq("company_id", companyId!)
         .order("issue_date", { ascending: false });
@@ -340,6 +341,7 @@ function Facturas() {
                 <td className="px-4 py-2">
                   <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${SIIGO_CLASS[r.siigo_status] ?? "bg-muted text-muted-foreground"}`}>
                     {r.siigo_status === "error" && (r.siigo_id || r.siigo_number) ? "Creada · con diferencia" : SIIGO_LABEL[r.siigo_status] ?? r.siigo_status}
+                    {r.siigo_status === "sincronizada" && r.siigo_pending_label ? ` – ${r.siigo_pending_label.toLowerCase()}` : ""}
                   </span>
                   {r.siigo_status === "sincronizada" && (
                     <div className="mt-0.5 text-[11px] text-muted-foreground">

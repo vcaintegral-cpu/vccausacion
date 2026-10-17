@@ -863,6 +863,7 @@ export type Database = {
       }
       invoices: {
         Row: {
+          advance_amount: number
           approved_at: string | null
           approved_by: string | null
           buyer_name: string | null
@@ -925,6 +926,7 @@ export type Database = {
           siigo_id: string | null
           siigo_last_attempt_at: string | null
           siigo_number: string | null
+          siigo_pending_label: string | null
           siigo_reconciled_at: string | null
           siigo_reconciled_by: string | null
           siigo_reconciled_note: string | null
@@ -947,6 +949,7 @@ export type Database = {
           voucher_number: string | null
         }
         Insert: {
+          advance_amount?: number
           approved_at?: string | null
           approved_by?: string | null
           buyer_name?: string | null
@@ -1009,6 +1012,7 @@ export type Database = {
           siigo_id?: string | null
           siigo_last_attempt_at?: string | null
           siigo_number?: string | null
+          siigo_pending_label?: string | null
           siigo_reconciled_at?: string | null
           siigo_reconciled_by?: string | null
           siigo_reconciled_note?: string | null
@@ -1031,6 +1035,7 @@ export type Database = {
           voucher_number?: string | null
         }
         Update: {
+          advance_amount?: number
           approved_at?: string | null
           approved_by?: string | null
           buyer_name?: string | null
@@ -1093,6 +1098,7 @@ export type Database = {
           siigo_id?: string | null
           siigo_last_attempt_at?: string | null
           siigo_number?: string | null
+          siigo_pending_label?: string | null
           siigo_reconciled_at?: string | null
           siigo_reconciled_by?: string | null
           siigo_reconciled_note?: string | null
@@ -2291,6 +2297,75 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      siigo_pending_settlements: {
+        Row: {
+          account_code: string | null
+          amount: number
+          company_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          invoice_id: string
+          invoice_label: string | null
+          kind: string
+          provider_name: string | null
+          provider_nit: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          siigo_number: string | null
+          status: string
+        }
+        Insert: {
+          account_code?: string | null
+          amount: number
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id: string
+          invoice_label?: string | null
+          kind: string
+          provider_name?: string | null
+          provider_nit?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          siigo_number?: string | null
+          status?: string
+        }
+        Update: {
+          account_code?: string | null
+          amount?: number
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          invoice_id?: string
+          invoice_label?: string | null
+          kind?: string
+          provider_name?: string | null
+          provider_nit?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          siigo_number?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "siigo_pending_settlements_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "siigo_pending_settlements_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
             referencedColumns: ["id"]
           },
         ]

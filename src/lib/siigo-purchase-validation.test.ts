@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { capitalizedIvaRow, retentionRowsExcluding } from "./siigo-purchase-validation";
 import { adaptPurchaseItems, retefuenteRows, isInterruptedSend, purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, readbackExpectedFromDoc, resolvePurchaseInc, siigoErrorKind } from "./siigo-purchase-validation";
 
 describe("shared PDF and RECIBIDOS purchase gates", () => {
@@ -116,9 +117,27 @@ describe("Siigo representation without changing source values", () => {
     expect(purchasePayloadErrors(r.items, TAXES, { subtotal: 783250.44, iva: 0, impoconsumo: 0 })).toEqual([]);
   });
 
-  it("VC INTEGRAL FE-2992: -0.40 with only a taxed row stays blocked", () => {
-    expect(() => adaptPurchaseItems([item(1750905, [2845])], [{ iva: 332671.95, impoconsumo: 0 }], TAXES,
-      { subtotal: 1750905, iva: 332671.95, impoconsumo: 0, total: 2083576.55 }, "42958101")).toThrow(/Ajuste al peso/);
+  it("VC INTEGRAL FE-2992: -0.40 with only a taxed row is sent as calculated and left pending at payment", () => {
+    const r = adaptPurchaseItems([item(1750905, [2845])], [{ iva: 332671.95, impoconsumo: 0 }], TAXES,
+      { subtotal: 1750905, iva: 332671.95, impoconsumo: 0, total: 2083576.55 }, "42958101");
+    expect(r.providerRounding).toBe(-0.4);
+    expect(r.items).toHaveLength(1);
+    expect(r.items[0]!.price).toBe(1750905);
+  });
+
+  it("FE-2992 readback accepts exactly the registered rounding difference", () => {
+    const exp = readbackExpectedFromDoc({ items: [] }, { total: 2083576.55, iva: 332671.95, impoconsumo: 0, retefuente: 192599.55, reteiva: 0, reteica: 0 }, 0, { providerRounding: -0.4 });
+    expect(exp.total).toBe(2083576.95);
+    expect(exp.payable).toBe(1890977.4);
+  });
+
+  it("BUF-1277: capitalized IVA row never carries the 2% retention (base 2.127.314)", () => {
+    const rows = retentionRowsExcluding([2006900, 120414, 22878.66], 2, 42546.28, new Set([2]));
+    expect(rows).toEqual([0, 1]);
+    const cap = capitalizedIvaRow(item(2006900, []), "15160501", 22878.66);
+    expect(cap.tax_ids).toEqual([]);
+    expect(cap.price).toBe(22878.66);
+    expect(cap.account_code).toBe("15160501");
   });
 
   it("ATILA AT-7796: retefuente 9230.96 applies only to the AIU row (2% of 461548)", () => {

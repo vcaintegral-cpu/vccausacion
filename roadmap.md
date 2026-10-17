@@ -23,4 +23,5 @@
 - [x] Revisión, cálculos, cuentas, anticipos y notas crédito.
 - [x] Persistencia independiente por documento, historial y exportación Contai; envío compartido a Siigo habilitado con validaciones bloqueantes.
 - [x] Pruebas con el archivo aportado y flujo en pantalla.
-- [x] Metadatos de pantallas y actualización de seguridad obligatoria.
+- [x] Metadatos de pantallas y actualización de seguridad obligatoria.- [x] FE-2992 enviada con diferencia de redondeo pendiente al pago (FC-1-714); lista "Pendientes Siigo".
+- [ ] BUF-1277: Siigo rechaza (documents_service) incluso sin IVA y sin retención — bloqueado: verificar en Siigo la cuenta 15160501 / tercero 8419585.
