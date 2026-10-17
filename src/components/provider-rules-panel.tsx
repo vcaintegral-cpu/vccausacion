@@ -325,7 +325,7 @@ export function ProviderRulesPanel({ companyId }: { companyId: string }) {
                 <td className="px-3 py-2">
                   <Select
                     value={nueva.iva_treatment ?? "descontable"}
-                    onValueChange={(v) => setNueva({ ...nueva, iva_treatment: v as Draft["iva_treatment"] })}
+                    onValueChange={(v) => setNueva({ ...nueva, iva_treatment: v as NonNullable<Draft["iva_treatment"]> })}
                   >
                     <SelectTrigger className="h-8 w-32 text-xs">
                       <SelectValue />
@@ -370,7 +370,7 @@ export function ProviderRulesPanel({ companyId }: { companyId: string }) {
                 <td className="px-3 py-2">
                   <Select
                     value={nueva.retention_base ?? ""}
-                    onValueChange={(v) => setNueva({ ...nueva, retention_base: v as Draft["retention_base"] })}
+                    onValueChange={(v) => setNueva({ ...nueva, retention_base: v as NonNullable<Draft["retention_base"]> })}
                   >
                     <SelectTrigger className="h-8 w-28 text-xs">
                       <SelectValue placeholder="—" />
