@@ -225,16 +225,18 @@ export type StoredPdf = {
   mimeType: string;
 };
 
-export async function fileFromStorage(path: string, name: string, bucket = "facturas"): Promise<StoredPdf> {
+export async function fileFromStorage(path: string, name: string, bucket = "facturas", expectPdf = true): Promise<StoredPdf> {
   if (!path) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene una ruta de almacenamiento.");
   const { data, error } = await supabase.storage.from(bucket).download(path);
   if (error || !data) throw new Error(`ERROR_STORAGE: ${error?.message ?? "no fue posible recuperar el PDF"}`);
   if (data.size === 0) throw new Error("ERROR_ARCHIVO_VACIO: el PDF guardado no contiene datos.");
-  const bytes = new Uint8Array(await data.slice(0, 5).arrayBuffer());
-  const validPdf = new TextDecoder().decode(bytes) === "%PDF-";
-  if (!validPdf) throw new Error("ERROR_PDF_INVALIDO: el archivo recuperado no contiene un PDF válido.");
-  const mimeType = data.type || "application/pdf";
-  return { file: new File([data], name, { type: "application/pdf" }), bucket, path, size: data.size, mimeType };
+  if (expectPdf) {
+    const bytes = new Uint8Array(await data.slice(0, 5).arrayBuffer());
+    const validPdf = new TextDecoder().decode(bytes) === "%PDF-";
+    if (!validPdf) throw new Error("ERROR_PDF_INVALIDO: el archivo recuperado no contiene un PDF válido.");
+  }
+  const mimeType = data.type || (expectPdf ? "application/pdf" : "application/octet-stream");
+  return { file: new File([data], name, { type: mimeType }), bucket, path, size: data.size, mimeType };
 }
 
 export async function sha256(bytes: Uint8Array): Promise<string> {

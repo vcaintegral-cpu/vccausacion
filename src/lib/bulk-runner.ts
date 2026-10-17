@@ -14,7 +14,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { extractInvoice } from "@/lib/extract.functions";
 import { fetchCompanyPuc } from "@/lib/puc-data";
 import { errorCode } from "@/lib/bulk-diagnostics";
-import { BulkInvoiceStageError, processInvoiceFile, resetBulkBatch, type BulkConfig, type InvoiceReadTrace } from "@/lib/bulk-invoices";
+import { BulkInvoiceStageError, processInvoiceFile, resetBulkBatch, saveExtractedInvoice, type BulkConfig, type InvoiceReadTrace } from "@/lib/bulk-invoices";
+import { parsePurchaseWorkbook, type PurchaseDocument } from "@/lib/purchase-excel";
+import { excelDocKey, excelDocToExtracted } from "@/lib/excel-invoice-adapter";
 import { fetchCompanyKnowledge, type CompanyKnowledge } from "@/lib/causacion-engine";
 import type { Rule, TaxRate } from "@/lib/accounting";
 import {
@@ -194,10 +196,96 @@ function counters(items: BulkItem[]) {
   return { total: items.length, done, errors, review, duplicates, pending };
 }
 
+/** Caché del libro Excel ya descargado y leído (una sola vez por carga). */
+const excelCache = new Map<string, Promise<PurchaseDocument[]>>();
+
+function parseExcelCached(storagePath: string, fileName: string, companyNit: string): Promise<PurchaseDocument[]> {
+  const key = `${storagePath}|${companyNit}`;
+  let cached = excelCache.get(key);
+  if (!cached) {
+    cached = (async () => {
+      const stored = await fileFromStorage(storagePath, fileName, "facturas", false);
+      return parsePurchaseWorkbook(await stored.file.arrayBuffer(), companyNit);
+    })();
+    excelCache.set(key, cached);
+    cached.catch(() => excelCache.delete(key));
+  }
+  return cached;
+}
+
+/** Procesa un documento del Excel RECIBIDOS por la MISMA función de causación del PDF. */
+async function processExcelItem(item: BulkItem, companyId: string, deps: Deps) {
+  const key = item.fingerprint?.startsWith("excel:") ? item.fingerprint.slice(6) : "";
+  if (!item.storage_path || !key) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene el documento del Excel.");
+  const { data: empresa } = await supabase.from("companies").select("nit").eq("id", companyId).maybeSingle();
+  const docs = await parseExcelCached(item.storage_path, item.file_name, empresa?.nit ?? "");
+  const doc = docs.find((d) => excelDocKey(d) === key);
+  if (!doc) throw new Error("El documento ya no está en el archivo Excel cargado.");
+  const trace: InvoiceReadTrace = {
+    providerName: doc.header.provider_name || null,
+    providerNit: doc.header.provider_nit || null,
+    buyerName: doc.header.buyer_name || null,
+    buyerNit: doc.header.buyer_nit || null,
+    invoiceNumber: [doc.header.prefix, doc.header.number].filter(Boolean).join("-") || null,
+    issueDate: doc.header.issue_date || null,
+    text: null,
+    readMode: "texto",
+  };
+  await updateItem(item.id, {
+    status: "validating_company",
+    stage: "validating_company",
+    provider_name: trace.providerName,
+    provider_nit: trace.providerNit,
+    buyer_name: trace.buyerName,
+    buyer_nit: trace.buyerNit,
+    invoice_number: trace.invoiceNumber,
+    issue_date: trace.issueDate,
+    read_status: "Leída (Excel)",
+  });
+  if (doc.kind === "credit_note") {
+    throw new BulkInvoiceStageError(
+      "Nota de crédito electrónica: requiere revisión manual; no se causa automáticamente.",
+      "validating_company",
+      trace,
+      true,
+    );
+  }
+  const result = await saveExtractedInvoice({
+    data: excelDocToExtracted(doc),
+    fileName: item.file_name,
+    companyId,
+    config: deps.config,
+    knowledge: deps.knowledge,
+    readMode: "texto",
+    rawExtraction: { fuente: "excel_recibidos", fila_excel: doc.rowNumber, tipo_documento: doc.type },
+  });
+  await updateItem(item.id, {
+    status: "completed",
+    stage: "guardado",
+    invoice_id: result.invoiceId,
+    invoice_number: result.numero,
+    invoice_total: result.total,
+    score: result.score,
+    needs_review: result.needsReview,
+    error_message: null,
+    user_message: null,
+    provider_name: result.providerName,
+    provider_nit: result.providerNit,
+    buyer_name: result.buyerName,
+    buyer_nit: result.buyerNit,
+    issue_date: result.issueDate,
+    read_status: "Leída (Excel)",
+  });
+}
+
 /** Procesa una tarea reutilizando el procesador individual (sin cambios de lógica). */
 async function processItem(item: BulkItem, companyId: string, deps: Deps) {
   await updateItem(item.id, { status: "downloading", attempts: item.attempts + 1, stage: "recuperando_pdf" });
   try {
+    if (item.fingerprint?.startsWith("excel:")) {
+      await processExcelItem(item, companyId, deps);
+      return;
+    }
     if (!item.storage_path) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene storage_path.");
     const stored = await fileFromStorage(item.storage_path, item.file_name, item.storage_bucket ?? "facturas");
     await updateItem(item.id, {
@@ -376,7 +464,7 @@ export async function retryBulkItems(job: QueuedUpload, itemIds: string[]) {
 export async function resumeBackgroundUploads(companyId: string) {
   if (!companyId) return;
   const uploads: BulkUpload[] = await listUploads(companyId, 10);
-  for (const up of uploads.filter((u) => ACTIVE_STATUSES.includes(u.status) && !/\.xlsx?$/i.test(u.file_name))) {
+  for (const up of uploads.filter((u) => ACTIVE_STATUSES.includes(u.status))) {
     const items = await listItems(up.id);
     if (items.some((i) => PENDING_STATUSES.includes(i.status))) {
       startBackgroundUpload({ uploadId: up.id, companyId, fileName: up.file_name });

@@ -187,17 +187,7 @@ async function fileFingerprint(file: File): Promise<string> {
 const norm = (s?: string | null) =>
   (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
-/** Lee una factura con IA y la guarda como borrador con su comprobante contable. */
-export async function processInvoiceFile(params: {
-  file: File;
-  companyId: string;
-  config: BulkConfig;
-  extract: ExtractFn;
-  knowledge?: CompanyKnowledge;
-  /** Ruta del PDF ya guardado en Storage: evita subir el archivo dos veces. */
-  storagePath?: string | null;
-  onStage?: (stage: "reading" | "ocr" | "extracting_data" | "validating_company" | "ready_for_accounting", trace?: InvoiceReadTrace) => Promise<void>;
-}): Promise<{
+export type ProcessedInvoice = {
   invoiceId: string;
   numero: string;
   total: number;
@@ -210,8 +200,22 @@ export async function processInvoiceFile(params: {
   buyerNit: string | null;
   issueDate: string | null;
   readMode: "texto" | "imagen";
-}> {
-  const { file, companyId, config, extract } = params;
+};
+
+type StageCallback = (stage: "reading" | "ocr" | "extracting_data" | "validating_company" | "ready_for_accounting", trace?: InvoiceReadTrace) => Promise<void>;
+
+/** Lee una factura con IA y la guarda como borrador con su comprobante contable. */
+export async function processInvoiceFile(params: {
+  file: File;
+  companyId: string;
+  config: BulkConfig;
+  extract: ExtractFn;
+  knowledge?: CompanyKnowledge;
+  /** Ruta del PDF ya guardado en Storage: evita subir el archivo dos veces. */
+  storagePath?: string | null;
+  onStage?: StageCallback;
+}): Promise<ProcessedInvoice> {
+  const { file, extract } = params;
   const huella = await fileFingerprint(file);
   let cached = extraccionCache.get(huella);
   if (!cached) {
@@ -245,8 +249,45 @@ export async function processInvoiceFile(params: {
     };
     extraccionCache.set(huella, cached);
   }
-  const { lines: extracted, ...header } = cached.data;
-  const textoDocumento = cached.texto;
+  return saveExtractedInvoice({
+    data: cached.data,
+    fileName: file.name,
+    file,
+    companyId: params.companyId,
+    config: params.config,
+    knowledge: params.knowledge,
+    storagePath: params.storagePath,
+    readMode: cached.lectura,
+    texto: cached.texto,
+    onStage: params.onStage,
+  });
+}
+
+/**
+ * Guarda como borrador una factura ya extraída (por IA desde PDF o por el
+ * adaptador del Excel RECIBIDOS). Es UNA SOLA función de causación: el Excel
+ * entrega sus datos en la misma estructura ExtractedInvoice y pasa por aquí,
+ * con exactamente los mismos parámetros, reglas y resultados que el PDF.
+ */
+export async function saveExtractedInvoice(params: {
+  data: ExtractedInvoice;
+  fileName: string;
+  /** Archivo original a conservar en Storage (PDF). El Excel no adjunta archivo. */
+  file?: File | null;
+  companyId: string;
+  config: BulkConfig;
+  knowledge?: CompanyKnowledge | undefined;
+  storagePath?: string | null | undefined;
+  readMode: "texto" | "imagen";
+  texto?: string;
+  /** Trazabilidad adicional para raw_extraction (por ejemplo la fila del Excel). */
+  rawExtraction?: Record<string, unknown>;
+  onStage?: StageCallback | undefined;
+}): Promise<ProcessedInvoice> {
+  const { companyId, config } = params;
+  const fileName = params.fileName;
+  const { lines: extracted, ...header } = params.data;
+  const textoDocumento = params.texto ?? "";
 
   const trace: InvoiceReadTrace = {
     providerName: header.provider_name ?? null,
@@ -256,7 +297,7 @@ export async function processInvoiceFile(params: {
     invoiceNumber: [header.prefix, header.number].filter(Boolean).join("-") || null,
     issueDate: header.issue_date ?? null,
     text: textoDocumento ? textoDocumento.slice(0, 20000) : null,
-    readMode: cached.lectura,
+    readMode: params.readMode,
   };
   await params.onStage?.("validating_company", trace);
 
@@ -434,9 +475,9 @@ export async function processInvoiceFile(params: {
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth.user?.id;
   let filePath: string | null = params.storagePath ?? null;
-  if (!filePath && userId) {
-    const path = `${userId}/${companyId}/${Date.now()}-${file.name.replace(/[^\w.-]/g, "_")}`;
-    const { error: upErr } = await supabase.storage.from("facturas").upload(path, file);
+  if (!filePath && userId && params.file) {
+    const path = `${userId}/${companyId}/${Date.now()}-${fileName.replace(/[^\w.-]/g, "_")}`;
+    const { error: upErr } = await supabase.storage.from("facturas").upload(path, params.file);
     if (!upErr) filePath = path;
   }
 
@@ -497,13 +538,14 @@ export async function processInvoiceFile(params: {
       payable_confidence: payable.confidence,
       payable_updated_at: new Date().toISOString(),
       file_path: filePath,
-      file_name: file.name,
-      // Trazabilidad de lectura: lo que devolvió la IA y el texto extraído del documento.
+      file_name: fileName,
+      // Trazabilidad de lectura: lo que devolvió la IA (o el adaptador Excel) y el texto extraído.
       raw_extraction: {
-        ia: cached.data,
-        lectura: cached.lectura,
+        ia: params.data,
+        lectura: params.readMode,
         texto: textoDocumento ? textoDocumento.slice(0, 20000) : null,
-        archivo: file.name,
+        archivo: fileName,
+        ...(params.rawExtraction ?? {}),
       } as never,
     })
     .select()
@@ -546,7 +588,7 @@ export async function processInvoiceFile(params: {
 
   return {
     invoiceId: inv.id as string,
-    numero: [header.prefix, header.number].filter(Boolean).join("-") || file.name,
+    numero: [header.prefix, header.number].filter(Boolean).join("-") || fileName,
     total,
     score,
     // 95% o más: automática. 80–94%: sugerida y marcada para revisión. Menos de 80%: revisión obligatoria.
@@ -559,6 +601,6 @@ export async function processInvoiceFile(params: {
     buyerName: header.buyer_name ?? null,
     buyerNit: header.buyer_nit ?? null,
     issueDate: header.issue_date || null,
-    readMode: cached.lectura,
+    readMode: params.readMode,
   };
 }

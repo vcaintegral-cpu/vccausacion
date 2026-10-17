@@ -28,6 +28,8 @@ import { cop, fechaHora } from "@/lib/format";
 import { codigoTecnico, mensajeAmigable } from "@/lib/bulk-messages";
 import { diagnoseItem, type BulkDiagnosis } from "@/lib/bulk-diagnostics";
 import { readZipContents, type BulkConfig } from "@/lib/bulk-invoices";
+import { parsePurchaseWorkbook } from "@/lib/purchase-excel";
+import { excelDocKey, excelDocLabel } from "@/lib/excel-invoice-adapter";
 import {
   retryBulkItems,
   startBackgroundUpload,
@@ -154,11 +156,92 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running]);
 
+  /** Sube el Excel RECIBIDOS y crea una tarea independiente por documento. */
+  async function iniciarExcel(excel: File) {
+    if (!companyId) return;
+    setBusy("Guardando el archivo…");
+    let row: BulkUpload | null = null;
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const userId = auth.user?.id;
+      if (!userId) throw new Error("Sesión no válida.");
+
+      row = await createUpload({ companyId, fileName: excel.name, size: excel.size });
+      setUpload(row);
+      setItems([]);
+
+      const excelPath = `${userId}/${companyId}/excel/${row.id}-${excel.name.replace(/[^\w.-]/g, "_")}`;
+      const up = await supabase.storage.from("facturas").upload(excelPath, excel, { upsert: true });
+      if (up.error) throw new Error(up.error.message);
+      await updateUpload(row.id, { storage_path: excelPath, status: "extracting" });
+
+      // Lectura con SheetJS (sin IA): el NIT del comprador debe ser el de la empresa activa.
+      setBusy("Leyendo el Excel…");
+      const { data: empresa } = await supabase.from("companies").select("nit").eq("id", companyId).maybeSingle();
+      let docs;
+      try {
+        docs = parsePurchaseWorkbook(await excel.arrayBuffer(), empresa?.nit ?? "");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "No fue posible leer el Excel.";
+        throw new Error(/comprador diferente/i.test(message) ? "El archivo no corresponde a la empresa seleccionada" : message);
+      }
+      if (docs.length === 0) throw new Error("El Excel no contiene documentos.");
+
+      // Control de duplicados por documento (CUFE), igual que la huella del PDF.
+      setBusy(`Creando ${docs.length} tareas…`);
+      const claves = docs.map((d) => `excel:${excelDocKey(d)}`);
+      const previos = forzar ? new Set<string>() : await existingFingerprints(companyId, claves);
+      const rows: Array<Partial<BulkItem>> = docs.map((doc, position) => {
+        const clave = claves[position]!;
+        const repetido = previos.has(clave);
+        return {
+          upload_id: row!.id,
+          company_id: companyId,
+          file_name: excelDocLabel(doc),
+          storage_path: excelPath,
+          size_bytes: 0,
+          fingerprint: repetido ? null : clave,
+          status: repetido ? "duplicate" : "pending",
+          mime_type: "excel_document",
+          provider_name: doc.header.provider_name || null,
+          provider_nit: doc.header.provider_nit || null,
+          buyer_name: doc.header.buyer_name || null,
+          buyer_nit: doc.header.buyer_nit || null,
+          invoice_number: [doc.header.prefix, doc.header.number].filter(Boolean).join("-") || null,
+          issue_date: doc.header.issue_date || null,
+          ...(repetido ? { user_message: `${excelDocLabel(doc)}: este documento ya fue procesado.` } : {}),
+          position,
+        };
+      });
+
+      const created = await insertItems(rows);
+      setItems(created);
+      await updateUpload(row.id, {
+        status: "processing",
+        files_found: docs.length,
+        pdf_found: docs.length,
+        skipped_files: 0,
+      });
+      setBusy("");
+      setSelected([]);
+      if (inputRef.current) inputRef.current.value = "";
+      startBackgroundUpload({ uploadId: row.id, companyId, fileName: excel.name });
+      toast.success("Procesamiento iniciado en segundo plano. Puedes salir de este módulo.");
+      void historial.refetch();
+    } catch (error) {
+      setBusy("");
+      const message = error instanceof Error ? error.message : "No fue posible iniciar el procesamiento.";
+      if (row) await updateUpload(row.id, { status: "failed", error_message: message, finished_at: new Date().toISOString() });
+      toast.error(message);
+    }
+  }
+
   /** Sube el ZIP, lo descomprime, guarda cada PDF y crea las tareas. */
   async function iniciar() {
     if (!companyId || selected.length === 0) return;
-    if (selected.some((file) => /\.xlsx?$/i.test(file.name))) {
-      toast.error("Los reportes Excel se cargan en Compras desde Excel. Seleccione RECIBIDOS, no ENVIADOS.");
+    const excel = selected.find((file) => /\.xlsx?$/i.test(file.name));
+    if (excel) {
+      await iniciarExcel(excel);
       return;
     }
     setBusy("Guardando el archivo…");
@@ -397,20 +480,21 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
         <div>
           <h2 className="text-sm font-semibold">Carga masiva</h2>
           <p className="text-xs text-muted-foreground">
-            Sube un .zip con las facturas PDF. El comprimido se guarda primero, cada factura se convierte en una tarea
-            independiente y el avance queda registrado: puedes salir del módulo y retomar el proceso.
+            Sube un .zip con las facturas PDF o el Excel RECIBIDOS del Procesador XML FE (.xlsx). El archivo se guarda
+            primero, cada documento se convierte en una tarea independiente y el avance queda registrado: puedes salir
+            del módulo y retomar el proceso.
           </p>
         </div>
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-64 flex-1 space-y-1.5">
-          <Label htmlFor="masivo">Archivos o comprimido (.zip)</Label>
+          <Label htmlFor="masivo">Comprimido (.zip) o Excel RECIBIDOS (.xlsx)</Label>
           <Input
             id="masivo"
             ref={inputRef}
             type="file"
-            accept=".zip,.pdf"
+            accept=".zip,.pdf,.xlsx"
             multiple
             onChange={(e) => setSelected(Array.from(e.target.files ?? []))}
           />
@@ -424,7 +508,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
           disabled={running || !!busy || selected.length === 0 || !companyId || loadingConfig || !config}
         >
           {running || busy ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-          {busy || (running ? "Procesando…" : loadingConfig ? "Cargando parámetros contables…" : "Procesar comprimido")}
+          {busy || (running ? "Procesando…" : loadingConfig ? "Cargando parámetros contables…" : "Procesar archivo")}
         </Button>
       </div>
 
