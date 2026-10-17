@@ -71,10 +71,12 @@ export type EstadoFactura =
   | "error";
 
 /** Estado único de la factura, derivado del estado interno y del estado en Siigo. */
-export function estadoUnico(inv: { status: string; siigo_status?: string | null }): EstadoFactura {
-  // Histórico: confirmación real de Siigo.
+export function estadoUnico(inv: { status: string; siigo_status?: string | null; siigo_id?: string | null; siigo_number?: string | null }): EstadoFactura {
+  // Histórico: confirmación real de Siigo, o documento que ya existe en Siigo
+  // (aunque tenga diferencia pendiente de conciliar: nunca vuelve a enviarse).
   if (inv.siigo_status === "sincronizada" || inv.status === "sincronizada" || inv.status === "historico")
     return "sincronizada";
+  if (inv.siigo_id || inv.siigo_number) return "sincronizada";
   // Envío en curso: no permite reintentos ni acciones simultáneas.
   if (inv.siigo_status === "sincronizando") return "sincronizando";
   // Siigo rechazó el documento: la factura sigue causada y puede reintentarse.

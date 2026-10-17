@@ -126,3 +126,11 @@ describe("Siigo representation without changing source values", () => {
     expect(retefuenteRows([2006900, 120414], 2, 42546.28)).toEqual([0, 1]);
   });
 });
+
+describe("Histórico rule", () => {
+  it("a document that already exists in Siigo is Histórico, not Error Siigo", async () => {
+    const { estadoUnico } = await import("./invoice-duplicates");
+    expect(estadoUnico({ status: "causada", siigo_status: "error", siigo_id: "x", siigo_number: "FC-1-684" })).toBe("sincronizada");
+    expect(estadoUnico({ status: "causada", siigo_status: "error", siigo_id: null, siigo_number: null })).toBe("error_siigo");
+  });
+});

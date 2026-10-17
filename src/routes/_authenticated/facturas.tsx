@@ -96,6 +96,7 @@ function Facturas() {
   );
 
   const [tipoError, setTipoError] = useState<"" | SiigoErrorKind>("");
+  useEffect(() => { setTipoError(""); }, [estado]);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [lote, setLote] = useState<null | "retry" | "check">(null);
   const [resultados, setResultados] = useState<{ id: string; etiqueta: string; ok: boolean; message: string }[] | null>(null);
@@ -204,7 +205,7 @@ function Facturas() {
     if (desde && (r.issue_date ?? "") < desde) return false;
     if (hasta && (r.issue_date ?? "") > hasta) return false;
     if (estado !== "todas" && estadoUnico(r) !== estado) return false;
-    if (estado === "error_siigo" && tipoError) {
+    if ((estado === "error_siigo" || estado === "sincronizada") && tipoError) {
       const k = siigoErrorKind(r);
       if (tipoError === "sin_crear" ? k !== "sin_crear" && k !== "interrumpido" : k !== tipoError) return false;
     }
@@ -265,12 +266,12 @@ function Facturas() {
         </select>
       </div>
 
-      {estado === "error_siigo" && (
+      {(estado === "error_siigo" || estado === "sincronizada") && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3 text-xs">
-          {([["", "Todos los errores"], ["sin_crear", "Sin crear en Siigo"], ["creado_diferencia", "Creado con diferencia"]] as const).map(([v, l]) => (
+          {(estado === "error_siigo" ? ([["", "Todos los errores"], ["sin_crear", "Sin crear en Siigo"]] as const) : ([["", "Todo el histórico"], ["creado_diferencia", "Con diferencia en Siigo"]] as const)).map(([v, l]) => (
             <button key={v} type="button" onClick={() => { setTipoError(v); setSel({}); }}
               className={`rounded-full px-2.5 py-1 font-medium ${tipoError === v ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"}`}>
-              {l} · {(invoices ?? []).filter((r) => { const k = siigoErrorKind(r); return v === "" ? !!k : v === "sin_crear" ? k === "sin_crear" || k === "interrumpido" : k === v; }).length}
+              {l} · {(invoices ?? []).filter((r) => { if (estadoUnico(r) !== estado) return false; const k = siigoErrorKind(r); return v === "" ? true : v === "sin_crear" ? k === "sin_crear" || k === "interrumpido" : k === v; }).length}
             </button>
           ))}
           <div className="ml-auto flex flex-wrap gap-2">
@@ -330,7 +331,7 @@ function Facturas() {
                   {siigoErrorKind(r) && (
                     <div className="mt-0.5 text-[11px] font-medium text-muted-foreground">{SIIGO_KIND_LABEL[siigoErrorKind(r)!]}</div>
                   )}
-                  {estadoUnico(r) === "error_siigo" && r.siigo_error && (
+                  {r.siigo_status === "error" && r.siigo_error && (
                     <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-destructive" title={r.siigo_error}>
                       {r.siigo_error}
                     </div>
@@ -338,7 +339,7 @@ function Facturas() {
                 </td>
                 <td className="px-4 py-2">
                   <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${SIIGO_CLASS[r.siigo_status] ?? "bg-muted text-muted-foreground"}`}>
-                    {SIIGO_LABEL[r.siigo_status] ?? r.siigo_status}
+                    {r.siigo_status === "error" && (r.siigo_id || r.siigo_number) ? "Creada · con diferencia" : SIIGO_LABEL[r.siigo_status] ?? r.siigo_status}
                   </span>
                   {r.siigo_status === "sincronizada" && (
                     <div className="mt-0.5 text-[11px] text-muted-foreground">
