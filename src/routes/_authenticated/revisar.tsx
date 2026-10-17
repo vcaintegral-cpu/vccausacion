@@ -1,3 +1,4 @@
+import { sourceFromRaw, alignJournalToSource, sourceErrors } from "@/lib/source-values";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -97,6 +98,9 @@ export const Route = createFileRoute("/_authenticated/revisar")({
 });
 
 type InvRow = {
+  raw_extraction?: unknown;
+  subtotal: number;
+  total: number;
   id: string;
   company_id: string;
   prefix: string | null;
@@ -123,6 +127,8 @@ type InvRow = {
 };
 
 type LineRow = {
+  total: number;
+  impoconsumo: number;
   id: string;
   code: string | null;
   description: string | null;
@@ -281,17 +287,18 @@ function Revisar() {
     };
   }, [header?.provider_nit, header?.company_id, centroTocado]);
 
+  const source = sourceFromRaw(header?.raw_extraction);
   const base = useMemo(
     () =>
       roundCOP(
         lines.reduce(
           (s, l) =>
             s +
-            roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
+            roundCOP(source ? l.total : Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
           0,
         ),
       ),
-    [lines],
+    [lines, header?.raw_extraction],
   );
 
   const impuestos = (data?.taxes ?? []) as TaxRecord[];
@@ -429,8 +436,9 @@ function Revisar() {
   const impoconsumoCuenta = useMemo(() => resolveImpoconsumoAccount(impuestos, puc), [impuestos, puc]);
   const journal: JournalLine[] = useMemo(
     () =>
-      buildJournal({
+      ((built) => source ? alignJournalToSource(built, source, retenciones.retefuente + retenciones.reteiva + retenciones.reteica) : built)(buildJournal({
         lines: lines.map((l) => ({
+          subtotal: source ? l.total : undefined,
           description: l.description ?? "",
           quantity: Number(l.quantity || 0),
           unit_value: Number(l.unit_value || 0),
@@ -449,7 +457,7 @@ function Revisar() {
         ivaDetalle: ivaDetalle,
         payableAccount: payable,
         impoconsumoAccount: impoconsumoCuenta,
-      }),
+      })),
     [
       lines,
       header?.iva,
@@ -548,6 +556,8 @@ function Revisar() {
 
   async function guardarCambios() {
     if (!header) return;
+    const issues = source ? sourceErrors(source) : [];
+    if (issues[0]) throw new Error(issues[0]);
     const { error: invoiceError } = await supabase
       .from("invoices")
       .update({
@@ -558,8 +568,8 @@ function Revisar() {
         retefuente: roundCOP(retenciones.retefuente),
         reteiva: roundCOP(retenciones.reteiva),
         reteica: roundCOP(retenciones.reteica),
-        subtotal: base,
-        total: roundCOP(base + roundCOP(header.iva) + roundCOP(header.impoconsumo)),
+        subtotal: source ? header.subtotal : base,
+        total: source ? header.total : roundCOP(base + roundCOP(header.iva) + roundCOP(header.impoconsumo)),
       })
       .eq("id", header.id);
     if (invoiceError)
@@ -791,6 +801,7 @@ function Revisar() {
   }
 
   function setLine(i: number, patch: Partial<LineRow>) {
+    if (source && ("iva" in patch || "total" in patch)) { const { iva, total, ...accountsOnly } = patch; patch = accountsOnly; }
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   }
 
@@ -830,7 +841,7 @@ function Revisar() {
           item_type: normalizeItemType(first.item_type),
           iva_tax_id: first.iva_tax_id ?? null,
           ret_tax_id: first.ret_tax_id ?? null,
-          iva,
+          iva: source ? l.iva : iva,
           retention,
         };
       }),
@@ -900,6 +911,7 @@ function Revisar() {
           <Label className="text-xs">IVA</Label>
           <Input
             type="number"
+            readOnly={!!source}
             value={header.iva}
             onChange={(e) => setHeader({ ...header, iva: Number(e.target.value) })}
           />
@@ -1020,6 +1032,7 @@ function Revisar() {
                   <td className="px-3 py-1.5 w-28">
                     <Input
                       type="number"
+                      readOnly={!!source}
                       value={l.iva}
                       onChange={(e) => setLine(i, { iva: Number(e.target.value) })}
                     />

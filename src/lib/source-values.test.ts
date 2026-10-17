@@ -1,0 +1,22 @@
+import { describe, it, expect } from "vitest";
+import { captureSource, sourceErrors, alignJournalToSource, validateStoredJournal } from "./source-values";
+import { toCents, sumCOP, netoAPagarCOP } from "./money";
+import type { ExtractedInvoice } from "./extract.functions";
+import { buildJournal } from "./accounting";
+import { validateExportRows } from "./export";
+
+const invoice = (subtotal: number, iva: number, total: number) => ({ subtotal, iva, total, discount: 0, impoconsumo: 0, lines: [{ quantity: 1, unit_value: subtotal, subtotal, total: subtotal, discount: 0, iva, impoconsumo: 0 }] }) as ExtractedInvoice;
+const journal = (inv: ExtractedInvoice) => alignJournalToSource(buildJournal({ lines: inv.lines.map(l => ({ ...l, account_code: "51350501" })), iva: inv.iva, ivaDetalle: [{ account_code: "24081013", amount: inv.iva }], retenciones: { retefuente: 0, reteiva: 0, reteica: 0, autorretencion: 0, detalle: [] }, payableAccount: { code: "23359501" } }), captureSource(inv, "excel"), 0);
+describe("Exact source values", () => {
+  it("interprets Colombian thousands and cents", () => { expect(toCents("1.300.000,00")).toBe(130000000); expect(toCents("87.694,12")).toBe(8769412); });
+  it("adds and subtracts in integer cents", () => { expect(sumCOP(0.1, 0.2)).toBe(0.3); expect(netoAPagarCOP(5164724.12, 100000.01)).toBe(5064724.11); });
+  it("ATILA preserves AIU IVA 87694.12 and total 5164724.12", () => { const inv = invoice(5077030, 87694.12, 5164724.12); const j = journal(inv); expect(j.find(l => l.account_code === "24081013")?.debit).toBe(87694.12); expect(j.find(l => l.account_code === "23359501")?.credit).toBe(5164724.12); });
+  it("TELEVIGIA preserves IVA 4968 and total 266440", () => { const inv = invoice(261472, 4968, 266440); expect(validateStoredJournal({ ...inv, raw_extraction: { valores_origen: captureSource(inv, "excel") } }, journal(inv))).toEqual([]); });
+  it("UNE preserves CARGO BASICO 169725.91 and IVA 32458.49", () => { const inv = invoice(185851.78, 32458.49, 218310); inv.lines = [{ ...inv.lines[0], subtotal: 169725.91, total: 169725.91, iva: 32247.92 }, { ...inv.lines[0], subtotal: 16125.87, total: 16125.87, iva: 210.57 }] as ExtractedInvoice["lines"]; const j = journal(inv); expect(captureSource(inv, "excel").lines[0]?.subtotal).toBe(16972591); expect(j.find(l => l.account_code === "42958101")?.credit).toBe(0.27); expect(j.find(l => l.account_code === "23359501")?.credit).toBe(218310); });
+  it("EPM keeps 783250.44 and adjustment 0.42", () => { const j = journal(invoice(783250.86, 0, 783250.44)); expect(j.find(l => l.account_code === "42958101")?.credit).toBe(0.42); expect(j.find(l => l.account_code === "23359501")?.credit).toBe(783250.44); });
+  it("VC INTEGRAL keeps IVA 332671.95, total 2083576.55, adjustment 0.40", () => { const j = journal(invoice(1750905, 332671.95, 2083576.55)); expect(j.find(l => l.account_code === "24081013")?.debit).toBe(332671.95); expect(j.find(l => l.account_code === "42958101")?.credit).toBe(0.4); });
+  it("does not subtract a net line discount twice", () => { const inv = invoice(100, 19, 119); const line = inv.lines[0]; if (line) line.discount = 20; expect(journal(inv).find(l => l.account_code === "51350501")?.debit).toBe(100); });
+  it("blocks PDF inconsistent line IVA rather than fixing it", () => { const inv = invoice(100, 19, 119); const line = inv.lines[0]; if (line) line.iva = 5; expect(sourceErrors(captureSource(inv, "pdf"))).toContain("Diferencia con la fuente: suma de iva de las líneas."); expect(line?.iva).toBe(5); });
+  it("blocks a discrepancy greater than one peso", () => { expect(sourceErrors(captureSource(invoice(100, 19, 120.01), "excel"))).toHaveLength(1); });
+  it("blocks changed exported cents", () => { expect(() => validateExportRows([{ account_code: "51350501", account_name: null, debit: 100.01, credit: 0 }], [{ Cuenta: "51350501", Debito: 100, Credito: 0 }])).toThrow("Diferencia en el archivo"); });
+});

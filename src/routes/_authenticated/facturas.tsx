@@ -98,7 +98,7 @@ function Facturas() {
       const { data, error } = await supabase
         .from("invoices")
         .select(
-          "id, prefix, number, issue_date, provider_nit, provider_name, cost_center, notes, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_synced_at, siigo_last_attempt_at, siigo_error, file_path, file_name",
+          "raw_extraction, impoconsumo, discount, id, prefix, number, issue_date, provider_nit, provider_name, cost_center, notes, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_synced_at, siigo_last_attempt_at, siigo_error, file_path, file_name",
         )
         .eq("company_id", companyId!)
         .order("issue_date", { ascending: false });
@@ -135,7 +135,8 @@ function Facturas() {
       .order("position");
     if (error || !data?.length) { toast.error("Este comprobante no tiene movimientos."); return; }
     const fn = kind === "xlsx" ? exportXlsx : kind === "csv" ? exportCsv : exportTxt;
-    fn(inv, data as JournalLine[]);
+    if (!["aprobado", "causada", "historico", "sincronizada"].includes(inv.status)) { toast.error("Solo se exportan comprobantes aprobados."); return; }
+    try { fn(inv, data as JournalLine[]); } catch (e) { toast.error(e instanceof Error ? e.message : "No se pudo validar el archivo."); }
   }
 
   async function descargarPdf(inv: Inv) {

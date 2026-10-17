@@ -1,4 +1,8 @@
 # Compras desde Excel RECIBIDOS
+- [ ] Preservar importes de fuente y corregir descuento duplicado/redistribución PDF.
+- [ ] Proteger valores y aprobación, conciliación y correcciones auditadas.
+- [ ] Validar exportaciones Contai/Siigo y comparación posterior Siigo.
+- [ ] Pruebas monetarias y comprobación del flujo visible.
 - [x] Bloquear cuentas bancarias/CxP como gasto, incluyendo borradores existentes.
 - [x] Priorizar historial por NIT y descripción, con origen visible y filtro.
 - [x] Precargar conocimiento por lote, procesar cinco en paralelo y guardar por grupo; progreso con tiempo.

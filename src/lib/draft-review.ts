@@ -1,3 +1,4 @@
+import { sourceFromRaw, sourceErrors, compareSource } from "@/lib/source-values";
 // Revisión masiva de borradores: lee la recomendación REAL almacenada por el motor
 // de causación (journal_lines) y ejecuta aprobación y causación por factura,
 // sin crear una segunda lógica contable.
@@ -151,6 +152,8 @@ export type Alerta = { level: "ok" | "warn" | "error"; message: string };
 /** Alertas visuales; no modifican la causación, solo indican qué revisar con el lápiz. */
 export function alertasBorrador(inv: DraftInvoice, acc: DraftAccounts | undefined, pucCodes: Set<string>): Alerta[] {
   const a: Alerta[] = [];
+  const source = sourceFromRaw(inv.raw_extraction);
+  if (source) for (const message of [...sourceErrors(source), ...compareSource(source, inv)]) a.push({ level: "error", message });
   if (!acc || acc.lines === 0) { a.push({ level: "error", message: "Sin comprobante contable generado." }); return a; }
   if (!inv.provider_nit) a.push({ level: "error", message: "Proveedor sin NIT." });
   if (!inv.number) a.push({ level: "error", message: "Sin número de factura." });
@@ -176,7 +179,7 @@ export function alertasBorrador(inv: DraftInvoice, acc: DraftAccounts | undefine
     a.push({ level: "error", message: "El asiento no está cuadrado. Revise los valores tributarios y contables." });
   // Bloqueante: la suma de las líneas de gasto/costo debe igualar el subtotal del documento.
   const subtotal = Number(inv.subtotal || 0);
-  if (subtotal > 0 && acc.gastoDebit > 0 && Math.abs(acc.gastoDebit - subtotal) >= EPS_COP)
+  if (!source && subtotal > 0 && acc.gastoDebit > 0 && Math.abs(acc.gastoDebit - subtotal) >= EPS_COP)
     a.push({ level: "error", message: "La suma de las líneas no coincide con el subtotal del documento." });
   // Informativas: no bloquean la aprobación, solo piden confirmación visual.
   if (inv.issue_date) {

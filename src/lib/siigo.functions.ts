@@ -1,3 +1,5 @@
+import { validateStoredJournal, sourceFromRaw } from "@/lib/source-values";
+import { toCents, sumCents } from "@/lib/money";
 import { esCeroCOP, roundCOP } from "@/lib/money";
 import { createServerFn } from "@tanstack/react-start";
 import { resolveOperationalAccount, validarCuenta } from "@/lib/puc-hierarchy";
@@ -719,7 +721,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
       .select(
-        "id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, buyer_nit, buyer_name, notes, total, iva, impoconsumo, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, payment_method, payment_type_id, payment_type_name, payable_account, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at, voucher_number, import_source",
+        "raw_extraction, discount, id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, buyer_nit, buyer_name, notes, total, iva, impoconsumo, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, payment_method, payment_type_id, payment_type_name, payable_account, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at, voucher_number, import_source",
       )
       .eq("id", data.invoiceId)
       .single();
@@ -778,6 +780,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     if (jErr) throw new Error(jErr.message);
     if (!journal || journal.length === 0)
       throw new Error("La factura no tiene asiento contable generado.");
+    const sourceValidation = validateStoredJournal(inv, journal);
+    if (sourceValidation[0]) throw new Error(sourceValidation.join("\n"));
 
     // Flujo obligatorio: BORRADOR → APROBADO → CAUSADO → SINCRONIZADO → HISTÓRICO.
     // Solo se envía a Siigo lo que ya tiene comprobante interno de causación.
@@ -1445,7 +1449,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       );
       const ivaLineas = (invoiceLines ?? []).reduce((acc, l) => acc + Number(l.iva ?? 0), 0);
       const subtotal = r2(Number(inv.subtotal ?? 0) > 0 ? Number(inv.subtotal) : subtotalItems);
-      const iva = r2(Number(inv.iva ?? 0) > 0 ? Number(inv.iva) : ivaLineas);
+      const iva = r2(inv.iva);
       // El total de la compra permanece bruto. Siigo exige que payments concilie
       // contra ese total y contabiliza las retenciones enviadas por separado.
       // Impoconsumo: igual que subtotal e IVA, manda el valor del encabezado de la
@@ -1459,7 +1463,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         ),
       );
       const impoconsumo = r2(
-        Number(inv.impoconsumo ?? 0) > 0 ? Number(inv.impoconsumo) : impoconsumoLineas,
+        Number(inv.impoconsumo ?? 0),
       );
 
       const totalesSiigo = calculateSiigoPurchaseTotals({
@@ -1467,7 +1471,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         taxes: iva + impoconsumo,
         retentions: retenciones,
       });
-      const totalFactura = totalesSiigo.totalFactura;
+      const totalFactura = roundCOP(inv.total);
+      if (toCents(totalFactura) !== toCents(totalesSiigo.totalFactura)) throw new Error("Diferencia con la fuente: Siigo recalcularía el total. No se envió la factura.");
       let netoAPagar = totalesSiigo.netoAPagar;
 
       if (totalFactura <= 0) {
@@ -1899,6 +1904,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const sumaRetencionesSiigo = r2(
         retencionesRecalculadas.reduce((acc, r) => acc + r.valor_siigo, 0),
       );
+      if (toCents(sumaRetencionesSiigo) !== toCents(retenciones)) throw new Error("Diferencia con la fuente: Siigo recalcularía las retenciones. No se envió la factura.");
       // Conciliable exacto que espera Siigo. El total de la factura y el asiento NO cambian.
       const conciliableSiigo = r2(totalFactura - sumaRetencionesSiigo);
       const payments = [{ id: paymentId, value: conciliableSiigo, due_date: dueDate }];
@@ -2244,6 +2250,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       if (!res.id) {
         throw new Error("Siigo respondió sin el ID de la factura de compra creada.");
       }
+      // Persist remote identity BEFORE verification: a failed read-back must never duplicate it.
+      const identity = await supabase.from("invoices").update({ siigo_id: String(res.id), siigo_number: String(res.name ?? res.number ?? res.id), siigo_status: "error", siigo_error: "Diferencia Siigo: documento creado, pendiente de verificar." }).eq("id", inv.id);
+      if (identity.error) throw new Error("Siigo creó el documento, pero no se pudo guardar su identificación. No reenvíe la factura.");
       verificacion = await siigoGet<unknown>(`/v1/purchases/${res.id}`);
       const doc = verificacion as {
         total?: number;
@@ -2275,6 +2284,18 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         neto_local: netoAPagar,
         retenciones_local: retenciones,
       });
+      const ivaReturned = sumCents((doc.items ?? []).flatMap(item => (item.taxes ?? []).filter(t => String(t.id) === String(ivaTaxId)).map(t => t.value)));
+      const mismatches: string[] = [];
+      if (doc.total === undefined || toCents(doc.total) !== toCents(inv.total)) mismatches.push(`Total: origen ${inv.total}, Siigo ${doc.total ?? "no informado"}`);
+      if (toCents(retSiigo) !== toCents(retenciones)) mismatches.push(`Retenciones: origen ${retenciones}, Siigo ${retSiigo}`);
+      if (toCents(inv.iva) !== ivaReturned) mismatches.push(`IVA: origen ${inv.iva}, Siigo ${ivaReturned / 100}`);
+      // INC must be verifiable, not silently assumed from the submitted value.
+      const incReturned = sumCents((doc.items ?? []).flatMap(item => (item.taxes ?? []).filter(t => /consum/i.test(t.type ?? "")).map(t => t.value)));
+      if (toCents(inv.impoconsumo) !== incReturned) mismatches.push(`INC: origen ${inv.impoconsumo}, Siigo ${incReturned / 100}`);
+      if (mismatches.length) {
+        await supabase.from("invoices").update({ siigo_trace: { resultado: "Diferencia Siigo", diferencias: mismatches, siigo_verificacion: verificacion, valores: { total: inv.total, iva: inv.iva, impoconsumo: inv.impoconsumo } } as Json }).eq("id", inv.id);
+        throw new Error("Diferencia Siigo: " + mismatches.join("; ") + ". No reenvíe el documento creado.");
+      }
       if (Math.abs(pagoSiigo - valorPagoEnviado) > 0.005) {
         throw new Error(
           "El payment devuelto por Siigo no coincide con el total conciliable de la compra.",
@@ -2395,6 +2416,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const raw = e instanceof Error ? e.message : JSON.stringify(e);
       // Los mensajes ya redactados por la validación de forma de pago se conservan tal cual.
       const yaLegible =
+        /^Diferencia Siigo|^Diferencia con la fuente/.test(raw) ||
         /^Factura no (causada|enviada)/.test(raw) ||
         /^No fue posible (crear|crear automáticamente) el tercero/.test(raw) ||
         /^No se puede causar la factura porque no tiene número/.test(raw);
@@ -2403,7 +2425,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       if (tercero && !yaLegible)
         message = `El tercero fue ${tercero.action} correctamente en Siigo, pero la factura no pudo causarse: ${message}`;
       console.error("[siigo][causacion] error:", message);
+      const existingTrace = await supabase.from("invoices").select("siigo_trace").eq("id", inv.id).maybeSingle();
       const failedTrace = {
+        ...(existingTrace.data?.siigo_trace as object ?? {}),
         ...siigoAttemptTrace,
         resultado: "rechazado",
         // Trazabilidad completa del rechazo, sin necesidad de revisar el código.

@@ -1,5 +1,5 @@
 import { isValidExpenseAccount } from "@/lib/provider-rules";
-import { roundCOP } from "@/lib/money";
+import { roundCOP, sumCOP } from "@/lib/money";
 
 export type Rule = {
   id?: string;
@@ -21,6 +21,7 @@ export type TaxRate = {
 };
 
 export type Line = {
+  subtotal?: number | undefined;
   code?: string | null;
   description: string;
   quantity: number;
@@ -139,8 +140,8 @@ export function buildJournal(params: {
   for (const l of lines) {
     const code = isValidExpenseAccount(l.account_code) ? (l.account_code ?? "") : "";
     const prev = grouped.get(code);
-    const value = Number(l.quantity ?? 0) * Number(l.unit_value ?? 0) - Number(l.discount ?? 0);
-    grouped.set(code, { name: l.account_name ?? prev?.name ?? null, value: (prev?.value ?? 0) + value });
+    const value = l.subtotal ?? round(Number(l.quantity ?? 0) * Number(l.unit_value ?? 0) - Number(l.discount ?? 0));
+    grouped.set(code, { name: l.account_name ?? prev?.name ?? null, value: sumCOP(prev?.value ?? 0, value) });
   }
   for (const [code, g] of grouped)
     out.push({ account_code: code, account_name: g.name, debit: round(g.value), credit: 0, cost_center: costCenter ?? null });
@@ -172,8 +173,8 @@ export function buildJournal(params: {
       cost_center: costCenter ?? null,
     });
 
-  const totalDebito = out.reduce((s, l) => s + l.debit, 0);
-  const totalRet = retenciones.retefuente + retenciones.reteiva + retenciones.reteica;
+  const totalDebito = sumCOP(...out.map((l) => l.debit));
+  const totalRet = sumCOP(retenciones.retefuente, retenciones.reteiva, retenciones.reteica);
 
   for (const d of retenciones.detalle) {
     if (d.kind === "autorretencion") continue;
@@ -207,7 +208,7 @@ export function buildJournal(params: {
 }
 
 export const totals = (j: JournalLine[]) => {
-  const debito = j.reduce((s, l) => s + Number(l.debit || 0), 0);
-  const credito = j.reduce((s, l) => s + Number(l.credit || 0), 0);
-  return { debito, credito, diferencia: debito - credito };
+  const debito = sumCOP(...j.map((l) => l.debit));
+  const credito = sumCOP(...j.map((l) => l.credit));
+  return { debito, credito, diferencia: sumCOP(debito, -credito) };
 };
