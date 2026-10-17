@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isInterruptedSend, purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, readbackExpectedFromDoc, resolvePurchaseInc, siigoErrorKind } from "./siigo-purchase-validation";
+import { adaptPurchaseItems, retefuenteRows, isInterruptedSend, purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, readbackExpectedFromDoc, resolvePurchaseInc, siigoErrorKind } from "./siigo-purchase-validation";
 
 describe("shared PDF and RECIBIDOS purchase gates", () => {
   it("allows ATILA expense 51350501 without an origin restriction", () => {
@@ -79,5 +79,48 @@ describe("Siigo error recovery", () => {
     const inv = { total: 79000, iva: 0, impoconsumo: 5851.85, retefuente: 0, reteiva: 0, reteica: 0 };
     const bad = purchaseReadbackComparison(doc, readbackExpectedFromDoc(doc, inv)).filter((r) => !r.ok).map((r) => r.campo);
     expect(bad).toContain("INC");
+  });
+});
+
+const item = (price: number, tax_ids: Array<string | number> = []) => ({ type: "Account" as const, code: "51350501", account_code: "51350501", description: "x", quantity: 1, price, discount: 0, tax_ids, item_type: "gasto" });
+const TAXES = [{ id: 2845, type: "IVA", name: "IVA 19%", percentage: 19 }, { id: 2846, type: "IVA", name: "IVA 5%", percentage: 5 }];
+
+describe("Siigo representation without changing source values", () => {
+  it("TELEVIGIA F-105382: IVA 994 + 3974 on partial base keeps IVA 4968 and total 266440", () => {
+    const r = adaptPurchaseItems([item(52294, [2845]), item(209178, [2845])], [{ iva: 994, impoconsumo: 0 }, { iva: 3974, impoconsumo: 0 }], TAXES,
+      { subtotal: 261472, iva: 4968, impoconsumo: 0, total: 266440 }, "42958101");
+    expect(purchasePayloadErrors(r.items, TAXES, { subtotal: 261472, iva: 4968, impoconsumo: 0 })).toEqual([]);
+    expect(r.items).toHaveLength(4);
+  });
+
+  it("COMCEL E-6103023639: INC 249.36 without Siigo tax is sent as cost, total unchanged", () => {
+    const r = adaptPurchaseItems([item(124679.92, [2845])], [{ iva: 23689.18, impoconsumo: 249.36 }], TAXES,
+      { subtotal: 124679.92, iva: 23689.18, impoconsumo: 249.36, total: 148618.46 }, "42958101");
+    expect(r.incAsCost).toBe(249.36);
+    expect(purchasePayloadErrors(r.items, TAXES, { subtotal: 124929.28, iva: 23689.18, impoconsumo: 0 })).toEqual([]);
+  });
+
+  it("UNE FOPU-235005: +0.27 document adjustment becomes an adjustment row", () => {
+    const r = adaptPurchaseItems([item(169725.91, [2845]), item(1108.24, [2845]), item(1056.09), item(13961)],
+      [{ iva: 32247.92, impoconsumo: 0 }, { iva: 210.57, impoconsumo: 0 }, { iva: 0, impoconsumo: 0 }, { iva: 0, impoconsumo: 0 }], TAXES,
+      { subtotal: 185851.24, iva: 32458.49, impoconsumo: 0, total: 218310 }, "42958101");
+    expect(r.adjustment).toBe(0.27);
+    expect(purchasePayloadErrors(r.items, TAXES, { subtotal: 185851.51, iva: 32458.49, impoconsumo: 0 })).toEqual([]);
+  });
+
+  it("EPM DEE-61768892: -0.42 adjustment becomes a discount on an untaxed row", () => {
+    const r = adaptPurchaseItems([item(69696.06), item(713554.8)], [{ iva: 0, impoconsumo: 0 }, { iva: 0, impoconsumo: 0 }], TAXES,
+      { subtotal: 783250.86, iva: 0, impoconsumo: 0, total: 783250.44 }, "42958101");
+    expect(purchasePayloadErrors(r.items, TAXES, { subtotal: 783250.44, iva: 0, impoconsumo: 0 })).toEqual([]);
+  });
+
+  it("VC INTEGRAL FE-2992: -0.40 with only a taxed row stays blocked", () => {
+    expect(() => adaptPurchaseItems([item(1750905, [2845])], [{ iva: 332671.95, impoconsumo: 0 }], TAXES,
+      { subtotal: 1750905, iva: 332671.95, impoconsumo: 0, total: 2083576.55 }, "42958101")).toThrow(/Ajuste al peso/);
+  });
+
+  it("ATILA AT-7796: retefuente 9230.96 applies only to the AIU row (2% of 461548)", () => {
+    expect(retefuenteRows([4615482, 461548], 2, 9230.96)).toEqual([1]);
+    expect(retefuenteRows([2006900, 120414], 2, 42546.28)).toEqual([0, 1]);
   });
 });

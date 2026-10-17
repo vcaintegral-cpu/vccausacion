@@ -61,7 +61,7 @@ async function recheck(supabase: Supa, inv: InvRow, userId: string): Promise<Rec
       return { ok: false, message: `Siigo no encontró ${inv.siigo_number ?? inv.siigo_id}. Si lo anuló, use "Marcado como anulado en Siigo".` };
     throw new Error(`No fue posible consultar Siigo: ${raw}`);
   }
-  const comparacion = purchaseReadbackComparison(doc, readbackExpectedFromDoc(doc, inv));
+  const comparacion = purchaseReadbackComparison(doc, readbackExpectedFromDoc(doc, inv, Number(traceObj(inv.siigo_trace)["inc_como_costo"] ?? 0)));
   const diferencias = comparacion.filter((r) => !r.ok);
   const now = new Date().toISOString();
   const trace = { ...traceObj(inv.siigo_trace), comparacion, siigo_verificacion: doc as unknown as Json, consultado_at: now } as Json;

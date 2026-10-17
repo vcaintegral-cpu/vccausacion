@@ -75,13 +75,13 @@ export function purchaseReadbackErrors(doc: PurchaseReadback, expected: Readback
 /** Expected values for re-reading an existing Siigo purchase, derived only from that remote document. */
 export function readbackExpectedFromDoc(doc: PurchaseReadback & { retentions?: Array<{ value?: number }> }, inv: {
   total: number; iva: number; impoconsumo: number; retefuente: number; reteiva: number; reteica: number;
-}): ReadbackExpected {
+}, incAsCost = 0): ReadbackExpected {
   const taxes = (doc.items ?? []).flatMap(item => item.taxes ?? []);
   const returned = (sumCents((doc.retentions ?? []).map(r => r.value))
     + sumCents(taxes.filter(t => /^rete/i.test(t.type ?? "")).map(t => t.value))) / 100;
   const retentions = (toCents(inv.retefuente) + toCents(inv.reteiva) + toCents(inv.reteica)) / 100;
   return {
-    total: inv.total, iva: inv.iva, impoconsumo: inv.impoconsumo, retentions,
+    total: inv.total, iva: inv.iva, impoconsumo: (toCents(inv.impoconsumo) - toCents(incAsCost)) / 100, retentions,
     returnedRetentions: returned, payable: (toCents(inv.total) - toCents(retentions)) / 100,
     ivaIds: taxes.filter(t => /^iva$/i.test((t.type ?? "").trim())).map(t => t.id ?? ""),
   };
@@ -101,4 +101,88 @@ export function isInterruptedSend(inv: { siigo_status?: string | null; siigo_las
   if (inv.siigo_status !== "sincronizando") return false;
   const t = inv.siigo_last_attempt_at ? Date.parse(inv.siigo_last_attempt_at) : NaN;
   return !Number.isFinite(t) || now - t > INTERRUPTED_AFTER_MS;
+}
+// ---------------------------------------------------------------------------
+// Representación en Siigo de casos especiales, SIN cambiar importes de la fuente.
+// ---------------------------------------------------------------------------
+export type AdaptableItem = {
+  type: "Product" | "Account"; code: string; account_code: string; description: string;
+  quantity: number; price: number; discount: number; tax_ids: Array<string | number>; item_type: string;
+};
+const kindOf = (t: PurchaseTax) => `${t.type ?? ""} ${t.name ?? ""}`;
+const isIva = (t: PurchaseTax) => /iva/i.test(kindOf(t)) && !/rete|withhold|consum/i.test(kindOf(t));
+const isInc = (t: PurchaseTax) => /consum/i.test(kindOf(t));
+const baseOf = (it: { quantity: number; price: number; discount?: number }) =>
+  roundCOP(roundCOP(it.quantity) * roundCOP(it.price) - roundCOP(it.discount));
+
+export type AdaptResult<T> = { items: T[]; incAsCost: number; adjustment: number; notes: string[] };
+
+/**
+ * - IVA sobre base parcial (AIU, 1,9 %): divide el renglón en parte gravada + no gravada.
+ * - INC sin impuesto equivalente en Siigo: se envía como mayor costo del mismo renglón.
+ * - Ajuste al peso del documento (≤ $1): renglón de ajuste o descuento en renglón no gravado.
+ * El total, el IVA y el neto siguen siendo exactamente los de la fuente.
+ */
+export function adaptPurchaseItems<T extends AdaptableItem>(
+  items: T[],
+  lines: Array<{ iva: number; impoconsumo: number }>,
+  taxes: PurchaseTax[],
+  header: { subtotal: number; iva: number; impoconsumo: number; total: number },
+  adjustmentAccount: string | null,
+): AdaptResult<T> {
+  const active = taxes.filter(t => t.id != null && t.active !== false);
+  const out: T[] = [];
+  const notes: string[] = [];
+  let incAsCost = 0;
+  items.forEach((item, i) => {
+    const line = lines[i];
+    if (!line) { out.push(item); return; }
+    const base = baseOf(item);
+    let parts: T[] = [item];
+    const ivaTax = active.find(t => isIva(t) && item.tax_ids.some(id => String(id) === String(t.id)));
+    if (toCents(line.iva) > 0 && ivaTax && toCents(base * Number(ivaTax.percentage) / 100) !== toCents(line.iva)) {
+      const candidates = [ivaTax, ...active.filter(t => isIva(t) && t !== ivaTax && Number(t.percentage) > 0)];
+      for (const tax of candidates) {
+        const pct = Number(tax.percentage);
+        const taxed = roundCOP(line.iva * 100 / pct);
+        if (toCents(taxed * pct / 100) !== toCents(line.iva) || !(taxed > 0) || toCents(taxed) >= toCents(base)) continue;
+        const otros = item.tax_ids.filter(id => String(id) !== String(ivaTax.id));
+        parts = [
+          { ...item, quantity: 1, price: taxed, discount: 0, tax_ids: [tax.id!, ...otros], description: `${item.description} (base gravada)` },
+          { ...item, quantity: 1, price: roundCOP(base - taxed), discount: 0, tax_ids: otros, description: `${item.description} (no gravado)` },
+        ];
+        notes.push(`Renglón ${i + 1}: IVA ${line.iva} sobre base ${taxed} (${pct} %).`);
+        break;
+      }
+    }
+    out.push(...parts);
+    if (toCents(line.impoconsumo) > 0 && !item.tax_ids.some(id => active.some(t => isInc(t) && String(t.id) === String(id)))) {
+      out.push({ ...item, type: "Account", code: item.account_code, quantity: 1, price: roundCOP(line.impoconsumo), discount: 0, tax_ids: [], description: `Impoconsumo no descontable · ${item.description}` });
+      incAsCost += toCents(line.impoconsumo);
+      notes.push(`Renglón ${i + 1}: INC ${line.impoconsumo} enviado como mayor costo.`);
+    }
+  });
+  const diff = toCents(header.total) - toCents(header.subtotal) - toCents(header.iva) - toCents(header.impoconsumo);
+  if (diff !== 0 && Math.abs(diff) <= 100) {
+    if (diff > 0) {
+      if (!adjustmentAccount) throw new Error(`Ajuste al peso de ${diff / 100}: falta la cuenta de ajuste. No se envió la factura.`);
+      const ref = out[0]!;
+      out.push({ ...ref, type: "Account", code: adjustmentAccount, account_code: adjustmentAccount, quantity: 1, price: diff / 100, discount: 0, tax_ids: [], description: "Ajuste al peso del documento" });
+    } else {
+      const target = out.find(it => it.tax_ids.length === 0 && toCents(baseOf(it)) > -diff);
+      if (!target) throw new Error(`Ajuste al peso de ${diff / 100}: Siigo solo lo admite como descuento sobre un renglón sin impuestos y esta factura no tiene uno. No se envió la factura.`);
+      target.discount = roundCOP(Number(target.discount ?? 0) + -diff / 100);
+    }
+    notes.push(`Ajuste al peso del documento: ${diff / 100}.`);
+  }
+  return { items: out, incAsCost: incAsCost / 100, adjustment: Math.abs(diff) <= 100 ? diff / 100 : 0, notes };
+}
+
+/** Retefuente goes only on the rows whose bases reproduce the source value exactly. */
+export function retefuenteRows(bases: number[], pct: number, target: number): number[] {
+  const all = bases.map((_, i) => i);
+  const per = bases.map(b => toCents(b * pct / 100));
+  if (per.reduce((a, b) => a + b, 0) === toCents(target)) return all;
+  const single = per.findIndex(c => c === toCents(target));
+  return single >= 0 ? [single] : all;
 }
