@@ -46,7 +46,7 @@ function Pendientes() {
   const marcar = async (r: Row) => {
     const { data: u } = await supabase.auth.getUser();
     const { error } = await supabase.from("siigo_pending_settlements").update({ status: "registrado", resolved_at: new Date().toISOString(), resolved_by: u.user?.id ?? null }).eq("id", r.id);
-    if (error) return toast.error(error.message);
+    if (error) { toast.error(error.message); return; }
     qc.invalidateQueries({ queryKey: ["siigo-pending", companyId] });
   };
 
