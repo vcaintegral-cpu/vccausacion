@@ -282,7 +282,7 @@ export async function saveExtractedInvoice(params: {
   texto?: string;
   /** Trazabilidad adicional para raw_extraction (por ejemplo la fila del Excel). */
   rawExtraction?: Record<string, unknown>;
-  onStage?: StageCallback;
+  onStage?: StageCallback | undefined;
 }): Promise<ProcessedInvoice> {
   const { companyId, config } = params;
   const fileName = params.fileName;
