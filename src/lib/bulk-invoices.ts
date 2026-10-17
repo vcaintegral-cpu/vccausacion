@@ -477,7 +477,7 @@ export async function saveExtractedInvoice(params: {
   let filePath: string | null = params.storagePath ?? null;
   if (!filePath && userId && params.file) {
     const path = `${userId}/${companyId}/${Date.now()}-${fileName.replace(/[^\w.-]/g, "_")}`;
-    const { error: upErr } = await supabase.storage.from("facturas").upload(path, file);
+    const { error: upErr } = await supabase.storage.from("facturas").upload(path, params.file);
     if (!upErr) filePath = path;
   }
 
