@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Brain, Eye, Pencil, Plus, Trash2 } from "lucide-react";
+import { Brain, Eye, FileUp, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
@@ -17,6 +17,8 @@ import {
   type RuleShape,
 } from "@/lib/learning-rules";
 import { IVA_TREATMENT_LABEL } from "@/lib/iva-treatment";
+import { aprenderDesdeSiigo } from "@/lib/siigo-learning";
+import { clearProviderRulesCache } from "@/lib/provider-rules";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -116,6 +118,8 @@ function Aprendizaje() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [detalle, setDetalle] = useState<RuleShape | null>(null);
   const [saving, setSaving] = useState(false);
+  const [importando, setImportando] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const empresa = (companies ?? []).find((c) => c.id === companyId)?.name ?? "—";
   const autoLearning = (companies ?? []).find((c) => c.id === companyId)?.auto_learning ?? true;
@@ -225,9 +229,41 @@ function Aprendizaje() {
             {rows.length} regla(s) de {empresa}. La IA consulta primero estas reglas —con toda su estructura contable— antes de sugerir una causación.
           </p>
         </div>
-        <Button onClick={() => setDraft(emptyDraft())}>
-          <Plus className="size-4" /> Nueva regla
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={importando}>
+            <FileUp className="size-4" /> {importando ? "Importando…" : "Importar auxiliar de Siigo"}
+          </Button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (!f || !companyId) return;
+              setImportando(true);
+              void aprenderDesdeSiigo(companyId, f)
+                .then(async (r) => {
+                  if (r.errores.length && r.reglasCreadas + r.reglasActualizadas === 0) {
+                    toast.error(r.errores[0]);
+                  } else {
+                    toast.success(
+                      `Aprendizaje desde Siigo: ${r.reglasCreadas} regla(s) nuevas, ${r.reglasActualizadas} actualizadas de ${r.proveedores} proveedor(es).`,
+                    );
+                    if (r.errores.length) console.warn("[Siigo learning]", r.errores);
+                  }
+                  clearProviderRulesCache(companyId);
+                  await refresh();
+                })
+                .catch((err) => toast.error(err instanceof Error ? err.message : "No fue posible leer el archivo."))
+                .finally(() => setImportando(false));
+            }}
+          />
+          <Button onClick={() => setDraft(emptyDraft())}>
+            <Plus className="size-4" /> Nueva regla
+          </Button>
+        </div>
       </div>
 
       <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">

@@ -280,78 +280,44 @@ export async function processInvoiceFile(params: {
  * entrega sus datos en la misma estructura ExtractedInvoice y pasa por aquí,
  * con exactamente los mismos parámetros, reglas y resultados que el PDF.
  */
-export async function saveExtractedInvoice(params: {
-  data: ExtractedInvoice;
-  fileName: string;
-  /** Archivo original a conservar en Storage (PDF). El Excel no adjunta archivo. */
-  file?: File | null;
+type JournalLineOut = ReturnType<typeof buildJournal>[number];
+
+export type DraftAccounting = {
+  lines: Line[];
+  journal: JournalLineOut[];
+  payable: { code: string; name: string | null; source: string; confidence: number };
+  retenciones: {
+    retefuente: number;
+    reteiva: number;
+    reteica: number;
+    autorretencion: number;
+    detalle: unknown[];
+  };
+  baseGravable: number;
+  ivaTotal: number;
+  centroFactura: string | null;
+  costCentersEnabled: boolean;
+  score: number;
+  reason: string;
+  unresolvedAccounts: string[];
+  alertas: string[];
+};
+
+/**
+ * Núcleo contable compartido: toma la extracción (de la IA o del adaptador
+ * Excel) y produce las líneas con cuenta, el comprobante operativo, las
+ * retenciones, la CxP y las alertas. Lo usan la causación inicial
+ * (saveExtractedInvoice) y el botón "Recalcular cuentas" de Borradores, de
+ * modo que ambos aplican EXACTAMENTE las mismas reglas.
+ */
+export async function computeDraftAccounting(params: {
   companyId: string;
   config: BulkConfig;
+  header: Omit<ExtractedInvoice, "lines">;
+  extracted: ExtractedInvoice["lines"];
   knowledge?: CompanyKnowledge | undefined;
-  storagePath?: string | null | undefined;
-  readMode: "texto" | "imagen";
-  texto?: string;
-  /** Trazabilidad adicional para raw_extraction (por ejemplo la fila del Excel). */
-  rawExtraction?: Record<string, unknown>;
-  onStage?: StageCallback | undefined;
-}): Promise<ProcessedInvoice> {
-  const { companyId, config } = params;
-  const fileName = params.fileName;
-  const { lines: extracted, ...header } = params.data;
-  const textoDocumento = params.texto ?? "";
-
-  const trace: InvoiceReadTrace = {
-    providerName: header.provider_name ?? null,
-    providerNit: header.provider_nit ?? null,
-    buyerName: header.buyer_name ?? null,
-    buyerNit: header.buyer_nit ?? null,
-    invoiceNumber: [header.prefix, header.number].filter(Boolean).join("-") || null,
-    issueDate: header.issue_date ?? null,
-    text: textoDocumento ? textoDocumento.slice(0, 20000) : null,
-    readMode: params.readMode,
-  };
-  await params.onStage?.("validating_company", trace);
-
-  // Cada factura del ZIP se valida individualmente: si el NIT del comprador no es el de la
-  // empresa activa (o no se pudo leer), se rechaza y NO se crea borrador.
-  const { data: empresa } = await supabase
-    .from("companies").select("id, name, nit").eq("id", companyId).maybeSingle();
-
-  if (!header.buyer_nit || !header.buyer_name) {
-    throw new BulkInvoiceStageError(
-      "No fue posible identificar el comprador de la factura.",
-      "validating_company",
-      trace,
-      true,
-    );
-  }
-
-  const bloqueo = motivoBloqueoEmpresa(
-    checkInvoiceCompany(empresa, { buyer_nit: header.buyer_nit, buyer_name: header.buyer_name }),
-  );
-  if (bloqueo) throw new BulkInvoiceStageError(bloqueo, "validating_company", trace);
-  if (!sameNit(header.buyer_nit, empresa?.nit)) {
-    throw new BulkInvoiceStageError("Comprador diferente a la empresa activa.", "validating_company", trace);
-  }
-  await params.onStage?.("ready_for_accounting", trace);
-
-  // Mismo documento en dos archivos del ZIP: se procesa una sola vez.
-  const clave = claveDocumento(header);
-  if (clave) {
-    if (documentosDelLote.has(clave)) {
-      throw new Error("Documento repetido dentro del comprimido: ya se procesó desde otro archivo.");
-    }
-    documentosDelLote.add(clave);
-  }
-
-  // Control de duplicados por empresa: CUFE, o NIT + prefijo + número.
-  const existente = await findExistingInvoice(companyId, {
-    cufe: header.cufe,
-    provider_nit: header.provider_nit,
-    prefix: header.prefix,
-    number: header.number,
-  });
-  if (existente) throw new Error(mensajeDuplicado(existente));
+}): Promise<DraftAccounting> {
+  const { companyId, config, header, extracted } = params;
 
   let provider = null;
   if (header.provider_nit) {
@@ -539,6 +505,197 @@ export async function saveExtractedInvoice(params: {
     };
   });
 
+  return {
+    lines,
+    journal: operationalJournal,
+    payable,
+    retenciones: retenciones as DraftAccounting["retenciones"],
+    baseGravable,
+    ivaTotal,
+    centroFactura,
+    costCentersEnabled: costCentersEnabled(costPolicy),
+    score,
+    reason,
+    unresolvedAccounts,
+    alertas,
+  };
+}
+
+/**
+ * Recalcula las cuentas de un borrador existente con el motor actual (reglas
+ * por proveedor, aprendizaje, histórico) sin borrar sus datos: conserva la
+ * extracción original (raw_extraction.ia) y reemplaza solo el comprobante
+ * contable y la CxP sugerida. Devuelve el motivo/alertas del nuevo cálculo.
+ */
+export async function recalcularCuentasBorrador(
+  invoiceId: string,
+  config: BulkConfig,
+): Promise<{ ok: boolean; message: string }> {
+  const { data: inv, error } = await supabase
+    .from("invoices")
+    .select("id, company_id, status, raw_extraction, payable_manual")
+    .eq("id", invoiceId)
+    .maybeSingle();
+  if (error) return { ok: false, message: error.message };
+  if (!inv) return { ok: false, message: "La factura no existe." };
+  if (inv.status !== "borrador" && inv.status !== "error")
+    return { ok: false, message: "Solo se pueden recalcular facturas en borrador." };
+  const raw = (inv.raw_extraction ?? null) as { ia?: ExtractedInvoice } | null;
+  const data = raw?.ia;
+  if (!data || !Array.isArray(data.lines))
+    return { ok: false, message: "Esta factura no conserva la extracción original; no se puede recalcular." };
+
+  const { lines, ...header } = data;
+  const acc = await computeDraftAccounting({
+    companyId: inv.company_id as string,
+    config,
+    header,
+    extracted: lines,
+  });
+
+  // La CxP manual del usuario manda: el recálculo no la pisa.
+  const payablePatch = inv.payable_manual
+    ? {}
+    : {
+        payable_account: acc.payable.code,
+        payable_suggested: acc.payable.code,
+        payable_source: acc.payable.source,
+        payable_confidence: acc.payable.confidence,
+        payable_updated_at: new Date().toISOString(),
+      };
+
+  const { error: upErr } = await supabase
+    .from("invoices")
+    .update({
+      cost_center: acc.centroFactura,
+      retefuente: roundCOP(acc.retenciones.retefuente),
+      reteiva: roundCOP(acc.retenciones.reteiva),
+      reteica: roundCOP(acc.retenciones.reteica),
+      ...payablePatch,
+      updated_at: new Date().toISOString(),
+    } as never)
+    .eq("id", invoiceId);
+  if (upErr) return { ok: false, message: upErr.message };
+
+  await supabase.from("journal_lines").delete().eq("invoice_id", invoiceId);
+  const { error: insErr } = await supabase.from("journal_lines").insert(
+    acc.journal.map((j, i) => ({
+      invoice_id: invoiceId,
+      company_id: inv.company_id as string,
+      account_code: j.account_code,
+      account_name: j.account_name,
+      debit: roundCOP(j.debit),
+      credit: roundCOP(j.credit),
+      cost_center: acc.costCentersEnabled ? (j.cost_center ?? null) : null,
+      position: i,
+    })),
+  );
+  if (insErr) return { ok: false, message: insErr.message };
+
+  // Las cuentas sugeridas por línea también se refrescan (sin tocar valores).
+  const { data: lineasDb } = await supabase
+    .from("invoice_lines")
+    .select("id, position")
+    .eq("invoice_id", invoiceId)
+    .order("position");
+  for (const l of lineasDb ?? []) {
+    const nueva = acc.lines[l.position as number];
+    if (!nueva?.account_code) continue;
+    await supabase
+      .from("invoice_lines")
+      .update({ account_code: nueva.account_code, account_name: nueva.account_name ?? null } as never)
+      .eq("id", l.id);
+  }
+
+  const motivo = [acc.reason, ...acc.unresolvedAccounts, ...acc.alertas].filter(Boolean).join(" ");
+  return { ok: true, message: motivo || "Cuentas recalculadas." };
+}
+
+export async function saveExtractedInvoice(params: {
+  data: ExtractedInvoice;
+  fileName: string;
+  /** Archivo original a conservar en Storage (PDF). El Excel no adjunta archivo. */
+  file?: File | null;
+  companyId: string;
+  config: BulkConfig;
+  knowledge?: CompanyKnowledge | undefined;
+  storagePath?: string | null | undefined;
+  readMode: "texto" | "imagen";
+  texto?: string;
+  /** Trazabilidad adicional para raw_extraction (por ejemplo la fila del Excel). */
+  rawExtraction?: Record<string, unknown>;
+  onStage?: StageCallback | undefined;
+}): Promise<ProcessedInvoice> {
+  const { companyId, config } = params;
+  const fileName = params.fileName;
+  const { lines: extracted, ...header } = params.data;
+  const textoDocumento = params.texto ?? "";
+
+  const trace: InvoiceReadTrace = {
+    providerName: header.provider_name ?? null,
+    providerNit: header.provider_nit ?? null,
+    buyerName: header.buyer_name ?? null,
+    buyerNit: header.buyer_nit ?? null,
+    invoiceNumber: [header.prefix, header.number].filter(Boolean).join("-") || null,
+    issueDate: header.issue_date ?? null,
+    text: textoDocumento ? textoDocumento.slice(0, 20000) : null,
+    readMode: params.readMode,
+  };
+  await params.onStage?.("validating_company", trace);
+
+  // Cada factura del ZIP se valida individualmente: si el NIT del comprador no es el de la
+  // empresa activa (o no se pudo leer), se rechaza y NO se crea borrador.
+  const { data: empresa } = await supabase
+    .from("companies").select("id, name, nit").eq("id", companyId).maybeSingle();
+
+  if (!header.buyer_nit || !header.buyer_name) {
+    throw new BulkInvoiceStageError(
+      "No fue posible identificar el comprador de la factura.",
+      "validating_company",
+      trace,
+      true,
+    );
+  }
+
+  const bloqueo = motivoBloqueoEmpresa(
+    checkInvoiceCompany(empresa, { buyer_nit: header.buyer_nit, buyer_name: header.buyer_name }),
+  );
+  if (bloqueo) throw new BulkInvoiceStageError(bloqueo, "validating_company", trace);
+  if (!sameNit(header.buyer_nit, empresa?.nit)) {
+    throw new BulkInvoiceStageError("Comprador diferente a la empresa activa.", "validating_company", trace);
+  }
+  await params.onStage?.("ready_for_accounting", trace);
+
+  // Mismo documento en dos archivos del ZIP: se procesa una sola vez.
+  const clave = claveDocumento(header);
+  if (clave) {
+    if (documentosDelLote.has(clave)) {
+      throw new Error("Documento repetido dentro del comprimido: ya se procesó desde otro archivo.");
+    }
+    documentosDelLote.add(clave);
+  }
+
+  // Control de duplicados por empresa: CUFE, o NIT + prefijo + número.
+  const existente = await findExistingInvoice(companyId, {
+    cufe: header.cufe,
+    provider_nit: header.provider_nit,
+    prefix: header.prefix,
+    number: header.number,
+  });
+  if (existente) throw new Error(mensajeDuplicado(existente));
+
+  const acc = await computeDraftAccounting({
+    companyId,
+    config,
+    header,
+    extracted,
+    knowledge: params.knowledge,
+  });
+  const { lines, baseGravable, ivaTotal, retenciones, centroFactura, payable, score, reason } = acc;
+  const unresolvedAccounts = [...acc.unresolvedAccounts];
+  const alertas = [...acc.alertas];
+  const operationalJournal = acc.journal;
+
   const { data: auth } = await supabase.auth.getUser();
   const userId = auth.user?.id;
   let filePath: string | null = params.storagePath ?? null;
@@ -647,7 +804,7 @@ export async function saveExtractedInvoice(params: {
         account_name: j.account_name,
         debit: roundCOP(j.debit),
         credit: roundCOP(j.credit),
-        cost_center: costCentersEnabled(costPolicy) ? (j.cost_center ?? null) : null,
+        cost_center: acc.costCentersEnabled ? (j.cost_center ?? null) : null,
         position: i,
       })),
     ),
