@@ -2292,6 +2292,16 @@ export type Database = {
         }
         Returns: string
       }
+      confirm_excel_purchase_validated: {
+        Args: {
+          _actor: string
+          _choices: Json
+          _item_id: string
+          _journal: Json
+          _retentions: Json
+        }
+        Returns: string
+      }
       create_payment_receipt: {
         Args: {
           _account_code: string

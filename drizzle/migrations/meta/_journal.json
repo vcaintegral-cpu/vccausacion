@@ -15,6 +15,13 @@
       "when": 1792261023081,
       "tag": "0001_excel_purchase_confirm_access",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792261045165,
+      "tag": "0002_excel_purchase_server_validation",
+      "breakpoints": true
     }
   ]
 }
