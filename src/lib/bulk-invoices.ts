@@ -353,13 +353,6 @@ export async function saveExtractedInvoice(params: {
   });
   if (existente) throw new Error(mensajeDuplicado(existente));
 
-  let provider = null;
-  if (header.provider_nit) {
-    const { data: p } = await supabase
-      .from("providers").select("*").eq("company_id", companyId).eq("nit", header.provider_nit).maybeSingle();
-    provider = p;
-  }
-
   const acc = await computeDraftAccounting({
     companyId,
     config,
@@ -480,7 +473,7 @@ export async function saveExtractedInvoice(params: {
         account_name: j.account_name,
         debit: roundCOP(j.debit),
         credit: roundCOP(j.credit),
-        cost_center: costCentersEnabled(costPolicy) ? (j.cost_center ?? null) : null,
+        cost_center: acc.costCentersEnabled ? (j.cost_center ?? null) : null,
         position: i,
       })),
     ),
