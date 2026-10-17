@@ -521,6 +521,42 @@ function Borradores() {
 
   if (!loadingCompanies && (companies ?? []).length === 0) return <EmptyCompany />;
 
+  /** Recalcula las cuentas de los borradores seleccionados con el motor actual, sin borrar datos. */
+  async function recalcular() {
+    if (busy || !companyId) return;
+    const objetivo = seleccionadas.filter((r) => r.status === "borrador" || r.status === "error");
+    if (objetivo.length === 0) {
+      toast.error("Selecciona facturas en borrador para recalcular sus cuentas.");
+      return;
+    }
+    setBusy("aprobar");
+    setAvance({ hechas: 0, total: objetivo.length });
+    const out: ResultadoFactura[] = [];
+    try {
+      const { config } = await loadDeps(companyId);
+      for (const inv of objetivo) {
+        const etiqueta = etiquetaFactura(inv);
+        try {
+          const res = await recalcularCuentasBorrador(inv.id, config);
+          out.push({ id: inv.id, etiqueta, ok: res.ok, message: res.message });
+        } catch (err) {
+          out.push({ id: inv.id, etiqueta, ok: false, message: err instanceof Error ? err.message : "Error inesperado." });
+        } finally {
+          setAvance((p) => (p ? { ...p, hechas: p.hechas + 1 } : p));
+        }
+      }
+    } finally {
+      setBusy(null);
+      setAvance(null);
+      setResultados(out);
+      await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+      await queryClient.invalidateQueries({ queryKey: ["invoices", companyId] });
+    }
+    const ok = out.filter((r) => r.ok).length;
+    if (ok) toast.success(`${ok} factura(s) recalculada(s) con las reglas actuales.`);
+    if (out.length - ok) toast.error(`${out.length - ok} factura(s) no se pudieron recalcular.`);
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -535,6 +571,14 @@ function Borradores() {
           <Button variant="outline" onClick={() => setSel({})} disabled={seleccionadas.length === 0}>Deseleccionar todos</Button>
           <Button onClick={() => void ejecutar("aprobar")} disabled={!!busy || elegibles("aprobar").length === 0}>
             {busy === "aprobar" ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Aprobar ({elegibles("aprobar").length})
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => void recalcular()}
+            disabled={!!busy || seleccionadas.filter((r) => r.status === "borrador" || r.status === "error").length === 0}
+            title="Vuelve a aplicar el motor de cuentas (reglas por proveedor, aprendizaje e histórico) a los borradores seleccionados, sin borrar sus datos"
+          >
+            <RefreshCw className="size-4" /> Recalcular cuentas ({seleccionadas.filter((r) => r.status === "borrador" || r.status === "error").length})
           </Button>
           <Button
             variant="destructive"
