@@ -726,8 +726,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       .eq("id", data.invoiceId)
       .single();
     if (invErr || !inv) throw new Error(invErr?.message ?? "Factura no encontrada.");
-    if (inv.import_source?.startsWith("excel_")) {
-      throw new Error("Esta compra se causó con las reglas de RECIBIDOS Excel. Exporte su comprobante desde Compras desde Excel; el envío directo a Siigo todavía no está habilitado para este origen.");
+    if (inv.import_source?.startsWith("excel_") || sourceFromRaw(inv.raw_extraction)?.source === "excel") {
+      throw new Error("Esta compra viene de RECIBIDOS Excel. Exporte su comprobante desde el historial; el envío directo a Siigo todavía no está habilitado para este origen.");
     }
 
     // La conexión de Siigo se resuelve con las credenciales de la empresa dueña de la factura.

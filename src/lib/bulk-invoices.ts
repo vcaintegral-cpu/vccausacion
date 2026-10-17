@@ -725,7 +725,18 @@ export async function saveExtractedInvoice(params: {
     prefix: header.prefix,
     number: header.number,
   });
-  if (existente) throw new Error(mensajeDuplicado(existente));
+  if (existente) {
+    if (header.cufe) {
+      const previous = await supabase.from("invoices").select("raw_extraction").eq("id", existente.id).maybeSingle();
+      const original = sourceFromRaw(previous.data?.raw_extraction);
+      if (original?.source === "excel" && params.rawExtraction?.["fuente"] !== "excel_recibidos") {
+        const current = captureSource(params.data, "pdf");
+        const differences = (["subtotal", "iva", "impoconsumo", "total"] as const).filter(field => current[field] !== original[field]).map(field => `${field}: Excel ${(original[field] / 100).toFixed(2)}, PDF ${(current[field] / 100).toFixed(2)}`);
+        if (differences.length) throw new Error(`El mismo CUFE ya está en Excel. Diferencia con la fuente: ${differences.join("; ")}`);
+      }
+    }
+    throw new Error(mensajeDuplicado(existente));
+  }
 
   const acc = await computeDraftAccounting({
     companyId,

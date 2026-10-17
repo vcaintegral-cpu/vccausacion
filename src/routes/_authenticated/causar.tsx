@@ -887,7 +887,7 @@ function Causar() {
     }
     if (erroresImpuestos.length > 0) { toast.error(erroresImpuestos[0]!); return; }
     if (status === "aprobado" && erroresCentro.length > 0) { toast.error(erroresCentro[0]!); return; }
-    if (Math.abs(t.diferencia) >= 0.005) {
+    if (status === "aprobado" && Math.abs(t.diferencia) >= 0.005) {
       toast.error(
         `El asiento no está cuadrado. Revise los valores tributarios y contables. Diferencia: ${cop(t.diferencia)}`,
       );
