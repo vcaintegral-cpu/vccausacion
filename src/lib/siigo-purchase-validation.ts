@@ -120,7 +120,7 @@ export type AdaptResult<T> = { items: T[]; incAsCost: number; adjustment: number
 /**
  * - IVA sobre base parcial (AIU, 1,9 %): divide el renglón en parte gravada + no gravada.
  * - INC sin impuesto equivalente en Siigo: se envía como mayor costo del mismo renglón.
- * - Ajuste al peso del documento (≤ $1): renglón de ajuste o descuento en renglón no gravado.
+ * - Ajuste al peso del documento (≤ $1): renglón de ajuste (+) o menor valor de un renglón no gravado (−).
  * El total, el IVA y el neto siguen siendo exactamente los de la fuente.
  */
 export function adaptPurchaseItems<T extends AdaptableItem>(
@@ -169,9 +169,12 @@ export function adaptPurchaseItems<T extends AdaptableItem>(
       const ref = out[0]!;
       out.push({ ...ref, type: "Account", code: adjustmentAccount, account_code: adjustmentAccount, quantity: 1, price: diff / 100, discount: 0, tax_ids: [], description: "Ajuste al peso del documento" });
     } else {
-      const target = out.find(it => it.tax_ids.length === 0 && toCents(baseOf(it)) > -diff);
-      if (!target) throw new Error(`Ajuste al peso de ${diff / 100}: Siigo solo lo admite como descuento sobre un renglón sin impuestos y esta factura no tiene uno. No se envió la factura.`);
-      target.discount = roundCOP(Number(target.discount ?? 0) + -diff / 100);
+      // Siigo no descuenta items[].discount del total de la compra: el ajuste se resta del
+      // valor de un renglón sin impuestos (mismo total, IVA y neto de la fuente).
+      const idx = out.findIndex(it => it.tax_ids.length === 0 && toCents(baseOf(it)) > -diff);
+      if (idx < 0) throw new Error(`Ajuste al peso de ${diff / 100}: la factura no tiene un renglón sin IVA donde restarlo y Siigo no acepta valores negativos ni descuentos en compras. Requiere decisión manual. No se envió la factura.`);
+      const t = out[idx]!;
+      out[idx] = { ...t, quantity: 1, discount: 0, price: roundCOP(baseOf(t) + diff / 100), description: `${t.description} (incluye ajuste al peso ${diff / 100})` };
     }
     notes.push(`Ajuste al peso del documento: ${diff / 100}.`);
   }

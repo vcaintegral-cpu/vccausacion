@@ -108,9 +108,11 @@ describe("Siigo representation without changing source values", () => {
     expect(purchasePayloadErrors(r.items, TAXES, { subtotal: 185851.51, iva: 32458.49, impoconsumo: 0 })).toEqual([]);
   });
 
-  it("EPM DEE-61768892: -0.42 adjustment becomes a discount on an untaxed row", () => {
+  it("EPM DEE-61768892: -0.42 adjustment is subtracted from the price of an untaxed row", () => {
     const r = adaptPurchaseItems([item(69696.06), item(713554.8)], [{ iva: 0, impoconsumo: 0 }, { iva: 0, impoconsumo: 0 }], TAXES,
       { subtotal: 783250.86, iva: 0, impoconsumo: 0, total: 783250.44 }, "42958101");
+    expect(r.items[0]!.price).toBe(69695.64);
+    expect(r.items.every((i) => !i.discount)).toBe(true);
     expect(purchasePayloadErrors(r.items, TAXES, { subtotal: 783250.44, iva: 0, impoconsumo: 0 })).toEqual([]);
   });
 
