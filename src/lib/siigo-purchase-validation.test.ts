@@ -42,4 +42,9 @@ describe("shared PDF and RECIBIDOS purchase gates", () => {
   it("does not invent a tax for E-6103023639 INC 249.36", () => {
     expect(resolvePurchaseInc([{ id: 2860, type: "Impoconsumo", percentage: 8 }], 124679.92, 249.36)).toBeNull();
   });
+  it("blocks TELEVIGIA source IVA 4968 when applying 19 percent to whole service values", () => {
+    const errors = purchasePayloadErrors([{ quantity: 1, price: 52294, tax_ids: [2845] }, { quantity: 1, price: 209178, tax_ids: [2845] }], [{ id: 2845, type: "IVA", percentage: 19 }], { subtotal: 261472, iva: 4968, impoconsumo: 0 });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("49679.68");
+  });
 });
