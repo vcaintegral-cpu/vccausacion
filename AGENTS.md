@@ -18,3 +18,4 @@
 - Source snapshots store integer cents, database monetary columns store currency units, and all comparisons convert at the boundary; source-backed approval and exports validate the stored journal without changing invoice amounts.
 - Account selectors share a catalog-identity hierarchy index and filter the full catalog before bounding rendered results, avoiding repeated full accounting evaluations and oversized menus on the main thread.
 - Source-declared IVA rates resolve only an unambiguous active tax record and persist its exact ID without recalculating amounts; bounded, labeled document adjustments are classified separately from purchase expenses.
+- Siigo preflight forecasts taxes from serialized item precision and the live company tax catalog; readback reconstructs gross purchase totals from Siigo net totals plus actual retentions, without altering source values or resending existing identities.
