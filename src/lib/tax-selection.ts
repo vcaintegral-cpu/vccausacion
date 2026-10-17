@@ -34,6 +34,13 @@ export function findTaxById<T extends { id?: string | number }>(taxes: T[], id?:
   return taxes.find((t) => String(t.id) === String(id)) ?? null;
 }
 
+/** Source-declared IVA rate may select only one configured record; never infer a rate from amounts. */
+export function findSourceIvaTax<T extends TaxRecord>(taxes: T[], sourceLine?: { iva: number; iva_rate: number | null } | null): T | null {
+  if (!sourceLine || sourceLine.iva <= 0 || sourceLine.iva_rate == null) return null;
+  const matches = taxes.filter((tax) => tax.kind === "iva" && tax.active !== false && Number(tax.rate) === sourceLine.iva_rate);
+  return matches.length === 1 ? matches[0] ?? null : null;
+}
+
 export type TaxAccountResolution = {
   code: string;
   name: string | null;

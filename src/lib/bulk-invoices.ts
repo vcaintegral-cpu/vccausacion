@@ -19,7 +19,7 @@ import {
   sameNit,
 } from "@/lib/company-validation";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
-import { resolveImpoconsumoAccount } from "@/lib/tax-selection";
+import { findSourceIvaTax, resolveImpoconsumoAccount, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
@@ -847,6 +847,16 @@ export async function saveExtractedInvoice(params: {
         account_name: l.account_name ?? null,
         item_type: l.item_type ?? "gasto",
         position: i,
+        ...(() => {
+          const tax = findSourceIvaTax(config.taxes as unknown as TaxRecord[], valoresOrigen.lines[i]);
+          if (!tax) return {};
+          const trace = taxTrace(tax, resolveTaxAccount(tax, config.accounts).code || null);
+          return {
+            iva_tax_id: trace.tax_id, iva_tax_name: trace.tax_name, iva_tax_rate: trace.tax_rate,
+            iva_account_code: trace.account_code, iva_operational_account: trace.operational_account,
+            iva_siigo_id: trace.siigo_id, iva_siigo_name: trace.siigo_name,
+          };
+        })(),
       }));
   const journalRows = operationalJournal.map((j, i) => ({
         invoice_id: invoiceRow.id,

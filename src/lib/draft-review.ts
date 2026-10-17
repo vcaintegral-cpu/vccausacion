@@ -6,7 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { estadoUnico, findExistingInvoice, type EstadoFactura } from "@/lib/invoice-duplicates";
 import { isPayableCode, learnPayableAccount } from "@/lib/payable-account";
 import { isValidExpenseAccount } from "@/lib/provider-rules";
-import { EPS_COP } from "@/lib/money";
+import { EPS_COP, toCents } from "@/lib/money";
 
 export type DraftInvoice = {
   source_override?: import("@/lib/source-values").SourceValues | null;
@@ -121,6 +121,10 @@ export function classifyJournal(rows: JournalRow[]): DraftAccounts {
     out.debit += debit;
     out.credit += credit;
     if (!out.costCenter && r.cost_center) out.costCenter = r.cost_center;
+    // Document adjustments remain in journal totals, but are not purchase expenses.
+    // Do not exempt arbitrary class-4 debits or adjustments over the one-peso limit.
+    if (code === "42958101" && /ajuste (al peso|por redondeo del documento)/i.test(r.account_name ?? "") &&
+      ((debit > 0 && credit === 0 && toCents(debit) <= 100) || (credit > 0 && debit === 0 && toCents(credit) <= 100))) continue;
     if (esRetencion(code)) {
       const c = { code, name: r.account_name };
       push(out.retenciones, c);

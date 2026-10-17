@@ -26,6 +26,7 @@ import { aprenderDeCausacion } from "@/lib/learning-rules";
 import {
   buildIvaGroups,
   findTaxById,
+  findSourceIvaTax,
   resolveImpoconsumoAccount,
   resolveTaxAccount,
   taxTrace,
@@ -228,7 +229,10 @@ function Revisar() {
     if (data) {
       setHeader(data.invoice);
       // Una sola fuente de verdad: el tipo de ítem se normaliza al cargar y nunca se degrada a gasto.
-      setLines(data.lines.map((l) => ({ ...l, item_type: normalizeItemType(l.item_type) })));
+      const origin = data.invoice.source_override ?? sourceFromRaw(data.invoice.raw_extraction);
+      setLines(data.lines.map((l, i) => ({ ...l, item_type: normalizeItemType(l.item_type),
+        iva_tax_id: l.iva_tax_id ?? findSourceIvaTax(data.taxes, origin?.lines[i])?.id ?? null,
+      })));
       setRetTocado(false);
     }
   }, [data]);
@@ -1051,7 +1055,7 @@ function Revisar() {
                           Number(l.discount || 0);
                         setLine(i, {
                           iva_tax_id: id,
-                          iva: tx ? roundCOP((baseLinea * Number(tx.rate)) / 100) : 0,
+                          ...(!source ? { iva: tx ? roundCOP((baseLinea * Number(tx.rate)) / 100) : 0 } : {}),
                         });
                       }}
                     >
