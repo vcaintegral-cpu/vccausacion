@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -85,6 +85,8 @@ export const Route = createFileRoute("/_authenticated/causar")({
   }),
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
       { title: "Causar factura de compra con IA" },
       { name: "description", content: "Carga PDF, XML DIAN o imagen y obtén el comprobante contable sugerido automáticamente." },
       { property: "og:title", content: "Causar factura de compra" },
@@ -1213,6 +1215,10 @@ function Causar() {
         extract={extract as never}
         loadingConfig={cargandoConfig}
       />
+      <div className="flex flex-wrap items-center justify-between gap-3 border-y border-border py-4">
+        <h2 className="text-sm font-semibold">Compras desde el reporte RECIBIDOS</h2>
+        <Button asChild variant="outline"><Link to="/compras-excel">Cargar Excel de compras</Link></Button>
+      </div>
 
       <Dialog open={passwordOpen} onOpenChange={(open) => !reading && setPasswordOpen(open)}>
         <DialogContent>

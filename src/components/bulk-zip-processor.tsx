@@ -157,6 +157,10 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   /** Sube el ZIP, lo descomprime, guarda cada PDF y crea las tareas. */
   async function iniciar() {
     if (!companyId || selected.length === 0) return;
+    if (selected.some((file) => /\.xlsx?$/i.test(file.name))) {
+      toast.error("Los reportes Excel se cargan en Compras desde Excel. Seleccione RECIBIDOS, no ENVIADOS.");
+      return;
+    }
     setBusy("Guardando el archivo…");
     try {
       const zip = selected[0]!;
@@ -406,6 +410,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
             id="masivo"
             ref={inputRef}
             type="file"
+            accept=".zip,.pdf"
             multiple
             onChange={(e) => setSelected(Array.from(e.target.files ?? []))}
           />

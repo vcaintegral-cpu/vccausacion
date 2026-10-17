@@ -376,7 +376,7 @@ export async function retryBulkItems(job: QueuedUpload, itemIds: string[]) {
 export async function resumeBackgroundUploads(companyId: string) {
   if (!companyId) return;
   const uploads: BulkUpload[] = await listUploads(companyId, 10);
-  for (const up of uploads.filter((u) => ACTIVE_STATUSES.includes(u.status))) {
+  for (const up of uploads.filter((u) => ACTIVE_STATUSES.includes(u.status) && !/\.xlsx?$/i.test(u.file_name))) {
     const items = await listItems(up.id);
     if (items.some((i) => PENDING_STATUSES.includes(i.status))) {
       startBackgroundUpload({ uploadId: up.id, companyId, fileName: up.file_name });

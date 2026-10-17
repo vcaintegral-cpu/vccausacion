@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 export const Route = createFileRoute("/_authenticated/panel")({
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
       { title: "Panel de causación — Facturas de compra" },
       { name: "description", content: "Indicadores de facturas causadas, impuestos y retenciones por empresa." },
       { property: "og:title", content: "Panel de causación" },

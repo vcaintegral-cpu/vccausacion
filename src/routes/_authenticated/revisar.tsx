@@ -78,6 +78,8 @@ export const Route = createFileRoute("/_authenticated/revisar")({
   validateSearch: (search: Record<string, unknown>) => ({ id: String(search["id"] ?? "") }),
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
       { title: "Revisar y causar factura en Siigo" },
       {
         name: "description",
