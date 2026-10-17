@@ -83,6 +83,8 @@ export type DraftAccounts = {
   costCenter: string | null;
   debit: number;
   credit: number;
+  /** Suma de los débitos de gasto/costo (sin IVA), para comparar contra el subtotal. */
+  gastoDebit: number;
   lines: number;
 };
 
@@ -102,7 +104,7 @@ export function classifyJournal(rows: JournalRow[]): DraftAccounts {
   const out: DraftAccounts = {
     gasto: null, gastos: [], iva: null, ivas: [], payable: null, retenciones: [],
     retefuente: [], reteiva: [], reteica: [], otrasRetenciones: [],
-    costCenter: null, debit: 0, credit: 0, lines: rows.length,
+    costCenter: null, debit: 0, credit: 0, gastoDebit: 0, lines: rows.length,
   };
   let mayorGasto = -1;
   let mayorPasivo = -1;
