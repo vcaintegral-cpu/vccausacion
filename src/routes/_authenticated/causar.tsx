@@ -1565,7 +1565,7 @@ function Causar() {
                           setLineTax((p) => ({ ...p, [i]: { ...p[i], iva: id || undefined } }));
                           const tx = impuestosIva.find((t) => String(t.id) === id);
                           const base = (l.subtotal ?? roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)));
-                          setLine(i, { iva: tx ? roundCOP((base * Number(tx.rate)) / 100) : 0 });
+                          if (!source) setLine(i, { iva: tx ? roundCOP((base * Number(tx.rate)) / 100) : 0 });
                         }}
                       >
                         <option value="">Sin impuesto</option>
