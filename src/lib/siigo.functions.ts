@@ -1187,6 +1187,20 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         }
       }
 
+      // IVA capitalizado (regla del proveedor): el IVA no viaja como impuesto, sino como
+      // un renglón adicional sin impuestos en la misma cuenta del activo.
+      const { data: reglaCapitalizado } = await supabase
+        .from("provider_rules")
+        .select("iva_account")
+        .eq("company_id", inv.company_id)
+        .eq("provider_nit", String(inv.provider_nit ?? "").replace(/\D/g, ""))
+        .eq("active", true)
+        .eq("iva_treatment", "capitalizado")
+        .limit(1)
+        .maybeSingle();
+      const ivaCapitalizado = reglaCapitalizado && Number(inv.iva ?? 0) > 0 ? roundCOP(inv.iva) : 0;
+      const renglonesSinRetencion = new Set<number>();
+
       type Renglon = {
         type: "Product" | "Account";
         code: string;
@@ -1242,7 +1256,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               tax_ids: (() => {
                 const ids: Array<string | number> = [];
                 const ivaId = ivaSiigoPorPosicion.get(Number(l.position ?? i));
-                if (Number(l.iva) > 0) {
+                if (Number(l.iva) > 0 && !ivaCapitalizado) {
                   if (ivaId == null) throw new Error(`Renglón ${i + 1}: falta el IVA exacto de Siigo.`);
                   ids.push(ivaId);
                 }
@@ -1282,12 +1296,20 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       try { cuentaAjuste = cuentaDelRenglon(cuentaAjuste); } catch { /* se valida en Siigo */ }
       const adaptacion = adaptPurchaseItems(
         items,
-        (invoiceLines ?? []).map((l) => ({ iva: Number(l.iva ?? 0), impoconsumo: Number((l as { impoconsumo?: number }).impoconsumo ?? 0) })),
+        (invoiceLines ?? []).map((l) => ({ iva: ivaCapitalizado ? 0 : Number(l.iva ?? 0), impoconsumo: Number((l as { impoconsumo?: number }).impoconsumo ?? 0) })),
         purchaseTaxes,
-        { subtotal: Number(inv.subtotal ?? 0), iva: Number(inv.iva ?? 0), impoconsumo: Number(inv.impoconsumo ?? 0), total: Number(inv.total ?? 0) },
+        { subtotal: roundCOP(Number(inv.subtotal ?? 0) + ivaCapitalizado), iva: roundCOP(Number(inv.iva ?? 0) - ivaCapitalizado), impoconsumo: Number(inv.impoconsumo ?? 0), total: Number(inv.total ?? 0) },
         cuentaAjuste,
       );
       items.splice(0, items.length, ...adaptacion.items);
+      if (ivaCapitalizado) {
+        const ref = items.find((it) => /^1[5-7]/.test(it.account_code)) ?? items[0]!;
+        const cuentaActivo = cuentaDelRenglon(String(reglaCapitalizado?.iva_account ?? "") || ref.account_code);
+        items.push(capitalizedIvaRow(ref, cuentaActivo, ivaCapitalizado));
+        renglonesSinRetencion.add(items.length - 1);
+        adaptacion.notes.push(`IVA capitalizado ${ivaCapitalizado} enviado como renglón sin impuestos en ${cuentaActivo}.`);
+      }
+      const redondeoProveedor = adaptacion.providerRounding;
       if (adaptacion.notes.length) console.log("[siigo][representacion]", adaptacion.notes);
 
       // La configuración del tipo de documento FC en Siigo manda sobre la configuración
@@ -1411,9 +1433,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const ivaLineas = (invoiceLines ?? []).reduce((acc, l) => acc + Number(l.iva ?? 0), 0);
       // Subtotal en Siigo = subtotal de la fuente + INC enviado como costo + ajuste al peso.
       const subtotal = Number(inv.subtotal ?? 0) > 0
-        ? r2(Number(inv.subtotal) + adaptacion.incAsCost + adaptacion.adjustment)
+        ? r2(Number(inv.subtotal) + adaptacion.incAsCost + adaptacion.adjustment + ivaCapitalizado)
         : r2(subtotalItems);
-      const iva = r2(inv.iva);
+      const iva = r2(Number(inv.iva) - ivaCapitalizado);
       // El total de la compra permanece bruto. Siigo exige que payments concilie
       // contra ese total y contabiliza las retenciones enviadas por separado.
       // Impoconsumo: igual que subtotal e IVA, manda el valor del encabezado de la
@@ -1435,7 +1457,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         taxes: iva + impoconsumo,
         retentions: retenciones,
       });
-      const totalFactura = roundCOP(inv.total);
+      // Con diferencia de redondeo del proveedor, Siigo recibe el total calculado de las líneas.
+      const totalFactura = roundCOP(Number(inv.total) - redondeoProveedor);
       if (toCents(totalFactura) !== toCents(totalesSiigo.totalFactura)) throw new Error("Diferencia con la fuente: Siigo recalcularía el total. No se envió la factura.");
       let netoAPagar = totalesSiigo.netoAPagar;
 
@@ -1856,10 +1879,10 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         const pct = porcentajePorTaxId.get(String(r.id)) ?? 0;
         const enRenglon = r.kind === "retefuente";
         if (enRenglon) {
-          const filas = retefuenteRows(basesRenglones.map((b) => b.base), pct, r.value);
+          const filas = retentionRowsExcluding(basesRenglones.map((b) => b.base), pct, r.value, renglonesSinRetencion);
           renglonesPorRetencion.set(String(r.id), new Set(filas));
         }
-        const renglonesRet = enRenglon ? basesRenglones.filter((_, i) => renglonesPorRetencion.get(String(r.id))?.has(i)) : basesRenglones;
+        const renglonesRet = enRenglon ? basesRenglones.filter((_, i) => renglonesPorRetencion.get(String(r.id))?.has(i)) : basesRenglones.filter((_, i) => !renglonesSinRetencion.has(i));
         const base = r.kind === "reteiva" ? iva : subtotal;
         const calculado = retencionCalculadaPorSiigo({
           retencion: { ...r, porcentaje: pct, enRenglon },
@@ -1942,7 +1965,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         tax_ids: [
           ...item.tax_ids,
           ...retencionesEnItem
-            .filter((retention) => renglonesPorRetencion.get(String(retention.id))?.has(index) ?? true)
+            .filter((retention) => renglonesPorRetencion.get(String(retention.id))?.has(index) ?? !renglonesSinRetencion.has(index))
             .map((retention) => retention.id)
             .filter((id) => !item.tax_ids.some((taxId) => String(taxId) === String(id))),
         ],
@@ -1977,10 +2000,11 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
       // VALIDACIÓN BLOQUEANTE DE FORMA DE PAGO Y CUENTA POR PAGAR.
       // VALOR CXP = NETO A PAGAR = TOTAL FACTURA − TODAS LAS RETENCIONES.
+      // La diferencia de redondeo del proveedor queda pendiente al pago (no altera el asiento).
       const valorCxP = r2(
         resolvedJournal
           .filter((l) => Number(l.credit ?? 0) > 0 && isPayableCode(l.account_code))
-          .reduce((acc, l) => acc + Number(l.credit ?? 0), 0),
+          .reduce((acc, l) => acc + Number(l.credit ?? 0), 0) - redondeoProveedor,
       );
       // VALIDACIÓN DE CUADRE UNIVERSAL: aplica a toda factura (con o sin retenciones,
       // individual o masiva). Si hay diferencia, la factura NO se envía a Siigo.
@@ -2016,6 +2040,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         totalDocumento: number,
         valorPago: number = conciliableSiigo,
         valorPagoExacto = false,
+        variante: { items?: typeof itemsConRetencion; sinRetenciones?: boolean } = {},
       ) =>
         buildSiigoPurchasePayload({
           documentId,
@@ -2028,7 +2053,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             inv.provider_name ?? ""
           } ${inv.notes ?? ""}`.trim(),
           costCenterId,
-          items: itemsConRetencion,
+          items: variante.items ?? itemsConRetencion,
           paymentId,
           purchaseTotal: totalDocumento,
           paymentValue: valorPago,
@@ -2036,7 +2061,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           paymentDueDate: dueDate,
           // Se envía el valor que Siigo calcula con su porcentaje oficial: si enviamos
           // otro, Siigo concilia con el suyo y rechaza la forma de pago.
-          retentions: retencionesEnDocumento.map((r) => ({
+          retentions: variante.sinRetenciones ? [] : retencionesEnDocumento.map((r) => ({
             id: r.id,
             value: valorSiigoPorTaxId.get(String(r.id)) ?? r.value,
           })),
@@ -2193,6 +2218,54 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             costCenterId = null;
             continue;
           }
+          if (raw.includes("documents_service")) {
+            // Diagnóstico automático: variantes de prueba que se eliminan si Siigo las crea.
+            const { siigoDelete } = await import("./siigo.server");
+            const totalCap = ivaCapitalizado;
+            const sumaRetDoc = r2(retencionesEnDocumento.reduce((a, x) => a + (valorSiigoPorTaxId.get(String(x.id)) ?? x.value), 0));
+            const idsRet = new Set(retencionesSiigo.map((x) => String(x.id)));
+            const variantes: Array<{ nombre: string; causa: string; payload: unknown }> = [];
+            if (totalCap > 0) {
+              const itemsSinIva = itemsConRetencion.filter((_, i) => !renglonesSinRetencion.has(i));
+              variantes.push({
+                nombre: "Sin el renglón de IVA capitalizado",
+                causa: `Siigo no acepta el renglón de IVA capitalizado en la cuenta ${itemsConRetencion.find((_, i) => renglonesSinRetencion.has(i))?.account_code ?? ""}.`,
+                payload: construirPayload(r2(totalDocumentoSiigo - totalCap), r2(intentoValor - totalCap), intentoExacto, { items: itemsSinIva }),
+              });
+            }
+            if (retencionesSiigo.length > 0) {
+              const itemsSinRet = itemsConRetencion.map((it) => ({ ...it, tax_ids: it.tax_ids.filter((id) => !idsRet.has(String(id))) }));
+              variantes.push({
+                nombre: "Sin la retención",
+                causa: `Siigo no acepta la retención ${retencionesSiigo.map((x) => `${x.tipo} (ID ${x.id})`).join(", ")} en esta compra.`,
+                payload: construirPayload(totalDocumentoSiigo, r2(intentoValor + sumaRetencionesSiigo - sumaRetDoc + sumaRetDoc), true, { items: itemsSinRet, sinRetenciones: true }),
+              });
+            }
+            const diagnostico: Array<Record<string, unknown>> = [{ variante: "Envío completo", payload: payloadIntento, respuesta: raw }];
+            let causa: string | null = null;
+            for (const v of variantes) {
+              try {
+                const prueba = await siigoPost<SiigoPurchaseResponse>("/v1/purchases", v.payload);
+                let eliminado = false;
+                let errorEliminar: string | null = null;
+                if (prueba.id) {
+                  try { await siigoDelete(`/v1/purchases/${prueba.id}`); eliminado = true; }
+                  catch (de) { errorEliminar = de instanceof Error ? de.message : String(de); }
+                }
+                diagnostico.push({ variante: v.nombre, payload: v.payload, respuesta: prueba, funciono: true, documento_prueba: prueba.name ?? prueba.id ?? null, eliminado, error_eliminar: errorEliminar });
+                causa = v.causa + (eliminado ? " El documento de prueba se eliminó en Siigo." : ` ATENCIÓN: no se pudo eliminar el documento de prueba ${prueba.name ?? prueba.id}; anúlelo en Siigo.`);
+                break;
+              } catch (ve) {
+                diagnostico.push({ variante: v.nombre, payload: v.payload, respuesta: ve instanceof Error ? ve.message : String(ve), funciono: false });
+              }
+            }
+            siigoAttemptTrace = { ...siigoAttemptTrace, diagnostico_documents_service: diagnostico, causa_identificada: causa };
+            throw new Error(
+              `Siigo rechazó la compra (documents_service). ` +
+                (causa ? `Causa identificada: ${causa}` : "Ningún intento de diagnóstico funcionó; la causa no está en el renglón de IVA ni en la retención.") +
+                " Ver detalle muestra el JSON y la respuesta de cada intento. No se creó la factura.",
+            );
+          }
           if (!raw.includes("invalid_total_payments")) throw e;
           const exacto = conciliableInformadoPorSiigo(raw);
           if (exacto != null && toCents(exacto) === toCents(valorCxP) && Math.abs(exacto - intentoValor) > 0.0001) {
@@ -2260,12 +2333,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         retenciones_local: retenciones,
       });
       const mismatches = purchaseReadbackErrors(doc, {
-        total: inv.total, iva: inv.iva, impoconsumo,
+        total: totalFactura, iva, impoconsumo,
         retentions: retenciones, returnedRetentions: retSiigo, payable: valorCxP,
         ivaIds: [...ivaSiigoPorPosicion.values(), ...(ivaTaxId == null ? [] : [ivaTaxId])],
       });
       if (mismatches.length) {
-        await supabase.from("invoices").update({ siigo_trace: { resultado: "Diferencia Siigo", diferencias: mismatches, inc_como_costo: adaptacion.incAsCost, comparacion: purchaseReadbackComparison(doc, { total: inv.total, iva: inv.iva, impoconsumo, retentions: retenciones, returnedRetentions: retSiigo, payable: valorCxP, ivaIds: [...ivaSiigoPorPosicion.values(), ...(ivaTaxId == null ? [] : [ivaTaxId])] }), siigo_request: payloadEnviado, siigo_respuesta: res, siigo_verificacion: verificacion, valores: { total: inv.total, iva: inv.iva, impoconsumo: inv.impoconsumo } } as Json }).eq("id", inv.id);
+        await supabase.from("invoices").update({ siigo_trace: { resultado: "Diferencia Siigo", diferencias: mismatches, inc_como_costo: adaptacion.incAsCost, iva_capitalizado: ivaCapitalizado, redondeo_proveedor: redondeoProveedor, comparacion: purchaseReadbackComparison(doc, { total: totalFactura, iva, impoconsumo, retentions: retenciones, returnedRetentions: retSiigo, payable: valorCxP, ivaIds: [...ivaSiigoPorPosicion.values(), ...(ivaTaxId == null ? [] : [ivaTaxId])] }), siigo_request: payloadEnviado, siigo_respuesta: res, siigo_verificacion: verificacion, valores: { total: inv.total, iva: inv.iva, impoconsumo: inv.impoconsumo } } as Json }).eq("id", inv.id);
         throw new Error("Diferencia Siigo: " + mismatches.join("; ") + ". No reenvíe el documento creado.");
       }
       if (Math.abs(pagoSiigo - valorPagoEnviado) > 0.005) {
@@ -2309,6 +2382,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           : null;
       const documentUrl = res._links?.self?.href ?? null;
 
+      const anticipo = Number((inv as { advance_amount?: number | null }).advance_amount ?? 0);
+      const pendientes: Array<{ kind: "ajuste_peso" | "anticipo"; amount: number; account: string | null; label: string }> = [];
+      if (redondeoProveedor !== 0)
+        pendientes.push({ kind: "ajuste_peso", amount: redondeoProveedor, account: cuentaAjuste ?? "42958101", label: "Con ajuste pendiente al pago" });
+      if (anticipo > 0)
+        pendientes.push({ kind: "anticipo", amount: anticipo, account: null, label: "Anticipo pendiente de cruzar" });
       const trace = {
         company_id: inv.company_id,
         factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
@@ -2349,6 +2428,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         siigo_respuesta: res,
         siigo_verificacion: verificacion,
         inc_como_costo: adaptacion.incAsCost,
+        iva_capitalizado: ivaCapitalizado,
+        redondeo_proveedor: redondeoProveedor,
         representacion: adaptacion.notes,
         siigo_documento_id: siigoId,
         siigo_documento_numero: siigoNumber,
@@ -2370,8 +2451,17 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           siigo_synced_by: context.userId,
           siigo_error: null,
           siigo_trace: trace,
+          siigo_pending_label: pendientes.length ? pendientes.map((p) => p.label).join(" · ") : null,
         })
         .eq("id", data.invoiceId);
+      for (const p of pendientes) {
+        await supabase.from("siigo_pending_settlements").upsert({
+          company_id: inv.company_id, invoice_id: inv.id, kind: p.kind, amount: p.amount, account_code: p.account,
+          provider_nit: inv.provider_nit, provider_name: inv.provider_name,
+          invoice_label: [inv.prefix, inv.number].filter(Boolean).join("-"), siigo_number: siigoNumber,
+          created_by: context.userId,
+        }, { onConflict: "invoice_id,kind" });
+      }
 
       return {
         ok: true,
