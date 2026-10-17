@@ -123,9 +123,9 @@ export function matchProviderRule(
   providerNit?: string | null,
   description?: string | null,
 ): ProviderRule | null {
-  const nit = norm(providerNit);
+  const nit = String(providerNit ?? "").replace(/\D/g, "");
   if (!nit) return null;
-  const delProveedor = rules.filter((r) => r.active && norm(r.provider_nit) === nit);
+  const delProveedor = rules.filter((r) => r.active && String(r.provider_nit).replace(/\D/g, "") === nit);
   if (delProveedor.length === 0) return null;
   const desc = norm(description);
   const especificas = delProveedor
@@ -146,7 +146,7 @@ export function applyProviderRuleToLines(
 ): { lines: Line[]; rule: ProviderRule | null } {
   let reglaUsada: ProviderRule | null = null;
   const out = lines.map((l) => {
-    if (l.account_code) return l;
+    if (isValidExpenseAccount(l.account_code)) return l;
     const rule = matchProviderRule(rules, providerNit, l.description);
     if (!rule) return l;
     if (!isValidExpenseAccount(rule.expense_account)) return l;
@@ -162,9 +162,9 @@ export function applyProviderRuleToLines(
 
 /** Regla de encabezado del proveedor (para IVA, INC, retención y CxP): la "(todas)" o la más usada. */
 export function headerRule(rules: ProviderRule[], providerNit?: string | null): ProviderRule | null {
-  const nit = norm(providerNit);
+  const nit = String(providerNit ?? "").replace(/\D/g, "");
   if (!nit) return null;
-  const delProveedor = rules.filter((r) => r.active && norm(r.provider_nit) === nit);
+  const delProveedor = rules.filter((r) => r.active && String(r.provider_nit).replace(/\D/g, "") === nit);
   if (delProveedor.length === 0) return null;
   return (
     delProveedor.find((r) => esTodas(r.keyword)) ??
@@ -234,8 +234,8 @@ export function ivaDetalleDesdeRegla(
     // Diferencia de centavos contra el IVA total: se suma a la cuenta mayor.
     const diff = roundCOP(total - repartido);
     if (diff !== 0 && porCuenta.size > 0) {
-      const mayor = [...porCuenta.entries()].sort((a, b) => b[1] - a[1])[0]![0];
-      porCuenta.set(mayor, roundCOP(porCuenta.get(mayor)! + diff));
+      const mayor = [...porCuenta.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (mayor) porCuenta.set(mayor, roundCOP((porCuenta.get(mayor) ?? 0) + diff));
     }
     if (porCuenta.size === 0 && baseTotal >= 0) return null;
     return [...porCuenta.entries()].map(([account_code, amount]) => ({

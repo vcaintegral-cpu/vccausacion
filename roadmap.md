@@ -1,4 +1,8 @@
 # Compras desde Excel RECIBIDOS
+- [x] Bloquear cuentas bancarias/CxP como gasto, incluyendo borradores existentes.
+- [x] Priorizar historial por NIT y descripción, con origen visible y filtro.
+- [x] Precargar conocimiento por lote, procesar cinco en paralelo y guardar por grupo; progreso con tiempo.
+- [x] Recalcular sin releer archivos, índices y verificación con las 17 compras.
 - [x] Lectura de ambas hojas sin IA y validaciones del XML.
 - [x] Parámetros por empresa y marcas tributarias por proveedor.
 - [x] Revisión, cálculos, cuentas, anticipos y notas crédito.

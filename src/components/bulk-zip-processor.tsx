@@ -67,6 +67,8 @@ type Props = {
 };
 
 export function BulkZipProcessor({ companyId, config, knowledge, extract, loadingConfig, onFinished }: Props) {
+  const [elapsed, setElapsed] = useState(0);
+  const started = useRef<number | null>(null);
   const [selected, setSelected] = useState<File[]>([]);
   const [busy, setBusy] = useState<string>("");
   const [upload, setUpload] = useState<BulkUpload | null>(null);
@@ -106,6 +108,12 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
   // El proceso corre en segundo plano; "running" refleja el motor global, no la pantalla.
   const running = progress.running && (!upload || progress.uploadId === upload.id || progress.queued > 0);
 
+  useEffect(() => {
+    if (!running) { started.current = null; return; }
+    started.current ??= Date.now();
+    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - (started.current ?? Date.now())) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
   const stats = useMemo(() => {
     const total = items.length;
     const done = items.filter((i) => i.status === "completed").length;
@@ -584,7 +592,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                 <span>
                   Procesando facturas… {stats.done + stats.failed + stats.dup + stats.review} de {stats.total}
                 </span>
-                <span>{stats.percent}%</span>
+                <span>{stats.percent}% · {elapsed}s</span>
               </div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
                 <div className="h-full bg-primary transition-all" style={{ width: `${stats.percent}%` }} />

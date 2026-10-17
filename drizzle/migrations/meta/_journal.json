@@ -43,6 +43,13 @@
       "when": 1792266006551,
       "tag": "0005_create_provider_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792268377498,
+      "tag": "0006_purchase_knowledge_and_expense_guard",
+      "breakpoints": true
     }
   ]
 }

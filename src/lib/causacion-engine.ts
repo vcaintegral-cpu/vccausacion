@@ -6,10 +6,11 @@
 // 6) reglas contables del usuario y PUC operativo.
 // Todo es SIEMPRE por empresa: nunca se comparten datos entre empresas.
 import { supabase } from "@/integrations/supabase/client";
-import { suggestSmart, bySourcePriority, type HistoryEvent, type LearningRule } from "@/lib/learning";
+import { bySourcePriority, type HistoryEvent, type LearningRule } from "@/lib/learning";
 import { resolveProductAccount, type CategoryRef, type ProductRef } from "@/lib/product-account";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 import { companyUsesCostCenters, costCenterForCompany } from "@/lib/cost-center-config";
+import { isValidExpenseAccount } from "@/lib/provider-rules";
 import type { Line, ProviderConfig, Rule } from "@/lib/accounting";
 
 const PAGE = 1000;
@@ -48,7 +49,11 @@ const MAX_EVENTS = 5000;
 export type CompanyKnowledge = {
   learning: LearningRule[];
   history: HistoryEvent[];
+  complete?: boolean;
+  profiles?: PurchaseProfile[];
 };
+
+export type PurchaseProfile = { provider_nit: string | null; voucher: string | null; entry_date: string | null; payable_account: string | null; iva_account: string | null; retention_account: string | null; retention_rate: string | null; aiu: boolean };
 
 export const emptyKnowledge = (): CompanyKnowledge => ({ learning: [], history: [] });
 
@@ -78,27 +83,15 @@ const toEvents = (rows: HistoryRow[]): HistoryEvent[] =>
  */
 export async function fetchCompanyKnowledge(companyId: string): Promise<CompanyKnowledge> {
   if (!companyId) return emptyKnowledge();
-  const [learning, eventos] = await Promise.all([
+  const [learning, purchases] = await Promise.all([
     fetchAll<LearningRule>((from, to) =>
       supabase.from("learning_rules").select("*").eq("company_id", companyId).eq("active", true).range(from, to),
     ),
-    fetchAll<{ provider_nit: string | null; concept: string | null; account_code: string }>(
-      (from, to) =>
-        supabase
-          .from("learning_events")
-          .select("provider_nit, concept, account_code")
-          .eq("company_id", companyId)
-          .order("created_at", { ascending: false })
-          .range(from, to),
-      MAX_EVENTS,
-    ),
+    supabase.rpc("purchase_company_knowledge", { _company_id: companyId }),
   ]);
-  const history: HistoryEvent[] = eventos.map((e) => ({
-    provider_nit: e.provider_nit,
-    concept: e.concept,
-    account_code: e.account_code,
-  }));
-  return { learning, history };
+  if (purchases.error) throw new Error(`No fue posible leer el historial de compras: ${purchases.error.message}`);
+  const data = purchases.data as unknown as { history?: HistoryEvent[]; profiles?: PurchaseProfile[] } | null;
+  return { learning, history: data?.history ?? [], profiles: data?.profiles ?? [], complete: true };
 }
 
 // Caché en memoria del histórico resumido (por empresa y proveedor), con
@@ -142,6 +135,7 @@ export async function knowledgeForProvider(
   providerNit: string | null | undefined,
   base: CompanyKnowledge,
 ): Promise<CompanyKnowledge> {
+  if (base.complete) return base;
   const history = await fetchProviderHistory(companyId, providerNit);
   return { learning: base.learning, history: [...base.history, ...history] };
 }
@@ -157,7 +151,7 @@ export type AccountDecision = {
   code: string;
   name: string;
   /** Fuente real de la decisión. */
-  origin: "PRODUCTO" | "CATEGORIA" | "APRENDIZAJE" | "HISTORIAL" | "REGLA" | "NINGUNA";
+  origin: "PRODUCTO" | "CATEGORIA" | "APRENDIZAJE" | "HISTORIAL" | "HISTORIAL_DESCRIPCION" | "IA" | "REGLA" | "NINGUNA";
   reason: string;
   confidence: Confianza;
   /** 0 a 1 */
@@ -185,38 +179,49 @@ export type ResolveParams = {
 export function resolveLineAccount(params: ResolveParams): AccountDecision {
   const { line, providerNit, knowledge, products, categories, rules, puc, provider } = params;
   const nombrePuc = (code: string) => puc.find((p) => p.code === code)?.name ?? "";
-  const operativa = (code: string) => (puc.length === 0 ? true : resolveOperationalAccount(puc, code).valid);
+  const operativa = (code: string) => isValidExpenseAccount(code) && (puc.length === 0 ? true : resolveOperationalAccount(puc, code).valid);
 
-  // 1) y 2) catálogo: producto y categoría.
-  const prod =
-    products.find((p) => line.code && norm(p.code) === norm(String(line.code))) ??
-    products.find((p) => norm(p.name) === norm(line.description));
-  if (prod) {
-    const r = resolveProductAccount(prod, categories, rules);
-    if (r.code && (r.origin === "producto" || r.origin === "categoria")) {
-      const score = r.origin === "producto" ? 0.98 : 0.9;
+  const nit = providerNit ? providerNit.replace(/\D/g, "") : null;
+  const activas = knowledge.learning.filter((r) => r.active && operativa(r.account_code));
+
+  // 5) historial real de causaciones: proveedor y conceptos similares.
+  const historial = knowledge.history.filter((h) => operativa(h.account_code));
+  const cuentaMasUsada = (items: HistoryEvent[]) => {
+    if (items.length === 0) return null;
+    const counts = new Map<string, number>();
+    for (const i of items) counts.set(i.account_code, (counts.get(i.account_code) ?? 0) + (i.weight ?? 1));
+    const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (!top) return null;
+    const [code, count] = top;
+    const total = items.reduce((s, i) => s + (i.weight ?? 1), 0);
+    return { code, count, total };
+  };
+
+  if (nit) {
+    const delProveedor = historial.filter((h) => String(h.provider_nit ?? "").replace(/\D/g, "") === nit);
+    const conConcepto = cuentaMasUsada(delProveedor.filter((h) => similar(line.description, h.concept) >= 0.5));
+    const top = conConcepto ?? cuentaMasUsada(delProveedor);
+    if (top) {
+      const frecuencia = top.count / Math.max(1, top.total);
+      const score = Math.min(0.92, 0.5 + frecuencia * 0.3 + Math.min(top.count, 10) * 0.015);
       return {
-        code: r.code,
-        name: r.name || nombrePuc(r.code),
-        origin: r.origin === "producto" ? "PRODUCTO" : "CATEGORIA",
-        reason:
-          r.origin === "producto"
-            ? `Cuenta ${r.code} tomada del producto "${prod.name}" del catálogo.`
-            : `Cuenta ${r.code} tomada de la categoría del producto "${prod.name}".`,
+        code: top.code,
+        name: nombrePuc(top.code),
+        origin: "HISTORIAL",
+        reason: (() => {
+          const evidence = delProveedor.filter((h) => h.account_code === top.code).sort((a, b) => (b.entry_date ?? "").localeCompare(a.entry_date ?? ""))[0];
+          return evidence?.voucher ? `Historial NIT (${evidence.voucher}, ${evidence.entry_date ?? "sin fecha"})` : `Historial NIT: cuenta ${top.code} usada en ${top.count} de ${top.total} movimiento(s) anteriores de este proveedor${conConcepto ? " con conceptos similares" : ""}.`;
+        })(),
         confidence: nivel(score),
         score,
-        itemType: prod.kind ?? undefined,
         error: null,
       };
     }
   }
 
-  const nit = providerNit ? norm(providerNit) : null;
-  const activas = knowledge.learning.filter((r) => r.active && operativa(r.account_code));
-
   // 3) regla aprendida: mismo proveedor + concepto parecido.
   if (nit) {
-    const mismos = activas.filter((r) => norm(r.provider_nit) === nit);
+    const mismos = activas.filter((r) => String(r.provider_nit ?? "").replace(/\D/g, "") === nit);
     const conConcepto = mismos
       .map((r) => ({ r, s: similar(line.description, r.concept) }))
       .filter((x) => x.s >= 0.5)
@@ -255,43 +260,13 @@ export function resolveLineAccount(params: ResolveParams): AccountDecision {
     }
   }
 
-  // 5) historial real de causaciones: proveedor y conceptos similares.
-  const historial = knowledge.history.filter((h) => operativa(h.account_code));
-  const cuentaMasUsada = (items: HistoryEvent[]) => {
-    if (items.length === 0) return null;
-    const counts = new Map<string, number>();
-    for (const i of items) counts.set(i.account_code, (counts.get(i.account_code) ?? 0) + (i.weight ?? 1));
-    const [code, count] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]!;
-    const total = items.reduce((s, i) => s + (i.weight ?? 1), 0);
-    return { code, count, total };
-  };
-
-  if (nit) {
-    const delProveedor = historial.filter((h) => norm(h.provider_nit) === nit);
-    const conConcepto = cuentaMasUsada(delProveedor.filter((h) => similar(line.description, h.concept) >= 0.5));
-    const top = conConcepto ?? cuentaMasUsada(delProveedor);
-    if (top) {
-      const frecuencia = top.count / Math.max(1, top.total);
-      const score = Math.min(0.92, 0.5 + frecuencia * 0.3 + Math.min(top.count, 10) * 0.015);
-      return {
-        code: top.code,
-        name: nombrePuc(top.code),
-        origin: "HISTORIAL",
-        reason: `Cuenta ${top.code} usada en ${top.count} de ${top.total} movimiento(s) anteriores de este proveedor${conConcepto ? " con conceptos similares" : ""}.`,
-        confidence: nivel(score),
-        score,
-        error: null,
-      };
-    }
-  }
-
   const similares = cuentaMasUsada(historial.filter((h) => similar(line.description, h.concept) >= 0.6));
   if (similares) {
     const score = Math.min(0.8, 0.45 + Math.min(similares.count, 10) * 0.03);
     return {
       code: similares.code,
       name: nombrePuc(similares.code),
-      origin: "HISTORIAL",
+      origin: "HISTORIAL_DESCRIPCION",
       reason: `Cuenta ${similares.code} usada en ${similares.count} movimiento(s) con conceptos similares.`,
       confidence: nivel(score),
       score,
@@ -299,35 +274,8 @@ export function resolveLineAccount(params: ResolveParams): AccountDecision {
     };
   }
 
-  // 6) reglas contables del usuario, cuenta del tercero y PUC operativo.
-  const s = suggestSmart({
-    description: line.description ?? "",
-    providerNit: providerNit ?? null,
-    learning: [],
-    history: [],
-    rules,
-    puc,
-    provider: provider ?? null,
-  });
-  if (!s.code)
-    return {
-      code: "",
-      name: "",
-      origin: "NINGUNA",
-      reason: s.reason,
-      confidence: "BAJA",
-      score: 0,
-      error: s.reason,
-    };
-  return {
-    code: s.code,
-    name: s.name ?? nombrePuc(s.code),
-    origin: "REGLA",
-    reason: s.reason,
-    confidence: "BAJA",
-    score: 0.4,
-    error: null,
-  };
+  // Sin evidencia: no inventar una cuenta por defecto ni reutilizar bancos.
+  return { code: "", name: "", origin: "NINGUNA", reason: "Pendiente de cuenta: no hay regla ni historial de compra coincidente.", confidence: "BAJA", score: 0, error: "Pendiente de cuenta" };
 }
 
 export type LineDecisions = Record<number, AccountDecision>;
@@ -339,13 +287,16 @@ export function applyEngineToLines(
 ): { lines: Line[]; decisions: LineDecisions } {
   const decisions: LineDecisions = {};
   const out = lines.map((l, i) => {
-    if (l.account_code) return l;
+    if (isValidExpenseAccount(l.account_code) && (params.puc.length === 0 || resolveOperationalAccount(params.puc, l.account_code ?? "").valid)) {
+      decisions[i] = { code: l.account_code ?? "", name: l.account_name ?? "", origin: "REGLA", reason: "Regla por proveedor", confidence: "ALTA", score: 1, error: null };
+      return l;
+    }
     const d = resolveLineAccount({ ...params, line: l });
     decisions[i] = d;
     return {
       ...l,
       account_code: d.code,
-      account_name: l.account_name || d.name,
+      account_name: d.name,
       item_type: l.item_type || d.itemType || "gasto",
     };
   });

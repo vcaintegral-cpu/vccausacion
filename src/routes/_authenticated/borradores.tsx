@@ -42,20 +42,26 @@ import { PaymentReceiptDialog, type FacturaPagable } from "@/components/payment-
 import { ESTADO_PAGO_LABEL, saldoPendiente, type EstadoPago } from "@/lib/payments";
 import { roundCOP } from "@/lib/money";
 import { recalcularCuentasBorrador } from "@/lib/bulk-invoices";
-import { loadDeps } from "@/lib/bulk-runner";
+import { isValidExpenseAccount } from "@/lib/provider-rules";
+import { loadDeps, invalidateBulkDeps } from "@/lib/bulk-runner";
 
 /** Muestra código + nombre de todas las cuentas de una categoría del asiento. */
-function Cuentas({ items, nombres }: { items: Cuenta[] | undefined; nombres: Map<string, string> }) {
+function Cuentas({ items, nombres, expense = false, decisions }: { items: Cuenta[] | undefined; nombres: Map<string, string>; expense?: boolean; decisions?: DraftInvoice["raw_extraction"] }) {
   const list = (items ?? []).filter((c) => !!c?.code);
-  if (list.length === 0) return <span className="text-xs text-muted-foreground">—</span>;
+  if (list.length === 0) return <span className={expense ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>{expense ? "Pendiente de cuenta" : "—"}</span>;
   return (
     <div className="space-y-1">
       {list.map((c) => {
         const name = c.name ?? nombres.get(c.code) ?? "";
+        const invalid = expense && !isValidExpenseAccount(c.code);
+        const origins = Object.values(decisions?.account_decisions ?? {}).filter((d) => d.code === c.code);
         return (
           <div key={c.code}>
+            {invalid ? <span className="text-xs text-destructive">Pendiente de cuenta</span> : <>
             <span className="font-mono text-xs">{c.code}</span>
             {name && <div className="max-w-[180px] truncate text-[11px] text-muted-foreground" title={name}>{name}</div>}
+            </>}
+            {expense && !invalid && <div className="max-w-[200px] text-[10px] text-muted-foreground">{[...new Set(origins.map((d) => d.origin === "HISTORIAL" ? d.reason : originLabel(d.origin)))].join(" · ") || "Sin origen registrado"}</div>}
           </div>
         );
       })}
@@ -89,8 +95,10 @@ export const Route = createFileRoute("/_authenticated/borradores")({
   component: Borradores,
 });
 
+const originLabel = (origin: string) => ({ REGLA: "Regla", APRENDIZAJE: "Historial NIT", HISTORIAL: "Historial NIT", HISTORIAL_DESCRIPCION: "Historial descripción", IA: "IA", NINGUNA: "Pendiente" }[origin] ?? origin);
+
 const COLS =
-  "id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id, paid_amount, payment_status, payment_enabled, payment_method, payment_type_id, payment_type_name, payment_form_manual";
+  "raw_extraction, id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id, paid_amount, payment_status, payment_enabled, payment_method, payment_type_id, payment_type_name, payment_form_manual";
 
 /** Origen visible de la cuenta por pagar del borrador. */
 const origenPayable = (i: DraftInvoice) => {
@@ -132,6 +140,7 @@ function Borradores() {
   const [q, setQ] = useState("");
   const [proveedor, setProveedor] = useState("");
   const [cuenta, setCuenta] = useState("");
+  const [origen, setOrigen] = useState("");
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
   const [estado, setEstado] = useState<EstadoFactura | "todas">("borrador");
@@ -319,6 +328,12 @@ function Borradores() {
         const texto = `${r.prefix ?? ""}${r.number ?? ""} ${r.provider_name ?? ""} ${r.provider_nit ?? ""}`.toLowerCase();
         if (q && !texto.includes(q.toLowerCase())) return false;
         if (proveedor && r.provider_name !== proveedor) return false;
+        if (origen) {
+          const acc = accounts.get(r.id);
+          const pending = !acc?.gasto || acc.gastos.some((g) => !isValidExpenseAccount(g.code)) || Object.values(r.raw_extraction?.account_decisions ?? {}).some((d) => !isValidExpenseAccount(d.code));
+          const labels = Object.values(r.raw_extraction?.account_decisions ?? {}).map((d) => originLabel(d.origin));
+          if (origen === "Pendiente" ? !pending : !labels.includes(origen)) return false;
+        }
         if (desde && (r.issue_date ?? "") < desde) return false;
         if (hasta && (r.issue_date ?? "") > hasta) return false;
         if (cuenta) {
@@ -336,7 +351,7 @@ function Borradores() {
         }
         return true;
       }),
-    [invoices, accounts, estado, q, proveedor, desde, hasta, cuenta],
+    [invoices, accounts, estado, q, proveedor, desde, hasta, cuenta, origen],
   );
 
   const seleccionadas = rows.filter((r) => sel[r.id]);
@@ -533,8 +548,10 @@ function Borradores() {
     setAvance({ hechas: 0, total: objetivo.length });
     const out: ResultadoFactura[] = [];
     try {
+      invalidateBulkDeps(companyId);
       const { config } = await loadDeps(companyId);
-      for (const inv of objetivo) {
+      for (let offset = 0; offset < objetivo.length; offset += 5) {
+        await Promise.all(objetivo.slice(offset, offset + 5).map(async (inv) => {
         const etiqueta = etiquetaFactura(inv);
         try {
           const res = await recalcularCuentasBorrador(inv.id, config);
@@ -544,6 +561,7 @@ function Borradores() {
         } finally {
           setAvance((p) => (p ? { ...p, hechas: p.hechas + 1 } : p));
         }
+        }));
       }
     } finally {
       setBusy(null);
@@ -611,6 +629,10 @@ function Borradores() {
         </div>
       </div>
 
+      <select aria-label="Origen de cuenta" className="h-9 max-w-xs rounded-md border border-input bg-background px-3 text-sm" value={origen} onChange={(e) => setOrigen(e.target.value)}>
+        <option value="">Todos los orígenes</option>
+        {["Regla", "Historial NIT", "Historial descripción", "IA", "Pendiente"].map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
       {/* Flujo obligatorio y conteo por etapa */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3 text-xs">
         <span className="mr-1 font-medium text-muted-foreground">Flujo:</span>
@@ -749,7 +771,7 @@ function Borradores() {
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.subtotal)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.iva)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.total)}</td>
-                  <td className="px-3 py-2"><Cuentas items={acc?.gastos} nombres={pucNames} /></td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.gastos} nombres={pucNames} expense decisions={r.raw_extraction} /></td>
                   <td className="px-3 py-2"><Cuentas items={acc?.ivas} nombres={pucNames} /></td>
                   <td className="px-3 py-2"><Cuentas items={acc?.retefuente} nombres={pucNames} /></td>
                   <td className="px-3 py-2"><Cuentas items={acc?.reteiva} nombres={pucNames} /></td>

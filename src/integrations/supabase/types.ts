@@ -2452,6 +2452,10 @@ export type Database = {
           uses: number
         }[]
       }
+      purchase_company_knowledge: {
+        Args: { _company_id: string }
+        Returns: Json
+      }
       release_stale_jobs: { Args: { _minutes?: number }; Returns: number }
       resume_upload_jobs: {
         Args: { _include_errors?: boolean; _upload_id: string }
