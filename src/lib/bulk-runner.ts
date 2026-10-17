@@ -14,7 +14,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { extractInvoice } from "@/lib/extract.functions";
 import { fetchCompanyPuc } from "@/lib/puc-data";
 import { errorCode } from "@/lib/bulk-diagnostics";
-import { BulkInvoiceStageError, processInvoiceFile, resetBulkBatch, type BulkConfig, type InvoiceReadTrace } from "@/lib/bulk-invoices";
+import { BulkInvoiceStageError, processInvoiceFile, resetBulkBatch, saveExtractedInvoice, type BulkConfig, type InvoiceReadTrace } from "@/lib/bulk-invoices";
+import { parsePurchaseWorkbook, type PurchaseDocument } from "@/lib/purchase-excel";
+import { excelDocKey, excelDocToExtracted } from "@/lib/excel-invoice-adapter";
 import { fetchCompanyKnowledge, type CompanyKnowledge } from "@/lib/causacion-engine";
 import type { Rule, TaxRate } from "@/lib/accounting";
 import {
@@ -376,7 +378,7 @@ export async function retryBulkItems(job: QueuedUpload, itemIds: string[]) {
 export async function resumeBackgroundUploads(companyId: string) {
   if (!companyId) return;
   const uploads: BulkUpload[] = await listUploads(companyId, 10);
-  for (const up of uploads.filter((u) => ACTIVE_STATUSES.includes(u.status) && !/\.xlsx?$/i.test(u.file_name))) {
+  for (const up of uploads.filter((u) => ACTIVE_STATUSES.includes(u.status))) {
     const items = await listItems(up.id);
     if (items.some((i) => PENDING_STATUSES.includes(i.status))) {
       startBackgroundUpload({ uploadId: up.id, companyId, fileName: up.file_name });
