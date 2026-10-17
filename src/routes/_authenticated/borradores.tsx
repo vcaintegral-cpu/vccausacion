@@ -490,8 +490,10 @@ function Borradores() {
           else if (tipo === "devolver") out.push(await devolverABorrador(inv, etiqueta));
           else if (tipo === "revertir") out.push(await revertirCausacion(inv, etiqueta));
           else {
-            if (inv.siigo_status === "sincronizada" || inv.siigo_id) {
+            if (inv.siigo_status === "sincronizada") {
               out.push({ id: inv.id, etiqueta, ok: true, message: `Esta factura ya fue causada en Siigo${inv.siigo_number ? ` · N° ${inv.siigo_number}` : ""}.` });
+            } else if (inv.siigo_id || inv.siigo_number) {
+              out.push({ id: inv.id, etiqueta, ok: false, message: "Diferencia Siigo: existe un documento creado pendiente de verificar. No se reenviará." });
             } else if (!inv.voucher_number) {
               out.push({ id: inv.id, etiqueta, ok: false, message: "Debe causarse internamente antes de causar en Siigo." });
             } else {
@@ -882,7 +884,7 @@ function Borradores() {
                   </td>
                   <td className="px-3 py-2">
                     <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${ESTADO_CLASS[e] ?? "bg-muted text-muted-foreground"}`}>
-                      {ESTADO_LABEL[e] ?? e}
+                      {e === "error_siigo" && r.siigo_error?.startsWith("Diferencia Siigo") ? "Diferencia Siigo" : ESTADO_LABEL[e] ?? e}
                     </span>
                     {e === "error_siigo" && r.siigo_error && (
                       <div className="mt-0.5 max-w-[200px] truncate text-[11px] text-destructive" title={r.siigo_error}>{r.siigo_error}</div>

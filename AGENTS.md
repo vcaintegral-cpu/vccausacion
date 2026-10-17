@@ -11,7 +11,7 @@
 
 - RECIBIDOS purchases use a pure workbook parser and an adapter into the shared PDF draft-accounting function, with one persisted task per document, so extraction remains AI-free without duplicating accounting logic.
 - Purchase confirmation recomputes rules with user-scoped reads, then calls an atomic service-only SQL transaction after membership checks, to prevent client journal tampering and partial writes.
-- Excel purchases export stored journal rows in the existing Contai format; direct Siigo posting stays blocked until its source-specific reversal, advances, and document mapping are supported.
+- PDF and RECIBIDOS purchases use the same Siigo posting function and payload mapping, with shared expense/source/duplicate/readback gates; Contai exports continue to use stored journal rows to avoid divergent accounting.
 - The shared account engine validates expense groups at every assignment boundary and journal construction; approval is additionally guarded in PostgreSQL to prevent bypasses.
 - Bulk imports preload company purchase knowledge under user-scoped RLS, retain per-line provenance in raw extraction metadata, and persist bounded groups before marking items complete to avoid per-line network calls.
 - Rejected dynamic-module imports require an explicit document reload in the root error boundary; router invalidation cannot clear the browser's rejected module cache.
