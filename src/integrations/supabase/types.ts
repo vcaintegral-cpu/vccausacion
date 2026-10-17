@@ -1822,6 +1822,86 @@ export type Database = {
         }
         Relationships: []
       }
+      provider_rules: {
+        Row: {
+          active: boolean
+          company_id: string
+          created_at: string
+          created_by: string | null
+          expense_account: string | null
+          expense_account_name: string | null
+          id: string
+          inc_account: string | null
+          iva_account: string | null
+          iva_treatment: string
+          keyword: string
+          last_used_at: string | null
+          payable_account: string | null
+          provider_name: string | null
+          provider_nit: string
+          retention_account: string | null
+          retention_base: string | null
+          retention_rate: number | null
+          source: string
+          times_used: number
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          expense_account?: string | null
+          expense_account_name?: string | null
+          id?: string
+          inc_account?: string | null
+          iva_account?: string | null
+          iva_treatment?: string
+          keyword?: string
+          last_used_at?: string | null
+          payable_account?: string | null
+          provider_name?: string | null
+          provider_nit: string
+          retention_account?: string | null
+          retention_base?: string | null
+          retention_rate?: number | null
+          source?: string
+          times_used?: number
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          expense_account?: string | null
+          expense_account_name?: string | null
+          id?: string
+          inc_account?: string | null
+          iva_account?: string | null
+          iva_treatment?: string
+          keyword?: string
+          last_used_at?: string | null
+          payable_account?: string | null
+          provider_name?: string | null
+          provider_nit?: string
+          retention_account?: string | null
+          retention_base?: string | null
+          retention_rate?: number | null
+          source?: string
+          times_used?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provider_rules_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       providers: {
         Row: {
           address: string | null

@@ -22,6 +22,7 @@ import { resolveImpoconsumoAccount } from "@/lib/tax-selection";
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
+  isPayableCode,
   type Line,
   type Rule,
   type TaxRate,
@@ -33,6 +34,16 @@ import {
   fetchIvaEvidence,
   resolveIvaTreatment,
 } from "@/lib/iva-treatment";
+import {
+  ajusteAlPeso,
+  applyProviderRuleToLines,
+  fetchProviderRulesCached,
+  headerRule,
+  ivaDetalleDesdeRegla,
+  marcarUsoRegla,
+  retencionDesdeRegla,
+} from "@/lib/provider-rules";
+import { totals as totalesJournal } from "@/lib/accounting";
 
 const ALLOWED = /\.pdf$/i;
 const IS_ZIP = (name: string, type = "") => /\.zip$/i.test(name) || type.includes("zip");
@@ -370,11 +381,17 @@ export async function saveExtractedInvoice(params: {
     return prod ? { ...base, item_type: prod.kind ?? "gasto" } : base;
   });
 
+  // P1/P2: reglas por proveedor (NIT + palabra clave, luego "(todas)"). Una cuenta
+  // fuera de los grupos de gasto válidos se descarta y la línea sigue al motor.
+  const providerRules = await fetchProviderRulesCached(companyId);
+  const conReglaProveedor = applyProviderRuleToLines(conCatalogo, providerRules, header.provider_nit);
+  const reglaProveedor = headerRule(providerRules, header.provider_nit) ?? conReglaProveedor.rule;
+
   // Mismo motor inteligente que la causación individual.
   // Conocimiento base (reglas) + histórico resumido del proveedor de ESTA factura.
   const base = params.knowledge ?? config.knowledge ?? (await fetchCompanyKnowledge(companyId)) ?? emptyKnowledge();
   const conocimiento = await knowledgeForProvider(companyId, header.provider_nit, base);
-  const { lines, decisions } = applyEngineToLines(conCatalogo, {
+  const { lines, decisions } = applyEngineToLines(conReglaProveedor.lines, {
     providerNit: header.provider_nit,
     knowledge: conocimiento,
     products: config.products,
@@ -407,22 +424,58 @@ export async function saveExtractedInvoice(params: {
     ivaTotal,
     taxes: config.taxes,
   });
-  const { retenciones, errores: erroresRetencion } = resolverRetenciones({
+  const resueltas = resolverRetenciones({
     reportado,
     baseGravable,
     ivaTotal,
     taxes: config.taxes,
     puc: config.accounts,
   });
+  let { retenciones } = resueltas;
+  const erroresRetencion = [...resueltas.errores];
+  const alertas: string[] = [];
+  // Regla del proveedor: la retención se calcula con SU cuenta, tarifa y base
+  // (Subtotal o AIU). Si difiere de lo retenido en el documento, se alerta sin bloquear.
+  const retRegla = retencionDesdeRegla(reglaProveedor, lines);
+  if (retRegla) {
+    retenciones = {
+      retefuente: retRegla.amount,
+      reteiva: 0,
+      reteica: 0,
+      autorretencion: 0,
+      detalle: [
+        {
+          kind: "retefuente",
+          name: retRegla.name,
+          rate: retRegla.rate,
+          base: retRegla.base,
+          amount: retRegla.amount,
+          account_code: retRegla.account_code,
+        },
+      ],
+    };
+    const delDocumento = roundCOP(reportado.retefuente);
+    if (delDocumento > 0 && Math.abs(delDocumento - retRegla.amount) >= 0.005) {
+      alertas.push(
+        `Retención difiere del documento: calculada $${retRegla.amount.toLocaleString("es-CO")}, documento $${delDocumento.toLocaleString("es-CO")}.`,
+      );
+    }
+  }
   // La empresa define si maneja centros de costo; si no, nunca se guarda ninguno.
   const costPolicy = await companyUsesCostCenters(companyId);
   const centroFactura = costCenterForCompany(costPolicy, header.cost_center);
-  // Contrapartida: obligación por pagar según el histórico de esta empresa con este proveedor.
-  const payable = applyPucToPayable(await fetchPayableAccount(companyId, header.provider_nit), config.accounts);
-  // Tratamiento contable del IVA de esta factura (descontable / gasto / costo).
-  // No altera el cálculo del impuesto, solo la cuenta donde queda registrado.
+  // Contrapartida: primero la cuenta CxP de la regla del proveedor; si no hay,
+  // el histórico de esta empresa con este proveedor.
+  const payableHistorico = applyPucToPayable(await fetchPayableAccount(companyId, header.provider_nit), config.accounts);
+  const payable =
+    reglaProveedor?.payable_account && isPayableCode(reglaProveedor.payable_account)
+      ? { code: reglaProveedor.payable_account.trim(), name: null, source: "regla por proveedor", confidence: 1 }
+      : payableHistorico;
+  // Tratamiento contable del IVA: primero la regla del proveedor (descontable /
+  // asumido / capitalizado / N-A); sin regla, la decisión por histórico de siempre.
+  const ivaDetalleRegla = reglaProveedor ? ivaDetalleDesdeRegla(reglaProveedor, lines, ivaTotal) : null;
   const ivaDecision =
-    ivaTotal > 0
+    !ivaDetalleRegla && ivaTotal > 0
       ? resolveIvaTreatment({
           config: await fetchIvaConfig(companyId),
           evidence: await fetchIvaEvidence(companyId, header.provider_nit),
@@ -435,22 +488,36 @@ export async function saveExtractedInvoice(params: {
       : null;
   // El IVA que no es descontable se registra SIEMPRE como una línea independiente por el total.
   const ivaDetalle =
-    ivaDecision && ivaDecision.treatment !== "descontable"
+    ivaDetalleRegla ??
+    (ivaDecision && ivaDecision.treatment !== "descontable"
       ? applyIvaTreatment([{ account_code: "", account_name: "IVA", amount: ivaTotal }], ivaDecision)
-      : undefined;
+      : undefined);
   const journal = buildJournal({
     lines,
     iva: ivaTotal,
     impoconsumo: Number(header.impoconsumo || 0),
     retenciones,
     costCenter: centroFactura,
-    ...(ivaDetalle ? { ivaDetalle } : {}),
+    ...(ivaDetalle !== undefined && ivaDetalle !== null ? { ivaDetalle } : {}),
     payableAccount: payable,
-    // El impoconsumo va a la cuenta auxiliar configurada, nunca a una cuenta mayor.
-    impoconsumoAccount: resolveImpoconsumoAccount(config.taxes as never, config.accounts),
+    // El impoconsumo va a la cuenta de la regla del proveedor o a la auxiliar
+    // configurada, nunca a una cuenta mayor.
+    impoconsumoAccount: reglaProveedor?.inc_account
+      ? { code: reglaProveedor.inc_account, name: "Impuesto al consumo" }
+      : resolveImpoconsumoAccount(config.taxes as never, config.accounts),
   });
+  // Cuadre: diferencias de $1 o menos (centavos del XML o recargo global) van a
+  // 42958101 Ajuste al peso; una diferencia mayor deja el borrador "No cuadra".
+  const cuadre = totalesJournal(journal);
+  const ajuste = ajusteAlPeso(cuadre.debito, cuadre.credito);
+  if (ajuste.linea) journal.push({ ...ajuste.linea, cost_center: centroFactura ?? null });
+  if (reglaProveedor) void marcarUsoRegla(reglaProveedor.id);
   const unresolvedAccounts: string[] = [];
   unresolvedAccounts.push(...erroresRetencion);
+  if (ajuste.descuadre)
+    unresolvedAccounts.push(
+      `No cuadra: la diferencia entre débitos y créditos es $${Math.abs(ajuste.descuadre).toLocaleString("es-CO")}, mayor a $1.`,
+    );
   const operationalJournal = journal.map((line) => {
     // Renglones sin cuenta (por ejemplo el IVA aún sin impuesto seleccionado) se guardan
     // tal cual: el borrador exige elegir el impuesto exacto antes de causar.
@@ -593,9 +660,14 @@ export async function saveExtractedInvoice(params: {
     score,
     // 95% o más: automática. 80–94%: sugerida y marcada para revisión. Menos de 80%: revisión obligatoria.
     needsReview: score < 0.95 || unresolvedAccounts.length > 0,
-    reason: unresolvedAccounts.length > 0
-      ? `${reason}${reason ? " " : ""}${unresolvedAccounts.join(" ")}`
-      : reason,
+    reason: [
+      reason,
+      ...unresolvedAccounts,
+      // Alertas informativas (retención difiere del documento, etc.): no bloquean.
+      ...alertas,
+    ]
+      .filter(Boolean)
+      .join(" "),
     providerName: header.provider_name ?? null,
     providerNit: header.provider_nit ?? null,
     buyerName: header.buyer_name ?? null,
