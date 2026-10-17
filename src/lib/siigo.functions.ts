@@ -722,7 +722,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
       .select(
-        "raw_extraction, source_override, discount, id, company_id, cufe, prefix, number, issue_date, due_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, buyer_nit, buyer_name, notes, total, iva, impoconsumo, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, payment_method, payment_type_id, payment_type_name, payable_account, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at, voucher_number, import_source, siigo_attempts, siigo_error_kind",
+        "raw_extraction, source_override, discount, id, company_id, cufe, prefix, number, issue_date, due_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, buyer_nit, buyer_name, notes, total, iva, impoconsumo, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, payment_method, payment_type_id, payment_type_name, payable_account, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at, voucher_number, import_source, siigo_attempts, siigo_error_kind, advance_amount",
       )
       .eq("id", data.invoiceId)
       .single();
