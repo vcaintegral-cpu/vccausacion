@@ -433,6 +433,7 @@ export async function computeDraftAccounting(params: {
   // (Subtotal o AIU). Si difiere de lo retenido en el documento, se alerta sin bloquear.
   const retRegla = retencionDesdeRegla(reglaProveedor, lines);
   if (retRegla) {
+    erroresRetencion.length = 0;
     retenciones = {
       retefuente: retRegla.amount,
       reteiva: 0,
@@ -888,14 +889,23 @@ async function flushDrafts(company: string) {
   if (!queue) return;
   clearTimeout(queue.timer);
   draftQueues.delete(company);
+  let parentsInserted = false;
   try {
     const { error } = await supabase.from("invoices").insert(queue.rows.map((r) => r.draft.invoice) as never);
     if (error) throw error;
+    parentsInserted = true;
     const results = await Promise.all([
       supabase.from("invoice_lines").insert(queue.rows.flatMap((r) => r.draft.lines) as never),
       supabase.from("journal_lines").insert(queue.rows.flatMap((r) => r.draft.journal) as never),
     ]);
     for (const result of results) if (result.error) throw result.error;
     for (const row of queue.rows) row.resolve();
-  } catch (error) { for (const row of queue.rows) row.reject(error); }
+  } catch (error) {
+    if (parentsInserted) {
+      const ids = queue.rows.map((r) => String(r.draft.invoice['id']));
+      const cleanup = await supabase.from("invoices").delete().eq("company_id", company).eq("status", "borrador").in("id", ids);
+      if (cleanup.error) console.error("No se pudo limpiar el grupo incompleto de borradores.");
+    }
+    for (const row of queue.rows) row.reject(error);
+  }
 }

@@ -146,7 +146,7 @@ export function applyProviderRuleToLines(
 ): { lines: Line[]; rule: ProviderRule | null } {
   let reglaUsada: ProviderRule | null = null;
   const out = lines.map((l) => {
-    if (l.account_code) return l;
+    if (isValidExpenseAccount(l.account_code)) return l;
     const rule = matchProviderRule(rules, providerNit, l.description);
     if (!rule) return l;
     if (!isValidExpenseAccount(rule.expense_account)) return l;

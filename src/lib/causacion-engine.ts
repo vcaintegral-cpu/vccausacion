@@ -198,7 +198,7 @@ export function resolveLineAccount(params: ResolveParams): AccountDecision {
   };
 
   if (nit) {
-    const delProveedor = historial.filter((h) => norm(h.provider_nit) === nit);
+    const delProveedor = historial.filter((h) => String(h.provider_nit ?? "").replace(/\D/g, "") === nit);
     const conConcepto = cuentaMasUsada(delProveedor.filter((h) => similar(line.description, h.concept) >= 0.5));
     const top = conConcepto ?? cuentaMasUsada(delProveedor);
     if (top) {
@@ -221,7 +221,7 @@ export function resolveLineAccount(params: ResolveParams): AccountDecision {
 
   // 3) regla aprendida: mismo proveedor + concepto parecido.
   if (nit) {
-    const mismos = activas.filter((r) => norm(r.provider_nit) === nit);
+    const mismos = activas.filter((r) => String(r.provider_nit ?? "").replace(/\D/g, "") === nit);
     const conConcepto = mismos
       .map((r) => ({ r, s: similar(line.description, r.concept) }))
       .filter((x) => x.s >= 0.5)
@@ -287,7 +287,7 @@ export function applyEngineToLines(
 ): { lines: Line[]; decisions: LineDecisions } {
   const decisions: LineDecisions = {};
   const out = lines.map((l, i) => {
-    if (isValidExpenseAccount(l.account_code)) {
+    if (isValidExpenseAccount(l.account_code) && (params.puc.length === 0 || resolveOperationalAccount(params.puc, l.account_code ?? "").valid)) {
       decisions[i] = { code: l.account_code ?? "", name: l.account_name ?? "", origin: "REGLA", reason: "Regla por proveedor", confidence: "ALTA", score: 1, error: null };
       return l;
     }
@@ -296,7 +296,7 @@ export function applyEngineToLines(
     return {
       ...l,
       account_code: d.code,
-      account_name: l.account_name || d.name,
+      account_name: d.name,
       item_type: l.item_type || d.itemType || "gasto",
     };
   });

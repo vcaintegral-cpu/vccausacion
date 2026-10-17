@@ -481,8 +481,7 @@ function Borradores() {
     let tercerosExistentes = 0;
     try {
 
-      for (let offset = 0; offset < objetivo.length; offset += 5) {
-        await Promise.all(objetivo.slice(offset, offset + 5).map(async (inv) => {
+      for (const inv of objetivo) {
         const etiqueta = etiquetaFactura(inv);
         try {
           if (tipo === "aprobar") out.push(await aprobarBorrador(inv, accounts.get(inv.id), pucCodes, etiqueta, userId));
@@ -516,7 +515,6 @@ function Borradores() {
         } finally {
           setAvance((p) => (p ? { ...p, hechas: p.hechas + 1 } : p));
         }
-        }));
       }
     } finally {
       setBusy(null);
@@ -552,7 +550,8 @@ function Borradores() {
     try {
       invalidateBulkDeps(companyId);
       const { config } = await loadDeps(companyId);
-      for (const inv of objetivo) {
+      for (let offset = 0; offset < objetivo.length; offset += 5) {
+        await Promise.all(objetivo.slice(offset, offset + 5).map(async (inv) => {
         const etiqueta = etiquetaFactura(inv);
         try {
           const res = await recalcularCuentasBorrador(inv.id, config);
@@ -562,6 +561,7 @@ function Borradores() {
         } finally {
           setAvance((p) => (p ? { ...p, hechas: p.hechas + 1 } : p));
         }
+        }));
       }
     } finally {
       setBusy(null);
