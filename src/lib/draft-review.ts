@@ -31,6 +31,11 @@ export type DraftInvoice = {
   siigo_id: string | null;
   siigo_number: string | null;
   siigo_error: string | null;
+  siigo_error_kind?: string | null;
+  siigo_attempts?: number | null;
+  siigo_last_attempt_at?: string | null;
+  siigo_reconciled_at?: string | null;
+  siigo_trace?: unknown;
   voucher_number: string | null;
   posted_at: string | null;
   approved_at: string | null;
