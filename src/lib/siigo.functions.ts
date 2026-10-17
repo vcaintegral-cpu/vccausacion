@@ -1,6 +1,6 @@
-import { validateStoredJournal, sourceFromRaw } from "@/lib/source-values";
+import { validateStoredJournal } from "@/lib/source-values";
 import { purchaseLineErrors, purchaseReadbackErrors } from "@/lib/siigo-purchase-validation";
-import { toCents, sumCents } from "@/lib/money";
+import { toCents } from "@/lib/money";
 import { esCeroCOP, roundCOP } from "@/lib/money";
 import { createServerFn } from "@tanstack/react-start";
 import { resolveOperationalAccount, validarCuenta } from "@/lib/puc-hierarchy";
@@ -2426,7 +2426,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const raw = e instanceof Error ? e.message : JSON.stringify(e);
       // Los mensajes ya redactados por la validación de forma de pago se conservan tal cual.
       const yaLegible =
-        /^Diferencia Siigo|^Diferencia con la fuente/.test(raw) ||
+        /^Diferencia Siigo|^Diferencia con la fuente|^Siigo /.test(raw) ||
         /^Factura no (causada|enviada)/.test(raw) ||
         /^No fue posible (crear|crear automáticamente) el tercero/.test(raw) ||
         /^No se puede causar la factura porque no tiene número/.test(raw);

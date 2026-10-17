@@ -1,12 +1,12 @@
 # Compras desde Excel RECIBIDOS
-- [ ] Habilitar RECIBIDOS en el envío compartido a Siigo, con validaciones de fuente/cuentas y verificación posterior; probar AT-7796 y FE-2992 y bloquear documentos pendientes.
+- [x] Habilitar RECIBIDOS en el envío compartido a Siigo, con validaciones de fuente/cuentas/CUFE y verificación posterior de total/IVA/INC/retenciones/CxP; 42 pruebas aprobadas y prueba real ejecutada para AT-7796 y FE-2992, ambas bloqueadas antes de crear por diferencias.
 - [x] Resolver IVA de fuente sin identificador seleccionado y falso gasto inválido del ajuste documental; UNE guardada y reabierta con IVA 32.458,49 y total 218.310,00 sin esas alertas; 40 pruebas aprobadas.
 - [x] Corregir el congelamiento al abrir la factura UNE: índice compartido de cuentas y resultados acotados; pruebas contables y búsqueda/navegación con sesión real verificadas.
 - [x] Preservar importes de fuente y corregir descuento duplicado/redistribución PDF; 17 borradores recuperados del Excel original.
 - [x] Proteger valores y aprobación, conciliación y correcciones auditadas.
 - [x] Validar exportación Contai y controles previos/posteriores Siigo, bloqueando diferencias y reenvíos de documentos ya creados.
 - [x] Pruebas monetarias y comprobación del flujo visible; 17 documentos suman 23.759.319,12 y conciliación sin diferencias.
-- [ ] Verificar un envío real y lectura posterior Siigo: requiere autorización para crear un documento contable real; RECIBIDOS sigue bloqueado para envío directo.
+- [ ] Completar creación y lectura posterior Siigo de AT-7796 y FE-2992: ATILA no tiene IVA exacto identificado (tarifa global 1,73% no corresponde al IVA AIU); VC INTEGRAL tiene ajuste documental 0,40 sin representación admitida por el mapeo PDF actual. No alterar valores ni inventar impuestos para enviarlas.
 - [ ] Verificar importación en Contai: requiere acceso al programa destino; archivo y centavos comprobados localmente.
 - [x] Bloquear cuentas bancarias/CxP como gasto, incluyendo borradores existentes.
 - [x] Priorizar historial por NIT y descripción, con origen visible y filtro.
@@ -15,6 +15,6 @@
 - [x] Lectura de ambas hojas sin IA y validaciones del XML.
 - [x] Parámetros por empresa y marcas tributarias por proveedor.
 - [x] Revisión, cálculos, cuentas, anticipos y notas crédito.
-- [x] Persistencia independiente por documento, historial y exportación Contai; envío directo a Siigo excluido de este origen.
+- [x] Persistencia independiente por documento, historial y exportación Contai; envío compartido a Siigo habilitado con validaciones bloqueantes.
 - [x] Pruebas con el archivo aportado y flujo en pantalla.
 - [x] Metadatos de pantallas y actualización de seguridad obligatoria.
