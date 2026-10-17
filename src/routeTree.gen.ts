@@ -22,6 +22,7 @@ import { Route as AuthenticatedEmpresasRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedFacturasRouteImport } from './routes/_authenticated/facturas'
 import { Route as AuthenticatedIntegracionesRouteImport } from './routes/_authenticated/integraciones'
 import { Route as AuthenticatedPanelRouteImport } from './routes/_authenticated/panel'
+import { Route as AuthenticatedPendientesSiigoRouteImport } from './routes/_authenticated/pendientes-siigo'
 import { Route as AuthenticatedRevisarRouteImport } from './routes/_authenticated/revisar'
 
 const IndexRoute = IndexRouteImport.update({
@@ -90,6 +91,12 @@ const AuthenticatedPanelRoute = AuthenticatedPanelRouteImport.update({
   path: '/panel',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedPendientesSiigoRoute =
+  AuthenticatedPendientesSiigoRouteImport.update({
+    id: '/pendientes-siigo',
+    path: '/pendientes-siigo',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedRevisarRoute = AuthenticatedRevisarRouteImport.update({
   id: '/revisar',
   path: '/revisar',
@@ -109,6 +116,7 @@ export interface FileRoutesByFullPath {
   '/facturas': typeof AuthenticatedFacturasRoute
   '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
+  '/pendientes-siigo': typeof AuthenticatedPendientesSiigoRoute
   '/revisar': typeof AuthenticatedRevisarRoute
 }
 export interface FileRoutesByTo {
@@ -124,6 +132,7 @@ export interface FileRoutesByTo {
   '/facturas': typeof AuthenticatedFacturasRoute
   '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
+  '/pendientes-siigo': typeof AuthenticatedPendientesSiigoRoute
   '/revisar': typeof AuthenticatedRevisarRoute
 }
 export interface FileRoutesById {
@@ -141,6 +150,7 @@ export interface FileRoutesById {
   '/_authenticated/facturas': typeof AuthenticatedFacturasRoute
   '/_authenticated/integraciones': typeof AuthenticatedIntegracionesRoute
   '/_authenticated/panel': typeof AuthenticatedPanelRoute
+  '/_authenticated/pendientes-siigo': typeof AuthenticatedPendientesSiigoRoute
   '/_authenticated/revisar': typeof AuthenticatedRevisarRoute
 }
 export interface FileRouteTypes {
@@ -158,6 +168,7 @@ export interface FileRouteTypes {
     | '/facturas'
     | '/integraciones'
     | '/panel'
+    | '/pendientes-siigo'
     | '/revisar'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -173,6 +184,7 @@ export interface FileRouteTypes {
     | '/facturas'
     | '/integraciones'
     | '/panel'
+    | '/pendientes-siigo'
     | '/revisar'
   id:
     | '__root__'
@@ -189,6 +201,7 @@ export interface FileRouteTypes {
     | '/_authenticated/facturas'
     | '/_authenticated/integraciones'
     | '/_authenticated/panel'
+    | '/_authenticated/pendientes-siigo'
     | '/_authenticated/revisar'
   fileRoutesById: FileRoutesById
 }
@@ -292,6 +305,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedPanelRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/pendientes-siigo': {
+      id: '/_authenticated/pendientes-siigo'
+      path: '/pendientes-siigo'
+      fullPath: '/pendientes-siigo'
+      preLoaderRoute: typeof AuthenticatedPendientesSiigoRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/revisar': {
       id: '/_authenticated/revisar'
       path: '/revisar'
@@ -312,6 +332,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedFacturasRoute: typeof AuthenticatedFacturasRoute
   AuthenticatedIntegracionesRoute: typeof AuthenticatedIntegracionesRoute
   AuthenticatedPanelRoute: typeof AuthenticatedPanelRoute
+  AuthenticatedPendientesSiigoRoute: typeof AuthenticatedPendientesSiigoRoute
   AuthenticatedRevisarRoute: typeof AuthenticatedRevisarRoute
 }
 
@@ -325,6 +346,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedFacturasRoute: AuthenticatedFacturasRoute,
   AuthenticatedIntegracionesRoute: AuthenticatedIntegracionesRoute,
   AuthenticatedPanelRoute: AuthenticatedPanelRoute,
+  AuthenticatedPendientesSiigoRoute: AuthenticatedPendientesSiigoRoute,
   AuthenticatedRevisarRoute: AuthenticatedRevisarRoute,
 }
 
