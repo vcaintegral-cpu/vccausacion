@@ -257,6 +257,10 @@ function Admin() {
           {wrap(<PaymentTypesPanel companyId={companyId} />)}
         </TabsContent>
 
+        <TabsContent value="reglas-proveedor">
+          {wrap(<ProviderRulesPanel companyId={companyId} />)}
+        </TabsContent>
+
         <TabsContent value="reglas">
           {wrap(
             <Section
