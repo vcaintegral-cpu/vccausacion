@@ -21,6 +21,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 export const Route = createFileRoute("/_authenticated/facturas")({
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
       { title: "Historial de facturas causadas" },
       { name: "description", content: "Consulta, aprueba y exporta a Contai los comprobantes contables de tus facturas de compra." },
       { property: "og:title", content: "Historial de facturas causadas" },

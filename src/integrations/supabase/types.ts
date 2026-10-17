@@ -832,6 +832,7 @@ export type Database = {
           file_path: string | null
           id: string
           impoconsumo: number
+          import_source: string | null
           issue_date: string | null
           iva: number
           notes: string | null
@@ -864,6 +865,7 @@ export type Database = {
           provider_name: string | null
           provider_nit: string | null
           provider_phone: string | null
+          purchase_import_data: Json | null
           raw_extraction: Json | null
           retefuente: number
           reteica: number
@@ -905,6 +907,7 @@ export type Database = {
           file_path?: string | null
           id?: string
           impoconsumo?: number
+          import_source?: string | null
           issue_date?: string | null
           iva?: number
           notes?: string | null
@@ -937,6 +940,7 @@ export type Database = {
           provider_name?: string | null
           provider_nit?: string | null
           provider_phone?: string | null
+          purchase_import_data?: Json | null
           raw_extraction?: Json | null
           retefuente?: number
           reteica?: number
@@ -978,6 +982,7 @@ export type Database = {
           file_path?: string | null
           id?: string
           impoconsumo?: number
+          import_source?: string | null
           issue_date?: string | null
           iva?: number
           notes?: string | null
@@ -1010,6 +1015,7 @@ export type Database = {
           provider_name?: string | null
           provider_nit?: string | null
           provider_phone?: string | null
+          purchase_import_data?: Json | null
           raw_extraction?: Json | null
           retefuente?: number
           reteica?: number
@@ -1831,6 +1837,7 @@ export type Database = {
           name: string
           nit: string
           phone: string | null
+          purchase_tax_profile: Json
           regime: string | null
           siigo_id: string | null
           siigo_sync_status: string | null
@@ -1850,6 +1857,7 @@ export type Database = {
           name: string
           nit: string
           phone?: string | null
+          purchase_tax_profile?: Json
           regime?: string | null
           siigo_id?: string | null
           siigo_sync_status?: string | null
@@ -1869,6 +1877,7 @@ export type Database = {
           name?: string
           nit?: string
           phone?: string | null
+          purchase_tax_profile?: Json
           regime?: string | null
           siigo_id?: string | null
           siigo_sync_status?: string | null
@@ -1956,6 +1965,96 @@ export type Database = {
             foreignKeyName: "puc_accounts_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      purchase_import_items: {
+        Row: {
+          choices: Json
+          company_id: string
+          created_at: string
+          document: Json
+          error_message: string | null
+          id: string
+          invoice_id: string | null
+          position: number
+          status: string
+          updated_at: string
+          upload_id: string
+        }
+        Insert: {
+          choices?: Json
+          company_id: string
+          created_at?: string
+          document: Json
+          error_message?: string | null
+          id?: string
+          invoice_id?: string | null
+          position: number
+          status?: string
+          updated_at?: string
+          upload_id: string
+        }
+        Update: {
+          choices?: Json
+          company_id?: string
+          created_at?: string
+          document?: Json
+          error_message?: string | null
+          id?: string
+          invoice_id?: string | null
+          position?: number
+          status?: string
+          updated_at?: string
+          upload_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_import_items_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_import_items_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_import_items_upload_id_fkey"
+            columns: ["upload_id"]
+            isOneToOne: false
+            referencedRelation: "bulk_uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      purchase_import_settings: {
+        Row: {
+          company_id: string
+          config: Json
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          config?: Json
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          config?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_import_settings_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: true
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
@@ -2184,6 +2283,25 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      confirm_excel_purchase: {
+        Args: {
+          _choices: Json
+          _item_id: string
+          _journal: Json
+          _retentions: Json
+        }
+        Returns: string
+      }
+      confirm_excel_purchase_validated: {
+        Args: {
+          _actor: string
+          _choices: Json
+          _item_id: string
+          _journal: Json
+          _retentions: Json
+        }
+        Returns: string
+      }
       create_payment_receipt: {
         Args: {
           _account_code: string
@@ -2289,12 +2407,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2318,11 +2436,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2343,11 +2461,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2368,11 +2486,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2385,11 +2503,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }

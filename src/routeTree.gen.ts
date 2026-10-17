@@ -17,6 +17,7 @@ import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedAprendizajeRouteImport } from './routes/_authenticated/aprendizaje'
 import { Route as AuthenticatedBorradoresRouteImport } from './routes/_authenticated/borradores'
 import { Route as AuthenticatedCausarRouteImport } from './routes/_authenticated/causar'
+import { Route as AuthenticatedComprasExcelRouteImport } from './routes/_authenticated/compras-excel'
 import { Route as AuthenticatedDocumentosRouteImport } from './routes/_authenticated/documentos'
 import { Route as AuthenticatedEmpresasRouteImport } from './routes/_authenticated/empresas'
 import { Route as AuthenticatedFacturasRouteImport } from './routes/_authenticated/facturas'
@@ -64,6 +65,12 @@ const AuthenticatedCausarRoute = AuthenticatedCausarRouteImport.update({
   path: '/causar',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedComprasExcelRoute =
+  AuthenticatedComprasExcelRouteImport.update({
+    id: '/compras-excel',
+    path: '/compras-excel',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedDocumentosRoute = AuthenticatedDocumentosRouteImport.update({
   id: '/documentos',
   path: '/documentos',
@@ -104,6 +111,7 @@ export interface FileRoutesByFullPath {
   '/aprendizaje': typeof AuthenticatedAprendizajeRoute
   '/borradores': typeof AuthenticatedBorradoresRoute
   '/causar': typeof AuthenticatedCausarRoute
+  '/compras-excel': typeof AuthenticatedComprasExcelRoute
   '/documentos': typeof AuthenticatedDocumentosRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
@@ -119,6 +127,7 @@ export interface FileRoutesByTo {
   '/aprendizaje': typeof AuthenticatedAprendizajeRoute
   '/borradores': typeof AuthenticatedBorradoresRoute
   '/causar': typeof AuthenticatedCausarRoute
+  '/compras-excel': typeof AuthenticatedComprasExcelRoute
   '/documentos': typeof AuthenticatedDocumentosRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
@@ -136,6 +145,7 @@ export interface FileRoutesById {
   '/_authenticated/aprendizaje': typeof AuthenticatedAprendizajeRoute
   '/_authenticated/borradores': typeof AuthenticatedBorradoresRoute
   '/_authenticated/causar': typeof AuthenticatedCausarRoute
+  '/_authenticated/compras-excel': typeof AuthenticatedComprasExcelRoute
   '/_authenticated/documentos': typeof AuthenticatedDocumentosRoute
   '/_authenticated/empresas': typeof AuthenticatedEmpresasRoute
   '/_authenticated/facturas': typeof AuthenticatedFacturasRoute
@@ -153,6 +163,7 @@ export interface FileRouteTypes {
     | '/aprendizaje'
     | '/borradores'
     | '/causar'
+    | '/compras-excel'
     | '/documentos'
     | '/empresas'
     | '/facturas'
@@ -168,6 +179,7 @@ export interface FileRouteTypes {
     | '/aprendizaje'
     | '/borradores'
     | '/causar'
+    | '/compras-excel'
     | '/documentos'
     | '/empresas'
     | '/facturas'
@@ -184,6 +196,7 @@ export interface FileRouteTypes {
     | '/_authenticated/aprendizaje'
     | '/_authenticated/borradores'
     | '/_authenticated/causar'
+    | '/_authenticated/compras-excel'
     | '/_authenticated/documentos'
     | '/_authenticated/empresas'
     | '/_authenticated/facturas'
@@ -257,6 +270,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCausarRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/compras-excel': {
+      id: '/_authenticated/compras-excel'
+      path: '/compras-excel'
+      fullPath: '/compras-excel'
+      preLoaderRoute: typeof AuthenticatedComprasExcelRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/documentos': {
       id: '/_authenticated/documentos'
       path: '/documentos'
@@ -307,6 +327,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedAprendizajeRoute: typeof AuthenticatedAprendizajeRoute
   AuthenticatedBorradoresRoute: typeof AuthenticatedBorradoresRoute
   AuthenticatedCausarRoute: typeof AuthenticatedCausarRoute
+  AuthenticatedComprasExcelRoute: typeof AuthenticatedComprasExcelRoute
   AuthenticatedDocumentosRoute: typeof AuthenticatedDocumentosRoute
   AuthenticatedEmpresasRoute: typeof AuthenticatedEmpresasRoute
   AuthenticatedFacturasRoute: typeof AuthenticatedFacturasRoute
@@ -320,6 +341,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAprendizajeRoute: AuthenticatedAprendizajeRoute,
   AuthenticatedBorradoresRoute: AuthenticatedBorradoresRoute,
   AuthenticatedCausarRoute: AuthenticatedCausarRoute,
+  AuthenticatedComprasExcelRoute: AuthenticatedComprasExcelRoute,
   AuthenticatedDocumentosRoute: AuthenticatedDocumentosRoute,
   AuthenticatedEmpresasRoute: AuthenticatedEmpresasRoute,
   AuthenticatedFacturasRoute: AuthenticatedFacturasRoute,

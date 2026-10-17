@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1792260943083,
+      "tag": "0000_excel_purchase_import",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792261023081,
+      "tag": "0001_excel_purchase_confirm_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792261045165,
+      "tag": "0002_excel_purchase_server_validation",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792261423231,
+      "tag": "0003_purchase_confirmation_integrity",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792261646261,
+      "tag": "0004_purchase_saved_voucher",
+      "breakpoints": true
+    }
+  ]
+}

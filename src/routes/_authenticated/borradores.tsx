@@ -76,6 +76,8 @@ const STICKY = [
 export const Route = createFileRoute("/_authenticated/borradores")({
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
       { title: "Borradores: revisión y aprobación masiva" },
       { name: "description", content: "Revisa las cuentas sugeridas de todas las facturas en borrador, apruébalas y cáusalas en lote sin abrir una por una." },
       { property: "og:title", content: "Borradores: revisión y aprobación masiva" },

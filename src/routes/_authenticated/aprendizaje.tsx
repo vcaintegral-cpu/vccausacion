@@ -26,6 +26,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 export const Route = createFileRoute("/_authenticated/aprendizaje")({
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
       { title: "Aprendizaje contable de la IA" },
       { name: "description", content: "Administra las reglas contables completas que la IA aprendió por proveedor, concepto, impuestos y retenciones." },
       { property: "og:title", content: "Aprendizaje contable" },

@@ -11,6 +11,8 @@ export const Route = createFileRoute("/reset-password")({
   ssr: false,
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
       { title: "Restablecer contraseña — Asistente de Causación" },
       {
         name: "description",

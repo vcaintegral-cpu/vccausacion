@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 const NAV = [
   { to: "/panel", label: "Panel", icon: LayoutDashboard },
   { to: "/causar", label: "Causar factura", icon: FileUp },
+  { to: "/compras-excel", label: "Compras desde Excel", icon: FileUp },
   { to: "/borradores", label: "Borradores", icon: ClipboardCheck },
   { to: "/facturas", label: "Historial", icon: ListChecks },
   { to: "/documentos", label: "Documentos", icon: FolderOpen },

@@ -14,6 +14,8 @@ export const Route = createFileRoute("/auth")({
   ssr: false,
   head: () => ({
     meta: [
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
       { title: "Ingresar — Asistente de Causación" },
       { name: "description", content: "Accede a tu cuenta para causar facturas de compra con inteligencia artificial." },
       { property: "og:title", content: "Ingresar — Asistente de Causación" },
