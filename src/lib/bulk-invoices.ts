@@ -660,9 +660,14 @@ export async function saveExtractedInvoice(params: {
     score,
     // 95% o más: automática. 80–94%: sugerida y marcada para revisión. Menos de 80%: revisión obligatoria.
     needsReview: score < 0.95 || unresolvedAccounts.length > 0,
-    reason: unresolvedAccounts.length > 0
-      ? `${reason}${reason ? " " : ""}${unresolvedAccounts.join(" ")}`
-      : reason,
+    reason: [
+      reason,
+      ...unresolvedAccounts,
+      // Alertas informativas (retención difiere del documento, etc.): no bloquean.
+      ...alertas,
+    ]
+      .filter(Boolean)
+      .join(" "),
     providerName: header.provider_name ?? null,
     providerNit: header.provider_nit ?? null,
     buyerName: header.buyer_name ?? null,
