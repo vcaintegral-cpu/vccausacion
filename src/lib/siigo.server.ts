@@ -669,7 +669,7 @@ export function buildSiigoPurchasePayload(params: {
         type: item.type,
         code: item.code,
         description: (item.description || `${item.type} ${item.code}`).slice(0, 500),
-        quantity: item.quantity > 0 ? item.quantity : 1,
+        quantity: item.quantity > 0 ? roundCOP(item.quantity) : 1,
         price: roundCOP(item.price),
       };
       if (item.discount && item.discount > 0) line["discount"] = roundCOP(item.discount);

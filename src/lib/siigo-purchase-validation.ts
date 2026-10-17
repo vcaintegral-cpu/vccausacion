@@ -1,5 +1,34 @@
 import { isValidExpenseAccount } from "./provider-rules";
-import { sumCents, toCents } from "./money";
+import { roundCOP, sumCents, toCents } from "./money";
+
+export type PurchaseTax = { id?: string | number; type?: string; name?: string; percentage?: number; active?: boolean };
+export function resolvePurchaseInc(taxes: PurchaseTax[], base: number, amount: number): string | number | null {
+  if (toCents(amount) === 0) return null;
+  const matches = taxes.filter(t => t.id != null && t.active !== false && /consum/i.test(`${t.type ?? ""} ${t.name ?? ""}`)
+    && Number(t.percentage) > 0 && toCents(base * Number(t.percentage) / 100) === toCents(amount));
+  return matches.length === 1 ? matches[0]?.id ?? null : null;
+}
+
+/** Forecast from the exact two-decimal payload, never from the invoice header. */
+export function purchasePayloadErrors(items: Array<{ quantity: number; price: number; discount?: number; tax_ids?: Array<string | number> }>, taxes: PurchaseTax[], expected: { subtotal: number; iva: number; impoconsumo: number }): string[] {
+  let subtotal = 0, iva = 0, inc = 0;
+  const errors: string[] = [];
+  for (const [index, item] of items.entries()) {
+    const base = roundCOP(roundCOP(item.quantity) * roundCOP(item.price) - roundCOP(item.discount));
+    subtotal += toCents(base);
+    for (const id of item.tax_ids ?? []) {
+      const tax = taxes.find(t => String(t.id) === String(id) && t.active !== false);
+      if (!tax) { errors.push(`Renglón ${index + 1}: el impuesto ${id} no está activo en Siigo.`); continue; }
+      const kind = `${tax.type ?? ""} ${tax.name ?? ""}`;
+      const amount = toCents(base * Number(tax.percentage ?? 0) / 100);
+      if (/consum/i.test(kind)) inc += amount;
+      else if (/iva/i.test(kind) && !/rete|withhold/i.test(kind)) iva += amount;
+    }
+  }
+  for (const [label, local, sent] of [["Subtotal", toCents(expected.subtotal), subtotal], ["IVA", toCents(expected.iva), iva], ["INC", toCents(expected.impoconsumo), inc]] as const)
+    if (local !== sent) errors.push(`Diferencia con la fuente: ${label}, origen ${local / 100}, Siigo calcularía ${sent / 100}. No se envió la factura.`);
+  return errors;
+}
 
 /** Same purchase safety gate for PDF and RECIBIDOS; origin never grants an exemption. */
 export function purchaseLineErrors(lines: Array<{ account_code?: string | null }>): string[] {
@@ -24,7 +53,8 @@ export function purchaseReadbackErrors(doc: PurchaseReadback, expected: {
   const inc = sumCents(taxes.filter(t => /consum/i.test(t.type ?? "")).map(t => t.value));
   const payable = doc.payments ? sumCents(doc.payments.map(p => p.value)) : null;
   const fields = [
-    ["Total", toCents(expected.total), doc.total === undefined ? null : toCents(doc.total)],
+    // Siigo purchase total is net of applied retentions; reconstruct the gross source total.
+    ["Total", toCents(expected.total), doc.total === undefined ? null : toCents(doc.total) + toCents(expected.returnedRetentions)],
     ["IVA", toCents(expected.iva), iva],
     ["INC", toCents(expected.impoconsumo), inc],
     ["Retenciones", toCents(expected.retentions), toCents(expected.returnedRetentions)],

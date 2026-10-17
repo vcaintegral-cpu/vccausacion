@@ -1,5 +1,8 @@
 # Compras desde Excel RECIBIDOS
-- [ ] Corregir omisión de INC y bloquear diferencias de centavos antes de crear compras en Siigo; revisar tarifas IVA globales y conservar bloqueo de reenvíos ya creados (archivo de errores de Maira del 17 de octubre).
+- [x] Corregir omisión de INC porcentual, validar importes desde la precisión enviada y eliminar tarifas IVA globales inferidas; reconstruir total bruto del readback con retenciones y conservar bloqueo de reenvíos. TELEVIGIA comprobada con sesión real: bloqueada antes del POST por IVA 4.968 frente a cálculo 49.679,68.
+- [ ] Resolver documentos ya creados con diferencias reales: requieren corrección/anulación en Siigo, nunca reenvío; NEURON requiere nueva consulta del documento existente para retirar la alerta antigua de total neto.
+- [ ] Completar representación Siigo de bases IVA especiales (TELEVIGIA/ATILA), INC por valor (COMCEL), ajustes documentales y centavos por cantidad (ZULUAGA): falta una representación admitida por Siigo que conserve exactamente la fuente; bloqueados sin cambiar importes.
+- [ ] Resolver rechazo documents_service de BUF-1277: requiere diagnóstico del documento/cuenta/consecutivo en Siigo; no repetir creación sin comprobación externa.
 - [x] Habilitar RECIBIDOS en el envío compartido a Siigo, con validaciones de fuente/cuentas/CUFE y verificación posterior de total/IVA/INC/retenciones/CxP; 42 pruebas aprobadas y prueba real ejecutada para AT-7796 y FE-2992, ambas bloqueadas antes de crear por diferencias.
 - [x] Resolver IVA de fuente sin identificador seleccionado y falso gasto inválido del ajuste documental; UNE guardada y reabierta con IVA 32.458,49 y total 218.310,00 sin esas alertas; 40 pruebas aprobadas.
 - [x] Corregir el congelamiento al abrir la factura UNE: índice compartido de cuentas y resultados acotados; pruebas contables y búsqueda/navegación con sesión real verificadas.
