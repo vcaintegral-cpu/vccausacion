@@ -64,6 +64,13 @@
       "when": 1792272161252,
       "tag": "0008_validate_complete_source_journal",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792277969294,
+      "tag": "0009_siigo_error_recovery",
+      "breakpoints": true
     }
   ]
 }

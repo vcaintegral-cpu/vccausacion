@@ -14,6 +14,9 @@ import { fetchCompanyPuc } from "@/lib/puc-data";
 import { cop, fecha } from "@/lib/format";
 import { ESTADO_LABEL, estadoUnico, type EstadoFactura } from "@/lib/invoice-duplicates";
 import { siigoSyncInvoice } from "@/lib/siigo.functions";
+import { siigoReleaseInterrupted } from "@/lib/siigo-recovery.functions";
+import { siigoErrorKind, type SiigoErrorKind } from "@/lib/siigo-purchase-validation";
+import { SIIGO_KIND_LABEL, SiigoErrorActions, useSiigoRecovery } from "@/components/siigo-error-actions";
 import { IVA_TREATMENT_LABEL, treatmentForAccount } from "@/lib/iva-treatment";
 import { PAYABLE_SOURCE_LABEL, isPayableCode, learnPayableAccount, type PayableSource } from "@/lib/payable-account";
 import { AccountCombobox } from "@/components/account-combobox";
@@ -99,7 +102,7 @@ export const Route = createFileRoute("/_authenticated/borradores")({
 const originLabel = (origin: string) => ({ REGLA: "Regla", APRENDIZAJE: "Historial NIT", HISTORIAL: "Historial NIT", HISTORIAL_DESCRIPCION: "Historial descripción", IA: "IA", NINGUNA: "Pendiente" }[origin] ?? origin);
 
 const COLS =
-  "source_override, siigo_trace, impoconsumo, discount, raw_extraction, id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id, paid_amount, payment_status, payment_enabled, payment_method, payment_type_id, payment_type_name, payment_form_manual";
+  "source_override, siigo_trace, impoconsumo, discount, raw_extraction, id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, siigo_error_kind, siigo_attempts, siigo_last_attempt_at, siigo_reconciled_at, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id, paid_amount, payment_status, payment_enabled, payment_method, payment_type_id, payment_type_name, payment_form_manual";
 
 /** Origen visible de la cuenta por pagar del borrador. */
 const origenPayable = (i: DraftInvoice) => {
@@ -154,6 +157,19 @@ function Borradores() {
   const [pagoFacturas, setPagoFacturas] = useState<FacturaPagable[]>([]);
   const [borrarOpen, setBorrarOpen] = useState(false);
   const [borrando, setBorrando] = useState(false);
+  const [tipoError, setTipoError] = useState<"" | SiigoErrorKind>("");
+  const [lote, setLote] = useState<null | "retry" | "check">(null);
+  const recovery = useSiigoRecovery();
+  const release = useServerFn(siigoReleaseInterrupted);
+  const refrescar = () => queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+
+  // Envíos que quedaron en "Sincronizando" al cerrar la app pasan a "Envío interrumpido".
+  useEffect(() => {
+    if (!companyId) return;
+    void release({ data: { companyId } })
+      .then((r) => { if (r.released) void queryClient.invalidateQueries({ queryKey: ["borradores", companyId] }); })
+      .catch(() => undefined);
+  }, [companyId, release, queryClient]);
 
   // Desplazamiento horizontal sincronizado: barra superior ↔ contenedor de la tabla.
   const tablaRef = useRef<HTMLDivElement | null>(null);
@@ -326,6 +342,10 @@ function Borradores() {
       invoices.filter((r) => {
         const e = estadoUnico(r);
         if (estado !== "todas" && e !== estado) return false;
+        if (estado === "error_siigo" && tipoError) {
+          const k = siigoErrorKind(r);
+          if (tipoError === "sin_crear" ? k !== "sin_crear" && k !== "interrumpido" : k !== tipoError) return false;
+        }
         const texto = `${r.prefix ?? ""}${r.number ?? ""} ${r.provider_name ?? ""} ${r.provider_nit ?? ""}`.toLowerCase();
         if (q && !texto.includes(q.toLowerCase())) return false;
         if (proveedor && r.provider_name !== proveedor) return false;
@@ -352,10 +372,33 @@ function Borradores() {
         }
         return true;
       }),
-    [invoices, accounts, estado, q, proveedor, desde, hasta, cuenta, origen],
+    [invoices, accounts, estado, tipoError, q, proveedor, desde, hasta, cuenta, origen],
   );
 
   const seleccionadas = rows.filter((r) => sel[r.id]);
+  const paraReintentar = seleccionadas.filter((r) => { const k = siigoErrorKind(r); return k === "sin_crear" || k === "interrumpido"; });
+  const paraConsultar = seleccionadas.filter((r) => siigoErrorKind(r) === "creado_diferencia");
+
+  async function enLote(tipo: "retry" | "check") {
+    const objetivo = tipo === "retry" ? paraReintentar : paraConsultar;
+    if (lote || busy || objetivo.length === 0) return;
+    setLote(tipo);
+    setAvance({ hechas: 0, total: objetivo.length });
+    const out: ResultadoFactura[] = [];
+    try {
+      for (const inv of objetivo) {
+        try { out.push(await (tipo === "retry" ? recovery.reintentar(inv) : recovery.consultar(inv))); }
+        catch (e) { out.push({ id: inv.id, etiqueta: etiquetaFactura(inv), ok: false, message: e instanceof Error ? e.message : "Error inesperado." }); }
+        finally { setAvance((p) => (p ? { ...p, hechas: p.hechas + 1 } : p)); }
+      }
+    } finally {
+      setLote(null);
+      setAvance(null);
+      setSel({});
+      setResultados(out);
+      await refrescar();
+    }
+  }
   const todasVisiblesMarcadas = rows.length > 0 && rows.every((r) => sel[r.id]);
 
   /** Conteo por etapa del flujo, sobre todas las facturas de la empresa. */
@@ -679,6 +722,31 @@ function Borradores() {
         </button>
       </div>
 
+      {estado === "error_siigo" && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3 text-xs">
+          {([["", "Todos los errores"], ["sin_crear", "Sin crear en Siigo"], ["creado_diferencia", "Creado con diferencia"]] as const).map(([v, l]) => (
+            <button key={v} type="button" onClick={() => { setTipoError(v); setSel({}); }}
+              className={`rounded-full px-2.5 py-1 font-medium ${tipoError === v ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"}`}>
+              {l} · {invoices.filter((r) => { const k = siigoErrorKind(r); return v === "" ? !!k : v === "sin_crear" ? k === "sin_crear" || k === "interrumpido" : k === v; }).length}
+            </button>
+          ))}
+          <div className="ml-auto flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => void enLote("retry")} disabled={!!lote || !!busy || paraReintentar.length === 0}>
+              {lote === "retry" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} Reintentar envío ({paraReintentar.length})
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => void enLote("check")} disabled={!!lote || !!busy || paraConsultar.length === 0}>
+              {lote === "check" ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} Consultar Siigo de nuevo ({paraConsultar.length})
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {lote && avance && (
+        <div className="rounded-lg border border-border bg-card p-3 text-xs">
+          <span className="font-medium">{lote === "retry" ? "Reintentando envío a Siigo" : "Consultando Siigo"}</span> · {avance.hechas} de {avance.total}
+        </div>
+      )}
+
       {busy && avance && (
         <div className="rounded-lg border border-border bg-card p-3">
           <div className="flex items-center justify-between text-xs">
@@ -889,6 +957,8 @@ function Borradores() {
                     {e === "error_siigo" && r.siigo_error && (
                       <div className="mt-0.5 max-w-[200px] truncate text-[11px] text-destructive" title={r.siigo_error}>{r.siigo_error}</div>
                     )}
+                    {siigoErrorKind(r) && <div className="mt-0.5 text-[11px] font-medium text-muted-foreground">{SIIGO_KIND_LABEL[siigoErrorKind(r)!]}</div>}
+                    {e === "sincronizada" && r.siigo_reconciled_at && <div className="mt-0.5 text-[11px] text-muted-foreground">Conciliada manualmente</div>}
                     {r.siigo_number && <div className="mt-0.5 text-[11px] text-muted-foreground">Siigo N° {r.siigo_number}</div>}
                   </td>
                   <td className="px-3 py-2">
@@ -911,6 +981,11 @@ function Borradores() {
                     <Button variant="ghost" size="icon" title="Ver trazabilidad" onClick={() => setTraza(r)}>
                       <History className="size-4" />
                     </Button>
+                    {siigoErrorKind(r) && (
+                      <div className="mt-1">
+                        <SiigoErrorActions invoice={r} onDone={refrescar} />
+                      </div>
+                    )}
                   </td>
                 </tr>
               );
