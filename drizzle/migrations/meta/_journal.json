@@ -29,6 +29,13 @@
       "when": 1792261423231,
       "tag": "0003_purchase_confirmation_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792261646261,
+      "tag": "0004_purchase_saved_voucher",
+      "breakpoints": true
     }
   ]
 }
