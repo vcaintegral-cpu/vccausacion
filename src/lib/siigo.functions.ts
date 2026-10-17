@@ -1,5 +1,5 @@
 import { effectiveSource, validateStoredJournal } from "@/lib/source-values";
-import { adaptPurchaseItems, retefuenteRows, purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, resolvePurchaseInc } from "@/lib/siigo-purchase-validation";
+import { adaptPurchaseItems, capitalizedIvaRow, retentionRowsExcluding, purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, resolvePurchaseInc } from "@/lib/siigo-purchase-validation";
 import { toCents } from "@/lib/money";
 import { esCeroCOP, roundCOP } from "@/lib/money";
 import { createServerFn } from "@tanstack/react-start";
@@ -2222,7 +2222,6 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             // Diagnóstico automático: variantes de prueba que se eliminan si Siigo las crea.
             const { siigoDelete } = await import("./siigo.server");
             const totalCap = ivaCapitalizado;
-            const sumaRetDoc = r2(retencionesEnDocumento.reduce((a, x) => a + (valorSiigoPorTaxId.get(String(x.id)) ?? x.value), 0));
             const idsRet = new Set(retencionesSiigo.map((x) => String(x.id)));
             const variantes: Array<{ nombre: string; causa: string; payload: unknown }> = [];
             if (totalCap > 0) {
@@ -2238,7 +2237,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
               variantes.push({
                 nombre: "Sin la retención",
                 causa: `Siigo no acepta la retención ${retencionesSiigo.map((x) => `${x.tipo} (ID ${x.id})`).join(", ")} en esta compra.`,
-                payload: construirPayload(totalDocumentoSiigo, r2(intentoValor + sumaRetencionesSiigo - sumaRetDoc + sumaRetDoc), true, { items: itemsSinRet, sinRetenciones: true }),
+                payload: construirPayload(totalDocumentoSiigo, totalDocumentoSiigo, true, { items: itemsSinRet, sinRetenciones: true }),
               });
             }
             const diagnostico: Array<Record<string, unknown>> = [{ variante: "Envío completo", payload: payloadIntento, respuesta: raw }];

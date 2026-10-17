@@ -292,6 +292,10 @@ export async function siigoGet<T>(path: string): Promise<T> {
   return siigoRequest<T>("GET", path);
 }
 
+export async function siigoDelete<T>(path: string): Promise<T> {
+  return siigoRequest<T>("DELETE", path);
+}
+
 export async function siigoPost<T>(path: string, payload: unknown): Promise<T> {
   return siigoRequest<T>("POST", path, payload);
 }
