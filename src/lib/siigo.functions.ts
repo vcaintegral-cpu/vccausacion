@@ -1198,7 +1198,10 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .eq("iva_treatment", "capitalizado")
         .limit(1)
         .maybeSingle();
-      const ivaCapitalizado = reglaCapitalizado && Number(inv.iva ?? 0) > 0 ? roundCOP(inv.iva) : 0;
+      // Solo se capitaliza cuando la compra es de activo (15-17); si el usuario la pasó a gasto,
+      // el IVA viaja como impuesto normal del renglón.
+      const esCompraDeActivo = (invoiceLines ?? []).length > 0 && (invoiceLines ?? []).every((l) => /^1[5-7]/.test(String(l.account_code ?? "")));
+      const ivaCapitalizado = reglaCapitalizado && esCompraDeActivo && Number(inv.iva ?? 0) > 0 ? roundCOP(inv.iva) : 0;
       const renglonesSinRetencion = new Set<number>();
 
       type Renglon = {
@@ -1304,7 +1307,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       items.splice(0, items.length, ...adaptacion.items);
       if (ivaCapitalizado) {
         const ref = items.find((it) => /^1[5-7]/.test(it.account_code)) ?? items[0]!;
-        const cuentaActivo = cuentaDelRenglon(String(reglaCapitalizado?.iva_account ?? "") || ref.account_code);
+        const cuentaActivo = cuentaDelRenglon(ref.account_code);
         items.push(capitalizedIvaRow(ref, cuentaActivo, ivaCapitalizado));
         renglonesSinRetencion.add(items.length - 1);
         adaptacion.notes.push(`IVA capitalizado ${ivaCapitalizado} enviado como renglón sin impuestos en ${cuentaActivo}.`);
