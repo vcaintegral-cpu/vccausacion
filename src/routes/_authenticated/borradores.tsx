@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, History, Loader2, Pencil, RotateCcw, Send, Stamp, Trash2, Undo2, Wallet } from "lucide-react";
+import { CheckCircle2, History, Loader2, Pencil, RefreshCw, RotateCcw, Send, Stamp, Trash2, Undo2, Wallet } from "lucide-react";
 
 
 import { supabase } from "@/integrations/supabase/client";
@@ -41,6 +41,8 @@ import { Switch } from "@/components/ui/switch";
 import { PaymentReceiptDialog, type FacturaPagable } from "@/components/payment-receipt-dialog";
 import { ESTADO_PAGO_LABEL, saldoPendiente, type EstadoPago } from "@/lib/payments";
 import { roundCOP } from "@/lib/money";
+import { recalcularCuentasBorrador } from "@/lib/bulk-invoices";
+import { loadDeps } from "@/lib/bulk-runner";
 
 /** Muestra código + nombre de todas las cuentas de una categoría del asiento. */
 function Cuentas({ items, nombres }: { items: Cuenta[] | undefined; nombres: Map<string, string> }) {
