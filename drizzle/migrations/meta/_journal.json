@@ -71,6 +71,13 @@
       "when": 1792277969294,
       "tag": "0009_siigo_error_recovery",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792279967034,
+      "tag": "0010_siigo_pending_settlements",
+      "breakpoints": true
     }
   ]
 }
