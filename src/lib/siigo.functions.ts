@@ -722,7 +722,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
       .select(
-        "raw_extraction, source_override, discount, id, company_id, cufe, prefix, number, issue_date, due_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, buyer_nit, buyer_name, notes, total, iva, impoconsumo, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, payment_method, payment_type_id, payment_type_name, payable_account, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at, voucher_number, import_source",
+        "raw_extraction, source_override, discount, id, company_id, cufe, prefix, number, issue_date, due_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, buyer_nit, buyer_name, notes, total, iva, impoconsumo, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, payment_method, payment_type_id, payment_type_name, payable_account, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at, voucher_number, import_source, siigo_attempts, siigo_error_kind",
       )
       .eq("id", data.invoiceId)
       .single();
@@ -746,6 +746,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .update({
           siigo_status: "error",
           siigo_error: `RECHAZADA — EMPRESA INCORRECTA. ${mensaje}`,
+          siigo_error_kind: "sin_crear",
         })
         .eq("id", inv.id);
       throw new Error(mensaje);
@@ -810,11 +811,16 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const sinNumero = "No se puede causar la factura porque no tiene número de factura del proveedor.";
       await supabase
         .from("invoices")
-        .update({ siigo_status: "error", siigo_error: sinNumero })
+        .update({ siigo_status: "error", siigo_error: sinNumero, siigo_error_kind: "sin_crear" })
         .eq("id", inv.id);
       throw new Error(sinNumero);
     }
 
+
+    // Envío interrumpido: antes de reintentar hay que confirmar en Siigo que no quedó creado.
+    if (inv.siigo_error_kind === "interrumpido") {
+      throw new Error("Envío interrumpido: consulte Siigo antes de reintentar para no duplicar el documento.");
+    }
 
     // Protección contra doble clic / envíos simultáneos.
     if (inv.siigo_status === "sincronizando") {
@@ -928,7 +934,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           "\nAcción: seleccione una cuenta auxiliar activa en la pantalla de causación.";
         await supabase
           .from("invoices")
-          .update({ siigo_status: "error", siigo_error: mensajeCuentas })
+          .update({ siigo_status: "error", siigo_error: mensajeCuentas, siigo_error_kind: "sin_crear" })
           .eq("id", inv.id);
         throw new Error(mensajeCuentas);
       }
@@ -939,6 +945,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       .update({
         siigo_status: "sincronizando",
         siigo_error: null,
+        siigo_error_kind: null,
+        siigo_attempts: Number(inv.siigo_attempts ?? 0) + 1,
         siigo_last_attempt_at: new Date().toISOString(),
       })
       .eq("id", data.invoiceId)
@@ -2013,6 +2021,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       siigoAttemptTrace = {
         ...siigoAttemptTrace,
         resultado: "listo_para_enviar",
+        siigo_request: payload,
         impuesto_siigo: retencionesTrace.map((r) => ({
           id: r.siigo_id,
           nombre: r.nombre,
@@ -2191,7 +2200,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         throw new Error("Siigo respondió sin el ID de la factura de compra creada.");
       }
       // Persist remote identity BEFORE verification: a failed read-back must never duplicate it.
-      const identity = await supabase.from("invoices").update({ siigo_id: String(res.id), siigo_number: String(res.name ?? res.number ?? res.id), siigo_status: "error", siigo_error: "Diferencia Siigo: documento creado, pendiente de verificar." }).eq("id", inv.id);
+      const identity = await supabase.from("invoices").update({ siigo_id: String(res.id), siigo_number: String(res.name ?? res.number ?? res.id), siigo_status: "error", siigo_error_kind: "creado_diferencia", siigo_error: "Diferencia Siigo: documento creado, pendiente de verificar." }).eq("id", inv.id);
       if (identity.error) throw new Error("Siigo creó el documento, pero no se pudo guardar su identificación. No reenvíe la factura.");
       verificacion = await siigoGet<unknown>(`/v1/purchases/${res.id}`);
       const doc = verificacion as {
@@ -2362,7 +2371,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       if (tercero && !yaLegible)
         message = `El tercero fue ${tercero.action} correctamente en Siigo, pero la factura no pudo causarse: ${message}`;
       console.error("[siigo][causacion] error:", message);
-      const existingTrace = await supabase.from("invoices").select("siigo_trace").eq("id", inv.id).maybeSingle();
+      const existingTrace = await supabase.from("invoices").select("siigo_trace, siigo_id, siigo_number").eq("id", inv.id).maybeSingle();
+      const creadoEnSiigo = !!(existingTrace.data?.siigo_id || existingTrace.data?.siigo_number);
       const failedTrace = {
         ...(existingTrace.data?.siigo_trace as object ?? {}),
         ...siigoAttemptTrace,
@@ -2393,6 +2403,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .update({
           siigo_status: "error",
           siigo_error: message,
+          siigo_error_kind: creadoEnSiigo ? "creado_diferencia" : "sin_crear",
           siigo_synced_by: context.userId,
           status: "causada",
         })
