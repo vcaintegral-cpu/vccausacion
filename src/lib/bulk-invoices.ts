@@ -581,7 +581,7 @@ export async function recalcularCuentasBorrador(
   if (!data || !Array.isArray(data.lines))
     return { ok: false, message: "Esta factura no conserva la extracción original; no se puede recalcular." };
 
-  const source = sourceFromRaw(raw);
+  const source = (inv.source_override as ReturnType<typeof sourceFromRaw>) ?? sourceFromRaw(raw);
   if (source) data = { ...data, subtotal: source.subtotal / 100, iva: source.iva / 100, impoconsumo: source.impoconsumo / 100, total: source.total / 100, discount: source.discount / 100, surcharge: source.surcharge / 100, lines: data.lines.map((l, i) => ({ ...l, subtotal: (source.lines[i]?.subtotal ?? 0) / 100, total: (source.lines[i]?.subtotal ?? 0) / 100, discount: source.source === "excel" ? 0 : l.discount })) };
   const { lines, ...header } = data;
   const acc = await computeDraftAccounting({
@@ -613,7 +613,7 @@ export async function recalcularCuentasBorrador(
       reteiva: roundCOP(acc.retenciones.reteiva),
       reteica: roundCOP(acc.retenciones.reteica),
       ...(source ? { subtotal: source.subtotal / 100, iva: source.iva / 100, impoconsumo: source.impoconsumo / 100, total: source.total / 100, discount: source.discount / 100 } : {}),
-      raw_extraction: { ...raw, ia: data, ...(source ? { valores_origen: source } : {}), account_decisions: acc.decisions } as never,
+      raw_extraction: { ...raw, account_decisions: acc.decisions } as never,
       ...payablePatch,
       updated_at: new Date().toISOString(),
     } as never)

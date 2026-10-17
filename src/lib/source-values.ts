@@ -49,8 +49,8 @@ export function alignJournalToSource(journal: JournalLine[], s: SourceValues, re
   if (diff !== 0 && Math.abs(diff) <= 100) out.push({ account_code: "42958101", account_name: "Ajuste por redondeo del documento", debit: diff < 0 ? -diff / 100 : 0, credit: diff > 0 ? diff / 100 : 0 });
   return out;
 }
-export function validateStoredJournal(inv: { raw_extraction?: unknown; subtotal?: unknown; iva?: unknown; impoconsumo?: unknown; total?: unknown; discount?: unknown; retefuente?: unknown; reteiva?: unknown; reteica?: unknown }, journal: JournalLine[]): string[] {
-  const source = sourceFromRaw(inv.raw_extraction);
+export function validateStoredJournal(inv: { source_override?: SourceValues | null; raw_extraction?: unknown; subtotal?: unknown; iva?: unknown; impoconsumo?: unknown; total?: unknown; discount?: unknown; retefuente?: unknown; reteiva?: unknown; reteica?: unknown }, journal: JournalLine[]): string[] {
+  const source = inv.source_override ?? sourceFromRaw(inv.raw_extraction);
   const errors = source ? [...sourceErrors(source), ...compareSource(source, inv)] : [];
   if (!journal.length) errors.push("No hay asiento aprobado para exportar.");
   const debit = sumCents(journal.map(l => l.debit)), credit = sumCents(journal.map(l => l.credit));

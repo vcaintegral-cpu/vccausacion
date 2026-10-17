@@ -1,4 +1,6 @@
 import { sourceFromRaw, alignJournalToSource, sourceErrors } from "@/lib/source-values";
+import { SourceValuesCorrection } from "@/components/source-values-correction";
+import type { SourceValues } from "@/lib/source-values";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -98,6 +100,7 @@ export const Route = createFileRoute("/_authenticated/revisar")({
 });
 
 type InvRow = {
+  source_override?: SourceValues | null;
   raw_extraction?: unknown;
   subtotal: number;
   total: number;
@@ -287,7 +290,7 @@ function Revisar() {
     };
   }, [header?.provider_nit, header?.company_id, centroTocado]);
 
-  const source = sourceFromRaw(header?.raw_extraction);
+  const source = header?.source_override ?? sourceFromRaw(header?.raw_extraction);
   const base = useMemo(
     () =>
       roundCOP(
@@ -875,6 +878,7 @@ function Revisar() {
       </div>
 
       <div className="grid gap-4 rounded-lg border border-border bg-card p-5 sm:grid-cols-2 xl:grid-cols-4">
+        {source && header.status === "borrador" && <SourceValuesCorrection source={source} invoiceId={header.id} companyId={header.company_id} />}
         {usaCentros && (
           <div className="space-y-1.5">
             <Label className="text-xs">Centro de costo</Label>

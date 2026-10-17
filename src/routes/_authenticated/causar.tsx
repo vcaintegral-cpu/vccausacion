@@ -1,4 +1,5 @@
 import { captureSource, sourceFromRaw, sourceErrors, alignJournalToSource, type SourceValues } from "@/lib/source-values";
+import { SourceValuesCorrection } from "@/components/source-values-correction";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -278,7 +279,7 @@ function Causar() {
     if (!borrador?.invoice || !config) return;
     if (editingId === borrador.invoice.id) return;
     const inv = borrador.invoice as Record<string, any>;
-    setSource(sourceFromRaw(inv["raw_extraction"]));
+    setSource((inv["source_override"] as SourceValues | null) ?? sourceFromRaw(inv["raw_extraction"]));
     setEditingId(inv['id'] as string);
     setExistingFile({ path: (inv['file_path'] as string) ?? null, name: (inv['file_name'] as string) ?? null });
     // Cuenta por pagar corregida manualmente antes: se respeta y no se recalcula.
@@ -972,7 +973,7 @@ function Causar() {
           reteica,
           total,
           status: "borrador",
-          ...(source ? { raw_extraction: { ...(borrador?.invoice?.raw_extraction as object ?? {}), valores_origen: source, ia: { ...header, lines } } as never } : {}),
+          ...(source && !editingId ? { raw_extraction: { valores_origen: source, ia: { ...header, lines } } as never } : {}),
           dian_status: header.cufe ? "con CUFE" : "sin CUFE",
           // Cuenta por pagar: se determina por NIT + histórico, no por la descripción.
           ...(payable
@@ -1195,6 +1196,7 @@ function Causar() {
   return (
     <div className="space-y-6">
       {sourceIssues.map(issue => <p key={issue} className="text-sm text-destructive">{source?.source === "pdf" ? "Revisar lectura del PDF. " : ""}{issue}</p>)}
+      {source && editingId && companyId && <SourceValuesCorrection source={source} invoiceId={editingId} companyId={companyId} />}
       <div>
         <h1 className="text-xl font-semibold">{editingId ? "Editar borrador" : "Causar factura"}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
