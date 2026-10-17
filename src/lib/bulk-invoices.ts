@@ -277,7 +277,7 @@ export async function saveExtractedInvoice(params: {
   companyId: string;
   config: BulkConfig;
   knowledge?: CompanyKnowledge | undefined;
-  storagePath?: string | null;
+  storagePath?: string | null | undefined;
   readMode: "texto" | "imagen";
   texto?: string;
   /** Trazabilidad adicional para raw_extraction (por ejemplo la fila del Excel). */
