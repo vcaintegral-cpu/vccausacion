@@ -280,6 +280,337 @@ export async function processInvoiceFile(params: {
  * entrega sus datos en la misma estructura ExtractedInvoice y pasa por aquí,
  * con exactamente los mismos parámetros, reglas y resultados que el PDF.
  */
+type JournalLineOut = ReturnType<typeof buildJournal>[number];
+
+export type DraftAccounting = {
+  lines: Line[];
+  journal: JournalLineOut[];
+  payable: { code: string; name: string | null; source: string; confidence: number };
+  retenciones: {
+    retefuente: number;
+    reteiva: number;
+    reteica: number;
+    autorretencion: number;
+    detalle: unknown[];
+  };
+  baseGravable: number;
+  ivaTotal: number;
+  centroFactura: string | null;
+  costCentersEnabled: boolean;
+  score: number;
+  reason: string;
+  unresolvedAccounts: string[];
+  alertas: string[];
+};
+
+/**
+ * Núcleo contable compartido: toma la extracción (de la IA o del adaptador
+ * Excel) y produce las líneas con cuenta, el comprobante operativo, las
+ * retenciones, la CxP y las alertas. Lo usan la causación inicial
+ * (saveExtractedInvoice) y el botón "Recalcular cuentas" de Borradores, de
+ * modo que ambos aplican EXACTAMENTE las mismas reglas.
+ */
+export async function computeDraftAccounting(params: {
+  companyId: string;
+  config: BulkConfig;
+  header: Omit<ExtractedInvoice, "lines">;
+  extracted: ExtractedInvoice["lines"];
+  knowledge?: CompanyKnowledge | undefined;
+}): Promise<DraftAccounting> {
+  const { companyId, config, header, extracted } = params;
+
+  let provider = null;
+  if (header.provider_nit) {
+    const { data: p } = await supabase
+      .from("providers").select("*").eq("company_id", companyId).eq("nit", header.provider_nit).maybeSingle();
+    provider = p;
+  }
+
+  const conCatalogo: Line[] = extracted.map((l) => {
+    const base: Line = {
+      description: l.description ?? "",
+      quantity: Number(l.quantity || 0),
+      unit_value: Number(l.unit_value || 0),
+      discount: Number(l.discount || 0),
+      iva: Number(l.iva || 0),
+      retention: Number(l.retention || 0),
+      impoconsumo: Number(l.impoconsumo || 0),
+      total: Number(l.total || 0),
+      account_code: "",
+      account_name: "",
+      item_type: "gasto",
+      code: l.code ?? null,
+    } as Line;
+    const prod =
+      config.products.find((p) => base.code && norm(p.code) === norm(String(base.code))) ??
+      config.products.find((p) => norm(p.name) === norm(base.description));
+    return prod ? { ...base, item_type: prod.kind ?? "gasto" } : base;
+  });
+
+  // P1/P2: reglas por proveedor (NIT + palabra clave, luego "(todas)"). Una cuenta
+  // fuera de los grupos de gasto válidos se descarta y la línea sigue al motor.
+  const providerRules = await fetchProviderRulesCached(companyId);
+  const conReglaProveedor = applyProviderRuleToLines(conCatalogo, providerRules, header.provider_nit);
+  const reglaProveedor = headerRule(providerRules, header.provider_nit) ?? conReglaProveedor.rule;
+
+  // Mismo motor inteligente que la causación individual.
+  // Conocimiento base (reglas) + histórico resumido del proveedor de ESTA factura.
+  const base = params.knowledge ?? config.knowledge ?? (await fetchCompanyKnowledge(companyId)) ?? emptyKnowledge();
+  const conocimiento = await knowledgeForProvider(companyId, header.provider_nit, base);
+  const { lines, decisions } = applyEngineToLines(conReglaProveedor.lines, {
+    providerNit: header.provider_nit,
+    knowledge: conocimiento,
+    products: config.products,
+    categories: config.categories,
+    rules: config.rules,
+    puc: config.accounts,
+    provider,
+  });
+  // Nivel de confianza del lote: manda la decisión más débil de la factura.
+  const tomadas = Object.values(decisions);
+  const peor = tomadas.sort((a, b) => a.score - b.score)[0];
+  const score = tomadas.length === 0 ? 1 : (peor?.score ?? 0);
+  const reason = tomadas.length === 0 ? "Cuentas tomadas del catálogo o del borrador." : (peor?.reason ?? "");
+  const baseGravable = roundCOP(
+    lines.reduce(
+      (s, l) => s + roundCOP(Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
+      0,
+    ),
+  );
+  const ivaLineas = roundCOP(lines.reduce((s, l) => s + roundCOP(l.iva), 0));
+  const ivaTotal = ivaLineas > 0 ? ivaLineas : roundCOP(header.iva);
+  // Las retenciones salen ÚNICAMENTE de lo retenido en ESTA factura y se
+  // resuelven desde cero por tipo (retefuente / reteiva / reteica). Una factura
+  // sin retención no genera líneas 2365 / 2367 / 2368 ni valida esas cuentas.
+  const retencionLineas = roundCOP(lines.reduce((s, l) => s + roundCOP(Number(l.retention || 0)), 0));
+  const reportado = retencionesReportadas({
+    header,
+    lineRetention: retencionLineas,
+    baseGravable,
+    ivaTotal,
+    taxes: config.taxes,
+  });
+  const resueltas = resolverRetenciones({
+    reportado,
+    baseGravable,
+    ivaTotal,
+    taxes: config.taxes,
+    puc: config.accounts,
+  });
+  let { retenciones } = resueltas;
+  const erroresRetencion = [...resueltas.errores];
+  const alertas: string[] = [];
+  // Regla del proveedor: la retención se calcula con SU cuenta, tarifa y base
+  // (Subtotal o AIU). Si difiere de lo retenido en el documento, se alerta sin bloquear.
+  const retRegla = retencionDesdeRegla(reglaProveedor, lines);
+  if (retRegla) {
+    retenciones = {
+      retefuente: retRegla.amount,
+      reteiva: 0,
+      reteica: 0,
+      autorretencion: 0,
+      detalle: [
+        {
+          kind: "retefuente",
+          name: retRegla.name,
+          rate: retRegla.rate,
+          base: retRegla.base,
+          amount: retRegla.amount,
+          account_code: retRegla.account_code,
+        },
+      ],
+    };
+    const delDocumento = roundCOP(reportado.retefuente);
+    if (delDocumento > 0 && Math.abs(delDocumento - retRegla.amount) >= 0.005) {
+      alertas.push(
+        `Retención difiere del documento: calculada $${retRegla.amount.toLocaleString("es-CO")}, documento $${delDocumento.toLocaleString("es-CO")}.`,
+      );
+    }
+  }
+  // La empresa define si maneja centros de costo; si no, nunca se guarda ninguno.
+  const costPolicy = await companyUsesCostCenters(companyId);
+  const centroFactura = costCenterForCompany(costPolicy, header.cost_center);
+  // Contrapartida: primero la cuenta CxP de la regla del proveedor; si no hay,
+  // el histórico de esta empresa con este proveedor.
+  const payableHistorico = applyPucToPayable(await fetchPayableAccount(companyId, header.provider_nit), config.accounts);
+  const payable =
+    reglaProveedor?.payable_account && isPayableCode(reglaProveedor.payable_account)
+      ? { code: reglaProveedor.payable_account.trim(), name: null, source: "regla por proveedor", confidence: 1 }
+      : payableHistorico;
+  // Tratamiento contable del IVA: primero la regla del proveedor (descontable /
+  // asumido / capitalizado / N-A); sin regla, la decisión por histórico de siempre.
+  const ivaDetalleRegla = reglaProveedor ? ivaDetalleDesdeRegla(reglaProveedor, lines, ivaTotal) : null;
+  const ivaDecision =
+    !ivaDetalleRegla && ivaTotal > 0
+      ? resolveIvaTreatment({
+          config: await fetchIvaConfig(companyId),
+          evidence: await fetchIvaEvidence(companyId, header.provider_nit),
+          providerNit: header.provider_nit,
+          expenseAccounts: [...new Set(lines.map((l) => String(l.account_code ?? "").trim()).filter(Boolean))],
+          concepts: lines.map((l) => l.description ?? ""),
+          puc: config.accounts,
+          taxAccount: null,
+        })
+      : null;
+  // El IVA que no es descontable se registra SIEMPRE como una línea independiente por el total.
+  const ivaDetalle =
+    ivaDetalleRegla ??
+    (ivaDecision && ivaDecision.treatment !== "descontable"
+      ? applyIvaTreatment([{ account_code: "", account_name: "IVA", amount: ivaTotal }], ivaDecision)
+      : undefined);
+  const journal = buildJournal({
+    lines,
+    iva: ivaTotal,
+    impoconsumo: Number(header.impoconsumo || 0),
+    retenciones,
+    costCenter: centroFactura,
+    ...(ivaDetalle !== undefined && ivaDetalle !== null ? { ivaDetalle } : {}),
+    payableAccount: payable,
+    // El impoconsumo va a la cuenta de la regla del proveedor o a la auxiliar
+    // configurada, nunca a una cuenta mayor.
+    impoconsumoAccount: reglaProveedor?.inc_account
+      ? { code: reglaProveedor.inc_account, name: "Impuesto al consumo" }
+      : resolveImpoconsumoAccount(config.taxes as never, config.accounts),
+  });
+  // Cuadre: diferencias de $1 o menos (centavos del XML o recargo global) van a
+  // 42958101 Ajuste al peso; una diferencia mayor deja el borrador "No cuadra".
+  const cuadre = totalesJournal(journal);
+  const ajuste = ajusteAlPeso(cuadre.debito, cuadre.credito);
+  if (ajuste.linea) journal.push({ ...ajuste.linea, cost_center: centroFactura ?? null });
+  if (reglaProveedor) void marcarUsoRegla(reglaProveedor.id);
+  const unresolvedAccounts: string[] = [];
+  unresolvedAccounts.push(...erroresRetencion);
+  if (ajuste.descuadre)
+    unresolvedAccounts.push(
+      `No cuadra: la diferencia entre débitos y créditos es $${Math.abs(ajuste.descuadre).toLocaleString("es-CO")}, mayor a $1.`,
+    );
+  const operationalJournal = journal.map((line) => {
+    // Renglones sin cuenta (por ejemplo el IVA aún sin impuesto seleccionado) se guardan
+    // tal cual: el borrador exige elegir el impuesto exacto antes de causar.
+    if (!line.account_code) return line;
+    const resolution = resolveOperationalAccount(config.accounts, line.account_code);
+    if (!resolution.valid || !resolution.operationalAccount) {
+      // Igual que en la causación individual: una cuenta padre o ambigua no impide
+      // guardar el borrador. Se conserva para que el usuario seleccione el auxiliar
+      // exacto durante la revisión; únicamente la aprobación/exportación la bloquea.
+      unresolvedAccounts.push(
+        resolution.message ?? `La cuenta ${line.account_code} requiere revisión antes de aprobar.`,
+      );
+      return line;
+    }
+    return {
+      ...line,
+      account_code: resolution.operationalAccount,
+      account_name: resolution.operational?.name ?? line.account_name,
+    };
+  });
+
+  return {
+    lines,
+    journal: operationalJournal,
+    payable,
+    retenciones: retenciones as DraftAccounting["retenciones"],
+    baseGravable,
+    ivaTotal,
+    centroFactura,
+    costCentersEnabled: costCentersEnabled(costPolicy),
+    score,
+    reason,
+    unresolvedAccounts,
+    alertas,
+  };
+}
+
+/**
+ * Recalcula las cuentas de un borrador existente con el motor actual (reglas
+ * por proveedor, aprendizaje, histórico) sin borrar sus datos: conserva la
+ * extracción original (raw_extraction.ia) y reemplaza solo el comprobante
+ * contable y la CxP sugerida. Devuelve el motivo/alertas del nuevo cálculo.
+ */
+export async function recalcularCuentasBorrador(
+  invoiceId: string,
+  config: BulkConfig,
+): Promise<{ ok: boolean; message: string }> {
+  const { data: inv, error } = await supabase
+    .from("invoices")
+    .select("id, company_id, status, raw_extraction, payable_manual")
+    .eq("id", invoiceId)
+    .maybeSingle();
+  if (error) return { ok: false, message: error.message };
+  if (!inv) return { ok: false, message: "La factura no existe." };
+  if (inv.status !== "borrador" && inv.status !== "error")
+    return { ok: false, message: "Solo se pueden recalcular facturas en borrador." };
+  const raw = (inv.raw_extraction ?? null) as { ia?: ExtractedInvoice } | null;
+  const data = raw?.ia;
+  if (!data || !Array.isArray(data.lines))
+    return { ok: false, message: "Esta factura no conserva la extracción original; no se puede recalcular." };
+
+  const { lines, ...header } = data;
+  const acc = await computeDraftAccounting({
+    companyId: inv.company_id as string,
+    config,
+    header,
+    extracted: lines,
+  });
+
+  // La CxP manual del usuario manda: el recálculo no la pisa.
+  const payablePatch = inv.payable_manual
+    ? {}
+    : {
+        payable_account: acc.payable.code,
+        payable_suggested: acc.payable.code,
+        payable_source: acc.payable.source,
+        payable_confidence: acc.payable.confidence,
+        payable_updated_at: new Date().toISOString(),
+      };
+
+  const { error: upErr } = await supabase
+    .from("invoices")
+    .update({
+      cost_center: acc.centroFactura,
+      retefuente: roundCOP(acc.retenciones.retefuente),
+      reteiva: roundCOP(acc.retenciones.reteiva),
+      reteica: roundCOP(acc.retenciones.reteica),
+      ...payablePatch,
+      updated_at: new Date().toISOString(),
+    } as never)
+    .eq("id", invoiceId);
+  if (upErr) return { ok: false, message: upErr.message };
+
+  await supabase.from("journal_lines").delete().eq("invoice_id", invoiceId);
+  const { error: insErr } = await supabase.from("journal_lines").insert(
+    acc.journal.map((j, i) => ({
+      invoice_id: invoiceId,
+      company_id: inv.company_id as string,
+      account_code: j.account_code,
+      account_name: j.account_name,
+      debit: roundCOP(j.debit),
+      credit: roundCOP(j.credit),
+      cost_center: acc.costCentersEnabled ? (j.cost_center ?? null) : null,
+      position: i,
+    })),
+  );
+  if (insErr) return { ok: false, message: insErr.message };
+
+  // Las cuentas sugeridas por línea también se refrescan (sin tocar valores).
+  const { data: lineasDb } = await supabase
+    .from("invoice_lines")
+    .select("id, position")
+    .eq("invoice_id", invoiceId)
+    .order("position");
+  for (const l of lineasDb ?? []) {
+    const nueva = acc.lines[l.position as number];
+    if (!nueva?.account_code) continue;
+    await supabase
+      .from("invoice_lines")
+      .update({ account_code: nueva.account_code, account_name: nueva.account_name ?? null } as never)
+      .eq("id", l.id);
+  }
+
+  const motivo = [acc.reason, ...acc.unresolvedAccounts, ...acc.alertas].filter(Boolean).join(" ");
+  return { ok: true, message: motivo || "Cuentas recalculadas." };
+}
+
 export async function saveExtractedInvoice(params: {
   data: ExtractedInvoice;
   fileName: string;
