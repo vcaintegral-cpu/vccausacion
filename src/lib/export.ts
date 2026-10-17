@@ -2,10 +2,10 @@ import * as XLSX from "xlsx";
 import type { JournalLine } from "./accounting";
 import { roundCOP } from "@/lib/money";
 import { toCents, sumCents } from "@/lib/money";
-import { validateStoredJournal, sourceFromRaw } from "@/lib/source-values";
+import { validateStoredJournal, sourceFromRaw, effectiveSource } from "@/lib/source-values";
 
 export type ExportInvoice = {
-  source_override?: import("@/lib/source-values").SourceValues | null;
+  source_override?: unknown;
   raw_extraction?: unknown;
   subtotal?: number;
   iva?: number;
@@ -101,7 +101,7 @@ export function validateExportRows(journal: JournalLine[], rows: Row[]) {
 export function exportReconciliation(invoices: (ExportInvoice & { id: string; siigo_trace?: unknown })[], journals: (JournalLine & { invoice_id: string })[]) {
   const rows: Row[] = [];
   for (const inv of invoices) {
-    const source = inv.source_override ?? sourceFromRaw(inv.raw_extraction);
+    const source = effectiveSource(inv.raw_extraction, inv.source_override);
     const journal = journals.filter(j => j.invoice_id === inv.id);
     const trace = inv.siigo_trace as { valores?: Record<string, number>; siigo_verificacion?: { total?: number }; siigo_request?: unknown } | null;
     for (const field of ["subtotal", "iva", "impoconsumo", "total"] as const) {
