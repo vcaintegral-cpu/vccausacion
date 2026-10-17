@@ -101,6 +101,7 @@ export const Route = createFileRoute("/_authenticated/revisar")({
 
 type InvRow = {
   source_override?: SourceValues | null;
+  value_modified?: boolean;
   raw_extraction?: unknown;
   subtotal: number;
   total: number;
@@ -861,6 +862,7 @@ function Revisar() {
 
   return (
     <div className="space-y-6">
+      {header.value_modified && <p className="text-sm text-destructive">Valor modificado manualmente</p>}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">

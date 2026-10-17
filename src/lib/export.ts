@@ -103,7 +103,7 @@ export function exportReconciliation(invoices: (ExportInvoice & { id: string; si
   for (const inv of invoices) {
     const source = effectiveSource(inv.raw_extraction, inv.source_override);
     const journal = journals.filter(j => j.invoice_id === inv.id);
-    const trace = inv.siigo_trace as { valores?: Record<string, number>; siigo_verificacion?: { total?: number }; siigo_request?: unknown } | null;
+  const trace = inv.siigo_trace as { valores?: Record<string, number>; siigo_verificacion?: { total?: number }; siigo_request?: unknown } | null;
     for (const field of ["subtotal", "iva", "impoconsumo", "total"] as const) {
       const original = source?.[field]; const stored = toCents(inv[field]);
       const exported = field === "total" ? trace?.siigo_verificacion?.total : trace?.valores?.[field];

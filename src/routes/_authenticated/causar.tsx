@@ -1197,6 +1197,7 @@ function Causar() {
     <div className="space-y-6">
       {sourceIssues.map(issue => <p key={issue} className="text-sm text-destructive">{source?.source === "pdf" ? "Revisar lectura del PDF. " : ""}{issue}</p>)}
       {source && editingId && companyId && <SourceValuesCorrection source={source} invoiceId={editingId} companyId={companyId} />}
+      {borrador?.invoice?.["value_modified"] && <p className="text-sm text-destructive">Valor modificado manualmente</p>}
       <div>
         <h1 className="text-xl font-semibold">{editingId ? "Editar borrador" : "Causar factura"}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
