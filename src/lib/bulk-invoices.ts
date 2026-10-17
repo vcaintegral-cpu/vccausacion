@@ -33,6 +33,16 @@ import {
   fetchIvaEvidence,
   resolveIvaTreatment,
 } from "@/lib/iva-treatment";
+import {
+  ajusteAlPeso,
+  applyProviderRuleToLines,
+  fetchProviderRulesCached,
+  headerRule,
+  ivaDetalleDesdeRegla,
+  marcarUsoRegla,
+  retencionDesdeRegla,
+} from "@/lib/provider-rules";
+import { totals as totalesJournal } from "@/lib/accounting";
 
 const ALLOWED = /\.pdf$/i;
 const IS_ZIP = (name: string, type = "") => /\.zip$/i.test(name) || type.includes("zip");
@@ -370,11 +380,17 @@ export async function saveExtractedInvoice(params: {
     return prod ? { ...base, item_type: prod.kind ?? "gasto" } : base;
   });
 
+  // P1/P2: reglas por proveedor (NIT + palabra clave, luego "(todas)"). Una cuenta
+  // fuera de los grupos de gasto válidos se descarta y la línea sigue al motor.
+  const providerRules = await fetchProviderRulesCached(companyId);
+  const conReglaProveedor = applyProviderRuleToLines(conCatalogo, providerRules, header.provider_nit);
+  const reglaProveedor = headerRule(providerRules, header.provider_nit) ?? conReglaProveedor.rule;
+
   // Mismo motor inteligente que la causación individual.
   // Conocimiento base (reglas) + histórico resumido del proveedor de ESTA factura.
   const base = params.knowledge ?? config.knowledge ?? (await fetchCompanyKnowledge(companyId)) ?? emptyKnowledge();
   const conocimiento = await knowledgeForProvider(companyId, header.provider_nit, base);
-  const { lines, decisions } = applyEngineToLines(conCatalogo, {
+  const { lines, decisions } = applyEngineToLines(conReglaProveedor.lines, {
     providerNit: header.provider_nit,
     knowledge: conocimiento,
     products: config.products,
