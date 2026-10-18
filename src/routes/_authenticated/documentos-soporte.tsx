@@ -423,6 +423,23 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
           <DialogFooter><Button variant="outline" onClick={() => setIva(null)}>Cancelar</Button><Button onClick={() => void confirmarIva()}>Sí, es correcto</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={!!propuestas} onOpenChange={(o) => !o && setPropuestas(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Confirmar fechas de envío</DialogTitle></DialogHeader>
+          <p className="text-sm">Estas fechas de operación están fuera de la ventana que permite Siigo. Se enviarán con la fecha propuesta:</p>
+          <div className="max-h-48 space-y-1 overflow-auto text-sm">
+            {(propuestas ?? []).map((p) => <p key={p.d.id}>{label(p.d)}: operación {fecha(p.d.issue_date)} → se enviará con {fecha(p.fecha)}</p>)}
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setPropuestas(null)}>Cancelar</Button><Button onClick={() => void confirmarFechas()}>Confirmar y crear</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!reintento} onOpenChange={(o) => !o && setReintento(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Reintentar con el último día del mes</DialogTitle></DialogHeader>
+          <p className="text-sm">{reintento ? `${label(reintento.d)}: Siigo no aceptó la fecha enviada. Se reintentará con ${fecha(reintento.fecha)} (último día del mes del documento). ¿Confirmar?` : ""}</p>
+          <DialogFooter><Button variant="outline" onClick={() => setReintento(null)}>Cancelar</Button><Button onClick={() => { const r = reintento; setReintento(null); if (r) void crear([r.d], new Map([[r.d.id, r.fecha]])); }}>Confirmar</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Detalle d={detalle} onClose={() => setDetalle(null)} />
     </div>
   );
@@ -442,7 +459,7 @@ function Historial({ docs, onDone }: { companyId: string; docs: Ds[]; onDone: ()
               <tr key={d.id} className="border-t">
                 <td className="p-2 font-mono text-xs">{label(d)}</td>
                 <td className="p-2">{d.provider_name}<div className="text-xs text-muted-foreground">{d.provider_nit}</div></td>
-                <td className="p-2 text-xs">{fecha(d.issue_date)}</td>
+                <td className="p-2 text-xs">Operación {fecha(d.issue_date)}{d.ds_sent_date && d.ds_sent_date !== d.issue_date ? <div>Enviado {fecha(d.ds_sent_date)}</div> : null}</td>
                 <td className="p-2 text-right">{cop(d.total)}</td>
                 <td className="p-2 font-mono text-xs">{d.siigo_number}</td>
                 <td className="p-2 text-xs">{d.ds_dian_status ?? "—"}</td>
