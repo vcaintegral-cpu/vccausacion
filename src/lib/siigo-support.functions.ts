@@ -63,7 +63,19 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       const deb = (journal ?? []).reduce((a, l) => a + toCents(l.debit), 0);
       const cre = (journal ?? []).reduce((a, l) => a + toCents(l.credit), 0);
       if (!journal?.length || deb !== cre) throw new Error(`El comprobante no cuadra: débitos ${deb / 100} vs créditos ${cre / 100}.`);
-      if (!params?.ds_document_id) throw new Error('Falta configurar el "Tipo de comprobante documento soporte" (ej. DS-3) en Documentos soporte → Configuración.');
+      // Tipo de comprobante DS: se toma de la configuración; si falta, se busca en Siigo y se guarda.
+      let dsDocumentId = params?.ds_document_id ? Number(params.ds_document_id) : null;
+      if (!dsDocumentId) {
+        const res = await siigoGet<DocType[] | { results?: DocType[] }>("/v1/document-types?type=DS");
+        const list = (Array.isArray(res) ? res : (res.results ?? [])).filter((d) => d.id != null && d.active !== false);
+        if (!list.length) throw new Error('Siigo no tiene un tipo de comprobante "Documento soporte" (DS) activo. Créelo en Siigo y reintente.');
+        const elegido = list.find((d) => /soporte/i.test(String(d.name ?? ""))) ?? list[0]!;
+        dsDocumentId = Number(elegido.id);
+        await supabase.from("company_parameters").upsert({
+          company_id: inv.company_id, ds_document_id: dsDocumentId, ds_document_code: String(elegido.code ?? ""), updated_at: new Date().toISOString(),
+        }, { onConflict: "company_id" });
+        trace = { ...trace, tipo_comprobante: { id: dsDocumentId, code: elegido.code, name: elegido.name, origen: "siigo_auto" } };
+      }
 
       // Duplicado local: mismo vendedor + número + valor ya creado en Siigo.
       const { data: dup } = await supabase.from("invoices").select("id, siigo_number").eq("company_id", inv.company_id).eq("doc_kind", "soporte")
