@@ -13,7 +13,7 @@ import { roundCOP, toCents } from "@/lib/money";
 export const DS_PATH = "/v1/purchase-support-documents";
 
 type SiigoTax = { id?: number | string; name?: string; type?: string; percentage?: number; active?: boolean };
-type DocType = { id?: number; code?: string | number; name?: string; active?: boolean; automatic_number?: boolean; consecutive?: number; cost_center?: boolean };
+type DocType = { id?: number; code?: string | number; name?: string; active?: boolean; automatic_number?: boolean; consecutive?: number; cost_center?: boolean; cost_center_mandatory?: boolean };
 
 export const siigoListDsTypes = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
