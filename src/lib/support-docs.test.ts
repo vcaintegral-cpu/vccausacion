@@ -29,7 +29,7 @@ describe("documentos soporte", () => {
     expect(siigoIdType("NIT")).toBe("31");
     expect(siigoIdType("CE")).toBe("22");
     expect(siigoIdType("Pasaporte")).toBe("41");
-    expect(nitDV("900373385")).toBe("1");
+    expect(nitDV("890900608")).toBe("9");
   });
   it("person name split", () => {
     expect(splitPersonName("Juan Carlos Pérez Gómez")).toEqual({ firstNames: "Juan Carlos", lastNames: "Pérez Gómez" });
