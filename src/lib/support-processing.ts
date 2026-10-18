@@ -82,7 +82,7 @@ export async function processSupportUpload(params: {
       const data: ExtractedInvoice = { ...built.data, provider_address: vendor.address ?? null, provider_city: vendor.city ?? null, provider_phone: vendor.phone ?? null, provider_email: vendor.email ?? null };
       const idNumber = String(data.provider_nit ?? "");
       const missing = missingIdentity({ idNumber, idType: built.idType, name: data.provider_name });
-      const sinNumero = !String(data.number ?? "").trim();
+      // El número de la cuenta de cobro no se exige: lo asigna Siigo (consecutivo DSEB) al crear el documento.
       const saved = await saveExtractedInvoice({
         data, fileName: built.file?.name ?? t.label, file: built.file ?? null, companyId, config: deps.config, knowledge: deps.knowledge,
         readMode: "texto", texto: built.texto ?? "", rawExtraction: { fuente: built.fuente, documento: "soporte" },
@@ -97,13 +97,13 @@ export async function processSupportUpload(params: {
         await supabase.from("journal_lines").update({ account_code: cxpDefault }).eq("invoice_id", saved.invoiceId)
           .gte("account_code", "22000000").lt("account_code", "23600000");
       }
-      const notas = [missing.length ? `Incompleto: falta ${missing.join(", ")} del vendedor.` : "", sinNumero ? "Falta número de cuenta de cobro." : ""].filter(Boolean).join(" ");
+      const notas = missing.length ? `Incompleto: falta ${missing.join(", ")} del vendedor.` : "";
       await supabase.from("invoices").update({
         doc_kind: "soporte",
         vendor_id_type: built.idType,
         vendor_is_natural: isNaturalPerson(built.idType, idNumber),
         vendor_filled: filled as unknown as Json,
-        ...(missing.length || sinNumero ? { status: "incompleto", notes: notas } : {}),
+        ...(missing.length ? { status: "incompleto", notes: notas } : {}),
       }).eq("id", saved.invoiceId);
       progress.ok += 1;
     } catch (e) {
