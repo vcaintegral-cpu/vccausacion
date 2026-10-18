@@ -568,9 +568,11 @@ function Configuracion({ companyId }: { companyId: string }) {
   const [f, setF] = useState<F>({});
   const [types, setTypes] = useState<Array<{ id: number; code: string; name: string }>>([]);
   const [loadingTypes, setLoadingTypes] = useState(false);
+  const [ccMode, setCcMode] = useState<string | null>(null);
   useEffect(() => {
     void supabase.from("company_parameters").select("*").eq("company_id", companyId).maybeSingle().then(({ data }) => {
       setF({ address: data?.address ?? "", city: data?.city ?? "", department: data?.department ?? "", country: data?.country ?? "", phone: data?.phone ?? "", email: data?.email ?? "", ds_document_id: data?.ds_document_id ? String(data.ds_document_id) : "", ds_document_code: data?.ds_document_code ?? "", ds_window_days: String(data?.ds_window_days ?? 10), ds_date_ref: data?.ds_date_ref ?? "fin_mes", ds_payable_account: data?.ds_payable_account ?? "23359501" });
+      setCcMode(data?.ds_cost_center_mode ?? null);
     });
   }, [companyId]);
   const sincronizar = async () => {
