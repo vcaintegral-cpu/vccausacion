@@ -29,7 +29,16 @@ export type ExtractInvoiceInput = {
   dataUrl?: string | null;
   images?: Array<{ dataUrl: string; mimeType: string }> | null;
   text?: string | null;
+  /** "soporte": cuenta de cobro / soporte de un vendedor no obligado a facturar. */
+  kind?: "compra" | "soporte";
 };
+
+const SOPORTE = `
+DOCUMENTO SOPORTE: este archivo es una CUENTA DE COBRO o soporte de un vendedor NO obligado a facturar (normalmente persona natural).
+- "provider_*" es quien COBRA (el vendedor). Añade "provider_id_type": "CC" | "NIT" | "CE" | "PASAPORTE" | null según el documento impreso.
+- "number" es el número de la cuenta de cobro (solo el número; si no tiene, null). "prefix" siempre null. "cufe" siempre null.
+- Los montos están en formato colombiano: el punto separa miles y la coma los decimales ("1.500.000,50" = 1500000.5).
+- Normalmente no hay IVA: si no está impreso, "iva" es 0.`;
 
 function normalizedImageUrl(mimeType: string, dataUrl: string) {
   const base64 = dataUrl.includes(",") ? dataUrl.slice(dataUrl.indexOf(",") + 1) : dataUrl;
@@ -43,7 +52,7 @@ function normalizedImageUrl(mimeType: string, dataUrl: string) {
 export async function extractInvoiceWithAi(data: ExtractInvoiceInput, apiKey: string) {
   const content: Array<Record<string, unknown>> = [{
     type: "input_text",
-    text: `Extrae toda la información contable de esta factura de compra (${data.fileName}). Las imágenes están en orden de página. Responde solo con un objeto JSON válido.`,
+    text: `Extrae toda la información contable de ${data.kind === "soporte" ? "esta cuenta de cobro / documento soporte" : "esta factura de compra"} (${data.fileName}). Las imágenes están en orden de página. Responde solo con un objeto JSON válido.`,
   }];
 
   if (data.text) {
@@ -66,7 +75,7 @@ export async function extractInvoiceWithAi(data: ExtractInvoiceInput, apiKey: st
     body: JSON.stringify({
       model: "openai/gpt-5.6-sol",
       stream: true,
-      instructions: SYSTEM,
+      instructions: data.kind === "soporte" ? SYSTEM + SOPORTE : SYSTEM,
       input: [{ role: "user", content }],
       text: { format: { type: "json_object" } },
     }),
