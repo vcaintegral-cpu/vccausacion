@@ -217,6 +217,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       // se guarda en Configuración para que los demás documentos del lote la usen directo.
       let res: { id?: string; name?: string; number?: number } | null = null;
       let ultimoError: unknown = null;
+      let sinCentroCosto = ccMode === "no";
       const fechasIntentadas: unknown[] = [...intentosPrevios];
       for (let intento = 0; intento < 10 && fechaEnvio <= ventana.lastDay && fechaEnvio <= hoy; intento++) {
         fechaIntentada = fechaEnvio;
@@ -235,7 +236,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
           observations: `${obsBase}Documento soporte · ${inv.provider_name ?? ""}`.slice(0, 4000),
           items: items.map((it) => ({ type: it.type, code: it.code, description: it.description, quantity: it.quantity, price: it.price, discount: 0, ...(it.retId != null ? { taxes: [{ id: Number(it.retId) }] } : {}) })),
           payments: [{ id: paymentId, value: neto, due_date: vencimiento }],
-          ...(costCenterId ? { cost_center: costCenterId } : {}),
+          ...(!sinCentroCosto && costCenterId ? { cost_center: costCenterId } : {}),
         };
         trace = { ...trace, siigo_request: payload };
         try {
@@ -244,7 +245,14 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
           break;
         } catch (e) {
           ultimoError = e;
-          if (!/invalid_date/i.test(e instanceof Error ? e.message : String(e))) throw e;
+          const msg = e instanceof Error ? e.message : String(e);
+          // Si Siigo rechaza el centro de costo (document_settings), se reintenta una vez sin él.
+          if (!sinCentroCosto && costCenterId != null && /cost_center|document_settings/i.test(msg)) {
+            sinCentroCosto = true;
+            intento--;
+            continue;
+          }
+          if (!/invalid_date/i.test(msg)) throw e;
           fechaEnvio = addDays(fechaEnvio, 1);
         }
       }
