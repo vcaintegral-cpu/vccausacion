@@ -12,7 +12,7 @@ import { EmptyCompany } from "@/components/app-shell";
 import { cop, fecha, fechaHora } from "@/lib/format";
 import { DS_TEMPLATE_COLUMNS, FILLED_LABEL, VENDOR_ID_LABEL, missingIdentity, dianLabel, DIAN_PENDIENTE, diasParaDian, resolutionExpiry, type FilledField, type RowError, type VendorIdType } from "@/lib/support-docs";
 import { processSupportUpload, type SupportProgress } from "@/lib/support-processing";
-import { siigoListDsTypes, siigoSyncSupportDocument } from "@/lib/siigo-support.functions";
+import { siigoFetchSupportConsecutive, siigoListDsTypes, siigoSyncSupportDocument } from "@/lib/siigo-support.functions";
 import { siigoReleaseInterrupted } from "@/lib/siigo-recovery.functions";
 import { SiigoErrorActions } from "@/components/siigo-error-actions";
 import { siigoErrorKind } from "@/lib/siigo-purchase-validation";
@@ -241,7 +241,9 @@ function Detalle({ d, onClose }: { d: Ds | null; onClose: () => void }) {
         <p className="text-xs font-semibold">JSON enviado a Siigo</p>
         <pre className="max-h-64 overflow-auto rounded bg-muted p-2 text-[11px]">{JSON.stringify(t["siigo_request"] ?? null, null, 2)}</pre>
         <p className="text-xs font-semibold">Respuesta de Siigo</p>
-        <pre className="max-h-64 overflow-auto rounded bg-muted p-2 text-[11px]">{JSON.stringify(t["siigo_verificacion"] ?? t["siigo_respuesta"] ?? t["error"] ?? null, null, 2)}</pre>
+        <pre className="max-h-64 overflow-auto rounded bg-muted p-2 text-[11px]">{JSON.stringify(t["siigo_documento"] ?? t["siigo_verificacion"] ?? t["siigo_respuesta"] ?? t["error"] ?? null, null, 2)}</pre>
+        {t["siigo_consecutivo"] != null && <><p className="text-xs font-semibold">Consecutivo leído de Siigo</p><pre className="rounded bg-muted p-2 text-[11px]">{JSON.stringify(t["siigo_consecutivo"], null, 2)}</pre></>}
+        {t["observaciones_siigo"] != null && <><p className="text-xs font-semibold">Observaciones en Siigo</p><pre className="rounded bg-muted p-2 text-[11px]">{JSON.stringify(t["observaciones_siigo"], null, 2)}</pre></>}
       </DialogContent>
     </Dialog>
   );
@@ -407,7 +409,7 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
                 <tr key={d.id} className="border-t align-top">
                   <td className="p-2"><Checkbox checked={sel.has(d.id)} onCheckedChange={(c) => setSel((s) => { const n = new Set(s); if (c) n.add(d.id); else n.delete(d.id); return n; })} /></td>
                   <td className="p-2 font-mono text-xs">
-                    {String(d.number ?? "").trim() ? label(d) : <span className="text-muted-foreground">Se asigna al crear en Siigo</span>}
+                    {d.siigo_number ? d.siigo_number : String(d.number ?? "").trim() ? label(d) : <span className="text-muted-foreground">Se asigna al crear en Siigo</span>}
                   </td>
                   <td className="p-2">
                     <div>{d.provider_name ?? <span className="text-destructive">Sin nombre</span>}</div>
@@ -514,6 +516,20 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
 function Historial({ docs, onDone }: { companyId: string; docs: Ds[]; onDone: () => void }) {
   const [detalle, setDetalle] = useState<Ds | null>(null);
   const [soloPendientes, setSoloPendientes] = useState(false);
+  const traer = useServerFn(siigoFetchSupportConsecutive);
+  const [trayendo, setTrayendo] = useState(false);
+  const sinConsecutivo = docs.filter((d) => d.siigo_id && !d.cc_pdf_path);
+  const traerConsecutivo = async (lista: Ds[]) => {
+    setTrayendo(true);
+    const ok: string[] = []; const err: string[] = [];
+    for (const d of lista) {
+      try { const r = await traer({ data: { invoiceId: d.id } }); (r.ok ? ok : err).push(r.message); }
+      catch (e) { err.push(`${d.siigo_number ?? label(d)}: ${e instanceof Error ? e.message : String(e)}`); }
+    }
+    setTrayendo(false); onDone();
+    if (ok.length) toast.success(ok.join("\n"));
+    if (err.length) toast.error(err.join("\n"), { duration: 15000 });
+  };
   const hoy = new Date().toISOString().slice(0, 10);
   const pendienteDian = (d: Ds) => dianLabel(d.ds_dian_status) === DIAN_PENDIENTE;
   const lista = soloPendientes ? docs.filter(pendienteDian) : docs;
@@ -521,7 +537,10 @@ function Historial({ docs, onDone }: { companyId: string; docs: Ds[]; onDone: ()
     <div className="space-y-3 pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <label className="flex items-center gap-2 text-sm"><Checkbox checked={soloPendientes} onCheckedChange={(c) => setSoloPendientes(!!c)} /> Pendientes de envío DIAN</label>
+        <div className="flex gap-2">
+        <Button size="sm" variant="outline" disabled={trayendo || !sinConsecutivo.length} onClick={() => void traerConsecutivo(sinConsecutivo)}>{trayendo && <Loader2 className="mr-1 size-4 animate-spin" />} Traer consecutivo de Siigo ({sinConsecutivo.length})</Button>
         <Button size="sm" variant="outline" disabled={!docs.some((d) => d.cc_pdf_path)} onClick={() => void descargarCuentasCobroZip(docs)}><Download className="mr-1 size-4" /> Descarga masiva (.zip)</Button>
+        </div>
       </div>
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full text-sm">
@@ -544,7 +563,8 @@ function Historial({ docs, onDone }: { companyId: string; docs: Ds[]; onDone: ()
                 </td>
                 <td className="p-2"><div className="flex justify-end gap-1">
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setDetalle(d)}><Eye className="size-3.5" /> Ver detalle</Button>
-                  {d.cc_pdf_path && <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => descargarCuentaCobro(d)}><Download className="size-3.5" /> Cuenta de cobro</Button>}
+                  {d.siigo_id && <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={trayendo} onClick={() => void traerConsecutivo([d])}>Traer consecutivo de Siigo</Button>}
+                  {d.cc_pdf_path && <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => descargarCuentaCobro(d)}><Download className="size-3.5" /> Descargar cuenta de cobro</Button>}
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => exportarComprobante(d)}><Download className="size-3.5" /> Comprobante</Button>
                   <SiigoErrorActions invoice={d} onDone={onDone} />
                 </div></td>
