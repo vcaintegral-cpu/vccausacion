@@ -7,7 +7,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
 import { purchaseLineErrors, purchaseReadbackComparison } from "@/lib/siigo-purchase-validation";
-import { missingIdentity, splitPersonName, supplierReceiptNumber, dsSendDate, DS_PREFIX } from "@/lib/support-docs";
+import { missingIdentity, splitPersonName, supplierReceiptNumber, dsSendDate, resolutionExpiry, DS_PREFIX } from "@/lib/support-docs";
 import { roundCOP, toCents } from "@/lib/money";
 
 export const DS_PATH = "/v1/purchase-support-documents";
@@ -77,6 +77,20 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
           company_id: inv.company_id, ds_document_id: dsDocumentId, ds_document_code: String(elegido.code ?? ""), updated_at: new Date().toISOString(),
         }, { onConflict: "company_id" });
         trace = { ...trace, tipo_comprobante: { id: dsDocumentId, code: elegido.code, name: elegido.name, origen: "siigo_auto" } };
+      }
+
+      // ---------- Resolución de numeración (vigencia y rango) ----------
+      const { data: resoluciones } = await supabase.from("ds_resolutions").select("*").eq("company_id", inv.company_id).eq("active", true);
+      const resolucion = (resoluciones ?? [])[0];
+      if (resolucion) {
+        const vence = resolutionExpiry(String(resolucion.approval_date), Number(resolucion.validity_months));
+        if (inv.issue_date && inv.issue_date > vence)
+          throw new Error(`La resolución ${resolucion.prefix} venció el ${vence.split("-").reverse().join("/")}; la fecha del documento es posterior. Registre una nueva resolución en Configuración.`);
+        const { data: creados } = await supabase.from("invoices").select("siigo_number").eq("company_id", inv.company_id).eq("doc_kind", "soporte").not("siigo_number", "is", null);
+        const maxConsec = (creados ?? []).reduce((a, r) => { const n = Number(String(r.siigo_number ?? "").replace(/\D/g, "")); return Number.isFinite(n) ? Math.max(a, n) : a; }, 0);
+        if (maxConsec >= Number(resolucion.to_number))
+          throw new Error(`La resolución ${resolucion.prefix} llegó a su consecutivo máximo (${resolucion.to_number}). Registre una nueva resolución en Configuración.`);
+        trace = { ...trace, resolucion: { prefix: resolucion.prefix, rango: `${resolucion.from_number}-${resolucion.to_number}`, vence } };
       }
 
       // Duplicado local: mismo vendedor + número + valor ya creado en Siigo.
