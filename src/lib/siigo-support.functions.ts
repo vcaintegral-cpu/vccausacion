@@ -92,15 +92,19 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
         const maxConsec = (creados ?? []).reduce((a, r) => { const n = Number(String(r.siigo_number ?? "").replace(/\D/g, "")); return Number.isFinite(n) ? Math.max(a, n) : a; }, 0);
         if (maxConsec >= Number(resolucion.to_number))
           throw new Error(`La resolución ${resolucion.prefix} llegó a su consecutivo máximo (${resolucion.to_number}). Registre una nueva resolución en Configuración.`);
-        if (numeroManual != null && (numeroManual < Number(resolucion.from_number) || numeroManual > Number(resolucion.to_number)))
-          throw new Error(`El número de cuenta de cobro ${numeroManual} está fuera del rango de la resolución ${resolucion.prefix} (${resolucion.from_number} a ${resolucion.to_number}).`);
         trace = { ...trace, resolucion: { prefix: resolucion.prefix, rango: `${resolucion.from_number}-${resolucion.to_number}`, vence } };
       }
 
-      // Duplicado local: mismo vendedor + número + valor ya creado en Siigo.
-      const { data: dup } = await supabase.from("invoices").select("id, siigo_number").eq("company_id", inv.company_id).eq("doc_kind", "soporte")
-        .eq("provider_nit", inv.provider_nit!).eq("number", inv.number ?? "").eq("total", inv.total).not("siigo_id", "is", null).neq("id", inv.id).limit(1);
-      if (dup?.length) throw new Error(`Duplicado: este documento ya se creó en Siigo como ${dup[0]!.siigo_number}. No se envió.`);
+      // Duplicado local (sin número de cuenta de cobro): mismo vendedor + fecha de la operación + valor total
+      // ya creado en Siigo. Se muestra "Posible duplicado" y no se crea sin confirmación del usuario.
+      if (!data.confirmDuplicate) {
+        const { data: dup } = await supabase.from("invoices").select("id, siigo_number").eq("company_id", inv.company_id).eq("doc_kind", "soporte")
+          .eq("provider_nit", inv.provider_nit!).eq("issue_date", inv.issue_date!).eq("total", inv.total).not("siigo_id", "is", null).neq("id", inv.id).limit(1);
+        if (dup?.length) {
+          await supabase.from("invoices").update({ siigo_status: "pendiente", siigo_error: null }).eq("id", inv.id);
+          return { ok: false, status: "posible_duplicado", duplicadoDe: dup[0]!.siigo_number, message: `${label}: posible duplicado de ${dup[0]!.siigo_number} (mismo vendedor, fecha y valor). Confirme para crearlo de todas formas.` };
+        }
+      }
 
       // ---------- Tercero ----------
       const { siigoEnsureCustomer } = await import("./siigo-customers.server");
