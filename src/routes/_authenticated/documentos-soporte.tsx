@@ -461,7 +461,7 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
       <Dialog open={!!propuestas} onOpenChange={(o) => !o && setPropuestas(null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Confirmar fechas de envío</DialogTitle></DialogHeader>
-          <p className="text-sm">Estas fechas de operación están fuera de la ventana que permite Siigo. Se enviarán con la fecha propuesta:</p>
+          <p className="text-sm">Las fechas por fuera de la ventana se ajustarán a la primera fecha aceptada por Siigo. Si Siigo rechaza una fecha, se reintenta automáticamente con el día siguiente:</p>
           <div className="max-h-48 space-y-1 overflow-auto text-sm">
             {(propuestas ?? []).map((p) => <p key={p.d.id}>{label(p.d)}: operación {fecha(p.d.issue_date)} → se enviará con {fecha(p.fecha)}</p>)}
           </div>

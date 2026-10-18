@@ -191,19 +191,27 @@ export function supplierReceiptNumber(number: string | null | undefined): string
 
 /**
  * Ventana de fechas de Siigo para documentos soporte (configurable):
- * se aceptan con fecha desde (referencia − N días) hasta la referencia.
+ * la ventana de N días INCLUYE el último día del mes, así que
+ * fecha_minima = referencia − (N − 1) días. Con N = 10 en septiembre: desde el 21/09.
  * Referencia: último día del mes del documento (por defecto) o hoy.
  * La fecha enviada nunca supera el último día del mes del documento ni hoy.
+ * acceptedMin: fecha mínima que Siigo ya aceptó para ese mes (aprendida en lotes); si existe, se usa directamente.
  */
-export function dsSendDate(issueDate: string, today: string, windowDays: number, ref: "fin_mes" | "hoy"): { sendDate: string; changed: boolean; lastDay: string } {
+export function dsSendDate(issueDate: string, today: string, windowDays: number, ref: "fin_mes" | "hoy", acceptedMin?: string | null): { sendDate: string; changed: boolean; lastDay: string; min: string } {
   const [y, m] = issueDate.split("-").map(Number);
   const lastDay = new Date(Date.UTC(y!, m!, 0)).toISOString().slice(0, 10);
   const refDate = ref === "hoy" ? today : lastDay;
-  const min = new Date(Date.parse(`${refDate}T00:00:00Z`) - windowDays * 86400000).toISOString().slice(0, 10);
+  let min = new Date(Date.parse(`${refDate}T00:00:00Z`) - (windowDays - 1) * 86400000).toISOString().slice(0, 10);
+  if (acceptedMin && acceptedMin > min && acceptedMin <= lastDay) min = acceptedMin;
   let send = issueDate >= min ? issueDate : min;
   if (send > lastDay) send = lastDay;
   if (send > today) send = today;
-  return { sendDate: send, changed: send !== issueDate, lastDay };
+  return { sendDate: send, changed: send !== issueDate, lastDay, min };
+}
+
+/** Suma días a una fecha ISO (aaaa-mm-dd). */
+export function addDays(iso: string, days: number): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
 }
 
 /** Estado de transmisión DIAN reportado por Siigo (stamp.status) → etiqueta visible. */

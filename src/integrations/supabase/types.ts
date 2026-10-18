@@ -545,6 +545,7 @@ export type Database = {
           company_id: string
           country: string | null
           department: string | null
+          ds_accepted_dates: Json
           ds_date_mode: string
           ds_date_ref: string
           ds_document_code: string | null
@@ -561,6 +562,7 @@ export type Database = {
           company_id: string
           country?: string | null
           department?: string | null
+          ds_accepted_dates?: Json
           ds_date_mode?: string
           ds_date_ref?: string
           ds_document_code?: string | null
@@ -577,6 +579,7 @@ export type Database = {
           company_id?: string
           country?: string | null
           department?: string | null
+          ds_accepted_dates?: Json
           ds_date_mode?: string
           ds_date_ref?: string
           ds_document_code?: string | null
