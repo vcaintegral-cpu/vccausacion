@@ -161,7 +161,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
         stamp: { send: true },
         observations: `Documento soporte ${label} · ${inv.provider_name ?? ""}`.slice(0, 4000),
         items: items.map((it) => ({ type: it.type, code: it.code, description: it.description, quantity: it.quantity, price: it.price, discount: 0, ...(it.retId != null ? { taxes: [{ id: Number(it.retId) }] } : {}) })),
-        payments: [{ id: paymentId, value: neto, due_date: inv.due_date ?? inv.issue_date }],
+        payments: [{ id: paymentId, value: neto, due_date: vencimiento }],
         ...(costCenterId ? { cost_center: costCenterId } : {}),
       };
       trace = { ...trace, siigo_request: payload };
