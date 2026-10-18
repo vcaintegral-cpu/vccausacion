@@ -48,16 +48,22 @@ describe("documentos soporte", () => {
 
 describe("ventana de fechas Siigo", () => {
   it("dentro de la ventana envía la fecha de la operación sin cambios", () => {
-    expect(dsSendDate("2026-09-25", "2026-10-18", 10, "fin_mes")).toEqual({ sendDate: "2026-09-25", changed: false, lastDay: "2026-09-30" });
+    expect(dsSendDate("2026-09-25", "2026-10-18", 10, "fin_mes")).toEqual({ sendDate: "2026-09-25", changed: false, lastDay: "2026-09-30", min: "2026-09-21" });
   });
-  it("fuera de la ventana propone la fecha mínima (30/09 - 10 días = 20/09)", () => {
-    expect(dsSendDate("2026-09-01", "2026-10-18", 10, "fin_mes")).toEqual({ sendDate: "2026-09-20", changed: true, lastDay: "2026-09-30" });
+  it("la ventana de N días incluye el último día del mes (30/09 - 9 días = 21/09)", () => {
+    expect(dsSendDate("2026-09-01", "2026-10-18", 10, "fin_mes")).toEqual({ sendDate: "2026-09-21", changed: true, lastDay: "2026-09-30", min: "2026-09-21" });
   });
   it("la fecha enviada nunca supera el último día del mes ni hoy", () => {
     expect(dsSendDate("2026-10-18", "2026-10-17", 10, "fin_mes").sendDate).toBe("2026-10-17");
   });
-  it("con referencia hoy usa hoy - N días", () => {
-    expect(dsSendDate("2026-09-01", "2026-10-18", 10, "hoy").sendDate).toBe("2026-09-30"); // hoy−10 = 08/10, pero nunca supera el último día del mes del documento
+  it("con referencia hoy usa hoy - (N-1) días", () => {
+    expect(dsSendDate("2026-09-01", "2026-10-18", 10, "hoy").sendDate).toBe("2026-09-30"); // hoy−9 = 09/10, pero nunca supera el último día del mes del documento
+  });
+  it("usa la fecha mínima que Siigo ya aceptó para ese mes", () => {
+    expect(dsSendDate("2026-09-01", "2026-10-18", 10, "fin_mes", "2026-09-23")).toEqual({ sendDate: "2026-09-23", changed: true, lastDay: "2026-09-30", min: "2026-09-23" });
+  });
+  it("ignora una fecha aceptada de otro mes o fuera de rango", () => {
+    expect(dsSendDate("2026-09-01", "2026-10-18", 10, "fin_mes", "2026-10-05").min).toBe("2026-09-21");
   });
 });
 
