@@ -147,9 +147,14 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       const paymentId = inv.payment_type_id ? Number(inv.payment_type_id) : await siigoPurchasePaymentTypeId(inv.payment_type_name ?? "crédito");
       if (!paymentId) throw new Error("No se encontró la forma de pago de compras en Siigo.");
       const costCenterId = inv.cost_center ? await siigoCostCenterId(inv.cost_center) : null;
+      // Siigo rechaza fechas futuras: si la fecha del documento es mayor a hoy, se envía con la fecha de hoy
+      // (el valor de la fuente no cambia; solo la fecha con que Siigo lo registra).
+      const hoy = new Date().toISOString().slice(0, 10);
+      const fechaEnvio = inv.issue_date && inv.issue_date > hoy ? hoy : inv.issue_date;
+      const vencimiento = inv.due_date && inv.due_date > hoy ? hoy : (inv.due_date ?? fechaEnvio);
       const payload: Record<string, unknown> = {
         document: { id: dsDocumentId },
-        date: inv.issue_date,
+        date: fechaEnvio,
         supplier: { identification: nit, branch_office: 0 },
         supplier_receipt_number: { prefix: (inv.prefix || DS_PREFIX).slice(0, 6), number: numeroSoporte },
         discount_type: "Value",
