@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fillVendorFromCompany, missingIdentity, moneyCents, nitDV, parseSupportRows, siigoIdType, splitPersonName, supplierReceiptNumber, dsSendDate, dianLabel, diasParaDian, resolutionExpiry } from "./support-docs";
+import { fillVendorFromCompany, missingIdentity, moneyCents, nitDV, parseSupportRows, siigoIdType, splitPersonName, supplierReceiptNumber, dsSendDate, dianLabel, dianTransmitted, diasParaDian, resolutionExpiry } from "./support-docs";
 
 const r = (o: Record<string, string>, n: number) => ({
   rowNumber: n,
@@ -69,7 +69,11 @@ describe("ventana de fechas Siigo", () => {
 
 describe("estado DIAN", () => {
   it("mapea los estados de Siigo a las tres etiquetas", () => {
-    expect(dianLabel(null)).toBe("Guardado – pendiente envío DIAN");
+    expect(dianLabel(null)).toBe("Sincronizado en Siigo – pendiente envío DIAN (lo envía el usuario desde Siigo)");
+    expect(dianTransmitted("Draft")).toBe(false);
+    expect(dianTransmitted(null)).toBe(false);
+    expect(dianTransmitted("Sent")).toBe(true);
+    expect(dianTransmitted("Accepted")).toBe(true);
     expect(dianLabel("Sent")).toBe("Enviado a la DIAN");
     expect(dianLabel("Accepted")).toBe("Validado DIAN");
     expect(dianLabel("Rejected")).toBe("Rechazado DIAN");

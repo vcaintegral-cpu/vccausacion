@@ -220,7 +220,14 @@ export function dianLabel(status: string | null | undefined): string {
   if (/accept|valid/.test(s)) return "Validado DIAN";
   if (/reject/.test(s)) return "Rechazado DIAN";
   if (/sent|enviado|process/.test(s)) return "Enviado a la DIAN";
-  return "Guardado – pendiente envío DIAN";
+  return DIAN_PENDIENTE;
+}
+
+export const DIAN_PENDIENTE = "Sincronizado en Siigo – pendiente envío DIAN (lo envía el usuario desde Siigo)";
+
+/** true si Siigo reporta que el documento ya salió hacia la DIAN (enviado, validado o rechazado). */
+export function dianTransmitted(status: string | null | undefined): boolean {
+  return dianLabel(status) !== DIAN_PENDIENTE;
 }
 
 /** Días transcurridos desde la fecha de elaboración (envío) para el envío a la DIAN: n de 6. */
