@@ -49,7 +49,7 @@ type Ds = {
   status: string; siigo_status: string | null; siigo_id: string | null; siigo_number: string | null; siigo_error: string | null; siigo_error_kind: string | null;
   siigo_trace: unknown; siigo_attempts: number | null; siigo_last_attempt_at: string | null; ds_dian_status: string | null; ds_sent_date: string | null;
   vendor_id_type: string | null; vendor_is_natural: boolean | null; vendor_declarant: boolean | null; vendor_filled: FilledField[] | null; iva_confirmed: boolean;
-  raw_extraction: { account_decisions?: Record<string, Decision> } | null; source_override: unknown; doc_kind: string;
+  raw_extraction: { account_decisions?: Record<string, Decision> } | null; source_override: unknown; doc_kind: string; cc_pdf_path: string | null;
   invoice_lines: Array<{ account_code: string | null; account_name: string | null; description: string | null }>;
 };
 
@@ -434,6 +434,16 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
           <DialogHeader><DialogTitle>Reintentar con el último día del mes</DialogTitle></DialogHeader>
           <p className="text-sm">{reintento ? `${label(reintento.d)}: Siigo no aceptó la fecha enviada. Se reintentará con ${fecha(reintento.fecha)} (último día del mes del documento). ¿Confirmar?` : ""}</p>
           <DialogFooter><Button variant="outline" onClick={() => setReintento(null)}>Cancelar</Button><Button onClick={() => { const r = reintento; setReintento(null); if (r) void crear([r.d], new Map([[r.d.id, r.fecha]])); }}>Confirmar</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!duplicados} onOpenChange={(o) => !o && setDuplicados(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Posibles duplicados</DialogTitle></DialogHeader>
+          <p className="text-sm">Estos documentos coinciden en vendedor, fecha y valor con documentos ya creados en Siigo:</p>
+          <div className="max-h-48 space-y-1 overflow-auto text-sm">
+            {(duplicados ?? []).map((x) => <p key={x.d.id}>{label(x.d)}: posible duplicado de <b>{x.de}</b></p>)}
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setDuplicados(null)}>No crearlos</Button><Button onClick={() => { const l = duplicados ?? []; setDuplicados(null); void crear(l.map((x) => x.d), undefined, true); }}>Crear de todas formas</Button></DialogFooter>
         </DialogContent>
       </Dialog>
       <Detalle d={detalle} onClose={() => setDetalle(null)} />
