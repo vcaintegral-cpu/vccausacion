@@ -1,0 +1,2 @@
+ALTER TABLE public.company_parameters ADD COLUMN ds_accepted_dates jsonb NOT NULL DEFAULT '{}'::jsonb;
+COMMENT ON COLUMN public.company_parameters.ds_accepted_dates IS 'Fecha mínima que Siigo aceptó por mes ("2026-09": "2026-09-21"), aprendida en lotes de documentos soporte.';
