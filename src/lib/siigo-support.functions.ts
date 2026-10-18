@@ -116,18 +116,17 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       });
       trace = { ...trace, tercero: { id: tercero.id, accion: tercero.action } };
 
-      // Duplicado en Siigo: mismo vendedor + número de soporte.
-      const numeroSoporte = supplierReceiptNumber(inv.number);
+      // Duplicado en Siigo (sin número de cuenta de cobro): mismo vendedor + fecha + valor total.
       const nit = String(inv.provider_nit ?? "").replace(/\D/g, "");
-      type Listed = { id?: string; name?: string; supplier?: { identification?: string }; supplier_receipt_number?: { number?: string | number } };
-      if (inv.issue_date) {
+      type Listed = { id?: string; name?: string; total?: number; supplier?: { identification?: string } };
+      if (inv.issue_date && !data.confirmDuplicate) {
         try {
           const res = await siigoGet<{ results?: Listed[] }>(`${DS_PATH}?date_start=${inv.issue_date}&date_end=${inv.issue_date}&page_size=100`);
           const found = (res.results ?? []).find((d) => String(d.supplier?.identification ?? "").replace(/\D/g, "") === nit
-            && String(d.supplier_receipt_number?.number ?? "").replace(/\D/g, "").padStart(11, "0") === numeroSoporte);
+            && Math.abs(Number(d.total ?? 0) - Number(inv.total)) < 0.005);
           if (found?.id) {
-            await supabase.from("invoices").update({ siigo_id: String(found.id), siigo_number: found.name ?? String(found.id), siigo_status: "error", siigo_error_kind: "creado_diferencia", siigo_error: `Siigo ya tenía el documento ${found.name ?? found.id}. Use "Consultar Siigo de nuevo".` }).eq("id", inv.id);
-            return { ok: false, status: "error", message: `${label}: ya existía en Siigo como ${found.name ?? found.id}; no se creó de nuevo.` };
+            await supabase.from("invoices").update({ siigo_status: "pendiente", siigo_error: null }).eq("id", inv.id);
+            return { ok: false, status: "posible_duplicado", duplicadoDe: found.name ?? String(found.id), message: `${label}: posible duplicado de ${found.name ?? found.id} en Siigo (mismo vendedor, fecha y valor). Confirme para crearlo de todas formas.` };
           }
         } catch (e) { trace = { ...trace, consulta_duplicado: e instanceof Error ? e.message : String(e) }; }
       }
