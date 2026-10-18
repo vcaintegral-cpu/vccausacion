@@ -584,6 +584,9 @@ export async function recalcularCuentasBorrador(
   const source = (inv.source_override as ReturnType<typeof sourceFromRaw>) ?? sourceFromRaw(raw);
   if (source) data = { ...data, subtotal: source.subtotal / 100, iva: source.iva / 100, impoconsumo: source.impoconsumo / 100, total: source.total / 100, discount: source.discount / 100, surcharge: source.surcharge / 100, lines: data.lines.map((l, i) => ({ ...l, subtotal: (source.lines[i]?.subtotal ?? 0) / 100, total: (source.lines[i]?.subtotal ?? 0) / 100, discount: source.source === "excel" ? 0 : l.discount })) };
   const { lines, ...header } = data;
+  // Las cuentas elegidas manualmente por el usuario nunca se recalculan.
+  const manuales = Object.entries(((raw as Record<string, unknown> | null)?.["account_decisions"] ?? {}) as Record<string, { code?: string; origin?: string }>)
+    .filter(([, d]) => d?.origin === "MANUAL" && d.code);
   const acc = await computeDraftAccounting({
     companyId: inv.company_id as string,
     config,
@@ -591,6 +594,15 @@ export async function recalcularCuentasBorrador(
     extracted: lines,
   });
 
+  for (const [k, d] of manuales) {
+    const i = Number(k);
+    const anterior = acc.lines[i]?.account_code;
+    if (!acc.lines[i] || !d.code || anterior === d.code) continue;
+    acc.lines[i] = { ...acc.lines[i]!, account_code: d.code, account_name: (d as { name?: string }).name ?? acc.lines[i]!.account_name ?? null };
+    acc.decisions[i] = d as never;
+    const j = acc.journal.find((x) => x.account_code === anterior && x.debit > 0);
+    if (j) { j.account_code = d.code; j.account_name = (d as { name?: string }).name ?? j.account_name; }
+  }
   if (inv.payable_manual && inv.payable_account) {
     acc.journal = acc.journal.map((j) => isPayableCode(j.account_code) && j.credit > 0 ? { ...j, account_code: inv.payable_account ?? j.account_code } : j);
   }

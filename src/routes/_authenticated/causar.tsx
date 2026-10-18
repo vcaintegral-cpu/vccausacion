@@ -3,6 +3,7 @@ import { SourceValuesCorrection } from "@/components/source-values-correction";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { FileUp, Loader2, Save, Sparkles, Trash2 } from "lucide-react";
@@ -143,6 +144,7 @@ function creditTermFromDates(issue?: string | null, due?: string | null): string
 
 function Causar() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { id: editId } = Route.useSearch();
   const companyId = useActiveCompany();
   const { data: companies, isLoading: loadingCompanies } = useCompanies();
@@ -1084,6 +1086,24 @@ function Causar() {
       ]);
 
       for (const result of savedRows) if (result.error) throw result.error;
+      // Cuenta elegida por el usuario: queda registrada como MANUAL para que ningún
+      // recálculo (reglas, historial) la vuelva a cambiar y se muestre su origen real.
+      if (editingId) {
+        const { data: cur } = await supabase.from("invoices").select("raw_extraction").eq("id", inv.id).maybeSingle();
+        const raw = (cur?.raw_extraction ?? {}) as Record<string, unknown>;
+        const prev = (raw["account_decisions"] ?? {}) as Record<string, { code?: string; origin?: string }>;
+        const next: Record<string, unknown> = { ...prev };
+        let changed = false;
+        lines.forEach((l, i) => {
+          const code = l.account_code ?? "";
+          if (code && prev[i]?.code !== code) {
+            next[i] = { code, name: l.account_name ?? null, origin: "MANUAL", reason: "Cuenta elegida por el usuario", confidence: "ALTA", score: 1, error: null };
+            changed = true;
+          }
+        });
+        if (changed) await supabase.from("invoices").update({ raw_extraction: { ...raw, account_decisions: next } as never }).eq("id", inv.id);
+      }
+      void queryClient.invalidateQueries({ queryKey: ["ds"] });
       if (status === "aprobado") {
         const approved = await supabase.from("invoices").update({ status: "aprobado" }).eq("id", inv.id);
         if (approved.error) throw approved.error;

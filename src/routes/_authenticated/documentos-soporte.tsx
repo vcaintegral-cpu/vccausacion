@@ -53,7 +53,7 @@ type Ds = {
   invoice_lines: Array<{ account_code: string | null; account_name: string | null; description: string | null }>;
 };
 
-const ORIGIN: Record<string, string> = { REGLA: "Regla", APRENDIZAJE: "Historial", HISTORIAL: "Historial", HISTORIAL_DESCRIPCION: "Historial descripción", IA: "IA", NINGUNA: "Pendiente" };
+const ORIGIN: Record<string, string> = { REGLA: "Regla", APRENDIZAJE: "Historial", HISTORIAL: "Historial", HISTORIAL_DESCRIPCION: "Historial descripción", IA: "IA", NINGUNA: "Pendiente", MANUAL: "Elegida por el usuario" };
 const label = (d: Ds) => (String(d.number ?? "").trim() ? [d.prefix, d.number].filter(Boolean).join("-") : (d.provider_name ?? "Sin número"));
 
 function estado(d: Ds): string {
