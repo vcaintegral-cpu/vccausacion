@@ -120,6 +120,13 @@
       "when": 1792286094440,
       "tag": "0016_ds_fechas_aceptadas",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792286898210,
+      "tag": "0017_cc_modo_tipos_documento",
+      "breakpoints": true
     }
   ]
 }

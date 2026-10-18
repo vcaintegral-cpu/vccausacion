@@ -546,6 +546,7 @@ export type Database = {
           country: string | null
           department: string | null
           ds_accepted_dates: Json
+          ds_cost_center_mode: string | null
           ds_date_mode: string
           ds_date_ref: string
           ds_document_code: string | null
@@ -553,6 +554,7 @@ export type Database = {
           ds_payable_account: string
           ds_window_days: number
           email: string | null
+          fc_cost_center_mode: string | null
           phone: string | null
           updated_at: string
         }
@@ -563,6 +565,7 @@ export type Database = {
           country?: string | null
           department?: string | null
           ds_accepted_dates?: Json
+          ds_cost_center_mode?: string | null
           ds_date_mode?: string
           ds_date_ref?: string
           ds_document_code?: string | null
@@ -570,6 +573,7 @@ export type Database = {
           ds_payable_account?: string
           ds_window_days?: number
           email?: string | null
+          fc_cost_center_mode?: string | null
           phone?: string | null
           updated_at?: string
         }
@@ -580,6 +584,7 @@ export type Database = {
           country?: string | null
           department?: string | null
           ds_accepted_dates?: Json
+          ds_cost_center_mode?: string | null
           ds_date_mode?: string
           ds_date_ref?: string
           ds_document_code?: string | null
@@ -587,6 +592,7 @@ export type Database = {
           ds_payable_account?: string
           ds_window_days?: number
           email?: string | null
+          fc_cost_center_mode?: string | null
           phone?: string | null
           updated_at?: string
         }

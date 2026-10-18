@@ -13,7 +13,7 @@ import { roundCOP, toCents } from "@/lib/money";
 export const DS_PATH = "/v1/purchase-support-documents";
 
 type SiigoTax = { id?: number | string; name?: string; type?: string; percentage?: number; active?: boolean };
-type DocType = { id?: number; code?: string | number; name?: string; active?: boolean; automatic_number?: boolean; consecutive?: number; cost_center?: boolean };
+type DocType = { id?: number; code?: string | number; name?: string; active?: boolean; automatic_number?: boolean; consecutive?: number; cost_center?: boolean; cost_center_mandatory?: boolean };
 
 export const siigoListDsTypes = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -80,6 +80,15 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       }
       // Numeración: la app NUNCA calcula ni reserva el consecutivo; Siigo lo asigna al crear
       // y ese consecutivo (ej.: DSEB-1153) queda como número de la cuenta de cobro.
+
+      // ---------- Centro de costo según la configuración del tipo DS en Siigo ----------
+      // Si el tipo NO permite centro de costo, no se envía el campo (se conserva solo en la app).
+      // Si el tipo lo EXIGE y el borrador no lo tiene, no se envía y se marca "Falta centro de costo".
+      const tipoDs = tiposDs.find((d) => Number(d.id) === Number(dsDocumentId));
+      const ccMode = tipoDs?.cost_center_mandatory === true ? "exige" : tipoDs?.cost_center === true ? "permite" : "no";
+      if (params?.ds_cost_center_mode !== ccMode)
+        await supabase.from("company_parameters").upsert({ company_id: inv.company_id, ds_cost_center_mode: ccMode, updated_at: new Date().toISOString() }, { onConflict: "company_id" });
+      trace = { ...trace, centro_costo_tipo: ccMode };
 
       // ---------- Resolución de numeración (vigencia y rango) ----------
       const { data: resoluciones } = await supabase.from("ds_resolutions").select("*").eq("company_id", inv.company_id).eq("active", true);
@@ -169,7 +178,9 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
 
       const paymentId = inv.payment_type_id ? Number(inv.payment_type_id) : await siigoPurchasePaymentTypeId(inv.payment_type_name ?? "crédito");
       if (!paymentId) throw new Error("No se encontró la forma de pago de compras en Siigo.");
-      const costCenterId = inv.cost_center ? await siigoCostCenterId(inv.cost_center) : null;
+      const costCenterId = ccMode === "no" ? null : inv.cost_center ? await siigoCostCenterId(inv.cost_center) : null;
+      if (ccMode === "exige" && costCenterId == null)
+        throw new Error("Falta centro de costo: el tipo de comprobante DS lo exige en Siigo. Asígnelo al borrador antes de enviar.");
       // ---------- Ventana de fechas de Siigo (configurable) ----------
       // Se aceptan documentos del mes desde (referencia − N días) hasta la referencia.
       // Si la fecha de la operación está fuera, se PROPONE la fecha mínima y se pide confirmación; nunca se cambia sola.
@@ -206,6 +217,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       // se guarda en Configuración para que los demás documentos del lote la usen directo.
       let res: { id?: string; name?: string; number?: number } | null = null;
       let ultimoError: unknown = null;
+      let sinCentroCosto = ccMode === "no";
       const fechasIntentadas: unknown[] = [...intentosPrevios];
       for (let intento = 0; intento < 10 && fechaEnvio <= ventana.lastDay && fechaEnvio <= hoy; intento++) {
         fechaIntentada = fechaEnvio;
@@ -224,7 +236,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
           observations: `${obsBase}Documento soporte · ${inv.provider_name ?? ""}`.slice(0, 4000),
           items: items.map((it) => ({ type: it.type, code: it.code, description: it.description, quantity: it.quantity, price: it.price, discount: 0, ...(it.retId != null ? { taxes: [{ id: Number(it.retId) }] } : {}) })),
           payments: [{ id: paymentId, value: neto, due_date: vencimiento }],
-          ...(costCenterId ? { cost_center: costCenterId } : {}),
+          ...(!sinCentroCosto && costCenterId ? { cost_center: costCenterId } : {}),
         };
         trace = { ...trace, siigo_request: payload };
         try {
@@ -233,7 +245,14 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
           break;
         } catch (e) {
           ultimoError = e;
-          if (!/invalid_date/i.test(e instanceof Error ? e.message : String(e))) throw e;
+          const msg = e instanceof Error ? e.message : String(e);
+          // Si Siigo rechaza el centro de costo (document_settings), se reintenta una vez sin él.
+          if (!sinCentroCosto && costCenterId != null && /cost_center|document_settings/i.test(msg)) {
+            sinCentroCosto = true;
+            intento--;
+            continue;
+          }
+          if (!/invalid_date/i.test(msg)) throw e;
           fechaEnvio = addDays(fechaEnvio, 1);
         }
       }
