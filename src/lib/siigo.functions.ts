@@ -1319,6 +1319,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // contable local. Una empresa puede usar centros internamente, pero si este FC no
       // los admite Siigo responde document_settings y rechaza toda la compra.
       const usaCentros = documentInfo.costCenter || documentInfo.costCenterMandatory;
+      // Se guarda en Configuración si el tipo FC permite o exige centro de costo (lectura de Siigo).
+      const fcCcMode = documentInfo.costCenterMandatory ? "exige" : documentInfo.costCenter ? "permite" : "no";
+      void supabase.from("company_parameters").upsert({ company_id: inv.company_id, fc_cost_center_mode: fcCcMode, updated_at: new Date().toISOString() }, { onConflict: "company_id" }).then(() => undefined);
       const centroEmpresa = usaCentros ? inv.cost_center : null;
       let costCenterId = centroEmpresa ? await siigoCostCenterId(centroEmpresa) : null;
       if (centroEmpresa && costCenterId == null) {
