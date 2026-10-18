@@ -7,7 +7,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
 import { purchaseLineErrors, purchaseReadbackComparison } from "@/lib/siigo-purchase-validation";
-import { missingIdentity, splitPersonName, supplierReceiptNumber, DS_PREFIX } from "@/lib/support-docs";
+import { missingIdentity, splitPersonName, supplierReceiptNumber, dsSendDate, DS_PREFIX } from "@/lib/support-docs";
 import { roundCOP, toCents } from "@/lib/money";
 
 export const DS_PATH = "/v1/purchase-support-documents";
@@ -26,11 +26,11 @@ export const siigoListDsTypes = createServerFn({ method: "POST" })
     return list.filter((d) => d.id != null && d.active !== false).map((d) => ({ id: Number(d.id), code: String(d.code ?? ""), name: String(d.name ?? "") }));
   });
 
-export type DsSyncResult = { ok: boolean; status: string; message: string; siigoNumber?: string | null };
+export type DsSyncResult = { ok: boolean; status: string; message: string; siigoNumber?: string | null; proposedDate?: string | null };
 
 export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((i: { invoiceId: string; useToday?: boolean }) => { if (!i?.invoiceId) throw new Error("invoiceId requerido"); return i; })
+  .inputValidator((i: { invoiceId: string; confirmDate?: string }) => { if (!i?.invoiceId) throw new Error("invoiceId requerido"); return i; })
   .handler(async ({ data, context }): Promise<DsSyncResult> => {
     const supabase = context.supabase;
     const { data: inv, error } = await supabase.from("invoices").select("*").eq("id", data.invoiceId).maybeSingle();
