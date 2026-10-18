@@ -320,7 +320,8 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
       while (next < lista.length && !detener) {
         const d = lista[next++]!;
         try {
-          const r = await sync({ data: { invoiceId: d.id, confirmDate: confirmadas?.get(d.id) } });
+          const cf = confirmadas?.get(d.id);
+          const r = await sync({ data: cf ? { invoiceId: d.id, confirmDate: cf } : { invoiceId: d.id } });
           if (r.ok) ok += 1;
           else if (r.status === "confirmar_fecha" && r.proposedDate) pendientesFecha.push({ d, fecha: r.proposedDate });
           else {
