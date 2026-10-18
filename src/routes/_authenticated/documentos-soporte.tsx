@@ -247,6 +247,14 @@ function Detalle({ d, onClose }: { d: Ds | null; onClose: () => void }) {
       <DialogContent className="max-h-[85vh] max-w-3xl overflow-auto">
         <DialogHeader><DialogTitle>Detalle {d ? label(d) : ""}</DialogTitle></DialogHeader>
         {d?.siigo_error && <p className="whitespace-pre-wrap text-sm text-destructive">{d.siigo_error}</p>}
+        {d && (
+          <div className="space-y-1 text-sm">
+            <p>Fecha de la operación: <b>{fecha(d.issue_date)}</b>{d.ds_sent_date ? <> · Enviada a Siigo: <b>{fecha(d.ds_sent_date)}</b></> : null}</p>
+            {Array.isArray(t["fechas_intentadas"]) && (t["fechas_intentadas"] as Array<{ fecha?: string }>).length > 0 && (
+              <p className="text-xs text-muted-foreground">Fechas intentadas: {(t["fechas_intentadas"] as Array<{ fecha?: string }>).map((x) => fecha(x.fecha ?? null)).join(", ")}</p>
+            )}
+          </div>
+        )}
         <p className="text-xs font-semibold">JSON enviado a Siigo</p>
         <pre className="max-h-64 overflow-auto rounded bg-muted p-2 text-[11px]">{JSON.stringify(t["siigo_request"] ?? null, null, 2)}</pre>
         <p className="text-xs font-semibold">Respuesta de Siigo</p>
@@ -505,7 +513,7 @@ function Terceros({ docs }: { docs: Ds[] }) {
 // ------------------------------------------------------------------ Configuración
 function Configuracion({ companyId }: { companyId: string }) {
   const listTypes = useServerFn(siigoListDsTypes);
-  type F = { address?: string; city?: string; department?: string; country?: string; phone?: string; email?: string; ds_document_id?: string; ds_document_code?: string };
+  type F = { address?: string; city?: string; department?: string; country?: string; phone?: string; email?: string; ds_document_id?: string; ds_document_code?: string; ds_window_days?: string; ds_date_ref?: string };
   const [f, setF] = useState<F>({});
   const [types, setTypes] = useState<Array<{ id: number; code: string; name: string }>>([]);
   const [loadingTypes, setLoadingTypes] = useState(false);
