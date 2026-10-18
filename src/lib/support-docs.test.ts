@@ -57,7 +57,7 @@ describe("ventana de fechas Siigo", () => {
     expect(dsSendDate("2026-10-18", "2026-10-17", 10, "fin_mes").sendDate).toBe("2026-10-17");
   });
   it("con referencia hoy usa hoy - N días", () => {
-    expect(dsSendDate("2026-09-01", "2026-10-18", 10, "hoy").sendDate).toBe("2026-10-08");
+    expect(dsSendDate("2026-09-01", "2026-10-18", 10, "hoy").sendDate).toBe("2026-09-30"); // hoy−10 = 08/10, pero nunca supera el último día del mes del documento
   });
 });
 
