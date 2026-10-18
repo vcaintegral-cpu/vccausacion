@@ -3,6 +3,7 @@ import { SourceValuesCorrection } from "@/components/source-values-correction";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { FileUp, Loader2, Save, Sparkles, Trash2 } from "lucide-react";
@@ -143,6 +144,7 @@ function creditTermFromDates(issue?: string | null, due?: string | null): string
 
 function Causar() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { id: editId } = Route.useSearch();
   const companyId = useActiveCompany();
   const { data: companies, isLoading: loadingCompanies } = useCompanies();
