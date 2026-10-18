@@ -47,6 +47,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
     await supabase.from("invoices").update({ siigo_status: "sincronizando", siigo_last_attempt_at: new Date().toISOString(), siigo_attempts: (inv.siigo_attempts ?? 0) + 1 }).eq("id", inv.id);
 
     let trace: Record<string, unknown> = { documento: "soporte", endpoint: DS_PATH, intento_at: new Date().toISOString() };
+    let fechaIntentada: string | null = null;
     try {
       // ---------- Validaciones ----------
       const faltan = missingIdentity({ idNumber: inv.provider_nit, idType: inv.vendor_id_type, name: inv.provider_name });
@@ -148,14 +149,35 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       const paymentId = inv.payment_type_id ? Number(inv.payment_type_id) : await siigoPurchasePaymentTypeId(inv.payment_type_name ?? "crédito");
       if (!paymentId) throw new Error("No se encontró la forma de pago de compras en Siigo.");
       const costCenterId = inv.cost_center ? await siigoCostCenterId(inv.cost_center) : null;
-      // Fecha de emisión en Siigo: "documento" (la de la cuenta de cobro) o "hoy" (configuración o reintento confirmado).
-      // Nunca se cambia automáticamente: "hoy" solo se usa si la empresa lo configuró o el usuario lo confirmó.
+      // ---------- Ventana de fechas de Siigo (configurable) ----------
+      // Se aceptan documentos del mes desde (referencia − N días) hasta la referencia.
+      // Si la fecha de la operación está fuera, se PROPONE la fecha mínima y se pide confirmación; nunca se cambia sola.
       const hoy = new Date().toISOString().slice(0, 10);
-      const modoHoy = data.useToday === true || params?.ds_date_mode === "hoy";
-      const fechaEnvio = modoHoy ? hoy : inv.issue_date;
-      const vencimiento = modoHoy ? hoy : (inv.due_date ?? inv.issue_date);
       const fecOp = inv.issue_date ? inv.issue_date.split("-").reverse().join("/") : "";
-      const obsBase = modoHoy && fechaEnvio !== inv.issue_date ? `Fecha de la operación: ${fecOp} – Cuenta de cobro N° ${inv.number}. ` : "";
+      const windowDays = Number(params?.ds_window_days ?? 10) || 10;
+      const ref = params?.ds_date_ref === "hoy" ? "hoy" : "fin_mes";
+      const ventana = dsSendDate(String(inv.issue_date ?? hoy), hoy, windowDays, ref);
+      let fechaEnvio: string;
+      if (inv.siigo_error_kind === "fecha_invalida" && data.confirmDate) {
+        // Reintento confirmado por el usuario tras un invalid_date (ej.: último día del mes).
+        if (data.confirmDate > ventana.lastDay || data.confirmDate > hoy)
+          throw new Error("La fecha de reintento no puede ser posterior al último día del mes del documento ni a hoy.");
+        fechaEnvio = data.confirmDate;
+      } else {
+        fechaEnvio = ventana.sendDate;
+        if (ventana.changed && data.confirmDate !== ventana.sendDate) {
+          await supabase.from("invoices").update({ siigo_status: "pendiente", siigo_error: null }).eq("id", inv.id);
+          return {
+            ok: false, status: "confirmar_fecha", proposedDate: ventana.sendDate,
+            message: `${label}: la fecha ${fecOp} está fuera de la ventana de Siigo; se enviará con ${ventana.sendDate.split("-").reverse().join("/")}. Confirme para continuar.`,
+          };
+        }
+      }
+      fechaIntentada = fechaEnvio;
+      const intentosPrevios = Array.isArray((inv.siigo_trace as Record<string, unknown> | null)?.["fechas_intentadas"]) ? (inv.siigo_trace as Record<string, unknown>)["fechas_intentadas"] as unknown[] : [];
+      trace = { ...trace, fechas_intentadas: [...intentosPrevios, { fecha: fechaEnvio, at: new Date().toISOString() }] };
+      const vencimiento = inv.due_date && inv.due_date >= fechaEnvio && inv.due_date <= ventana.lastDay ? inv.due_date : fechaEnvio;
+      const obsBase = `Fecha de la operación: ${fecOp} – Cuenta de cobro N° ${inv.number}. `;
       const payload: Record<string, unknown> = {
         document: { id: dsDocumentId },
         date: fechaEnvio,
