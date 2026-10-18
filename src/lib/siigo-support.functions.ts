@@ -198,16 +198,17 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       const intentosPrevios = Array.isArray((inv.siigo_trace as Record<string, unknown> | null)?.["fechas_intentadas"]) ? (inv.siigo_trace as Record<string, unknown>)["fechas_intentadas"] as unknown[] : [];
       trace = { ...trace, fechas_intentadas: [...intentosPrevios, { fecha: fechaEnvio, at: new Date().toISOString() }] };
       const vencimiento = inv.due_date && inv.due_date >= fechaEnvio && inv.due_date <= ventana.lastDay ? inv.due_date : fechaEnvio;
-      const obsBase = `Fecha de la operación: ${fecOp} – Cuenta de cobro N° ${inv.number}. `;
+      // Observaciones: el número de la cuenta de cobro solo se conoce DESPUÉS de crear (lo asigna Siigo),
+      // y la API no permite actualizar observaciones; se escribe solo la fecha de la operación.
+      const obsBase = `Fecha de la operación: ${fecOp}. `;
       const payload: Record<string, unknown> = {
         document: { id: dsDocumentId },
-        ...(numeroManual != null ? { number: numeroManual } : {}),
         date: fechaEnvio,
         supplier: { identification: nit, branch_office: 0 },
-        supplier_receipt_number: { prefix: (inv.prefix || DS_PREFIX).slice(0, 6), number: numeroSoporte },
+        ...(String(inv.number ?? "").trim() ? { supplier_receipt_number: { prefix: (inv.prefix || DS_PREFIX).slice(0, 6), number: supplierReceiptNumber(inv.number) } } : {}),
         discount_type: "Value",
         stamp: { send: true },
-        observations: `${obsBase}Documento soporte ${label} · ${inv.provider_name ?? ""}`.slice(0, 4000),
+        observations: `${obsBase}Documento soporte · ${inv.provider_name ?? ""}`.slice(0, 4000),
         items: items.map((it) => ({ type: it.type, code: it.code, description: it.description, quantity: it.quantity, price: it.price, discount: 0, ...(it.retId != null ? { taxes: [{ id: Number(it.retId) }] } : {}) })),
         payments: [{ id: paymentId, value: neto, due_date: vencimiento }],
         ...(costCenterId ? { cost_center: costCenterId } : {}),
@@ -218,8 +219,16 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       trace = { ...trace, siigo_respuesta: res };
       if (!res.id) throw new Error("Siigo respondió sin el ID del documento soporte.");
       const siigoNumber = String(res.name ?? res.number ?? res.id);
+      // El consecutivo que asigna Siigo (ej.: DSEB-1153) queda como número de la cuenta de cobro y del documento.
+      const m = /^([A-Za-z]+)[- ]?(\d+)$/.exec(siigoNumber);
+      const prefixSiigo = m ? m[1]!.toUpperCase() : null;
+      const numeroSiigo = m ? m[2]! : null;
       // La identidad remota se guarda ANTES de verificar: nunca se reenvía.
-      await supabase.from("invoices").update({ siigo_id: String(res.id), siigo_number: siigoNumber, siigo_status: "error", siigo_error_kind: "creado_diferencia", siigo_error: "Documento creado, pendiente de verificar.", siigo_trace: trace as Json, ds_sent_date: fechaEnvio }).eq("id", inv.id);
+      await supabase.from("invoices").update({
+        siigo_id: String(res.id), siigo_number: siigoNumber, siigo_status: "error", siigo_error_kind: "creado_diferencia",
+        siigo_error: "Documento creado, pendiente de verificar.", siigo_trace: trace as Json, ds_sent_date: fechaEnvio,
+        ...(prefixSiigo && numeroSiigo ? { prefix: prefixSiigo, number: numeroSiigo } : {}),
+      }).eq("id", inv.id);
 
       const doc = await siigoGet<Record<string, unknown> & { total?: number; payments?: Array<{ value?: number }>; retentions?: Array<{ value?: number }>; items?: Array<{ taxes?: Array<{ id?: string | number; type?: string; value?: number }> }>; stamp?: { status?: string }; metadata?: Record<string, unknown> }>(`${DS_PATH}/${res.id}`);
       const retDevueltas = ((doc.retentions ?? []).reduce((a, r) => a + toCents(r.value), 0)
