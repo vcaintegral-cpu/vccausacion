@@ -292,31 +292,36 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
 
   const [propuestas, setPropuestas] = useState<Array<{ d: Ds; fecha: string }> | null>(null);
   const [reintento, setReintento] = useState<{ d: Ds; fecha: string } | null>(null);
+  const [duplicados, setDuplicados] = useState<Array<{ d: Ds; de: string }> | null>(null);
 
-  const crear = async (lista: Ds[], confirmadas?: Map<string, string>) => {
+  // Envío en lote: UNO POR UNO (nunca en paralelo), en orden de fecha de la operación y luego
+  // nombre del vendedor, para que los consecutivos DSEB queden en orden cronológico.
+  // Si un documento falla, el lote sigue con el siguiente y el que falló queda en "Error sin crear".
+  const crear = async (listaOriginal: Ds[], confirmadas?: Map<string, string>, confirmarDuplicados?: boolean) => {
+    const lista = [...listaOriginal].sort((a, b) => (a.issue_date ?? "").localeCompare(b.issue_date ?? "") || (a.provider_name ?? "").localeCompare(b.provider_name ?? ""));
     setConfirmar(null); setBusy(true); setEnvio({ done: 0, total: lista.length });
-    const res: string[] = []; let ok = 0; let i = 0;
-    let next = 0; let detener = false;
+    const res: string[] = []; let ok = 0; let i = 0; let detener = false;
     const pendientesFecha: Array<{ d: Ds; fecha: string }> = [];
-    await Promise.all(Array.from({ length: Math.min(3, lista.length) }, async () => {
-      while (next < lista.length && !detener) {
-        const d = lista[next++]!;
-        try {
-          const cf = confirmadas?.get(d.id);
-          const r = await sync({ data: cf ? { invoiceId: d.id, confirmDate: cf } : { invoiceId: d.id } });
-          if (r.ok) ok += 1;
-          else if (r.status === "confirmar_fecha" && r.proposedDate) pendientesFecha.push({ d, fecha: r.proposedDate });
-          else {
-            res.push(r.message);
-            // Si Siigo rechazó la fecha, se detiene el lote y se pregunta antes de seguir.
-            if ((r as { status?: string }).status === "error" && /no acepta la fecha/i.test(r.message)) detener = true;
-          }
-        } catch (e) { res.push(`${label(d)}: ${e instanceof Error ? e.message : String(e)}`); }
-        setEnvio({ done: ++i, total: lista.length });
-      }
-    }));
+    const posiblesDup: Array<{ d: Ds; de: string }> = [];
+    for (const d of lista) {
+      if (detener) break;
+      try {
+        const cf = confirmadas?.get(d.id);
+        const r = await sync({ data: { invoiceId: d.id, ...(cf ? { confirmDate: cf } : {}), ...(confirmarDuplicados ? { confirmDuplicate: true } : {}) } });
+        if (r.ok) ok += 1;
+        else if (r.status === "confirmar_fecha" && r.proposedDate) pendientesFecha.push({ d, fecha: r.proposedDate });
+        else if (r.status === "posible_duplicado") posiblesDup.push({ d, de: r.duplicadoDe ?? "otro documento" });
+        else {
+          res.push(r.message);
+          // Si Siigo rechazó la fecha, se detiene el lote y se pregunta antes de seguir.
+          if (r.status === "error" && /no acepta la fecha/i.test(r.message)) detener = true;
+        }
+      } catch (e) { res.push(`${label(d)}: ${e instanceof Error ? e.message : String(e)}`); }
+      setEnvio({ done: ++i, total: lista.length });
+    }
     setBusy(false); setEnvio(null); setSel(new Set()); onDone();
     if (pendientesFecha.length) { setPropuestas(pendientesFecha); return; }
+    if (posiblesDup.length) { setDuplicados(posiblesDup); return; }
     if (ok) toast.success(`${ok} documento(s) soporte creado(s) en Siigo.`);
     if (res.length) toast.error(res.join("\n"), { duration: 15000 });
   };
@@ -353,7 +358,7 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
                 <tr key={d.id} className="border-t align-top">
                   <td className="p-2"><Checkbox checked={sel.has(d.id)} onCheckedChange={(c) => setSel((s) => { const n = new Set(s); if (c) n.add(d.id); else n.delete(d.id); return n; })} /></td>
                   <td className="p-2 font-mono text-xs">
-                    {String(d.number ?? "").trim() ? label(d) : <NumeroEditor d={d} onDone={onDone} />}
+                    {String(d.number ?? "").trim() ? label(d) : <span className="text-muted-foreground">Se asigna al crear en Siigo</span>}
                   </td>
                   <td className="p-2">
                     <div>{d.provider_name ?? <span className="text-destructive">Sin nombre</span>}</div>
