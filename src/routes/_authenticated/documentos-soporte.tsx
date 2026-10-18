@@ -467,15 +467,20 @@ function Historial({ docs, onDone }: { companyId: string; docs: Ds[]; onDone: ()
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-left text-xs"><tr><th className="p-2">Documento</th><th className="p-2">Vendedor</th><th className="p-2">Fecha</th><th className="p-2 text-right">Total</th><th className="p-2">Siigo</th><th className="p-2">Transmisión DIAN</th><th className="p-2" /></tr></thead>
           <tbody>
-            {docs.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">Aún no hay documentos soporte creados en Siigo.</td></tr>}
-            {docs.map((d) => (
+            {lista.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">Aún no hay documentos soporte creados en Siigo.</td></tr>}
+            {lista.map((d) => (
               <tr key={d.id} className="border-t">
                 <td className="p-2 font-mono text-xs">{label(d)}</td>
                 <td className="p-2">{d.provider_name}<div className="text-xs text-muted-foreground">{d.provider_nit}</div></td>
                 <td className="p-2 text-xs">Operación {fecha(d.issue_date)}{d.ds_sent_date && d.ds_sent_date !== d.issue_date ? <div>Enviado {fecha(d.ds_sent_date)}</div> : null}</td>
                 <td className="p-2 text-right">{cop(d.total)}</td>
                 <td className="p-2 font-mono text-xs">{d.siigo_number}</td>
-                <td className="p-2 text-xs">{d.ds_dian_status ?? "—"}</td>
+                <td className="p-2 text-xs">
+                  {dianLabel(d.ds_dian_status)}
+                  {pendienteDian(d) && (() => { const n = diasParaDian(d.ds_sent_date, hoy); return n == null ? null : (
+                    <div className={6 - n <= 2 ? "font-semibold text-destructive" : "text-muted-foreground"}>Días para enviar a la DIAN: {n} de 6</div>
+                  ); })()}
+                </td>
                 <td className="p-2"><div className="flex justify-end gap-1">
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setDetalle(d)}><Eye className="size-3.5" /> Ver detalle</Button>
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => exportarComprobante(d)}><Download className="size-3.5" /> Comprobante</Button>
