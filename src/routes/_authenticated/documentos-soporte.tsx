@@ -271,7 +271,7 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
       const dec = Object.values(d.raw_extraction?.account_decisions ?? {});
       const cuenta = d.invoice_lines.find((l) => isValidExpenseAccount(l.account_code));
       if (cuenta?.account_code && d.provider_nit && !dec.some((x) => x.code === cuenta.account_code && x.origin === "REGLA"))
-        await aprenderReglaProveedor({ companyId, userId: u.user?.id, providerNit: d.provider_nit, providerName: d.provider_name, keyword: "(todas)", expenseAccount: cuenta.account_code, expenseAccountName: cuenta.account_name });
+        await aprenderReglaProveedor({ companyId, userId: u.user?.id ?? null, providerNit: d.provider_nit, providerName: d.provider_name, keyword: "(todas)", expenseAccount: cuenta.account_code, expenseAccountName: cuenta.account_name });
       ok += 1;
     }
     setBusy(false); setSel(new Set()); onDone();
@@ -439,7 +439,8 @@ function Terceros({ docs }: { docs: Ds[] }) {
 // ------------------------------------------------------------------ Configuración
 function Configuracion({ companyId }: { companyId: string }) {
   const listTypes = useServerFn(siigoListDsTypes);
-  const [f, setF] = useState<Record<string, string>>({});
+  type F = { address?: string; city?: string; department?: string; country?: string; phone?: string; email?: string; ds_document_id?: string; ds_document_code?: string };
+  const [f, setF] = useState<F>({});
   const [types, setTypes] = useState<Array<{ id: number; code: string; name: string }>>([]);
   const [loadingTypes, setLoadingTypes] = useState(false);
   useEffect(() => {
@@ -455,7 +456,7 @@ function Configuracion({ companyId }: { companyId: string }) {
     const { error } = await supabase.from("company_parameters").upsert({ company_id: companyId, address: f.address || null, city: f.city || null, department: f.department || null, country: f.country || null, phone: f.phone || null, email: f.email || null, ds_document_id: f.ds_document_id ? Number(f.ds_document_id) : null, ds_document_code: f.ds_document_code || null, updated_at: new Date().toISOString() });
     if (error) toast.error(error.message); else toast.success("Parámetros guardados.");
   };
-  const campo = (k: string, l: string) => <label className="space-y-1 text-sm"><span className="text-muted-foreground">{l}</span><Input value={f[k] ?? ""} onChange={(e) => setF({ ...f, [k]: e.target.value })} /></label>;
+  const campo = (k: keyof F, l: string) => <label className="space-y-1 text-sm"><span className="text-muted-foreground">{l}</span><Input value={f[k] ?? ""} onChange={(e) => setF({ ...f, [k]: e.target.value })} /></label>;
   return (
     <div className="max-w-2xl space-y-6 pt-4">
       <section className="space-y-3">
