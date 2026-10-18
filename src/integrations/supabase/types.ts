@@ -384,6 +384,7 @@ export type Database = {
           company_id: string
           created_at: string
           created_by: string
+          doc_kind: string
           error_code: string | null
           error_count: number
           error_message: string | null
@@ -406,6 +407,7 @@ export type Database = {
           company_id: string
           created_at?: string
           created_by?: string
+          doc_kind?: string
           error_code?: string | null
           error_count?: number
           error_message?: string | null
@@ -428,6 +430,7 @@ export type Database = {
           company_id?: string
           created_at?: string
           created_by?: string
+          doc_kind?: string
           error_code?: string | null
           error_count?: number
           error_message?: string | null
@@ -530,6 +533,53 @@ export type Database = {
             foreignKeyName: "company_members_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      company_parameters: {
+        Row: {
+          address: string | null
+          city: string | null
+          company_id: string
+          country: string | null
+          department: string | null
+          ds_document_code: string | null
+          ds_document_id: number | null
+          email: string | null
+          phone: string | null
+          updated_at: string
+        }
+        Insert: {
+          address?: string | null
+          city?: string | null
+          company_id: string
+          country?: string | null
+          department?: string | null
+          ds_document_code?: string | null
+          ds_document_id?: number | null
+          email?: string | null
+          phone?: string | null
+          updated_at?: string
+        }
+        Update: {
+          address?: string | null
+          city?: string | null
+          company_id?: string
+          country?: string | null
+          department?: string | null
+          ds_document_code?: string | null
+          ds_document_id?: number | null
+          email?: string | null
+          phone?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_parameters_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: true
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
@@ -876,6 +926,8 @@ export type Database = {
           currency: string | null
           dian_status: string | null
           discount: number
+          doc_kind: string
+          ds_dian_status: string | null
           due_date: string | null
           file_name: string | null
           file_path: string | null
@@ -884,6 +936,7 @@ export type Database = {
           import_source: string | null
           issue_date: string | null
           iva: number
+          iva_confirmed: boolean
           notes: string | null
           number: string | null
           paid_amount: number
@@ -946,6 +999,10 @@ export type Database = {
           total: number
           updated_at: string
           value_modified: boolean
+          vendor_declarant: boolean | null
+          vendor_filled: Json
+          vendor_id_type: string | null
+          vendor_is_natural: boolean | null
           voucher_number: string | null
         }
         Insert: {
@@ -962,6 +1019,8 @@ export type Database = {
           currency?: string | null
           dian_status?: string | null
           discount?: number
+          doc_kind?: string
+          ds_dian_status?: string | null
           due_date?: string | null
           file_name?: string | null
           file_path?: string | null
@@ -970,6 +1029,7 @@ export type Database = {
           import_source?: string | null
           issue_date?: string | null
           iva?: number
+          iva_confirmed?: boolean
           notes?: string | null
           number?: string | null
           paid_amount?: number
@@ -1032,6 +1092,10 @@ export type Database = {
           total?: number
           updated_at?: string
           value_modified?: boolean
+          vendor_declarant?: boolean | null
+          vendor_filled?: Json
+          vendor_id_type?: string | null
+          vendor_is_natural?: boolean | null
           voucher_number?: string | null
         }
         Update: {
@@ -1048,6 +1112,8 @@ export type Database = {
           currency?: string | null
           dian_status?: string | null
           discount?: number
+          doc_kind?: string
+          ds_dian_status?: string | null
           due_date?: string | null
           file_name?: string | null
           file_path?: string | null
@@ -1056,6 +1122,7 @@ export type Database = {
           import_source?: string | null
           issue_date?: string | null
           iva?: number
+          iva_confirmed?: boolean
           notes?: string | null
           number?: string | null
           paid_amount?: number
@@ -1118,6 +1185,10 @@ export type Database = {
           total?: number
           updated_at?: string
           value_modified?: boolean
+          vendor_declarant?: boolean | null
+          vendor_filled?: Json
+          vendor_id_type?: string | null
+          vendor_is_natural?: boolean | null
           voucher_number?: string | null
         }
         Relationships: [
