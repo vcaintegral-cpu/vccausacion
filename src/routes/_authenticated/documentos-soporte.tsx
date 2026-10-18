@@ -135,7 +135,7 @@ function Cargar({ companyId, onDone }: { companyId: string; onDone: () => void }
 
   const subir = async (files: File[]) => {
     if (!files.length) return;
-    setRunning(true); setRowErrors([]); setProgress(null);
+    setRunning(true); setRowErrors([]); setProgress(null); setNow(Date.now());
     try {
       const r = await processSupportUpload({ companyId, files, onProgress: setProgress });
       setRowErrors(r.rowErrors);
@@ -145,7 +145,7 @@ function Cargar({ companyId, onDone }: { companyId: string; onDone: () => void }
     } finally { setRunning(false); onDone(); if (input.current) input.current.value = ""; }
   };
 
-  const seg = progress ? Math.round((now - progress.startedAt) / 1000) : 0;
+  const seg = progress ? Math.max(0, Math.round(((running ? now : Date.now()) - progress.startedAt) / 1000)) : 0;
   return (
     <div className="space-y-4 pt-4">
       <div className="flex flex-wrap gap-2">

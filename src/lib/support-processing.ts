@@ -2,7 +2,7 @@
 // Cada documento pasa por la MISMA función de causación de compras (saveExtractedInvoice)
 // y luego se marca como documento soporte con los datos del vendedor.
 import { supabase } from "@/integrations/supabase/client";
-import { expandInvoiceFiles, saveExtractedInvoice } from "@/lib/bulk-invoices";
+import { expandInvoiceFiles, resetBulkBatch, saveExtractedInvoice } from "@/lib/bulk-invoices";
 import { loadDeps } from "@/lib/bulk-runner";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
 import { prepareInvoiceFile } from "@/lib/invoice-file";
@@ -23,6 +23,7 @@ export async function processSupportUpload(params: {
   onProgress: (p: SupportProgress) => void;
 }): Promise<{ rowErrors: RowError[]; progress: SupportProgress }> {
   const { companyId } = params;
+  resetBulkBatch();
   const deps = await loadDeps(companyId);
   const company = deps.config.batch!.company;
   const { data: cp } = await supabase.from("company_parameters").select("*").eq("company_id", companyId).maybeSingle();
