@@ -79,7 +79,7 @@ function DocumentosSoporte() {
     enabled: !!companyId,
     queryFn: async () => {
       const { data, error } = await supabase.from("invoices")
-        .select("id, prefix, number, issue_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, subtotal, iva, retefuente, reteiva, reteica, total, cost_center, notes, status, siigo_status, siigo_id, siigo_number, siigo_error, siigo_error_kind, siigo_trace, siigo_attempts, siigo_last_attempt_at, ds_dian_status, ds_sent_date, vendor_id_type, vendor_is_natural, vendor_declarant, vendor_filled, iva_confirmed, raw_extraction, source_override, doc_kind, invoice_lines(account_code, account_name, description)")
+        .select("id, prefix, number, issue_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, subtotal, iva, retefuente, reteiva, reteica, total, cost_center, notes, status, siigo_status, siigo_id, siigo_number, siigo_error, siigo_error_kind, siigo_trace, siigo_attempts, siigo_last_attempt_at, ds_dian_status, ds_sent_date, vendor_id_type, vendor_is_natural, vendor_declarant, vendor_filled, iva_confirmed, raw_extraction, source_override, doc_kind, cc_pdf_path, invoice_lines(account_code, account_name, description)")
         .eq("company_id", companyId!).eq("doc_kind", "soporte").order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as unknown as Ds[];
@@ -252,6 +252,45 @@ function exportarComprobante(d: Ds) {
     const { data } = await supabase.from("journal_lines").select("*").eq("invoice_id", d.id).order("position");
     try { exportXlsx(d as never, (data ?? []) as unknown as JournalLine[]); } catch (e) { toast.error(e instanceof Error ? e.message : "No se pudo exportar."); }
   })();
+}
+
+// Cuenta de cobro numerada (PDF generado con el consecutivo DSEB de Siigo).
+async function urlCuentaCobro(d: Ds): Promise<string | null> {
+  if (!d.cc_pdf_path) return null;
+  const { data, error } = await supabase.storage.from("facturas").createSignedUrl(d.cc_pdf_path, 120);
+  return error ? null : data.signedUrl;
+}
+
+function descargarCuentaCobro(d: Ds) {
+  void (async () => {
+    const url = await urlCuentaCobro(d);
+    if (!url) { toast.error("Este documento aún no tiene cuenta de cobro numerada."); return; }
+    const a = document.createElement("a");
+    a.href = url; a.download = `Cuenta de cobro ${label(d)}.pdf`; a.rel = "noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+  })();
+}
+
+async function descargarCuentasCobroZip(docs: Ds[]) {
+  const conPdf = docs.filter((d) => d.cc_pdf_path);
+  if (!conPdf.length) { toast.error("Ningún documento del historial tiene cuenta de cobro numerada todavía."); return; }
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+  let n = 0;
+  for (const d of conPdf) {
+    const url = await urlCuentaCobro(d);
+    if (!url) continue;
+    const blob = await (await fetch(url)).blob();
+    zip.file(`Cuenta de cobro ${label(d)}.pdf`, blob);
+    n += 1;
+  }
+  if (!n) { toast.error("No se pudo descargar ninguna cuenta de cobro."); return; }
+  const blob = await zip.generateAsync({ type: "blob", compression: "STORE" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "Cuentas de cobro.zip";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 // ------------------------------------------------------------------ Borradores
