@@ -1084,6 +1084,24 @@ function Causar() {
       ]);
 
       for (const result of savedRows) if (result.error) throw result.error;
+      // Cuenta elegida por el usuario: queda registrada como MANUAL para que ningún
+      // recálculo (reglas, historial) la vuelva a cambiar y se muestre su origen real.
+      if (editingId) {
+        const { data: cur } = await supabase.from("invoices").select("raw_extraction").eq("id", inv.id).maybeSingle();
+        const raw = (cur?.raw_extraction ?? {}) as Record<string, unknown>;
+        const prev = (raw["account_decisions"] ?? {}) as Record<string, { code?: string; origin?: string }>;
+        const next: Record<string, unknown> = { ...prev };
+        let changed = false;
+        lines.forEach((l, i) => {
+          const code = l.account_code ?? "";
+          if (code && prev[i]?.code !== code) {
+            next[i] = { code, name: l.account_name ?? null, origin: "MANUAL", reason: "Cuenta elegida por el usuario", confidence: "ALTA", score: 1, error: null };
+            changed = true;
+          }
+        });
+        if (changed) await supabase.from("invoices").update({ raw_extraction: { ...raw, account_decisions: next } as never }).eq("id", inv.id);
+      }
+      void queryClient.invalidateQueries({ queryKey: ["ds"] });
       if (status === "aprobado") {
         const approved = await supabase.from("invoices").update({ status: "aprobado" }).eq("id", inv.id);
         if (approved.error) throw approved.error;
