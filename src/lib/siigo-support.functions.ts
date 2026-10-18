@@ -207,6 +207,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       const obsBase = `Fecha de la operación: ${fecOp} – Cuenta de cobro N° ${inv.number}. `;
       const payload: Record<string, unknown> = {
         document: { id: dsDocumentId },
+        ...(numeroManual != null ? { number: numeroManual } : {}),
         date: fechaEnvio,
         supplier: { identification: nit, branch_office: 0 },
         supplier_receipt_number: { prefix: (inv.prefix || DS_PREFIX).slice(0, 6), number: numeroSoporte },
