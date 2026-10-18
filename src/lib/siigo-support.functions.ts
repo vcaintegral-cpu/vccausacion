@@ -7,7 +7,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
 import { purchaseLineErrors, purchaseReadbackComparison } from "@/lib/siigo-purchase-validation";
-import { missingIdentity, splitPersonName, supplierReceiptNumber, dsSendDate, resolutionExpiry, DS_PREFIX } from "@/lib/support-docs";
+import { missingIdentity, splitPersonName, supplierReceiptNumber, dsSendDate, addDays, resolutionExpiry, DS_PREFIX } from "@/lib/support-docs";
 import { roundCOP, toCents } from "@/lib/money";
 
 export const DS_PATH = "/v1/purchase-support-documents";
@@ -177,7 +177,10 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       const fecOp = inv.issue_date ? inv.issue_date.split("-").reverse().join("/") : "";
       const windowDays = Number(params?.ds_window_days ?? 10) || 10;
       const ref = params?.ds_date_ref === "hoy" ? "hoy" : "fin_mes";
-      const ventana = dsSendDate(String(inv.issue_date ?? hoy), hoy, windowDays, ref);
+      // Fecha mínima que Siigo ya aceptó para este mes (aprendida en lotes anteriores).
+      const mesDoc = String(inv.issue_date ?? hoy).slice(0, 7);
+      const aceptadas = (params?.ds_accepted_dates ?? {}) as Record<string, string>;
+      const ventana = dsSendDate(String(inv.issue_date ?? hoy), hoy, windowDays, ref, aceptadas[mesDoc] ?? null);
       let fechaEnvio: string;
       if (inv.siigo_error_kind === "fecha_invalida" && data.confirmDate) {
         // Reintento confirmado por el usuario tras un invalid_date (ej.: último día del mes).
@@ -194,29 +197,52 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
           };
         }
       }
-      fechaIntentada = fechaEnvio;
       const intentosPrevios = Array.isArray((inv.siigo_trace as Record<string, unknown> | null)?.["fechas_intentadas"]) ? (inv.siigo_trace as Record<string, unknown>)["fechas_intentadas"] as unknown[] : [];
-      trace = { ...trace, fechas_intentadas: [...intentosPrevios, { fecha: fechaEnvio, at: new Date().toISOString() }] };
-      const vencimiento = inv.due_date && inv.due_date >= fechaEnvio && inv.due_date <= ventana.lastDay ? inv.due_date : fechaEnvio;
       // Observaciones: el número de la cuenta de cobro solo se conoce DESPUÉS de crear (lo asigna Siigo),
       // y la API no permite actualizar observaciones; se escribe solo la fecha de la operación.
       const obsBase = `Fecha de la operación: ${fecOp}. `;
-      const payload: Record<string, unknown> = {
-        document: { id: dsDocumentId },
-        date: fechaEnvio,
-        supplier: { identification: nit, branch_office: 0 },
-        ...(String(inv.number ?? "").trim() ? { supplier_receipt_number: { prefix: (inv.prefix || DS_PREFIX).slice(0, 6), number: supplierReceiptNumber(inv.number) } } : {}),
-        discount_type: "Value",
-        stamp: { send: true },
-        observations: `${obsBase}Documento soporte · ${inv.provider_name ?? ""}`.slice(0, 4000),
-        items: items.map((it) => ({ type: it.type, code: it.code, description: it.description, quantity: it.quantity, price: it.price, discount: 0, ...(it.retId != null ? { taxes: [{ id: Number(it.retId) }] } : {}) })),
-        payments: [{ id: paymentId, value: neto, due_date: vencimiento }],
-        ...(costCenterId ? { cost_center: costCenterId } : {}),
-      };
-      trace = { ...trace, siigo_request: payload };
-
-      const res = await siigoPost<{ id?: string; name?: string; number?: number }>(DS_PATH, payload);
+      // Envío con reintento automático ante invalid_date: se prueba el día siguiente,
+      // hasta el último día del mes, con máximo 10 intentos. La primera fecha aceptada
+      // se guarda en Configuración para que los demás documentos del lote la usen directo.
+      let res: { id?: string; name?: string; number?: number } | null = null;
+      let ultimoError: unknown = null;
+      for (let intento = 0; intento < 10 && fechaEnvio <= ventana.lastDay && fechaEnvio <= hoy; intento++) {
+        fechaIntentada = fechaEnvio;
+        trace = { ...trace, fechas_intentadas: [...intentosPrevios, ...(trace["fechas_intentadas"] as unknown[] ?? []), { fecha: fechaEnvio, at: new Date().toISOString() }] };
+        const vencimiento = inv.due_date && inv.due_date >= fechaEnvio && inv.due_date <= ventana.lastDay ? inv.due_date : fechaEnvio;
+        const payload: Record<string, unknown> = {
+          document: { id: dsDocumentId },
+          date: fechaEnvio,
+          supplier: { identification: nit, branch_office: 0 },
+          ...(String(inv.number ?? "").trim() ? { supplier_receipt_number: { prefix: (inv.prefix || DS_PREFIX).slice(0, 6), number: supplierReceiptNumber(inv.number) } } : {}),
+          discount_type: "Value",
+          stamp: { send: true },
+          observations: `${obsBase}Documento soporte · ${inv.provider_name ?? ""}`.slice(0, 4000),
+          items: items.map((it) => ({ type: it.type, code: it.code, description: it.description, quantity: it.quantity, price: it.price, discount: 0, ...(it.retId != null ? { taxes: [{ id: Number(it.retId) }] } : {}) })),
+          payments: [{ id: paymentId, value: neto, due_date: vencimiento }],
+          ...(costCenterId ? { cost_center: costCenterId } : {}),
+        };
+        trace = { ...trace, siigo_request: payload };
+        try {
+          res = await siigoPost<{ id?: string; name?: string; number?: number }>(DS_PATH, payload);
+          ultimoError = null;
+          break;
+        } catch (e) {
+          ultimoError = e;
+          if (!/invalid_date/i.test(e instanceof Error ? e.message : String(e))) throw e;
+          fechaEnvio = addDays(fechaEnvio, 1);
+        }
+      }
+      if (!res) throw ultimoError instanceof Error ? ultimoError : new Error(String(ultimoError ?? "Siigo no aceptó ninguna fecha de la ventana."));
       trace = { ...trace, siigo_respuesta: res };
+      // Guardar la fecha mínima aceptada del mes para los siguientes documentos del lote.
+      if (fechaEnvio !== ventana.sendDate || !aceptadas[mesDoc]) {
+        await supabase.from("company_parameters").upsert({
+          company_id: inv.company_id,
+          ds_accepted_dates: { ...aceptadas, [mesDoc]: fechaEnvio } as Json,
+          updated_at: new Date().toISOString(),
+        });
+      }
       if (!res.id) throw new Error("Siigo respondió sin el ID del documento soporte.");
       const siigoNumber = String(res.name ?? res.number ?? res.id);
       // El consecutivo que asigna Siigo (ej.: DSEB-1153) queda como número de la cuenta de cobro y del documento.
