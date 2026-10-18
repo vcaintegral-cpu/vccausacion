@@ -205,7 +205,7 @@ export async function siigoToken(): Promise<string> {
   return json.access_token;
 }
 
-async function siigoRequest<T>(method: "GET" | "POST" | "DELETE", path: string, payload?: unknown): Promise<T> {
+async function siigoRequest<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, payload?: unknown): Promise<T> {
   const token = await siigoToken();
   const { partnerId } = siigoConfig();
   const url = `${SIIGO_BASE}${path}`;
@@ -299,6 +299,10 @@ export async function siigoDelete<T>(path: string): Promise<T> {
 
 export async function siigoPost<T>(path: string, payload: unknown): Promise<T> {
   return siigoRequest<T>("POST", path, payload);
+}
+
+export async function siigoPut<T>(path: string, payload: unknown): Promise<T> {
+  return siigoRequest<T>("PUT", path, payload);
 }
 
 // ---------------------------------------------------------------------------

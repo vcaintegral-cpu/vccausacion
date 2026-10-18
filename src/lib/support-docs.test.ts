@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fillVendorFromCompany, missingIdentity, moneyCents, nitDV, parseSupportRows, siigoIdType, splitPersonName, supplierReceiptNumber, dsSendDate, dianLabel, dianTransmitted, diasParaDian, resolutionExpiry } from "./support-docs";
+import { fillVendorFromCompany, missingIdentity, moneyCents, nitDV, parseSupportRows, siigoIdType, splitPersonName, supplierReceiptNumber, dsSendDate, dianLabel, dianTransmitted, dsConsecutive, diasParaDian, resolutionExpiry } from "./support-docs";
 
 const r = (o: Record<string, string>, n: number) => ({
   rowNumber: n,
@@ -87,5 +87,20 @@ describe("estado DIAN", () => {
 describe("resolución de numeración", () => {
   it("vence a los 12 meses de la aprobación", () => {
     expect(resolutionExpiry("2025-10-23", 12)).toBe("2026-10-23");
+  });
+});
+
+describe("dsConsecutive", () => {
+  it("usa el número de Siigo con el prefijo de la resolución", () => {
+    expect(dsConsecutive({ name: "DS-3-1153", number: 1153 }, "DSEB").full).toBe("DSEB-1153");
+  });
+  it("toma el número del nombre si falta number", () => {
+    expect(dsConsecutive({ name: "DS-3-1153" }, "DSEB").number).toBe(1153);
+  });
+  it("sin resolución usa el nombre del comprobante", () => {
+    expect(dsConsecutive({ name: "DS-3-1153", number: 1153 }, null).full).toBe("DS-3-1153");
+  });
+  it("sin número no inventa nada", () => {
+    expect(dsConsecutive({ name: "DS" }, "DSEB").full).toBeNull();
   });
 });

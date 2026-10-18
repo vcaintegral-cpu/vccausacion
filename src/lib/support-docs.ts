@@ -291,3 +291,17 @@ export function supportDocToExtracted(doc: SupportDoc, company: { nit: string | 
     })),
   } as ExtractedInvoice;
 }
+
+/**
+ * Consecutivo asignado por Siigo al documento soporte. El número sale de `number`
+ * (o de los dígitos finales de `name`, ej.: "DS-3-1153"); el prefijo es el de la
+ * resolución DIAN activa (ej.: DSEB) o, si no hay, el nombre del comprobante en Siigo.
+ */
+export function dsConsecutive(doc: { name?: unknown; number?: unknown } | null | undefined, resolutionPrefix: string | null): { prefix: string | null; number: number | null; full: string | null } {
+  const name = String(doc?.name ?? "").trim();
+  const raw = doc?.number != null && String(doc.number).trim() !== "" ? String(doc.number) : (/(\d+)\s*$/.exec(name)?.[1] ?? "");
+  const number = /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : null;
+  if (number == null) return { prefix: null, number: null, full: null };
+  const prefix = (resolutionPrefix ?? "").trim().toUpperCase() || name.replace(/[-\s]*\d+\s*$/, "").trim() || "DS";
+  return { prefix, number, full: `${prefix}-${number}` };
+}
