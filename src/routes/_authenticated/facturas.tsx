@@ -127,6 +127,7 @@ function Facturas() {
           "source_override, raw_extraction, impoconsumo, discount, id, prefix, number, issue_date, provider_nit, provider_name, cost_center, notes, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_synced_at, siigo_last_attempt_at, siigo_error, siigo_error_kind, siigo_trace, siigo_attempts, siigo_reconciled_at, siigo_pending_label, file_path, file_name",
         )
         .eq("company_id", companyId!)
+        .eq("doc_kind", "compra")
         .order("issue_date", { ascending: false });
       if (error) throw error;
       return data as Inv[];

@@ -172,6 +172,7 @@ export async function listUploads(companyId: string, limit = 30): Promise<BulkUp
     .from("bulk_uploads")
     .select("*")
     .eq("company_id", companyId)
+    .eq("doc_kind", "compra")
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) throw new Error(error.message);

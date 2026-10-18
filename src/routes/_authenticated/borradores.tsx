@@ -192,6 +192,7 @@ function Borradores() {
         .from("invoices")
         .select(COLS)
         .eq("company_id", companyId!)
+        .eq("doc_kind", "compra")
         .order("issue_date", { ascending: false });
       if (inv.error) throw inv.error;
       const invoices = (inv.data ?? []) as unknown as DraftInvoice[];
