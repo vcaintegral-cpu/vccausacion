@@ -178,7 +178,9 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
 
       const paymentId = inv.payment_type_id ? Number(inv.payment_type_id) : await siigoPurchasePaymentTypeId(inv.payment_type_name ?? "crédito");
       if (!paymentId) throw new Error("No se encontró la forma de pago de compras en Siigo.");
-      const costCenterId = inv.cost_center ? await siigoCostCenterId(inv.cost_center) : null;
+      const costCenterId = ccMode === "no" ? null : inv.cost_center ? await siigoCostCenterId(inv.cost_center) : null;
+      if (ccMode === "exige" && costCenterId == null)
+        throw new Error("Falta centro de costo: el tipo de comprobante DS lo exige en Siigo. Asígnelo al borrador antes de enviar.");
       // ---------- Ventana de fechas de Siigo (configurable) ----------
       // Se aceptan documentos del mes desde (referencia − N días) hasta la referencia.
       // Si la fecha de la operación está fuera, se PROPONE la fecha mínima y se pide confirmación; nunca se cambia sola.
