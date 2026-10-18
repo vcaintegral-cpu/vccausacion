@@ -217,11 +217,14 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       }).eq("id", inv.id);
       return { ok: true, status: "sincronizada", message: `${label}: creado en Siigo como ${siigoNumber}.`, siigoNumber };
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      let message = e instanceof Error ? e.message : String(e);
       const { data: cur } = await supabase.from("invoices").select("siigo_id, siigo_number, siigo_trace").eq("id", inv.id).maybeSingle();
       const creado = !!(cur?.siigo_id || cur?.siigo_number);
+      const esFecha = /invalid_date/i.test(message);
+      if (esFecha && fechaIntentada)
+        message = `Siigo no acepta la fecha ${fechaIntentada.split("-").reverse().join("/")} enviada (periodo cerrado, fecha anterior al límite permitido o fuera de la resolución). Puede reintentar con el último día del mes. Respuesta de Siigo: ${message}`;
       await supabase.from("invoices").update({
-        siigo_status: "error", siigo_error: message, siigo_error_kind: creado ? "creado_diferencia" : "sin_crear",
+        siigo_status: "error", siigo_error: message, siigo_error_kind: esFecha && !creado ? "fecha_invalida" : creado ? "creado_diferencia" : "sin_crear",
         siigo_trace: { ...((cur?.siigo_trace as object) ?? {}), ...trace, resultado: "rechazado", error: message, fallo_at: new Date().toISOString() } as Json,
       }).eq("id", inv.id);
       return { ok: false, status: "error", message: `${label}: ${message}` };
