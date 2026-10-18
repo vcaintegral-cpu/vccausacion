@@ -519,7 +519,7 @@ function Configuracion({ companyId }: { companyId: string }) {
   const [loadingTypes, setLoadingTypes] = useState(false);
   useEffect(() => {
     void supabase.from("company_parameters").select("*").eq("company_id", companyId).maybeSingle().then(({ data }) => {
-      setF({ address: data?.address ?? "", city: data?.city ?? "", department: data?.department ?? "", country: data?.country ?? "", phone: data?.phone ?? "", email: data?.email ?? "", ds_document_id: data?.ds_document_id ? String(data.ds_document_id) : "", ds_document_code: data?.ds_document_code ?? "" });
+      setF({ address: data?.address ?? "", city: data?.city ?? "", department: data?.department ?? "", country: data?.country ?? "", phone: data?.phone ?? "", email: data?.email ?? "", ds_document_id: data?.ds_document_id ? String(data.ds_document_id) : "", ds_document_code: data?.ds_document_code ?? "", ds_window_days: String(data?.ds_window_days ?? 10), ds_date_ref: data?.ds_date_ref ?? "fin_mes" });
     });
   }, [companyId]);
   const sincronizar = async () => {
@@ -527,7 +527,7 @@ function Configuracion({ companyId }: { companyId: string }) {
     try { setTypes(await listTypes({ data: { companyId } })); } catch (e) { toast.error(e instanceof Error ? e.message : "No se pudo consultar Siigo."); } finally { setLoadingTypes(false); }
   };
   const guardar = async () => {
-    const { error } = await supabase.from("company_parameters").upsert({ company_id: companyId, address: f.address || null, city: f.city || null, department: f.department || null, country: f.country || null, phone: f.phone || null, email: f.email || null, ds_document_id: f.ds_document_id ? Number(f.ds_document_id) : null, ds_document_code: f.ds_document_code || null, updated_at: new Date().toISOString() });
+    const { error } = await supabase.from("company_parameters").upsert({ company_id: companyId, address: f.address || null, city: f.city || null, department: f.department || null, country: f.country || null, phone: f.phone || null, email: f.email || null, ds_document_id: f.ds_document_id ? Number(f.ds_document_id) : null, ds_document_code: f.ds_document_code || null, ds_window_days: Math.max(1, Number(f.ds_window_days) || 10), ds_date_ref: f.ds_date_ref === "hoy" ? "hoy" : "fin_mes", updated_at: new Date().toISOString() });
     if (error) toast.error(error.message); else toast.success("Parámetros guardados.");
   };
   const campo = (k: keyof F, l: string) => <label className="space-y-1 text-sm"><span className="text-muted-foreground">{l}</span><Input value={f[k] ?? ""} onChange={(e) => setF({ ...f, [k]: e.target.value })} /></label>;
@@ -546,6 +546,19 @@ function Configuracion({ companyId }: { companyId: string }) {
             {types.map((t) => <option key={t.id} value={t.id}>DS-{t.code} · {t.name}</option>)}
           </select>
           <Button variant="outline" onClick={() => void sincronizar()} disabled={loadingTypes}>{loadingTypes && <Loader2 className="mr-1 size-4 animate-spin" />} Sincronizar desde Siigo</Button>
+        </div>
+      </section>
+      <section className="space-y-3">
+        <h2 className="font-semibold">Ventana de fechas de Siigo</h2>
+        <p className="text-xs text-muted-foreground">Siigo acepta documentos soporte de un mes con fecha desde (fecha de referencia − N días) hasta la referencia. Si la fecha de la operación está fuera, se propone la fecha mínima y se pide confirmación antes de enviar.</p>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="space-y-1 text-sm"><span className="text-muted-foreground">Días permitidos antes del cierre del mes</span><Input type="number" min={1} value={f.ds_window_days ?? "10"} onChange={(e) => setF({ ...f, ds_window_days: e.target.value })} /></label>
+          <label className="space-y-1 text-sm"><span className="text-muted-foreground">Fecha de referencia</span>
+            <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={f.ds_date_ref ?? "fin_mes"} onChange={(e) => setF({ ...f, ds_date_ref: e.target.value })}>
+              <option value="fin_mes">Último día del mes del documento</option>
+              <option value="hoy">Fecha de hoy</option>
+            </select>
+          </label>
         </div>
       </section>
       <Button onClick={() => void guardar()}>Guardar</Button>
