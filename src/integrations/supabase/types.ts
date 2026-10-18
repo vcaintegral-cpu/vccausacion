@@ -974,6 +974,7 @@ export type Database = {
           approved_by: string | null
           buyer_name: string | null
           buyer_nit: string | null
+          cc_pdf_path: string | null
           company_id: string
           cost_center: string | null
           created_at: string
@@ -1068,6 +1069,7 @@ export type Database = {
           approved_by?: string | null
           buyer_name?: string | null
           buyer_nit?: string | null
+          cc_pdf_path?: string | null
           company_id: string
           cost_center?: string | null
           created_at?: string
@@ -1162,6 +1164,7 @@ export type Database = {
           approved_by?: string | null
           buyer_name?: string | null
           buyer_nit?: string | null
+          cc_pdf_path?: string | null
           company_id?: string
           cost_center?: string | null
           created_at?: string
