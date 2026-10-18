@@ -206,6 +206,27 @@ export function dsSendDate(issueDate: string, today: string, windowDays: number,
   return { sendDate: send, changed: send !== issueDate, lastDay };
 }
 
+/** Estado de transmisión DIAN reportado por Siigo (stamp.status) → etiqueta visible. */
+export function dianLabel(status: string | null | undefined): string {
+  const s = (status ?? "").toLowerCase();
+  if (/accept|valid/.test(s)) return "Validado DIAN";
+  if (/reject/.test(s)) return "Rechazado DIAN";
+  if (/sent|enviado|process/.test(s)) return "Enviado a la DIAN";
+  return "Guardado – pendiente envío DIAN";
+}
+
+/** Días transcurridos desde la fecha de elaboración (envío) para el envío a la DIAN: n de 6. */
+export function diasParaDian(sentDate: string | null | undefined, today: string): number | null {
+  if (!sentDate) return null;
+  return Math.max(0, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${sentDate}T00:00:00Z`)) / 86400000));
+}
+
+/** Vencimiento de una resolución: fecha de aprobación + meses de vigencia. */
+export function resolutionExpiry(approvalDate: string, validityMonths: number): string {
+  const [y, m, d] = approvalDate.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1 + validityMonths, d!)).toISOString().slice(0, 10);
+}
+
 /** Persona natural: Cédula, CE o Pasaporte; o NIT con menos de 9 dígitos. */
 export function isNaturalPerson(idType: string | null | undefined, idNumber: string): boolean {
   if (idType && idType !== "31") return true;

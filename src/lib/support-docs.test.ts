@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fillVendorFromCompany, missingIdentity, moneyCents, nitDV, parseSupportRows, siigoIdType, splitPersonName, supplierReceiptNumber } from "./support-docs";
+import { fillVendorFromCompany, missingIdentity, moneyCents, nitDV, parseSupportRows, siigoIdType, splitPersonName, supplierReceiptNumber, dsSendDate, dianLabel, diasParaDian, resolutionExpiry } from "./support-docs";
 
 const r = (o: Record<string, string>, n: number) => ({
   rowNumber: n,
@@ -43,5 +43,39 @@ describe("documentos soporte", () => {
   });
   it("supplier receipt number has 11 digits", () => {
     expect(supplierReceiptNumber("015")).toBe("00000000015");
+  });
+});
+
+describe("ventana de fechas Siigo", () => {
+  it("dentro de la ventana envía la fecha de la operación sin cambios", () => {
+    expect(dsSendDate("2026-09-25", "2026-10-18", 10, "fin_mes")).toEqual({ sendDate: "2026-09-25", changed: false, lastDay: "2026-09-30" });
+  });
+  it("fuera de la ventana propone la fecha mínima (30/09 - 10 días = 20/09)", () => {
+    expect(dsSendDate("2026-09-01", "2026-10-18", 10, "fin_mes")).toEqual({ sendDate: "2026-09-20", changed: true, lastDay: "2026-09-30" });
+  });
+  it("la fecha enviada nunca supera el último día del mes ni hoy", () => {
+    expect(dsSendDate("2026-10-18", "2026-10-17", 10, "fin_mes").sendDate).toBe("2026-10-17");
+  });
+  it("con referencia hoy usa hoy - N días", () => {
+    expect(dsSendDate("2026-09-01", "2026-10-18", 10, "hoy").sendDate).toBe("2026-09-30"); // hoy−10 = 08/10, pero nunca supera el último día del mes del documento
+  });
+});
+
+describe("estado DIAN", () => {
+  it("mapea los estados de Siigo a las tres etiquetas", () => {
+    expect(dianLabel(null)).toBe("Guardado – pendiente envío DIAN");
+    expect(dianLabel("Sent")).toBe("Enviado a la DIAN");
+    expect(dianLabel("Accepted")).toBe("Validado DIAN");
+    expect(dianLabel("Rejected")).toBe("Rechazado DIAN");
+  });
+  it("cuenta los días desde la fecha de elaboración", () => {
+    expect(diasParaDian("2026-10-16", "2026-10-18")).toBe(2);
+    expect(diasParaDian(null, "2026-10-18")).toBeNull();
+  });
+});
+
+describe("resolución de numeración", () => {
+  it("vence a los 12 meses de la aprobación", () => {
+    expect(resolutionExpiry("2025-10-23", 12)).toBe("2026-10-23");
   });
 });

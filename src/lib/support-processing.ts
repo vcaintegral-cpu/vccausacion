@@ -82,16 +82,28 @@ export async function processSupportUpload(params: {
       const data: ExtractedInvoice = { ...built.data, provider_address: vendor.address ?? null, provider_city: vendor.city ?? null, provider_phone: vendor.phone ?? null, provider_email: vendor.email ?? null };
       const idNumber = String(data.provider_nit ?? "");
       const missing = missingIdentity({ idNumber, idType: built.idType, name: data.provider_name });
+      const sinNumero = !String(data.number ?? "").trim();
       const saved = await saveExtractedInvoice({
         data, fileName: built.file?.name ?? t.label, file: built.file ?? null, companyId, config: deps.config, knowledge: deps.knowledge,
         readMode: "texto", texto: built.texto ?? "", rawExtraction: { fuente: built.fuente, documento: "soporte" },
       });
+      // CxP del documento soporte: prioridad al historial del vendedor; si no hay, la cuenta por defecto configurada.
+      const cxpDefault = (companyParams as { ds_payable_account?: string } | null)?.ds_payable_account ?? "23359501";
+      const { data: reglaCxp } = idNumber
+        ? await supabase.from("learning_rules").select("id").eq("company_id", companyId).eq("provider_nit", idNumber).not("payable_account", "is", null).limit(1)
+        : { data: null };
+      if (!reglaCxp?.length) {
+        await supabase.from("invoices").update({ payable_account: cxpDefault, payable_source: "parametro_ds" }).eq("id", saved.invoiceId);
+        await supabase.from("journal_lines").update({ account_code: cxpDefault }).eq("invoice_id", saved.invoiceId)
+          .gte("account_code", "22000000").lt("account_code", "23600000");
+      }
+      const notas = [missing.length ? `Incompleto: falta ${missing.join(", ")} del vendedor.` : "", sinNumero ? "Falta número de cuenta de cobro." : ""].filter(Boolean).join(" ");
       await supabase.from("invoices").update({
         doc_kind: "soporte",
         vendor_id_type: built.idType,
         vendor_is_natural: isNaturalPerson(built.idType, idNumber),
         vendor_filled: filled as unknown as Json,
-        ...(missing.length ? { status: "incompleto", notes: `Incompleto: falta ${missing.join(", ")} del vendedor.` } : {}),
+        ...(missing.length || sinNumero ? { status: "incompleto", notes: notas } : {}),
       }).eq("id", saved.invoiceId);
       progress.ok += 1;
     } catch (e) {

@@ -549,6 +549,7 @@ export type Database = {
           ds_date_ref: string
           ds_document_code: string | null
           ds_document_id: number | null
+          ds_payable_account: string
           ds_window_days: number
           email: string | null
           phone: string | null
@@ -564,6 +565,7 @@ export type Database = {
           ds_date_ref?: string
           ds_document_code?: string | null
           ds_document_id?: number | null
+          ds_payable_account?: string
           ds_window_days?: number
           email?: string | null
           phone?: string | null
@@ -579,6 +581,7 @@ export type Database = {
           ds_date_ref?: string
           ds_document_code?: string | null
           ds_document_id?: number | null
+          ds_payable_account?: string
           ds_window_days?: number
           email?: string | null
           phone?: string | null
@@ -700,6 +703,50 @@ export type Database = {
             columns: ["source_invoice_id"]
             isOneToOne: false
             referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ds_resolutions: {
+        Row: {
+          active: boolean
+          approval_date: string
+          company_id: string
+          created_at: string
+          from_number: number
+          id: string
+          prefix: string
+          to_number: number
+          validity_months: number
+        }
+        Insert: {
+          active?: boolean
+          approval_date: string
+          company_id: string
+          created_at?: string
+          from_number: number
+          id?: string
+          prefix: string
+          to_number: number
+          validity_months?: number
+        }
+        Update: {
+          active?: boolean
+          approval_date?: string
+          company_id?: string
+          created_at?: string
+          from_number?: number
+          id?: string
+          prefix?: string
+          to_number?: number
+          validity_months?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ds_resolutions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
             referencedColumns: ["id"]
           },
         ]

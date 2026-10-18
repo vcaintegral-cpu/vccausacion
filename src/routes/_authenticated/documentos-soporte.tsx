@@ -10,7 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany } from "@/components/app-shell";
 import { cop, fecha, fechaHora } from "@/lib/format";
-import { DS_TEMPLATE_COLUMNS, FILLED_LABEL, VENDOR_ID_LABEL, missingIdentity, type FilledField, type RowError, type VendorIdType } from "@/lib/support-docs";
+import { DS_TEMPLATE_COLUMNS, FILLED_LABEL, VENDOR_ID_LABEL, missingIdentity, dianLabel, diasParaDian, resolutionExpiry, type FilledField, type RowError, type VendorIdType } from "@/lib/support-docs";
 import { processSupportUpload, type SupportProgress } from "@/lib/support-processing";
 import { siigoListDsTypes, siigoSyncSupportDocument } from "@/lib/siigo-support.functions";
 import { siigoReleaseInterrupted } from "@/lib/siigo-recovery.functions";
@@ -320,7 +320,8 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
       while (next < lista.length && !detener) {
         const d = lista[next++]!;
         try {
-          const r = await sync({ data: { invoiceId: d.id, confirmDate: confirmadas?.get(d.id) } });
+          const cf = confirmadas?.get(d.id);
+          const r = await sync({ data: cf ? { invoiceId: d.id, confirmDate: cf } : { invoiceId: d.id } });
           if (r.ok) ok += 1;
           else if (r.status === "confirmar_fecha" && r.proposedDate) pendientesFecha.push({ d, fecha: r.proposedDate });
           else {
@@ -456,21 +457,31 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
 // ------------------------------------------------------------------ Historial
 function Historial({ docs, onDone }: { companyId: string; docs: Ds[]; onDone: () => void }) {
   const [detalle, setDetalle] = useState<Ds | null>(null);
+  const [soloPendientes, setSoloPendientes] = useState(false);
+  const hoy = new Date().toISOString().slice(0, 10);
+  const pendienteDian = (d: Ds) => dianLabel(d.ds_dian_status) === "Guardado – pendiente envío DIAN";
+  const lista = soloPendientes ? docs.filter(pendienteDian) : docs;
   return (
     <div className="space-y-3 pt-4">
+      <label className="flex items-center gap-2 text-sm"><Checkbox checked={soloPendientes} onCheckedChange={(c) => setSoloPendientes(!!c)} /> Pendientes de envío DIAN</label>
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-left text-xs"><tr><th className="p-2">Documento</th><th className="p-2">Vendedor</th><th className="p-2">Fecha</th><th className="p-2 text-right">Total</th><th className="p-2">Siigo</th><th className="p-2">Transmisión DIAN</th><th className="p-2" /></tr></thead>
           <tbody>
-            {docs.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">Aún no hay documentos soporte creados en Siigo.</td></tr>}
-            {docs.map((d) => (
+            {lista.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">Aún no hay documentos soporte creados en Siigo.</td></tr>}
+            {lista.map((d) => (
               <tr key={d.id} className="border-t">
                 <td className="p-2 font-mono text-xs">{label(d)}</td>
                 <td className="p-2">{d.provider_name}<div className="text-xs text-muted-foreground">{d.provider_nit}</div></td>
                 <td className="p-2 text-xs">Operación {fecha(d.issue_date)}{d.ds_sent_date && d.ds_sent_date !== d.issue_date ? <div>Enviado {fecha(d.ds_sent_date)}</div> : null}</td>
                 <td className="p-2 text-right">{cop(d.total)}</td>
                 <td className="p-2 font-mono text-xs">{d.siigo_number}</td>
-                <td className="p-2 text-xs">{d.ds_dian_status ?? "—"}</td>
+                <td className="p-2 text-xs">
+                  {dianLabel(d.ds_dian_status)}
+                  {pendienteDian(d) && (() => { const n = diasParaDian(d.ds_sent_date, hoy); return n == null ? null : (
+                    <div className={6 - n <= 2 ? "font-semibold text-destructive" : "text-muted-foreground"}>Días para enviar a la DIAN: {n} de 6</div>
+                  ); })()}
+                </td>
                 <td className="p-2"><div className="flex justify-end gap-1">
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setDetalle(d)}><Eye className="size-3.5" /> Ver detalle</Button>
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => exportarComprobante(d)}><Download className="size-3.5" /> Comprobante</Button>
@@ -513,13 +524,13 @@ function Terceros({ docs }: { docs: Ds[] }) {
 // ------------------------------------------------------------------ Configuración
 function Configuracion({ companyId }: { companyId: string }) {
   const listTypes = useServerFn(siigoListDsTypes);
-  type F = { address?: string; city?: string; department?: string; country?: string; phone?: string; email?: string; ds_document_id?: string; ds_document_code?: string; ds_window_days?: string; ds_date_ref?: string };
+  type F = { address?: string; city?: string; department?: string; country?: string; phone?: string; email?: string; ds_document_id?: string; ds_document_code?: string; ds_window_days?: string; ds_date_ref?: string; ds_payable_account?: string };
   const [f, setF] = useState<F>({});
   const [types, setTypes] = useState<Array<{ id: number; code: string; name: string }>>([]);
   const [loadingTypes, setLoadingTypes] = useState(false);
   useEffect(() => {
     void supabase.from("company_parameters").select("*").eq("company_id", companyId).maybeSingle().then(({ data }) => {
-      setF({ address: data?.address ?? "", city: data?.city ?? "", department: data?.department ?? "", country: data?.country ?? "", phone: data?.phone ?? "", email: data?.email ?? "", ds_document_id: data?.ds_document_id ? String(data.ds_document_id) : "", ds_document_code: data?.ds_document_code ?? "", ds_window_days: String(data?.ds_window_days ?? 10), ds_date_ref: data?.ds_date_ref ?? "fin_mes" });
+      setF({ address: data?.address ?? "", city: data?.city ?? "", department: data?.department ?? "", country: data?.country ?? "", phone: data?.phone ?? "", email: data?.email ?? "", ds_document_id: data?.ds_document_id ? String(data.ds_document_id) : "", ds_document_code: data?.ds_document_code ?? "", ds_window_days: String(data?.ds_window_days ?? 10), ds_date_ref: data?.ds_date_ref ?? "fin_mes", ds_payable_account: data?.ds_payable_account ?? "23359501" });
     });
   }, [companyId]);
   const sincronizar = async () => {
@@ -527,7 +538,7 @@ function Configuracion({ companyId }: { companyId: string }) {
     try { setTypes(await listTypes({ data: { companyId } })); } catch (e) { toast.error(e instanceof Error ? e.message : "No se pudo consultar Siigo."); } finally { setLoadingTypes(false); }
   };
   const guardar = async () => {
-    const { error } = await supabase.from("company_parameters").upsert({ company_id: companyId, address: f.address || null, city: f.city || null, department: f.department || null, country: f.country || null, phone: f.phone || null, email: f.email || null, ds_document_id: f.ds_document_id ? Number(f.ds_document_id) : null, ds_document_code: f.ds_document_code || null, ds_window_days: Math.max(1, Number(f.ds_window_days) || 10), ds_date_ref: f.ds_date_ref === "hoy" ? "hoy" : "fin_mes", updated_at: new Date().toISOString() });
+    const { error } = await supabase.from("company_parameters").upsert({ company_id: companyId, address: f.address || null, city: f.city || null, department: f.department || null, country: f.country || null, phone: f.phone || null, email: f.email || null, ds_document_id: f.ds_document_id ? Number(f.ds_document_id) : null, ds_document_code: f.ds_document_code || null, ds_window_days: Math.max(1, Number(f.ds_window_days) || 10), ds_date_ref: f.ds_date_ref === "hoy" ? "hoy" : "fin_mes", ds_payable_account: f.ds_payable_account || "23359501", updated_at: new Date().toISOString() });
     if (error) toast.error(error.message); else toast.success("Parámetros guardados.");
   };
   const campo = (k: keyof F, l: string) => <label className="space-y-1 text-sm"><span className="text-muted-foreground">{l}</span><Input value={f[k] ?? ""} onChange={(e) => setF({ ...f, [k]: e.target.value })} /></label>;
@@ -561,7 +572,61 @@ function Configuracion({ companyId }: { companyId: string }) {
           </label>
         </div>
       </section>
+      <section className="space-y-3">
+        <h2 className="font-semibold">Cuenta por pagar de documentos soporte</h2>
+        <p className="text-xs text-muted-foreground">Se usa cuando el vendedor no tiene historial de cuenta por pagar. Si el vendedor ya tiene historial, se usa el de él.</p>
+        <div className="max-w-xs">{campo("ds_payable_account", "Cuenta CxP por defecto documento soporte")}</div>
+      </section>
+      <Resoluciones companyId={companyId} />
       <Button onClick={() => void guardar()}>Guardar</Button>
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ Resoluciones de numeración
+type Resolucion = { id: string; prefix: string; from_number: number; to_number: number; approval_date: string; validity_months: number; active: boolean };
+
+function Resoluciones({ companyId }: { companyId: string }) {
+  const qc = useQueryClient();
+  const { data: rows = [] } = useQuery({
+    queryKey: ["ds-res", companyId],
+    queryFn: async () => (await supabase.from("ds_resolutions").select("*").eq("company_id", companyId).order("created_at", { ascending: false })).data ?? [],
+  });
+  const [n, setN] = useState({ prefix: "", from: "", to: "", date: "", months: "12" });
+  const hoy = new Date().toISOString().slice(0, 10);
+  const agregar = async () => {
+    if (!n.prefix.trim() || !n.from || !n.to || !n.date) { toast.error("Complete prefijo, rango y fecha de aprobación."); return; }
+    const { error } = await supabase.from("ds_resolutions").insert({ company_id: companyId, prefix: n.prefix.trim().toUpperCase(), from_number: Number(n.from), to_number: Number(n.to), approval_date: n.date, validity_months: Number(n.months) || 12 });
+    if (error) toast.error(error.message);
+    else { toast.success("Resolución registrada."); setN({ prefix: "", from: "", to: "", date: "", months: "12" }); void qc.invalidateQueries({ queryKey: ["ds-res", companyId] }); }
+  };
+  const desactivar = async (id: string) => { await supabase.from("ds_resolutions").update({ active: false }).eq("id", id); void qc.invalidateQueries({ queryKey: ["ds-res", companyId] }); };
+  return (
+    <section className="space-y-3">
+      <h2 className="font-semibold">Resolución de numeración</h2>
+      {rows.map((r) => {
+        const vence = resolutionExpiry(r.approval_date, r.validity_months);
+        const dias = Math.round((Date.parse(`${vence}T00:00:00Z`) - Date.parse(`${hoy}T00:00:00Z`)) / 86400000);
+        return (
+          <div key={r.id} className="flex flex-wrap items-center gap-3 rounded-md border p-3 text-sm">
+            <span className="font-mono font-semibold">{r.prefix}</span>
+            <span>Rango {r.from_number} a {r.to_number}</span>
+            <span>Aprobada {fecha(r.approval_date)} · vigencia {r.validity_months} meses</span>
+            {r.active && dias <= 30 && <span className={dias < 0 ? "font-semibold text-destructive" : "font-semibold text-amber-600"}>La resolución {r.prefix} {dias < 0 ? "venció" : "vence"} el {fecha(vence)}</span>}
+            {!r.active && <span className="text-muted-foreground">(inactiva)</span>}
+            {r.active && rows.some((x) => x.id !== r.id && x.active) && <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => void desactivar(r.id)}>Desactivar</Button>}
+          </div>
+        );
+      })}
+      <div className="grid max-w-2xl grid-cols-2 gap-3 md:grid-cols-5">
+        <Input placeholder="Prefijo (DSEB)" value={n.prefix} onChange={(e) => setN({ ...n, prefix: e.target.value })} />
+        <Input placeholder="Desde (739)" type="number" value={n.from} onChange={(e) => setN({ ...n, from: e.target.value })} />
+        <Input placeholder="Hasta (10000)" type="number" value={n.to} onChange={(e) => setN({ ...n, to: e.target.value })} />
+        <Input type="date" value={n.date} onChange={(e) => setN({ ...n, date: e.target.value })} />
+        <Input placeholder="Vigencia meses" type="number" value={n.months} onChange={(e) => setN({ ...n, months: e.target.value })} />
+      </div>
+      <Button variant="outline" size="sm" onClick={() => void agregar()}>Registrar nueva resolución</Button>
+      <p className="text-xs text-muted-foreground">Registrar una nueva resolución no borra la anterior. Se bloquea el envío si la fecha del documento es posterior al vencimiento o si el consecutivo supera el rango.</p>
+    </section>
   );
 }

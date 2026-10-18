@@ -27,3 +27,12 @@
 - [x] BUF-1277 enviada como gasto 5145 (FC-1-726); anticipo en Pendientes Siigo.
 - [x] Documentos soporte: carga PDF/ZIP/Excel, borradores, aprobación, envío a Siigo, recuperación, terceros por actualizar.
 - [ ] Primer DS real en Siigo: espera autorización de Maira y el tipo de comprobante DS en Configuración.
+
+## Documentos soporte – ventana de fechas y resolución (hecho 2026-10-18)
+- Ventana Siigo configurable (ds_window_days=10, ds_date_ref=fin_mes|hoy); fecha fuera de ventana se propone y requiere confirmación (individual y lote); nunca cambia sola.
+- invalid_date: lote se detiene, botón "Reintentar con el último día del mes" con confirmación; fechas intentadas en siigo_trace.fechas_intentadas; ds_sent_date guardada y visible en Borradores/Detalle/Historial.
+- Número de documento = solo cuenta de cobro; sin número: alerta, no se aprueba, editor inline; borrador de Natalia Garcés quedó incompleto para escribir el número.
+- Estado DIAN: 3 etiquetas + contador "n de 6" con alerta roja ≤2 días + filtro "Pendientes de envío DIAN".
+- Resoluciones de numeración (tabla ds_resolutions): varias sin borrar, aviso 30 días antes del vencimiento, bloqueo por vencimiento o consecutivo máximo.
+- CxP por defecto DS (ds_payable_account=23359501) con prioridad al historial del vendedor.
+- Pendiente: Maira debe escribir el número de cuenta de cobro del borrador de Natalia y reenviar (confirmará fecha 20/09/2026).
