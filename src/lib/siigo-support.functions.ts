@@ -66,17 +66,28 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       const cre = (journal ?? []).reduce((a, l) => a + toCents(l.credit), 0);
       if (!journal?.length || deb !== cre) throw new Error(`El comprobante no cuadra: débitos ${deb / 100} vs créditos ${cre / 100}.`);
       // Tipo de comprobante DS: se toma de la configuración; si falta, se busca en Siigo y se guarda.
+      const tiposRes = await siigoGet<DocType[] | { results?: DocType[] }>("/v1/document-types?type=DS");
+      const tiposDs = (Array.isArray(tiposRes) ? tiposRes : (tiposRes.results ?? [])).filter((d) => d.id != null && d.active !== false);
       let dsDocumentId = params?.ds_document_id ? Number(params.ds_document_id) : null;
       if (!dsDocumentId) {
-        const res = await siigoGet<DocType[] | { results?: DocType[] }>("/v1/document-types?type=DS");
-        const list = (Array.isArray(res) ? res : (res.results ?? [])).filter((d) => d.id != null && d.active !== false);
-        if (!list.length) throw new Error('Siigo no tiene un tipo de comprobante "Documento soporte" (DS) activo. Créelo en Siigo y reintente.');
-        const elegido = list.find((d) => /soporte/i.test(String(d.name ?? ""))) ?? list[0]!;
+        if (!tiposDs.length) throw new Error('Siigo no tiene un tipo de comprobante "Documento soporte" (DS) activo. Créelo en Siigo y reintente.');
+        const elegido = tiposDs.find((d) => /soporte/i.test(String(d.name ?? ""))) ?? tiposDs[0]!;
         dsDocumentId = Number(elegido.id);
         await supabase.from("company_parameters").upsert({
           company_id: inv.company_id, ds_document_id: dsDocumentId, ds_document_code: String(elegido.code ?? ""), updated_at: new Date().toISOString(),
         }, { onConflict: "company_id" });
         trace = { ...trace, tipo_comprobante: { id: dsDocumentId, code: elegido.code, name: elegido.name, origen: "siigo_auto" } };
+      }
+      // Numeración: si el tipo DS en Siigo es de numeración manual, el número del documento
+      // soporte en Siigo ES el número de la cuenta de cobro (regla de Maira).
+      const tipoSel = tiposDs.find((d) => Number(d.id) === dsDocumentId);
+      const numeracionManual = tipoSel?.automatic_number === false;
+      let numeroManual: number | null = null;
+      if (numeracionManual) {
+        if (!/^\d+$/.test(String(inv.number ?? "").trim()))
+          throw new Error("El comprobante DS en Siigo usa numeración manual: el número de la cuenta de cobro debe ser solo números.");
+        numeroManual = Number(String(inv.number).trim());
+        trace = { ...trace, numeracion: "manual", numero_documento: numeroManual };
       }
 
       // ---------- Resolución de numeración (vigencia y rango) ----------
