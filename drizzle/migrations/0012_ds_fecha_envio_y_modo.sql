@@ -1,0 +1,3 @@
+ALTER TABLE public.invoices ADD COLUMN IF NOT EXISTS ds_sent_date date;
+ALTER TABLE public.company_parameters ADD COLUMN IF NOT EXISTS ds_date_mode text NOT NULL DEFAULT 'documento';
+UPDATE public.invoices SET status='incompleto', notes=COALESCE(notes,'') || ' | Falta número de cuenta de cobro: escríbalo en Documentos soporte → Borradores.' WHERE id='5699f767-6ec8-4b84-a18d-c47a7bc5c690' AND (number IS NULL OR number='');
