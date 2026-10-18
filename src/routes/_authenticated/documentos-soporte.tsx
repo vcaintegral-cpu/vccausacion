@@ -210,29 +210,12 @@ function CuentaCelda({ d }: { d: Ds }) {
   );
 }
 
-function NumeroEditor({ d, onDone }: { d: Ds; onDone: () => void }) {
-  const [v, setV] = useState("");
-  const [saving, setSaving] = useState(false);
-  const guardar = async () => {
-    if (!v.trim()) return;
-    setSaving(true);
-    const { error } = await supabase.from("invoices").update({ number: v.trim() }).eq("id", d.id);
-    setSaving(false);
-    if (error) toast.error(error.message); else { toast.success("Número de cuenta de cobro guardado."); onDone(); }
-  };
-  return (
-    <div className="flex items-center gap-1">
-      <Input value={v} onChange={(e) => setV(e.target.value)} placeholder="N° cuenta de cobro" className="h-7 w-32 text-xs" />
-      <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={saving || !v.trim()} onClick={() => void guardar()}>Guardar</Button>
-    </div>
-  );
-}
+// El número de la cuenta de cobro lo asigna Siigo (consecutivo DSEB) al crear el documento.
 
 function Alertas({ d }: { d: Ds }) {
   const a: string[] = [];
   const faltan = missingIdentity({ idNumber: d.provider_nit, idType: d.vendor_id_type, name: d.provider_name });
   if (faltan.length) a.push(`Incompleto: falta ${faltan.join(", ")}`);
-  if (!String(d.number ?? "").trim()) a.push("Falta número de cuenta de cobro");
   if (d.vendor_is_natural && d.vendor_declarant == null) a.push("Definir si es declarante");
   if (Number(d.iva) > 0 && !d.iva_confirmed) a.push("Revisar: documento soporte con IVA");
   if ((d.vendor_filled ?? []).length) a.push("Dato tomado de la empresa: " + (d.vendor_filled ?? []).map((f) => FILLED_LABEL[f]).join(", "));
@@ -291,7 +274,6 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
     for (const d of aprobables) {
       const faltan = missingIdentity({ idNumber: d.provider_nit, idType: d.vendor_id_type, name: d.provider_name });
       if (faltan.length) { fallos.push(`${label(d)}: falta ${faltan.join(", ")}`); continue; }
-      if (!String(d.number ?? "").trim()) { fallos.push(`${label(d)}: falta número de cuenta de cobro — escríbalo en la columna Documento y oprima Guardar`); continue; }
       if (d.invoice_lines.some((l) => !isValidExpenseAccount(l.account_code))) { fallos.push(`${label(d)}: Pendiente de cuenta`); continue; }
       if (Number(d.iva) > 0 && !d.iva_confirmed) { fallos.push(`${label(d)}: confirme el IVA`); continue; }
       const { error } = await supabase.from("invoices").update({ status: "aprobado", approved_at: new Date().toISOString(), approved_by: u.user?.id ?? null }).eq("id", d.id);
