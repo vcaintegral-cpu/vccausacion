@@ -1,0 +1,2 @@
+ALTER TABLE public.invoices ADD COLUMN cc_pdf_path text;
+COMMENT ON COLUMN public.invoices.cc_pdf_path IS 'Ruta en storage del PDF numerado "Cuenta de cobro N° DSEB-x" generado tras crear el documento soporte en Siigo.';

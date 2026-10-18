@@ -49,7 +49,7 @@ type Ds = {
   status: string; siigo_status: string | null; siigo_id: string | null; siigo_number: string | null; siigo_error: string | null; siigo_error_kind: string | null;
   siigo_trace: unknown; siigo_attempts: number | null; siigo_last_attempt_at: string | null; ds_dian_status: string | null; ds_sent_date: string | null;
   vendor_id_type: string | null; vendor_is_natural: boolean | null; vendor_declarant: boolean | null; vendor_filled: FilledField[] | null; iva_confirmed: boolean;
-  raw_extraction: { account_decisions?: Record<string, Decision> } | null; source_override: unknown; doc_kind: string;
+  raw_extraction: { account_decisions?: Record<string, Decision> } | null; source_override: unknown; doc_kind: string; cc_pdf_path: string | null;
   invoice_lines: Array<{ account_code: string | null; account_name: string | null; description: string | null }>;
 };
 
@@ -79,7 +79,7 @@ function DocumentosSoporte() {
     enabled: !!companyId,
     queryFn: async () => {
       const { data, error } = await supabase.from("invoices")
-        .select("id, prefix, number, issue_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, subtotal, iva, retefuente, reteiva, reteica, total, cost_center, notes, status, siigo_status, siigo_id, siigo_number, siigo_error, siigo_error_kind, siigo_trace, siigo_attempts, siigo_last_attempt_at, ds_dian_status, ds_sent_date, vendor_id_type, vendor_is_natural, vendor_declarant, vendor_filled, iva_confirmed, raw_extraction, source_override, doc_kind, invoice_lines(account_code, account_name, description)")
+        .select("id, prefix, number, issue_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, subtotal, iva, retefuente, reteiva, reteica, total, cost_center, notes, status, siigo_status, siigo_id, siigo_number, siigo_error, siigo_error_kind, siigo_trace, siigo_attempts, siigo_last_attempt_at, ds_dian_status, ds_sent_date, vendor_id_type, vendor_is_natural, vendor_declarant, vendor_filled, iva_confirmed, raw_extraction, source_override, doc_kind, cc_pdf_path, invoice_lines(account_code, account_name, description)")
         .eq("company_id", companyId!).eq("doc_kind", "soporte").order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as unknown as Ds[];
@@ -210,29 +210,12 @@ function CuentaCelda({ d }: { d: Ds }) {
   );
 }
 
-function NumeroEditor({ d, onDone }: { d: Ds; onDone: () => void }) {
-  const [v, setV] = useState("");
-  const [saving, setSaving] = useState(false);
-  const guardar = async () => {
-    if (!v.trim()) return;
-    setSaving(true);
-    const { error } = await supabase.from("invoices").update({ number: v.trim() }).eq("id", d.id);
-    setSaving(false);
-    if (error) toast.error(error.message); else { toast.success("Número de cuenta de cobro guardado."); onDone(); }
-  };
-  return (
-    <div className="flex items-center gap-1">
-      <Input value={v} onChange={(e) => setV(e.target.value)} placeholder="N° cuenta de cobro" className="h-7 w-32 text-xs" />
-      <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={saving || !v.trim()} onClick={() => void guardar()}>Guardar</Button>
-    </div>
-  );
-}
+// El número de la cuenta de cobro lo asigna Siigo (consecutivo DSEB) al crear el documento.
 
 function Alertas({ d }: { d: Ds }) {
   const a: string[] = [];
   const faltan = missingIdentity({ idNumber: d.provider_nit, idType: d.vendor_id_type, name: d.provider_name });
   if (faltan.length) a.push(`Incompleto: falta ${faltan.join(", ")}`);
-  if (!String(d.number ?? "").trim()) a.push("Falta número de cuenta de cobro");
   if (d.vendor_is_natural && d.vendor_declarant == null) a.push("Definir si es declarante");
   if (Number(d.iva) > 0 && !d.iva_confirmed) a.push("Revisar: documento soporte con IVA");
   if ((d.vendor_filled ?? []).length) a.push("Dato tomado de la empresa: " + (d.vendor_filled ?? []).map((f) => FILLED_LABEL[f]).join(", "));
@@ -271,6 +254,45 @@ function exportarComprobante(d: Ds) {
   })();
 }
 
+// Cuenta de cobro numerada (PDF generado con el consecutivo DSEB de Siigo).
+async function urlCuentaCobro(d: Ds): Promise<string | null> {
+  if (!d.cc_pdf_path) return null;
+  const { data, error } = await supabase.storage.from("facturas").createSignedUrl(d.cc_pdf_path, 120);
+  return error ? null : data.signedUrl;
+}
+
+function descargarCuentaCobro(d: Ds) {
+  void (async () => {
+    const url = await urlCuentaCobro(d);
+    if (!url) { toast.error("Este documento aún no tiene cuenta de cobro numerada."); return; }
+    const a = document.createElement("a");
+    a.href = url; a.download = `Cuenta de cobro ${label(d)}.pdf`; a.rel = "noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+  })();
+}
+
+async function descargarCuentasCobroZip(docs: Ds[]) {
+  const conPdf = docs.filter((d) => d.cc_pdf_path);
+  if (!conPdf.length) { toast.error("Ningún documento del historial tiene cuenta de cobro numerada todavía."); return; }
+  const { default: JSZip } = await import("jszip");
+  const zip = new JSZip();
+  let n = 0;
+  for (const d of conPdf) {
+    const url = await urlCuentaCobro(d);
+    if (!url) continue;
+    const blob = await (await fetch(url)).blob();
+    zip.file(`Cuenta de cobro ${label(d)}.pdf`, blob);
+    n += 1;
+  }
+  if (!n) { toast.error("No se pudo descargar ninguna cuenta de cobro."); return; }
+  const blob = await zip.generateAsync({ type: "blob", compression: "STORE" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "Cuentas de cobro.zip";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
 // ------------------------------------------------------------------ Borradores
 function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]; onDone: () => void }) {
   const sync = useServerFn(siigoSyncSupportDocument);
@@ -291,7 +313,6 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
     for (const d of aprobables) {
       const faltan = missingIdentity({ idNumber: d.provider_nit, idType: d.vendor_id_type, name: d.provider_name });
       if (faltan.length) { fallos.push(`${label(d)}: falta ${faltan.join(", ")}`); continue; }
-      if (!String(d.number ?? "").trim()) { fallos.push(`${label(d)}: falta número de cuenta de cobro — escríbalo en la columna Documento y oprima Guardar`); continue; }
       if (d.invoice_lines.some((l) => !isValidExpenseAccount(l.account_code))) { fallos.push(`${label(d)}: Pendiente de cuenta`); continue; }
       if (Number(d.iva) > 0 && !d.iva_confirmed) { fallos.push(`${label(d)}: confirme el IVA`); continue; }
       const { error } = await supabase.from("invoices").update({ status: "aprobado", approved_at: new Date().toISOString(), approved_by: u.user?.id ?? null }).eq("id", d.id);
@@ -310,31 +331,36 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
 
   const [propuestas, setPropuestas] = useState<Array<{ d: Ds; fecha: string }> | null>(null);
   const [reintento, setReintento] = useState<{ d: Ds; fecha: string } | null>(null);
+  const [duplicados, setDuplicados] = useState<Array<{ d: Ds; de: string }> | null>(null);
 
-  const crear = async (lista: Ds[], confirmadas?: Map<string, string>) => {
+  // Envío en lote: UNO POR UNO (nunca en paralelo), en orden de fecha de la operación y luego
+  // nombre del vendedor, para que los consecutivos DSEB queden en orden cronológico.
+  // Si un documento falla, el lote sigue con el siguiente y el que falló queda en "Error sin crear".
+  const crear = async (listaOriginal: Ds[], confirmadas?: Map<string, string>, confirmarDuplicados?: boolean) => {
+    const lista = [...listaOriginal].sort((a, b) => (a.issue_date ?? "").localeCompare(b.issue_date ?? "") || (a.provider_name ?? "").localeCompare(b.provider_name ?? ""));
     setConfirmar(null); setBusy(true); setEnvio({ done: 0, total: lista.length });
-    const res: string[] = []; let ok = 0; let i = 0;
-    let next = 0; let detener = false;
+    const res: string[] = []; let ok = 0; let i = 0; let detener = false;
     const pendientesFecha: Array<{ d: Ds; fecha: string }> = [];
-    await Promise.all(Array.from({ length: Math.min(3, lista.length) }, async () => {
-      while (next < lista.length && !detener) {
-        const d = lista[next++]!;
-        try {
-          const cf = confirmadas?.get(d.id);
-          const r = await sync({ data: cf ? { invoiceId: d.id, confirmDate: cf } : { invoiceId: d.id } });
-          if (r.ok) ok += 1;
-          else if (r.status === "confirmar_fecha" && r.proposedDate) pendientesFecha.push({ d, fecha: r.proposedDate });
-          else {
-            res.push(r.message);
-            // Si Siigo rechazó la fecha, se detiene el lote y se pregunta antes de seguir.
-            if ((r as { status?: string }).status === "error" && /no acepta la fecha/i.test(r.message)) detener = true;
-          }
-        } catch (e) { res.push(`${label(d)}: ${e instanceof Error ? e.message : String(e)}`); }
-        setEnvio({ done: ++i, total: lista.length });
-      }
-    }));
+    const posiblesDup: Array<{ d: Ds; de: string }> = [];
+    for (const d of lista) {
+      if (detener) break;
+      try {
+        const cf = confirmadas?.get(d.id);
+        const r = await sync({ data: { invoiceId: d.id, ...(cf ? { confirmDate: cf } : {}), ...(confirmarDuplicados ? { confirmDuplicate: true } : {}) } });
+        if (r.ok) ok += 1;
+        else if (r.status === "confirmar_fecha" && r.proposedDate) pendientesFecha.push({ d, fecha: r.proposedDate });
+        else if (r.status === "posible_duplicado") posiblesDup.push({ d, de: r.duplicadoDe ?? "otro documento" });
+        else {
+          res.push(r.message);
+          // Si Siigo rechazó la fecha, se detiene el lote y se pregunta antes de seguir.
+          if (r.status === "error" && /no acepta la fecha/i.test(r.message)) detener = true;
+        }
+      } catch (e) { res.push(`${label(d)}: ${e instanceof Error ? e.message : String(e)}`); }
+      setEnvio({ done: ++i, total: lista.length });
+    }
     setBusy(false); setEnvio(null); setSel(new Set()); onDone();
     if (pendientesFecha.length) { setPropuestas(pendientesFecha); return; }
+    if (posiblesDup.length) { setDuplicados(posiblesDup); return; }
     if (ok) toast.success(`${ok} documento(s) soporte creado(s) en Siigo.`);
     if (res.length) toast.error(res.join("\n"), { duration: 15000 });
   };
@@ -371,7 +397,7 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
                 <tr key={d.id} className="border-t align-top">
                   <td className="p-2"><Checkbox checked={sel.has(d.id)} onCheckedChange={(c) => setSel((s) => { const n = new Set(s); if (c) n.add(d.id); else n.delete(d.id); return n; })} /></td>
                   <td className="p-2 font-mono text-xs">
-                    {String(d.number ?? "").trim() ? label(d) : <NumeroEditor d={d} onDone={onDone} />}
+                    {String(d.number ?? "").trim() ? label(d) : <span className="text-muted-foreground">Se asigna al crear en Siigo</span>}
                   </td>
                   <td className="p-2">
                     <div>{d.provider_name ?? <span className="text-destructive">Sin nombre</span>}</div>
@@ -449,6 +475,16 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
           <DialogFooter><Button variant="outline" onClick={() => setReintento(null)}>Cancelar</Button><Button onClick={() => { const r = reintento; setReintento(null); if (r) void crear([r.d], new Map([[r.d.id, r.fecha]])); }}>Confirmar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={!!duplicados} onOpenChange={(o) => !o && setDuplicados(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Posibles duplicados</DialogTitle></DialogHeader>
+          <p className="text-sm">Estos documentos coinciden en vendedor, fecha y valor con documentos ya creados en Siigo:</p>
+          <div className="max-h-48 space-y-1 overflow-auto text-sm">
+            {(duplicados ?? []).map((x) => <p key={x.d.id}>{label(x.d)}: posible duplicado de <b>{x.de}</b></p>)}
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setDuplicados(null)}>No crearlos</Button><Button onClick={() => { const l = duplicados ?? []; setDuplicados(null); void crear(l.map((x) => x.d), undefined, true); }}>Crear de todas formas</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Detalle d={detalle} onClose={() => setDetalle(null)} />
     </div>
   );
@@ -463,7 +499,10 @@ function Historial({ docs, onDone }: { companyId: string; docs: Ds[]; onDone: ()
   const lista = soloPendientes ? docs.filter(pendienteDian) : docs;
   return (
     <div className="space-y-3 pt-4">
-      <label className="flex items-center gap-2 text-sm"><Checkbox checked={soloPendientes} onCheckedChange={(c) => setSoloPendientes(!!c)} /> Pendientes de envío DIAN</label>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label className="flex items-center gap-2 text-sm"><Checkbox checked={soloPendientes} onCheckedChange={(c) => setSoloPendientes(!!c)} /> Pendientes de envío DIAN</label>
+        <Button size="sm" variant="outline" disabled={!docs.some((d) => d.cc_pdf_path)} onClick={() => void descargarCuentasCobroZip(docs)}><Download className="mr-1 size-4" /> Descarga masiva (.zip)</Button>
+      </div>
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-left text-xs"><tr><th className="p-2">Documento</th><th className="p-2">Vendedor</th><th className="p-2">Fecha</th><th className="p-2 text-right">Total</th><th className="p-2">Siigo</th><th className="p-2">Transmisión DIAN</th><th className="p-2" /></tr></thead>
@@ -484,6 +523,7 @@ function Historial({ docs, onDone }: { companyId: string; docs: Ds[]; onDone: ()
                 </td>
                 <td className="p-2"><div className="flex justify-end gap-1">
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setDetalle(d)}><Eye className="size-3.5" /> Ver detalle</Button>
+                  {d.cc_pdf_path && <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => descargarCuentaCobro(d)}><Download className="size-3.5" /> Cuenta de cobro</Button>}
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => exportarComprobante(d)}><Download className="size-3.5" /> Comprobante</Button>
                   <SiigoErrorActions invoice={d} onDone={onDone} />
                 </div></td>

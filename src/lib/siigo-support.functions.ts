@@ -26,11 +26,11 @@ export const siigoListDsTypes = createServerFn({ method: "POST" })
     return list.filter((d) => d.id != null && d.active !== false).map((d) => ({ id: Number(d.id), code: String(d.code ?? ""), name: String(d.name ?? "") }));
   });
 
-export type DsSyncResult = { ok: boolean; status: string; message: string; siigoNumber?: string | null; proposedDate?: string | null };
+export type DsSyncResult = { ok: boolean; status: string; message: string; siigoNumber?: string | null; proposedDate?: string | null; duplicadoDe?: string | null };
 
 export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((i: { invoiceId: string; confirmDate?: string }) => { if (!i?.invoiceId) throw new Error("invoiceId requerido"); return i; })
+  .inputValidator((i: { invoiceId: string; confirmDate?: string; confirmDuplicate?: boolean }) => { if (!i?.invoiceId) throw new Error("invoiceId requerido"); return i; })
   .handler(async ({ data, context }): Promise<DsSyncResult> => {
     const supabase = context.supabase;
     const { data: inv, error } = await supabase.from("invoices").select("*").eq("id", data.invoiceId).maybeSingle();
@@ -52,7 +52,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       // ---------- Validaciones ----------
       const faltan = missingIdentity({ idNumber: inv.provider_nit, idType: inv.vendor_id_type, name: inv.provider_name });
       if (faltan.length) throw new Error(`Vendedor incompleto: falta ${faltan.join(", ")}. No se envió el documento.`);
-      if (!String(inv.number ?? "").trim()) throw new Error("Falta número de cuenta de cobro. Escríbalo en Documentos soporte → Borradores antes de enviar.");
+      // El número de la cuenta de cobro NO se exige: lo asigna Siigo (consecutivo DSEB) al crear el documento.
       if (toCents(inv.iva) > 0 && !inv.iva_confirmed) throw new Error("Revisar: documento soporte con IVA. Confírmelo antes de crear en Siigo.");
       const [{ data: lines }, { data: journal }, { data: params }] = await Promise.all([
         supabase.from("invoice_lines").select("*").eq("invoice_id", inv.id).order("position"),
@@ -78,17 +78,8 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
         }, { onConflict: "company_id" });
         trace = { ...trace, tipo_comprobante: { id: dsDocumentId, code: elegido.code, name: elegido.name, origen: "siigo_auto" } };
       }
-      // Numeración: si el tipo DS en Siigo es de numeración manual, el número del documento
-      // soporte en Siigo ES el número de la cuenta de cobro (regla de Maira).
-      const tipoSel = tiposDs.find((d) => Number(d.id) === dsDocumentId);
-      const numeracionManual = tipoSel?.automatic_number === false;
-      let numeroManual: number | null = null;
-      if (numeracionManual) {
-        if (!/^\d+$/.test(String(inv.number ?? "").trim()))
-          throw new Error("El comprobante DS en Siigo usa numeración manual: el número de la cuenta de cobro debe ser solo números.");
-        numeroManual = Number(String(inv.number).trim());
-        trace = { ...trace, numeracion: "manual", numero_documento: numeroManual };
-      }
+      // Numeración: la app NUNCA calcula ni reserva el consecutivo; Siigo lo asigna al crear
+      // y ese consecutivo (ej.: DSEB-1153) queda como número de la cuenta de cobro.
 
       // ---------- Resolución de numeración (vigencia y rango) ----------
       const { data: resoluciones } = await supabase.from("ds_resolutions").select("*").eq("company_id", inv.company_id).eq("active", true);
@@ -101,15 +92,19 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
         const maxConsec = (creados ?? []).reduce((a, r) => { const n = Number(String(r.siigo_number ?? "").replace(/\D/g, "")); return Number.isFinite(n) ? Math.max(a, n) : a; }, 0);
         if (maxConsec >= Number(resolucion.to_number))
           throw new Error(`La resolución ${resolucion.prefix} llegó a su consecutivo máximo (${resolucion.to_number}). Registre una nueva resolución en Configuración.`);
-        if (numeroManual != null && (numeroManual < Number(resolucion.from_number) || numeroManual > Number(resolucion.to_number)))
-          throw new Error(`El número de cuenta de cobro ${numeroManual} está fuera del rango de la resolución ${resolucion.prefix} (${resolucion.from_number} a ${resolucion.to_number}).`);
         trace = { ...trace, resolucion: { prefix: resolucion.prefix, rango: `${resolucion.from_number}-${resolucion.to_number}`, vence } };
       }
 
-      // Duplicado local: mismo vendedor + número + valor ya creado en Siigo.
-      const { data: dup } = await supabase.from("invoices").select("id, siigo_number").eq("company_id", inv.company_id).eq("doc_kind", "soporte")
-        .eq("provider_nit", inv.provider_nit!).eq("number", inv.number ?? "").eq("total", inv.total).not("siigo_id", "is", null).neq("id", inv.id).limit(1);
-      if (dup?.length) throw new Error(`Duplicado: este documento ya se creó en Siigo como ${dup[0]!.siigo_number}. No se envió.`);
+      // Duplicado local (sin número de cuenta de cobro): mismo vendedor + fecha de la operación + valor total
+      // ya creado en Siigo. Se muestra "Posible duplicado" y no se crea sin confirmación del usuario.
+      if (!data.confirmDuplicate) {
+        const { data: dup } = await supabase.from("invoices").select("id, siigo_number").eq("company_id", inv.company_id).eq("doc_kind", "soporte")
+          .eq("provider_nit", inv.provider_nit!).eq("issue_date", inv.issue_date!).eq("total", inv.total).not("siigo_id", "is", null).neq("id", inv.id).limit(1);
+        if (dup?.length) {
+          await supabase.from("invoices").update({ siigo_status: "pendiente", siigo_error: null }).eq("id", inv.id);
+          return { ok: false, status: "posible_duplicado", duplicadoDe: dup[0]!.siigo_number, message: `${label}: posible duplicado de ${dup[0]!.siigo_number} (mismo vendedor, fecha y valor). Confirme para crearlo de todas formas.` };
+        }
+      }
 
       // ---------- Tercero ----------
       const { siigoEnsureCustomer } = await import("./siigo-customers.server");
@@ -121,18 +116,17 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       });
       trace = { ...trace, tercero: { id: tercero.id, accion: tercero.action } };
 
-      // Duplicado en Siigo: mismo vendedor + número de soporte.
-      const numeroSoporte = supplierReceiptNumber(inv.number);
+      // Duplicado en Siigo (sin número de cuenta de cobro): mismo vendedor + fecha + valor total.
       const nit = String(inv.provider_nit ?? "").replace(/\D/g, "");
-      type Listed = { id?: string; name?: string; supplier?: { identification?: string }; supplier_receipt_number?: { number?: string | number } };
-      if (inv.issue_date) {
+      type Listed = { id?: string; name?: string; total?: number; supplier?: { identification?: string } };
+      if (inv.issue_date && !data.confirmDuplicate) {
         try {
           const res = await siigoGet<{ results?: Listed[] }>(`${DS_PATH}?date_start=${inv.issue_date}&date_end=${inv.issue_date}&page_size=100`);
           const found = (res.results ?? []).find((d) => String(d.supplier?.identification ?? "").replace(/\D/g, "") === nit
-            && String(d.supplier_receipt_number?.number ?? "").replace(/\D/g, "").padStart(11, "0") === numeroSoporte);
+            && Math.abs(Number(d.total ?? 0) - Number(inv.total)) < 0.005);
           if (found?.id) {
-            await supabase.from("invoices").update({ siigo_id: String(found.id), siigo_number: found.name ?? String(found.id), siigo_status: "error", siigo_error_kind: "creado_diferencia", siigo_error: `Siigo ya tenía el documento ${found.name ?? found.id}. Use "Consultar Siigo de nuevo".` }).eq("id", inv.id);
-            return { ok: false, status: "error", message: `${label}: ya existía en Siigo como ${found.name ?? found.id}; no se creó de nuevo.` };
+            await supabase.from("invoices").update({ siigo_status: "pendiente", siigo_error: null }).eq("id", inv.id);
+            return { ok: false, status: "posible_duplicado", duplicadoDe: found.name ?? String(found.id), message: `${label}: posible duplicado de ${found.name ?? found.id} en Siigo (mismo vendedor, fecha y valor). Confirme para crearlo de todas formas.` };
           }
         } catch (e) { trace = { ...trace, consulta_duplicado: e instanceof Error ? e.message : String(e) }; }
       }
@@ -204,16 +198,17 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       const intentosPrevios = Array.isArray((inv.siigo_trace as Record<string, unknown> | null)?.["fechas_intentadas"]) ? (inv.siigo_trace as Record<string, unknown>)["fechas_intentadas"] as unknown[] : [];
       trace = { ...trace, fechas_intentadas: [...intentosPrevios, { fecha: fechaEnvio, at: new Date().toISOString() }] };
       const vencimiento = inv.due_date && inv.due_date >= fechaEnvio && inv.due_date <= ventana.lastDay ? inv.due_date : fechaEnvio;
-      const obsBase = `Fecha de la operación: ${fecOp} – Cuenta de cobro N° ${inv.number}. `;
+      // Observaciones: el número de la cuenta de cobro solo se conoce DESPUÉS de crear (lo asigna Siigo),
+      // y la API no permite actualizar observaciones; se escribe solo la fecha de la operación.
+      const obsBase = `Fecha de la operación: ${fecOp}. `;
       const payload: Record<string, unknown> = {
         document: { id: dsDocumentId },
-        ...(numeroManual != null ? { number: numeroManual } : {}),
         date: fechaEnvio,
         supplier: { identification: nit, branch_office: 0 },
-        supplier_receipt_number: { prefix: (inv.prefix || DS_PREFIX).slice(0, 6), number: numeroSoporte },
+        ...(String(inv.number ?? "").trim() ? { supplier_receipt_number: { prefix: (inv.prefix || DS_PREFIX).slice(0, 6), number: supplierReceiptNumber(inv.number) } } : {}),
         discount_type: "Value",
         stamp: { send: true },
-        observations: `${obsBase}Documento soporte ${label} · ${inv.provider_name ?? ""}`.slice(0, 4000),
+        observations: `${obsBase}Documento soporte · ${inv.provider_name ?? ""}`.slice(0, 4000),
         items: items.map((it) => ({ type: it.type, code: it.code, description: it.description, quantity: it.quantity, price: it.price, discount: 0, ...(it.retId != null ? { taxes: [{ id: Number(it.retId) }] } : {}) })),
         payments: [{ id: paymentId, value: neto, due_date: vencimiento }],
         ...(costCenterId ? { cost_center: costCenterId } : {}),
@@ -224,8 +219,16 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       trace = { ...trace, siigo_respuesta: res };
       if (!res.id) throw new Error("Siigo respondió sin el ID del documento soporte.");
       const siigoNumber = String(res.name ?? res.number ?? res.id);
+      // El consecutivo que asigna Siigo (ej.: DSEB-1153) queda como número de la cuenta de cobro y del documento.
+      const m = /^([A-Za-z]+)[- ]?(\d+)$/.exec(siigoNumber);
+      const prefixSiigo = m ? m[1]!.toUpperCase() : null;
+      const numeroSiigo = m ? m[2]! : null;
       // La identidad remota se guarda ANTES de verificar: nunca se reenvía.
-      await supabase.from("invoices").update({ siigo_id: String(res.id), siigo_number: siigoNumber, siigo_status: "error", siigo_error_kind: "creado_diferencia", siigo_error: "Documento creado, pendiente de verificar.", siigo_trace: trace as Json, ds_sent_date: fechaEnvio }).eq("id", inv.id);
+      await supabase.from("invoices").update({
+        siigo_id: String(res.id), siigo_number: siigoNumber, siigo_status: "error", siigo_error_kind: "creado_diferencia",
+        siigo_error: "Documento creado, pendiente de verificar.", siigo_trace: trace as Json, ds_sent_date: fechaEnvio,
+        ...(prefixSiigo && numeroSiigo ? { prefix: prefixSiigo, number: numeroSiigo } : {}),
+      }).eq("id", inv.id);
 
       const doc = await siigoGet<Record<string, unknown> & { total?: number; payments?: Array<{ value?: number }>; retentions?: Array<{ value?: number }>; items?: Array<{ taxes?: Array<{ id?: string | number; type?: string; value?: number }> }>; stamp?: { status?: string }; metadata?: Record<string, unknown> }>(`${DS_PATH}/${res.id}`);
       const retDevueltas = ((doc.retentions ?? []).reduce((a, r) => a + toCents(r.value), 0)
@@ -243,7 +246,39 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
         siigo_status: "sincronizada", status: "historico", siigo_error: null, siigo_error_kind: null,
         siigo_synced_at: new Date().toISOString(), siigo_synced_by: context.userId, siigo_trace: trace as Json, ds_dian_status: dian,
       }).eq("id", inv.id);
-      return { ok: true, status: "sincronizada", message: `${label}: creado en Siigo como ${siigoNumber}.`, siigoNumber };
+
+      // ---------- Cuenta de cobro numerada (PDF) ----------
+      // Se genera con el consecutivo DSEB que asignó Siigo. Si la cuenta de cobro vino en PDF,
+      // se estampa una franja superior; si no, se crea un PDF nuevo. Una falla aquí no afecta el documento ya creado.
+      try {
+        const { cuentaCobroPdf } = await import("./cc-pdf.server");
+        const { data: comp } = await supabase.from("companies").select("name, nit").eq("id", inv.company_id).maybeSingle();
+        let original: Uint8Array | null = null;
+        if (inv.file_path) {
+          const dl = await supabase.storage.from("facturas").download(inv.file_path);
+          if (!dl.error && dl.data) original = new Uint8Array(await dl.data.arrayBuffer());
+        }
+        const pdfBytes = await cuentaCobroPdf(original, {
+          dseb: siigoNumber,
+          fechaOperacion: fecOp,
+          empresa: {
+            nombre: comp?.name ?? "CORPORACION BALLET FOLCLORICO DE ANTIOQUIA",
+            nit: comp?.nit ?? "800.212.838-7",
+            direccion: params?.address ?? "CR 50 59 71",
+            ciudad: params?.city ?? "Medellín",
+            telefono: params?.phone ?? "(604) 2546637",
+          },
+          vendedor: { nombre: inv.provider_name ?? "", identificacion: inv.provider_nit ?? "", direccion: inv.provider_address, ciudad: inv.provider_city, telefono: inv.provider_phone },
+          descripcion: ls.map((l) => l.description ?? l.account_name ?? "").filter(Boolean).join("; ") || "Servicios prestados",
+          valor: Number(inv.total), retencion: retFuenteDoc / 100, neto,
+        });
+        const ccPath = `soporte-cc/${inv.id}.pdf`;
+        const up = await supabase.storage.from("facturas").upload(ccPath, pdfBytes, { contentType: "application/pdf", upsert: true });
+        if (!up.error) await supabase.from("invoices").update({ cc_pdf_path: ccPath }).eq("id", inv.id);
+        else trace = { ...trace, cc_pdf_error: up.error.message };
+      } catch (e) { trace = { ...trace, cc_pdf_error: e instanceof Error ? e.message : String(e) }; }
+
+      return { ok: true, status: "sincronizada", message: `${siigoNumber}: creado en Siigo. Cuenta de cobro N° ${siigoNumber} lista en el Historial.`, siigoNumber };
     } catch (e) {
       let message = e instanceof Error ? e.message : String(e);
       const { data: cur } = await supabase.from("invoices").select("siigo_id, siigo_number, siigo_trace").eq("id", inv.id).maybeSingle();
