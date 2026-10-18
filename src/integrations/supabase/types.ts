@@ -545,6 +545,7 @@ export type Database = {
           company_id: string
           country: string | null
           department: string | null
+          ds_date_mode: string
           ds_document_code: string | null
           ds_document_id: number | null
           email: string | null
@@ -557,6 +558,7 @@ export type Database = {
           company_id: string
           country?: string | null
           department?: string | null
+          ds_date_mode?: string
           ds_document_code?: string | null
           ds_document_id?: number | null
           email?: string | null
@@ -569,6 +571,7 @@ export type Database = {
           company_id?: string
           country?: string | null
           department?: string | null
+          ds_date_mode?: string
           ds_document_code?: string | null
           ds_document_id?: number | null
           email?: string | null
@@ -928,6 +931,7 @@ export type Database = {
           discount: number
           doc_kind: string
           ds_dian_status: string | null
+          ds_sent_date: string | null
           due_date: string | null
           file_name: string | null
           file_path: string | null
@@ -1021,6 +1025,7 @@ export type Database = {
           discount?: number
           doc_kind?: string
           ds_dian_status?: string | null
+          ds_sent_date?: string | null
           due_date?: string | null
           file_name?: string | null
           file_path?: string | null
@@ -1114,6 +1119,7 @@ export type Database = {
           discount?: number
           doc_kind?: string
           ds_dian_status?: string | null
+          ds_sent_date?: string | null
           due_date?: string | null
           file_name?: string | null
           file_path?: string | null
