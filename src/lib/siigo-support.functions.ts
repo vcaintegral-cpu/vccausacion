@@ -148,7 +148,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       if (!paymentId) throw new Error("No se encontró la forma de pago de compras en Siigo.");
       const costCenterId = inv.cost_center ? await siigoCostCenterId(inv.cost_center) : null;
       const payload: Record<string, unknown> = {
-        document: { id: params.ds_document_id },
+        document: { id: dsDocumentId },
         date: inv.issue_date,
         supplier: { identification: nit, branch_office: 0 },
         supplier_receipt_number: { prefix: (inv.prefix || DS_PREFIX).slice(0, 6), number: numeroSoporte },
