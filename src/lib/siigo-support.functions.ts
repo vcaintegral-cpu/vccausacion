@@ -26,11 +26,11 @@ export const siigoListDsTypes = createServerFn({ method: "POST" })
     return list.filter((d) => d.id != null && d.active !== false).map((d) => ({ id: Number(d.id), code: String(d.code ?? ""), name: String(d.name ?? "") }));
   });
 
-export type DsSyncResult = { ok: boolean; status: string; message: string; siigoNumber?: string | null; proposedDate?: string | null };
+export type DsSyncResult = { ok: boolean; status: string; message: string; siigoNumber?: string | null; proposedDate?: string | null; duplicadoDe?: string | null };
 
 export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((i: { invoiceId: string; confirmDate?: string }) => { if (!i?.invoiceId) throw new Error("invoiceId requerido"); return i; })
+  .inputValidator((i: { invoiceId: string; confirmDate?: string; confirmDuplicate?: boolean }) => { if (!i?.invoiceId) throw new Error("invoiceId requerido"); return i; })
   .handler(async ({ data, context }): Promise<DsSyncResult> => {
     const supabase = context.supabase;
     const { data: inv, error } = await supabase.from("invoices").select("*").eq("id", data.invoiceId).maybeSingle();
@@ -52,7 +52,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       // ---------- Validaciones ----------
       const faltan = missingIdentity({ idNumber: inv.provider_nit, idType: inv.vendor_id_type, name: inv.provider_name });
       if (faltan.length) throw new Error(`Vendedor incompleto: falta ${faltan.join(", ")}. No se envió el documento.`);
-      if (!String(inv.number ?? "").trim()) throw new Error("Falta número de cuenta de cobro. Escríbalo en Documentos soporte → Borradores antes de enviar.");
+      // El número de la cuenta de cobro NO se exige: lo asigna Siigo (consecutivo DSEB) al crear el documento.
       if (toCents(inv.iva) > 0 && !inv.iva_confirmed) throw new Error("Revisar: documento soporte con IVA. Confírmelo antes de crear en Siigo.");
       const [{ data: lines }, { data: journal }, { data: params }] = await Promise.all([
         supabase.from("invoice_lines").select("*").eq("invoice_id", inv.id).order("position"),
@@ -78,17 +78,8 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
         }, { onConflict: "company_id" });
         trace = { ...trace, tipo_comprobante: { id: dsDocumentId, code: elegido.code, name: elegido.name, origen: "siigo_auto" } };
       }
-      // Numeración: si el tipo DS en Siigo es de numeración manual, el número del documento
-      // soporte en Siigo ES el número de la cuenta de cobro (regla de Maira).
-      const tipoSel = tiposDs.find((d) => Number(d.id) === dsDocumentId);
-      const numeracionManual = tipoSel?.automatic_number === false;
-      let numeroManual: number | null = null;
-      if (numeracionManual) {
-        if (!/^\d+$/.test(String(inv.number ?? "").trim()))
-          throw new Error("El comprobante DS en Siigo usa numeración manual: el número de la cuenta de cobro debe ser solo números.");
-        numeroManual = Number(String(inv.number).trim());
-        trace = { ...trace, numeracion: "manual", numero_documento: numeroManual };
-      }
+      // Numeración: la app NUNCA calcula ni reserva el consecutivo; Siigo lo asigna al crear
+      // y ese consecutivo (ej.: DSEB-1153) queda como número de la cuenta de cobro.
 
       // ---------- Resolución de numeración (vigencia y rango) ----------
       const { data: resoluciones } = await supabase.from("ds_resolutions").select("*").eq("company_id", inv.company_id).eq("active", true);
