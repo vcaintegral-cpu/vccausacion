@@ -18,6 +18,7 @@ import { Route as AuthenticatedAprendizajeRouteImport } from './routes/_authenti
 import { Route as AuthenticatedBorradoresRouteImport } from './routes/_authenticated/borradores'
 import { Route as AuthenticatedCausarRouteImport } from './routes/_authenticated/causar'
 import { Route as AuthenticatedDocumentosRouteImport } from './routes/_authenticated/documentos'
+import { Route as AuthenticatedDocumentosSoporteRouteImport } from './routes/_authenticated/documentos-soporte'
 import { Route as AuthenticatedEmpresasRouteImport } from './routes/_authenticated/empresas'
 import { Route as AuthenticatedFacturasRouteImport } from './routes/_authenticated/facturas'
 import { Route as AuthenticatedIntegracionesRouteImport } from './routes/_authenticated/integraciones'
@@ -70,6 +71,12 @@ const AuthenticatedDocumentosRoute = AuthenticatedDocumentosRouteImport.update({
   path: '/documentos',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedDocumentosSoporteRoute =
+  AuthenticatedDocumentosSoporteRouteImport.update({
+    id: '/documentos-soporte',
+    path: '/documentos-soporte',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedEmpresasRoute = AuthenticatedEmpresasRouteImport.update({
   id: '/empresas',
   path: '/empresas',
@@ -112,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/borradores': typeof AuthenticatedBorradoresRoute
   '/causar': typeof AuthenticatedCausarRoute
   '/documentos': typeof AuthenticatedDocumentosRoute
+  '/documentos-soporte': typeof AuthenticatedDocumentosSoporteRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
   '/integraciones': typeof AuthenticatedIntegracionesRoute
@@ -128,6 +136,7 @@ export interface FileRoutesByTo {
   '/borradores': typeof AuthenticatedBorradoresRoute
   '/causar': typeof AuthenticatedCausarRoute
   '/documentos': typeof AuthenticatedDocumentosRoute
+  '/documentos-soporte': typeof AuthenticatedDocumentosSoporteRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
   '/integraciones': typeof AuthenticatedIntegracionesRoute
@@ -146,6 +155,7 @@ export interface FileRoutesById {
   '/_authenticated/borradores': typeof AuthenticatedBorradoresRoute
   '/_authenticated/causar': typeof AuthenticatedCausarRoute
   '/_authenticated/documentos': typeof AuthenticatedDocumentosRoute
+  '/_authenticated/documentos-soporte': typeof AuthenticatedDocumentosSoporteRoute
   '/_authenticated/empresas': typeof AuthenticatedEmpresasRoute
   '/_authenticated/facturas': typeof AuthenticatedFacturasRoute
   '/_authenticated/integraciones': typeof AuthenticatedIntegracionesRoute
@@ -164,6 +174,7 @@ export interface FileRouteTypes {
     | '/borradores'
     | '/causar'
     | '/documentos'
+    | '/documentos-soporte'
     | '/empresas'
     | '/facturas'
     | '/integraciones'
@@ -180,6 +191,7 @@ export interface FileRouteTypes {
     | '/borradores'
     | '/causar'
     | '/documentos'
+    | '/documentos-soporte'
     | '/empresas'
     | '/facturas'
     | '/integraciones'
@@ -197,6 +209,7 @@ export interface FileRouteTypes {
     | '/_authenticated/borradores'
     | '/_authenticated/causar'
     | '/_authenticated/documentos'
+    | '/_authenticated/documentos-soporte'
     | '/_authenticated/empresas'
     | '/_authenticated/facturas'
     | '/_authenticated/integraciones'
@@ -277,6 +290,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDocumentosRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/documentos-soporte': {
+      id: '/_authenticated/documentos-soporte'
+      path: '/documentos-soporte'
+      fullPath: '/documentos-soporte'
+      preLoaderRoute: typeof AuthenticatedDocumentosSoporteRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/empresas': {
       id: '/_authenticated/empresas'
       path: '/empresas'
@@ -328,6 +348,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedBorradoresRoute: typeof AuthenticatedBorradoresRoute
   AuthenticatedCausarRoute: typeof AuthenticatedCausarRoute
   AuthenticatedDocumentosRoute: typeof AuthenticatedDocumentosRoute
+  AuthenticatedDocumentosSoporteRoute: typeof AuthenticatedDocumentosSoporteRoute
   AuthenticatedEmpresasRoute: typeof AuthenticatedEmpresasRoute
   AuthenticatedFacturasRoute: typeof AuthenticatedFacturasRoute
   AuthenticatedIntegracionesRoute: typeof AuthenticatedIntegracionesRoute
@@ -342,6 +363,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedBorradoresRoute: AuthenticatedBorradoresRoute,
   AuthenticatedCausarRoute: AuthenticatedCausarRoute,
   AuthenticatedDocumentosRoute: AuthenticatedDocumentosRoute,
+  AuthenticatedDocumentosSoporteRoute: AuthenticatedDocumentosSoporteRoute,
   AuthenticatedEmpresasRoute: AuthenticatedEmpresasRoute,
   AuthenticatedFacturasRoute: AuthenticatedFacturasRoute,
   AuthenticatedIntegracionesRoute: AuthenticatedIntegracionesRoute,

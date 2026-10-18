@@ -44,6 +44,7 @@ function Panel() {
         .from("invoices")
         .select("id, prefix, number, provider_name, issue_date, total, iva, retefuente, reteiva, reteica, status")
         .eq("company_id", companyId!)
+        .eq("doc_kind", "compra")
         .order("issue_date", { ascending: false })
         .limit(200);
       if (error) throw error;

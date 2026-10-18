@@ -5,6 +5,7 @@ import { Ban, CheckCheck, FileSearch, Loader2, RefreshCw, Send, Undo2 } from "lu
 
 import { supabase } from "@/integrations/supabase/client";
 import { siigoSyncInvoice } from "@/lib/siigo.functions";
+import { siigoSyncSupportDocument } from "@/lib/siigo-support.functions";
 import {
   siigoCheckInterrupted,
   siigoMarkReconciled,
@@ -30,6 +31,7 @@ export type SiigoErrorInvoice = {
   siigo_trace?: unknown;
   siigo_attempts?: number | null;
   siigo_last_attempt_at?: string | null;
+  doc_kind?: string | null;
 };
 
 export const SIIGO_KIND_LABEL: Record<SiigoErrorKind, string> = {
@@ -45,6 +47,7 @@ type Res = { id: string; etiqueta: string; ok: boolean; message: string };
 /** Acciones de recuperación compartidas entre la fila y el lote. */
 export function useSiigoRecovery() {
   const sync = useServerFn(siigoSyncInvoice);
+  const syncDs = useServerFn(siigoSyncSupportDocument);
   const recheckFn = useServerFn(siigoRecheckInvoice);
   const checkFn = useServerFn(siigoCheckInterrupted);
 
@@ -55,6 +58,10 @@ export function useSiigoRecovery() {
     if (kind === "interrumpido") {
       const c = await checkFn({ data: { invoiceId: inv.id } });
       if (c.found || !c.ok) return { id: inv.id, etiqueta: e, ok: c.ok && c.status === "sincronizada", message: c.message };
+    }
+    if (inv.doc_kind === "soporte") {
+      const d = await syncDs({ data: { invoiceId: inv.id } });
+      return { id: inv.id, etiqueta: e, ok: d.ok, message: d.message };
     }
     const r = await sync({ data: { invoiceId: inv.id } });
     return { id: inv.id, etiqueta: e, ok: r.ok, message: r.ok ? `Siigo N° ${r.siigoNumber ?? r.siigoId ?? "creado"}.` : (r.error ?? "Siigo rechazó el comprobante.") };

@@ -25,3 +25,5 @@
 - [x] Pruebas con el archivo aportado y flujo en pantalla.
 - [x] Metadatos de pantallas y actualización de seguridad obligatoria.- [x] FE-2992 enviada con diferencia de redondeo pendiente al pago (FC-1-714); lista "Pendientes Siigo".
 - [x] BUF-1277 enviada como gasto 5145 (FC-1-726); anticipo en Pendientes Siigo.
+- [x] Documentos soporte: carga PDF/ZIP/Excel, borradores, aprobación, envío a Siigo, recuperación, terceros por actualizar.
+- [ ] Primer DS real en Siigo: espera autorización de Maira y el tipo de comprobante DS en Configuración.

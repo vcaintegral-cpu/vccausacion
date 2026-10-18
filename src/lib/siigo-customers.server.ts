@@ -38,6 +38,10 @@ export type ProviderInput = {
   city?: string | null;
   phone?: string | null;
   email?: string | null;
+  /** Documento soporte: tipo Siigo explícito (13, 31, 22, 41) y nombres/apellidos separados. */
+  idType?: string | null;
+  person?: { firstNames: string; lastNames: string } | null;
+  fiscalCode?: string | null;
 };
 
 /** Campos obligatorios que Siigo exige para crear un tercero. */
@@ -139,22 +143,22 @@ export async function siigoEnsureCustomer(p: ProviderInput): Promise<EnsureCusto
     };
 
   // Persona jurídica cuando el documento tiene estructura de NIT (9+ dígitos).
-  const esEmpresa = nit.length >= 9;
+  const esEmpresa = p.idType ? p.idType === "31" && !p.person : nit.length >= 9;
   const nombre = String(p.name ?? "").trim();
   const partes = nombre.split(/\s+/);
   const payload: Record<string, unknown> = {
     type: "Supplier",
     person_type: esEmpresa ? "Company" : "Person",
-    id_type: esEmpresa ? "31" : "13",
+    id_type: p.idType ?? (esEmpresa ? "31" : "13"),
     identification: nit,
     name: esEmpresa
       ? [nombre]
-      : [partes.slice(0, Math.max(1, partes.length - 1)).join(" "), partes.slice(-1).join(" ") || nombre],
+      : p.person ? [p.person.firstNames, p.person.lastNames] : [partes.slice(0, Math.max(1, partes.length - 1)).join(" "), partes.slice(-1).join(" ") || nombre],
     commercial_name: nombre.slice(0, 100),
     branch_office: 0,
     active: true,
     vat_responsible: false,
-    fiscal_responsibilities: [{ code: esEmpresa ? "R-99-PN" : "R-99-PN" }],
+    fiscal_responsibilities: [{ code: p.fiscalCode || "R-99-PN" }],
     address: {
       address: String(p.address ?? "").trim() || "No registrada",
       city: await resolveCity(p.city),
@@ -168,7 +172,7 @@ export async function siigoEnsureCustomer(p: ProviderInput): Promise<EnsureCusto
       },
     ],
   };
-  if (esEmpresa) payload["check_digit"] = checkDigit(nit);
+  if (esEmpresa || p.idType === "31") payload["check_digit"] = checkDigit(nit);
   if (String(p.phone ?? "").trim()) payload["phones"] = [{ number: String(p.phone).trim() }];
 
   try {
