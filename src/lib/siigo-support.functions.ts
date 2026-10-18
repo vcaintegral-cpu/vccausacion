@@ -288,7 +288,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       trace = { ...trace, siigo_verificacion: doc as Json, comparacion, resultado: diferencias.length ? "Diferencia Siigo" : "sincronizada" };
       // Consecutivo de Siigo (ej.: DSEB-1153) → número del documento, cuenta de cobro en PDF y observaciones.
       const { finalizarDocumentoSoporte } = await import("./ds-finalize.server");
-      const docConNumero = (doc.number != null || doc.name) ? doc : { ...doc, name: res.name, number: res.number };
+      const docConNumero = (doc["number"] != null || doc["name"]) ? doc : { ...doc, name: res.name, number: res.number };
       const fin = await finalizarDocumentoSoporte({ supabase, userId: context.userId, inv: { ...inv, siigo_trace: trace as Json, ds_sent_date: fechaEnvio }, siigoId: String(res.id), doc: docConNumero as never });
       trace = fin.trace;
       const numeroFinal = fin.full ?? siigoNumber;
