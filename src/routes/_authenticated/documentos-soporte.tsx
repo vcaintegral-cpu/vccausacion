@@ -10,7 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany } from "@/components/app-shell";
 import { cop, fecha, fechaHora } from "@/lib/format";
-import { DS_TEMPLATE_COLUMNS, FILLED_LABEL, VENDOR_ID_LABEL, missingIdentity, dianLabel, diasParaDian, resolutionExpiry, type FilledField, type RowError, type VendorIdType } from "@/lib/support-docs";
+import { DS_TEMPLATE_COLUMNS, FILLED_LABEL, VENDOR_ID_LABEL, missingIdentity, dianLabel, DIAN_PENDIENTE, diasParaDian, resolutionExpiry, type FilledField, type RowError, type VendorIdType } from "@/lib/support-docs";
 import { processSupportUpload, type SupportProgress } from "@/lib/support-processing";
 import { siigoListDsTypes, siigoSyncSupportDocument } from "@/lib/siigo-support.functions";
 import { siigoReleaseInterrupted } from "@/lib/siigo-recovery.functions";
@@ -47,7 +47,7 @@ type Ds = {
   provider_address: string | null; provider_city: string | null; provider_phone: string | null; provider_email: string | null;
   subtotal: number; iva: number; retefuente: number; reteiva: number; reteica: number; total: number; cost_center: string | null; notes: string | null;
   status: string; siigo_status: string | null; siigo_id: string | null; siigo_number: string | null; siigo_error: string | null; siigo_error_kind: string | null;
-  siigo_trace: unknown; siigo_attempts: number | null; siigo_last_attempt_at: string | null; ds_dian_status: string | null; ds_sent_date: string | null;
+  siigo_trace: unknown; siigo_attempts: number | null; siigo_last_attempt_at: string | null; ds_dian_status: string | null; ds_sent_date: string | null; ds_unauthorized_transmission: boolean | null;
   vendor_id_type: string | null; vendor_is_natural: boolean | null; vendor_declarant: boolean | null; vendor_filled: FilledField[] | null; iva_confirmed: boolean;
   raw_extraction: { account_decisions?: Record<string, Decision> } | null; source_override: unknown; doc_kind: string; cc_pdf_path: string | null;
   invoice_lines: Array<{ account_code: string | null; account_name: string | null; description: string | null }>;
@@ -79,7 +79,7 @@ function DocumentosSoporte() {
     enabled: !!companyId,
     queryFn: async () => {
       const { data, error } = await supabase.from("invoices")
-        .select("id, prefix, number, issue_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, subtotal, iva, retefuente, reteiva, reteica, total, cost_center, notes, status, siigo_status, siigo_id, siigo_number, siigo_error, siigo_error_kind, siigo_trace, siigo_attempts, siigo_last_attempt_at, ds_dian_status, ds_sent_date, vendor_id_type, vendor_is_natural, vendor_declarant, vendor_filled, iva_confirmed, raw_extraction, source_override, doc_kind, cc_pdf_path, invoice_lines(account_code, account_name, description)")
+        .select("id, prefix, number, issue_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, subtotal, iva, retefuente, reteiva, reteica, total, cost_center, notes, status, siigo_status, siigo_id, siigo_number, siigo_error, siigo_error_kind, siigo_trace, siigo_attempts, siigo_last_attempt_at, ds_dian_status, ds_sent_date, ds_unauthorized_transmission, vendor_id_type, vendor_is_natural, vendor_declarant, vendor_filled, iva_confirmed, raw_extraction, source_override, doc_kind, cc_pdf_path, invoice_lines(account_code, account_name, description)")
         .eq("company_id", companyId!).eq("doc_kind", "soporte").order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as unknown as Ds[];
@@ -96,7 +96,7 @@ function DocumentosSoporte() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Documentos soporte</h1>
-        <p className="text-sm text-muted-foreground">Cargar → Borradores → Aprobar → Crear en Siigo → Historial. Siigo transmite los documentos a la DIAN.</p>
+        <p className="text-sm text-muted-foreground">Cargar → Borradores → Aprobar → Crear en Siigo → Historial. La app solo guarda el documento en Siigo; usted lo envía a la DIAN desde Siigo.</p>
       </div>
       <Tabs defaultValue="borradores">
         <TabsList>
@@ -304,6 +304,12 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
   const [envio, setEnvio] = useState<{ done: number; total: number } | null>(null);
   const elegidos = docs.filter((d) => sel.has(d.id));
   const aprobables = elegidos.filter((d) => d.status === "borrador" || d.status === "incompleto");
+  // Hasta confirmar en Siigo que la primera prueba quedó "Documento guardado", se crea 1 documento por vez.
+  const { data: loteHabilitado = false } = useQuery({
+    queryKey: ["ds-batch", companyId],
+    queryFn: async () => !!(await supabase.from("company_parameters").select("ds_batch_enabled").eq("company_id", companyId).maybeSingle()).data?.ds_batch_enabled,
+  });
+  const [transmitidos, setTransmitidos] = useState<string[] | null>(null);
   const creables = elegidos.filter((d) => d.status === "aprobado" && !d.siigo_id && d.siigo_status !== "sincronizando" && d.siigo_status !== "error");
 
   const aprobar = async () => {
@@ -342,6 +348,7 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
     const res: string[] = []; let ok = 0; let i = 0; let detener = false;
     const pendientesFecha: Array<{ d: Ds; fecha: string }> = [];
     const posiblesDup: Array<{ d: Ds; de: string }> = [];
+    const sinAutorizacion: string[] = [];
     for (const d of lista) {
       if (detener) break;
       try {
@@ -349,6 +356,7 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
         const r = await sync({ data: { invoiceId: d.id, ...(cf ? { confirmDate: cf } : {}), ...(confirmarDuplicados ? { confirmDuplicate: true } : {}) } });
         if (r.ok) ok += 1;
         else if (r.status === "confirmar_fecha" && r.proposedDate) pendientesFecha.push({ d, fecha: r.proposedDate });
+        else if (r.status === "transmitido_dian") { sinAutorizacion.push(r.message); detener = true; }
         else if (r.status === "posible_duplicado") posiblesDup.push({ d, de: r.duplicadoDe ?? "otro documento" });
         else {
           res.push(r.message);
@@ -359,6 +367,7 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
       setEnvio({ done: ++i, total: lista.length });
     }
     setBusy(false); setEnvio(null); setSel(new Set()); onDone();
+    if (sinAutorizacion.length) { setTransmitidos(sinAutorizacion); return; }
     if (pendientesFecha.length) { setPropuestas(pendientesFecha); return; }
     if (posiblesDup.length) { setDuplicados(posiblesDup); return; }
     if (ok) toast.success(`${ok} documento(s) soporte creado(s) en Siigo.`);
@@ -380,7 +389,8 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
         <Button variant="outline" size="sm" onClick={() => setSel(new Set(docs.map((d) => d.id)))}>Seleccionar todos</Button>
         <Button variant="outline" size="sm" onClick={() => setSel(new Set())}>Deseleccionar</Button>
         <Button size="sm" disabled={busy || !aprobables.length} onClick={() => void aprobar()}><CheckCircle2 className="mr-1 size-4" /> Aprobar ({aprobables.length})</Button>
-        <Button size="sm" disabled={busy || !creables.length} onClick={() => setConfirmar(creables)}><Send className="mr-1 size-4" /> Crear en Siigo ({creables.length})</Button>
+        <Button size="sm" disabled={busy || !creables.length || (!loteHabilitado && creables.length > 1)} onClick={() => setConfirmar(creables)}><Send className="mr-1 size-4" /> Crear en Siigo ({creables.length})</Button>
+        {!loteHabilitado && creables.length > 1 && <span className="self-center text-xs text-destructive">Seleccione 1 solo documento: el envío en lote se habilita en Configuración cuando confirme en Siigo que la prueba quedó "Documento guardado".</span>}
         {envio && <span className="flex items-center gap-2 text-sm"><Loader2 className="size-4 animate-spin" /> {envio.done} de {envio.total}</span>}
       </div>
       <div className="overflow-x-auto rounded-md border">
@@ -447,7 +457,7 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
       <Dialog open={!!confirmar} onOpenChange={(o) => !o && setConfirmar(null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Crear en Siigo</DialogTitle></DialogHeader>
-          <p className="text-sm">Se crearán {confirmar?.length ?? 0} documentos soporte en Siigo y Siigo los transmitirá a la DIAN. ¿Confirmar?</p>
+          <p className="text-sm">Se crearán {confirmar?.length ?? 0} documento(s) soporte en Siigo, solo guardados (sin envío a la DIAN). Usted los envía a la DIAN desde Siigo. ¿Confirmar?</p>
           <DialogFooter><Button variant="outline" onClick={() => setConfirmar(null)}>Cancelar</Button><Button onClick={() => confirmar && void crear(confirmar)}>Confirmar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
@@ -485,6 +495,16 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
           <DialogFooter><Button variant="outline" onClick={() => setDuplicados(null)}>No crearlos</Button><Button onClick={() => { const l = duplicados ?? []; setDuplicados(null); void crear(l.map((x) => x.d), undefined, true); }}>Crear de todas formas</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={!!transmitidos} onOpenChange={(o) => !o && setTransmitidos(null)}>
+        <DialogContent className="border-destructive">
+          <DialogHeader><DialogTitle className="text-destructive">Transmitido a la DIAN sin autorización</DialogTitle></DialogHeader>
+          <div className="space-y-2 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+            {(transmitidos ?? []).map((m) => <p key={m}>{m}</p>)}
+          </div>
+          <p className="text-sm">El lote se detuvo. No se enviaron los demás documentos. Revise el documento en Siigo antes de continuar.</p>
+          <DialogFooter><Button onClick={() => setTransmitidos(null)}>Entendido</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Detalle d={detalle} onClose={() => setDetalle(null)} />
     </div>
   );
@@ -495,7 +515,7 @@ function Historial({ docs, onDone }: { companyId: string; docs: Ds[]; onDone: ()
   const [detalle, setDetalle] = useState<Ds | null>(null);
   const [soloPendientes, setSoloPendientes] = useState(false);
   const hoy = new Date().toISOString().slice(0, 10);
-  const pendienteDian = (d: Ds) => dianLabel(d.ds_dian_status) === "Guardado – pendiente envío DIAN";
+  const pendienteDian = (d: Ds) => dianLabel(d.ds_dian_status) === DIAN_PENDIENTE;
   const lista = soloPendientes ? docs.filter(pendienteDian) : docs;
   return (
     <div className="space-y-3 pt-4">
@@ -516,6 +536,7 @@ function Historial({ docs, onDone }: { companyId: string; docs: Ds[]; onDone: ()
                 <td className="p-2 text-right">{cop(d.total)}</td>
                 <td className="p-2 font-mono text-xs">{d.siigo_number}</td>
                 <td className="p-2 text-xs">
+                  {d.ds_unauthorized_transmission && <div className="mb-1 rounded bg-destructive px-1.5 py-0.5 font-semibold text-destructive-foreground">Transmitido a la DIAN sin autorización</div>}
                   {dianLabel(d.ds_dian_status)}
                   {pendienteDian(d) && (() => { const n = diasParaDian(d.ds_sent_date, hoy); return n == null ? null : (
                     <div className={6 - n <= 2 ? "font-semibold text-destructive" : "text-muted-foreground"}>Días para enviar a la DIAN: {n} de 6</div>
@@ -569,10 +590,13 @@ function Configuracion({ companyId }: { companyId: string }) {
   const [types, setTypes] = useState<Array<{ id: number; code: string; name: string }>>([]);
   const [loadingTypes, setLoadingTypes] = useState(false);
   const [ccMode, setCcMode] = useState<string | null>(null);
+  const [lote, setLote] = useState(false);
+  const qc = useQueryClient();
   useEffect(() => {
     void supabase.from("company_parameters").select("*").eq("company_id", companyId).maybeSingle().then(({ data }) => {
       setF({ address: data?.address ?? "", city: data?.city ?? "", department: data?.department ?? "", country: data?.country ?? "", phone: data?.phone ?? "", email: data?.email ?? "", ds_document_id: data?.ds_document_id ? String(data.ds_document_id) : "", ds_document_code: data?.ds_document_code ?? "", ds_window_days: String(data?.ds_window_days ?? 10), ds_date_ref: data?.ds_date_ref ?? "fin_mes", ds_payable_account: data?.ds_payable_account ?? "23359501" });
       setCcMode(data?.ds_cost_center_mode ?? null);
+      setLote(!!data?.ds_batch_enabled);
     });
   }, [companyId]);
   const sincronizar = async () => {
@@ -580,8 +604,8 @@ function Configuracion({ companyId }: { companyId: string }) {
     try { setTypes(await listTypes({ data: { companyId } })); } catch (e) { toast.error(e instanceof Error ? e.message : "No se pudo consultar Siigo."); } finally { setLoadingTypes(false); }
   };
   const guardar = async () => {
-    const { error } = await supabase.from("company_parameters").upsert({ company_id: companyId, address: f.address || null, city: f.city || null, department: f.department || null, country: f.country || null, phone: f.phone || null, email: f.email || null, ds_document_id: f.ds_document_id ? Number(f.ds_document_id) : null, ds_document_code: f.ds_document_code || null, ds_window_days: Math.max(1, Number(f.ds_window_days) || 10), ds_date_ref: f.ds_date_ref === "hoy" ? "hoy" : "fin_mes", ds_payable_account: f.ds_payable_account || "23359501", updated_at: new Date().toISOString() });
-    if (error) toast.error(error.message); else toast.success("Parámetros guardados.");
+    const { error } = await supabase.from("company_parameters").upsert({ company_id: companyId, address: f.address || null, city: f.city || null, department: f.department || null, country: f.country || null, phone: f.phone || null, email: f.email || null, ds_document_id: f.ds_document_id ? Number(f.ds_document_id) : null, ds_document_code: f.ds_document_code || null, ds_window_days: Math.max(1, Number(f.ds_window_days) || 10), ds_date_ref: f.ds_date_ref === "hoy" ? "hoy" : "fin_mes", ds_payable_account: f.ds_payable_account || "23359501", ds_batch_enabled: lote, updated_at: new Date().toISOString() });
+    if (error) toast.error(error.message); else { toast.success("Parámetros guardados."); void qc.invalidateQueries({ queryKey: ["ds-batch", companyId] }); }
   };
   const campo = (k: keyof F, l: string) => <label className="space-y-1 text-sm"><span className="text-muted-foreground">{l}</span><Input value={f[k] ?? ""} onChange={(e) => setF({ ...f, [k]: e.target.value })} /></label>;
   return (
@@ -619,6 +643,11 @@ function Configuracion({ companyId }: { companyId: string }) {
         <h2 className="font-semibold">Cuenta por pagar de documentos soporte</h2>
         <p className="text-xs text-muted-foreground">Se usa cuando el vendedor no tiene historial de cuenta por pagar. Si el vendedor ya tiene historial, se usa el de él.</p>
         <div className="max-w-xs">{campo("ds_payable_account", "Cuenta CxP por defecto documento soporte")}</div>
+      </section>
+      <section className="space-y-3">
+        <h2 className="font-semibold">Envío a Siigo (sin transmitir a la DIAN)</h2>
+        <p className="text-xs text-muted-foreground">La app crea el documento solo GUARDADO en Siigo; nunca lo transmite. Mientras no confirme la primera prueba, "Crear en Siigo" permite 1 documento por vez.</p>
+        <label className="flex items-start gap-2 text-sm"><Checkbox checked={lote} onCheckedChange={(c) => setLote(!!c)} /> <span>Confirmé en Siigo que el documento de prueba quedó en "Documento guardado" (Envío a la DIAN y Validación DIAN pendientes). Habilitar envío en lote.</span></label>
       </section>
       <Resoluciones companyId={companyId} />
       <Button onClick={() => void guardar()}>Guardar</Button>

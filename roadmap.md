@@ -36,3 +36,5 @@
 - Resoluciones de numeración (tabla ds_resolutions): varias sin borrar, aviso 30 días antes del vencimiento, bloqueo por vencimiento o consecutivo máximo.
 - CxP por defecto DS (ds_payable_account=23359501) con prioridad al historial del vendedor.
 - Pendiente: Maira debe escribir el número de cuenta de cobro del borrador de Natalia y reenviar (confirmará fecha 20/09/2026).
+- [x] DS: crear solo guardado en Siigo (stamp/mail send=false), detectar transmisión no autorizada y detener lote; 1 por vez hasta confirmar prueba.
+- [ ] DS: primera prueba segura (1 documento) la crea Maira y confirma en Siigo "Documento guardado"; luego habilita lote en Configuración.

@@ -127,6 +127,13 @@
       "when": 1792286898210,
       "tag": "0017_cc_modo_tipos_documento",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792287604917,
+      "tag": "0018_ds_no_transmitir_dian",
+      "breakpoints": true
     }
   ]
 }

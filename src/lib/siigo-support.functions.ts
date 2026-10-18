@@ -1,13 +1,16 @@
 // DOCUMENTOS SOPORTE EN SIIGO
 // Método oficial (developers.siigo.com, "Crear Documento soporte"):
 //   POST /v1/purchase-support-documents  · tipo de comprobante: GET /v1/document-types?type=DS
-//   supplier_receipt_number: prefijo (≤ 6) + número de 11 enteros · stamp.send = true → Siigo transmite a la DIAN.
-// Lovable no transmite a la DIAN: solo crea el tercero y el documento en Siigo.
+//   supplier_receipt_number: prefijo (≤ 6) + número de 11 enteros.
+//   stamp: "opcional; se debe enviar en true para enviarlo a la DIAN; si no se envía toma por defecto false".
+// La app NUNCA transmite a la DIAN: envía siempre stamp.send=false y mail.send=false; el documento queda
+// GUARDADO en Siigo y el usuario lo envía a la DIAN desde Siigo. Tras crear se lee el estado y, si Siigo lo
+// transmitió igualmente, se marca "Transmitido a la DIAN sin autorización" y el lote se detiene.
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
 import { purchaseLineErrors, purchaseReadbackComparison } from "@/lib/siigo-purchase-validation";
-import { missingIdentity, splitPersonName, supplierReceiptNumber, dsSendDate, addDays, resolutionExpiry, DS_PREFIX } from "@/lib/support-docs";
+import { dianTransmitted, missingIdentity, splitPersonName, supplierReceiptNumber, dsSendDate, addDays, resolutionExpiry, DS_PREFIX } from "@/lib/support-docs";
 import { roundCOP, toCents } from "@/lib/money";
 
 export const DS_PATH = "/v1/purchase-support-documents";
@@ -232,7 +235,9 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
           // (el consecutivo real del documento lo asigna Siigo igualmente).
           supplier_receipt_number: { prefix: (inv.prefix || DS_PREFIX).slice(0, 6), number: supplierReceiptNumber(inv.number) },
           discount_type: "Value",
-          stamp: { send: true },
+          // NUNCA transmitir: el documento queda solo guardado en Siigo.
+          stamp: { send: false },
+          mail: { send: false },
           observations: `${obsBase}Documento soporte · ${inv.provider_name ?? ""}`.slice(0, 4000),
           items: items.map((it) => ({ type: it.type, code: it.code, description: it.description, quantity: it.quantity, price: it.price, discount: 0, ...(it.retId != null ? { taxes: [{ id: Number(it.retId) }] } : {}) })),
           payments: [{ id: paymentId, value: neto, due_date: vencimiento }],
@@ -286,6 +291,13 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       const diferencias = comparacion.filter((c) => !c.ok);
       const dian = String(doc.stamp?.status ?? (doc.metadata?.["stamp_status"] as string | undefined) ?? "") || null;
       trace = { ...trace, siigo_verificacion: doc as Json, comparacion, resultado: diferencias.length ? "Diferencia Siigo" : "sincronizada" };
+      if (dianTransmitted(dian)) {
+        // Siigo lo transmitió pese a stamp.send=false: alerta roja y el lote se detiene.
+        const msg = `Transmitido a la DIAN sin autorización (estado Siigo: ${dian}). Revíselo en Siigo antes de crear más documentos.`;
+        trace = { ...trace, resultado: "transmitido_sin_autorizacion" };
+        await supabase.from("invoices").update({ siigo_error: msg, siigo_trace: trace as Json, ds_dian_status: dian, ds_unauthorized_transmission: true }).eq("id", inv.id);
+        return { ok: false, status: "transmitido_dian", message: `${siigoNumber}: ${msg}`, siigoNumber };
+      }
       if (diferencias.length) {
         const msg = "Diferencia Siigo: " + diferencias.map((d) => `${d.campo}: origen ${d.origen}, Siigo ${d.siigo ?? "no informado"}`).join("; ") + ". No reenvíe el documento creado.";
         await supabase.from("invoices").update({ siigo_error: msg, siigo_trace: trace as Json, ds_dian_status: dian }).eq("id", inv.id);
@@ -327,7 +339,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
         else trace = { ...trace, cc_pdf_error: up.error.message };
       } catch (e) { trace = { ...trace, cc_pdf_error: e instanceof Error ? e.message : String(e) }; }
 
-      return { ok: true, status: "sincronizada", message: `${siigoNumber}: creado en Siigo. Cuenta de cobro N° ${siigoNumber} lista en el Historial.`, siigoNumber };
+      return { ok: true, status: "sincronizada", message: `${siigoNumber}: guardado en Siigo, pendiente envío DIAN (lo envía usted desde Siigo). Cuenta de cobro N° ${siigoNumber} lista en el Historial.`, siigoNumber };
     } catch (e) {
       let message = e instanceof Error ? e.message : String(e);
       const { data: cur } = await supabase.from("invoices").select("siigo_id, siigo_number, siigo_trace").eq("id", inv.id).maybeSingle();
