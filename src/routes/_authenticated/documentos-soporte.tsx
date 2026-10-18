@@ -54,7 +54,7 @@ type Ds = {
 };
 
 const ORIGIN: Record<string, string> = { REGLA: "Regla", APRENDIZAJE: "Historial", HISTORIAL: "Historial", HISTORIAL_DESCRIPCION: "Historial descripción", IA: "IA", NINGUNA: "Pendiente" };
-const label = (d: Ds) => [d.prefix, d.number].filter(Boolean).join("-") || "Sin número";
+const label = (d: Ds) => (String(d.number ?? "").trim() ? [d.prefix, d.number].filter(Boolean).join("-") : (d.provider_name ?? "Sin número"));
 
 function estado(d: Ds): string {
   if (d.status === "incompleto") return "Incompleto";
@@ -291,7 +291,7 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
     for (const d of aprobables) {
       const faltan = missingIdentity({ idNumber: d.provider_nit, idType: d.vendor_id_type, name: d.provider_name });
       if (faltan.length) { fallos.push(`${label(d)}: falta ${faltan.join(", ")}`); continue; }
-      if (!String(d.number ?? "").trim()) { fallos.push(`${label(d)}: falta número de cuenta de cobro`); continue; }
+      if (!String(d.number ?? "").trim()) { fallos.push(`${label(d)}: falta número de cuenta de cobro — escríbalo en la columna Documento y oprima Guardar`); continue; }
       if (d.invoice_lines.some((l) => !isValidExpenseAccount(l.account_code))) { fallos.push(`${label(d)}: Pendiente de cuenta`); continue; }
       if (Number(d.iva) > 0 && !d.iva_confirmed) { fallos.push(`${label(d)}: confirme el IVA`); continue; }
       const { error } = await supabase.from("invoices").update({ status: "aprobado", approved_at: new Date().toISOString(), approved_by: u.user?.id ?? null }).eq("id", d.id);
