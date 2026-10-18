@@ -499,7 +499,10 @@ function Historial({ docs, onDone }: { companyId: string; docs: Ds[]; onDone: ()
   const lista = soloPendientes ? docs.filter(pendienteDian) : docs;
   return (
     <div className="space-y-3 pt-4">
-      <label className="flex items-center gap-2 text-sm"><Checkbox checked={soloPendientes} onCheckedChange={(c) => setSoloPendientes(!!c)} /> Pendientes de envío DIAN</label>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label className="flex items-center gap-2 text-sm"><Checkbox checked={soloPendientes} onCheckedChange={(c) => setSoloPendientes(!!c)} /> Pendientes de envío DIAN</label>
+        <Button size="sm" variant="outline" disabled={!docs.some((d) => d.cc_pdf_path)} onClick={() => void descargarCuentasCobroZip(docs)}><Download className="mr-1 size-4" /> Descarga masiva (.zip)</Button>
+      </div>
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-left text-xs"><tr><th className="p-2">Documento</th><th className="p-2">Vendedor</th><th className="p-2">Fecha</th><th className="p-2 text-right">Total</th><th className="p-2">Siigo</th><th className="p-2">Transmisión DIAN</th><th className="p-2" /></tr></thead>
@@ -520,6 +523,7 @@ function Historial({ docs, onDone }: { companyId: string; docs: Ds[]; onDone: ()
                 </td>
                 <td className="p-2"><div className="flex justify-end gap-1">
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setDetalle(d)}><Eye className="size-3.5" /> Ver detalle</Button>
+                  {d.cc_pdf_path && <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => descargarCuentaCobro(d)}><Download className="size-3.5" /> Cuenta de cobro</Button>}
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => exportarComprobante(d)}><Download className="size-3.5" /> Comprobante</Button>
                   <SiigoErrorActions invoice={d} onDone={onDone} />
                 </div></td>
