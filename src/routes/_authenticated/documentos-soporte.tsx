@@ -210,6 +210,24 @@ function CuentaCelda({ d }: { d: Ds }) {
   );
 }
 
+function NumeroEditor({ d, onDone }: { d: Ds; onDone: () => void }) {
+  const [v, setV] = useState("");
+  const [saving, setSaving] = useState(false);
+  const guardar = async () => {
+    if (!v.trim()) return;
+    setSaving(true);
+    const { error } = await supabase.from("invoices").update({ number: v.trim() }).eq("id", d.id);
+    setSaving(false);
+    if (error) toast.error(error.message); else { toast.success("Número de cuenta de cobro guardado."); onDone(); }
+  };
+  return (
+    <div className="flex items-center gap-1">
+      <Input value={v} onChange={(e) => setV(e.target.value)} placeholder="N° cuenta de cobro" className="h-7 w-32 text-xs" />
+      <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={saving || !v.trim()} onClick={() => void guardar()}>Guardar</Button>
+    </div>
+  );
+}
+
 function Alertas({ d }: { d: Ds }) {
   const a: string[] = [];
   const faltan = missingIdentity({ idNumber: d.provider_nit, idType: d.vendor_id_type, name: d.provider_name });
@@ -375,6 +393,13 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
                       )}
                       <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setDetalle(d)}><Eye className="size-3.5" /> Ver detalle</Button>
                       <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => exportarComprobante(d)}><Download className="size-3.5" /> Comprobante</Button>
+                      {d.siigo_error_kind === "fecha_invalida" && !d.siigo_id && d.issue_date && (
+                        <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => {
+                          const [y, m] = d.issue_date!.split("-").map(Number);
+                          const ultimo = new Date(Date.UTC(y!, m!, 0)).toISOString().slice(0, 10);
+                          setReintento({ d, fecha: ultimo });
+                        }}>Reintentar con el último día del mes</Button>
+                      )}
                       <SiigoErrorActions invoice={d} onDone={onDone} />
                     </div>
                   </td>
