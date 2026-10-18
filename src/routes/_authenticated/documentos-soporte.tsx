@@ -282,21 +282,40 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
     if (fallos.length) toast.error(fallos.join("\n"));
   };
 
-  const crear = async (lista: Ds[]) => {
+  const [propuestas, setPropuestas] = useState<Array<{ d: Ds; fecha: string }> | null>(null);
+  const [reintento, setReintento] = useState<{ d: Ds; fecha: string } | null>(null);
+
+  const crear = async (lista: Ds[], confirmadas?: Map<string, string>) => {
     setConfirmar(null); setBusy(true); setEnvio({ done: 0, total: lista.length });
     const res: string[] = []; let ok = 0; let i = 0;
-    let next = 0;
+    let next = 0; let detener = false;
+    const pendientesFecha: Array<{ d: Ds; fecha: string }> = [];
     await Promise.all(Array.from({ length: Math.min(3, lista.length) }, async () => {
-      while (next < lista.length) {
+      while (next < lista.length && !detener) {
         const d = lista[next++]!;
-        try { const r = await sync({ data: { invoiceId: d.id } }); if (r.ok) ok += 1; else res.push(r.message); }
-        catch (e) { res.push(`${label(d)}: ${e instanceof Error ? e.message : String(e)}`); }
+        try {
+          const r = await sync({ data: { invoiceId: d.id, confirmDate: confirmadas?.get(d.id) } });
+          if (r.ok) ok += 1;
+          else if (r.status === "confirmar_fecha" && r.proposedDate) pendientesFecha.push({ d, fecha: r.proposedDate });
+          else {
+            res.push(r.message);
+            // Si Siigo rechazó la fecha, se detiene el lote y se pregunta antes de seguir.
+            if ((r as { status?: string }).status === "error" && /no acepta la fecha/i.test(r.message)) detener = true;
+          }
+        } catch (e) { res.push(`${label(d)}: ${e instanceof Error ? e.message : String(e)}`); }
         setEnvio({ done: ++i, total: lista.length });
       }
     }));
     setBusy(false); setEnvio(null); setSel(new Set()); onDone();
+    if (pendientesFecha.length) { setPropuestas(pendientesFecha); return; }
     if (ok) toast.success(`${ok} documento(s) soporte creado(s) en Siigo.`);
     if (res.length) toast.error(res.join("\n"), { duration: 15000 });
+  };
+
+  const confirmarFechas = async () => {
+    const lista = propuestas ?? [];
+    setPropuestas(null);
+    await crear(lista.map((p) => p.d), new Map(lista.map((p) => [p.d.id, p.fecha])));
   };
 
   const declarante = async (d: Ds, v: string) => { await supabase.from("invoices").update({ vendor_declarant: v === "" ? null : v === "si" }).eq("id", d.id); onDone(); };
@@ -324,7 +343,9 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
               return (
                 <tr key={d.id} className="border-t align-top">
                   <td className="p-2"><Checkbox checked={sel.has(d.id)} onCheckedChange={(c) => setSel((s) => { const n = new Set(s); if (c) n.add(d.id); else n.delete(d.id); return n; })} /></td>
-                  <td className="p-2 font-mono text-xs">{label(d)}</td>
+                  <td className="p-2 font-mono text-xs">
+                    {String(d.number ?? "").trim() ? label(d) : <NumeroEditor d={d} onDone={onDone} />}
+                  </td>
                   <td className="p-2">
                     <div>{d.provider_name ?? <span className="text-destructive">Sin nombre</span>}</div>
                     <div className="text-xs text-muted-foreground">{d.vendor_id_type ? VENDOR_ID_LABEL[d.vendor_id_type as VendorIdType] : "Sin tipo"} {d.provider_nit}</div>
