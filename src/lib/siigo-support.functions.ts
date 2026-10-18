@@ -246,7 +246,39 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
         siigo_status: "sincronizada", status: "historico", siigo_error: null, siigo_error_kind: null,
         siigo_synced_at: new Date().toISOString(), siigo_synced_by: context.userId, siigo_trace: trace as Json, ds_dian_status: dian,
       }).eq("id", inv.id);
-      return { ok: true, status: "sincronizada", message: `${label}: creado en Siigo como ${siigoNumber}.`, siigoNumber };
+
+      // ---------- Cuenta de cobro numerada (PDF) ----------
+      // Se genera con el consecutivo DSEB que asignó Siigo. Si la cuenta de cobro vino en PDF,
+      // se estampa una franja superior; si no, se crea un PDF nuevo. Una falla aquí no afecta el documento ya creado.
+      try {
+        const { cuentaCobroPdf } = await import("./cc-pdf.server");
+        const { data: comp } = await supabase.from("companies").select("name, nit").eq("id", inv.company_id).maybeSingle();
+        let original: Uint8Array | null = null;
+        if (inv.file_path) {
+          const dl = await supabase.storage.from("facturas").download(inv.file_path);
+          if (!dl.error && dl.data) original = new Uint8Array(await dl.data.arrayBuffer());
+        }
+        const pdfBytes = await cuentaCobroPdf(original, {
+          dseb: siigoNumber,
+          fechaOperacion: fecOp,
+          empresa: {
+            nombre: comp?.name ?? "CORPORACION BALLET FOLCLORICO DE ANTIOQUIA",
+            nit: comp?.nit ?? "800.212.838-7",
+            direccion: params?.address ?? "CR 50 59 71",
+            ciudad: params?.city ?? "Medellín",
+            telefono: params?.phone ?? "(604) 2546637",
+          },
+          vendedor: { nombre: inv.provider_name ?? "", identificacion: inv.provider_nit ?? "", direccion: inv.provider_address, ciudad: inv.provider_city, telefono: inv.provider_phone },
+          descripcion: ls.map((l) => l.description ?? l.account_name ?? "").filter(Boolean).join("; ") || "Servicios prestados",
+          valor: Number(inv.total), retencion: retFuenteDoc / 100, neto,
+        });
+        const ccPath = `soporte-cc/${inv.id}.pdf`;
+        const up = await supabase.storage.from("facturas").upload(ccPath, pdfBytes, { contentType: "application/pdf", upsert: true });
+        if (!up.error) await supabase.from("invoices").update({ cc_pdf_path: ccPath }).eq("id", inv.id);
+        else trace = { ...trace, cc_pdf_error: up.error.message };
+      } catch (e) { trace = { ...trace, cc_pdf_error: e instanceof Error ? e.message : String(e) }; }
+
+      return { ok: true, status: "sincronizada", message: `${siigoNumber}: creado en Siigo. Cuenta de cobro N° ${siigoNumber} lista en el Historial.`, siigoNumber };
     } catch (e) {
       let message = e instanceof Error ? e.message : String(e);
       const { data: cur } = await supabase.from("invoices").select("siigo_id, siigo_number, siigo_trace").eq("id", inv.id).maybeSingle();
