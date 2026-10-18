@@ -189,6 +189,23 @@ export function supplierReceiptNumber(number: string | null | undefined): string
   return (d || "1").padStart(11, "0");
 }
 
+/**
+ * Ventana de fechas de Siigo para documentos soporte (configurable):
+ * se aceptan con fecha desde (referencia − N días) hasta la referencia.
+ * Referencia: último día del mes del documento (por defecto) o hoy.
+ * La fecha enviada nunca supera el último día del mes del documento ni hoy.
+ */
+export function dsSendDate(issueDate: string, today: string, windowDays: number, ref: "fin_mes" | "hoy"): { sendDate: string; changed: boolean; lastDay: string } {
+  const [y, m] = issueDate.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(y!, m!, 0)).toISOString().slice(0, 10);
+  const refDate = ref === "hoy" ? today : lastDay;
+  const min = new Date(Date.parse(`${refDate}T00:00:00Z`) - windowDays * 86400000).toISOString().slice(0, 10);
+  let send = issueDate >= min ? issueDate : min;
+  if (send > lastDay) send = lastDay;
+  if (send > today) send = today;
+  return { sendDate: send, changed: send !== issueDate, lastDay };
+}
+
 /** Persona natural: Cédula, CE o Pasaporte; o NIT con menos de 9 dígitos. */
 export function isNaturalPerson(idType: string | null | undefined, idNumber: string): boolean {
   if (idType && idType !== "31") return true;

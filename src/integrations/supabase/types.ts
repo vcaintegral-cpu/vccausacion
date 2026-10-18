@@ -546,8 +546,10 @@ export type Database = {
           country: string | null
           department: string | null
           ds_date_mode: string
+          ds_date_ref: string
           ds_document_code: string | null
           ds_document_id: number | null
+          ds_window_days: number
           email: string | null
           phone: string | null
           updated_at: string
@@ -559,8 +561,10 @@ export type Database = {
           country?: string | null
           department?: string | null
           ds_date_mode?: string
+          ds_date_ref?: string
           ds_document_code?: string | null
           ds_document_id?: number | null
+          ds_window_days?: number
           email?: string | null
           phone?: string | null
           updated_at?: string
@@ -572,8 +576,10 @@ export type Database = {
           country?: string | null
           department?: string | null
           ds_date_mode?: string
+          ds_date_ref?: string
           ds_document_code?: string | null
           ds_document_id?: number | null
+          ds_window_days?: number
           email?: string | null
           phone?: string | null
           updated_at?: string
