@@ -10,7 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany } from "@/components/app-shell";
 import { cop, fecha, fechaHora } from "@/lib/format";
-import { DS_TEMPLATE_COLUMNS, FILLED_LABEL, VENDOR_ID_LABEL, missingIdentity, type FilledField, type RowError, type VendorIdType } from "@/lib/support-docs";
+import { DS_TEMPLATE_COLUMNS, FILLED_LABEL, VENDOR_ID_LABEL, missingIdentity, dianLabel, diasParaDian, resolutionExpiry, type FilledField, type RowError, type VendorIdType } from "@/lib/support-docs";
 import { processSupportUpload, type SupportProgress } from "@/lib/support-processing";
 import { siigoListDsTypes, siigoSyncSupportDocument } from "@/lib/siigo-support.functions";
 import { siigoReleaseInterrupted } from "@/lib/siigo-recovery.functions";
@@ -456,8 +456,13 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
 // ------------------------------------------------------------------ Historial
 function Historial({ docs, onDone }: { companyId: string; docs: Ds[]; onDone: () => void }) {
   const [detalle, setDetalle] = useState<Ds | null>(null);
+  const [soloPendientes, setSoloPendientes] = useState(false);
+  const hoy = new Date().toISOString().slice(0, 10);
+  const pendienteDian = (d: Ds) => dianLabel(d.ds_dian_status) === "Guardado – pendiente envío DIAN";
+  const lista = soloPendientes ? docs.filter(pendienteDian) : docs;
   return (
     <div className="space-y-3 pt-4">
+      <label className="flex items-center gap-2 text-sm"><Checkbox checked={soloPendientes} onCheckedChange={(c) => setSoloPendientes(!!c)} /> Pendientes de envío DIAN</label>
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-left text-xs"><tr><th className="p-2">Documento</th><th className="p-2">Vendedor</th><th className="p-2">Fecha</th><th className="p-2 text-right">Total</th><th className="p-2">Siigo</th><th className="p-2">Transmisión DIAN</th><th className="p-2" /></tr></thead>
