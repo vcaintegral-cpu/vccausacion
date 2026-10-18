@@ -39,7 +39,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
     const label = [inv.prefix, inv.number].filter(Boolean).join("-");
     if (inv.siigo_id || inv.siigo_number) return { ok: false, status: "error", message: `${label}: ya existe en Siigo (${inv.siigo_number ?? inv.siigo_id}); no se reenvía.` };
     if (inv.siigo_status === "sincronizando") return { ok: false, status: "sincronizando", message: `${label}: ya se está enviando.` };
-    const permitido = inv.status === "aprobada" || (inv.siigo_status === "error" && inv.siigo_error_kind !== "interrumpido");
+    const permitido = inv.status === "aprobado" || (inv.siigo_status === "error" && inv.siigo_error_kind !== "interrumpido");
     if (!permitido) return { ok: false, status: inv.status, message: `${label}: solo se crean documentos aprobados.` };
 
     const { siigoGet, siigoPost, siigoUseCompany, siigoPurchasePaymentTypeId, siigoCostCenterId } = await import("./siigo.server");
