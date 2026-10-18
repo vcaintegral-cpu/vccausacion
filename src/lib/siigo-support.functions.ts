@@ -216,7 +216,9 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
           document: { id: dsDocumentId },
           date: fechaEnvio,
           supplier: { identification: nit, branch_office: 0 },
-          ...(String(inv.number ?? "").trim() ? { supplier_receipt_number: { prefix: (inv.prefix || DS_PREFIX).slice(0, 6), number: supplierReceiptNumber(inv.number) } } : {}),
+          // Siigo exige supplier_receipt_number siempre; sin número de cuenta de cobro se envía 0
+          // (el consecutivo real del documento lo asigna Siigo igualmente).
+          supplier_receipt_number: { prefix: (inv.prefix || DS_PREFIX).slice(0, 6), number: supplierReceiptNumber(inv.number) },
           discount_type: "Value",
           stamp: { send: true },
           observations: `${obsBase}Documento soporte · ${inv.provider_name ?? ""}`.slice(0, 4000),
