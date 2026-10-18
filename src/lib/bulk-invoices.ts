@@ -598,7 +598,7 @@ export async function recalcularCuentasBorrador(
     const i = Number(k);
     const anterior = acc.lines[i]?.account_code;
     if (!acc.lines[i] || !d.code || anterior === d.code) continue;
-    acc.lines[i] = { ...acc.lines[i]!, account_code: d.code, account_name: (d as { name?: string }).name ?? acc.lines[i]!.account_name };
+    acc.lines[i] = { ...acc.lines[i]!, account_code: d.code, account_name: (d as { name?: string }).name ?? acc.lines[i]!.account_name ?? null };
     acc.decisions[i] = d as never;
     const j = acc.journal.find((x) => x.account_code === anterior && x.debit > 0);
     if (j) { j.account_code = d.code; j.account_name = (d as { name?: string }).name ?? j.account_name; }
