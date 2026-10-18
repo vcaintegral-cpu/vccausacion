@@ -206,9 +206,11 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       // se guarda en Configuración para que los demás documentos del lote la usen directo.
       let res: { id?: string; name?: string; number?: number } | null = null;
       let ultimoError: unknown = null;
+      const fechasIntentadas: unknown[] = [...intentosPrevios];
       for (let intento = 0; intento < 10 && fechaEnvio <= ventana.lastDay && fechaEnvio <= hoy; intento++) {
         fechaIntentada = fechaEnvio;
-        trace = { ...trace, fechas_intentadas: [...intentosPrevios, ...(trace["fechas_intentadas"] as unknown[] ?? []), { fecha: fechaEnvio, at: new Date().toISOString() }] };
+        fechasIntentadas.push({ fecha: fechaEnvio, at: new Date().toISOString() });
+        trace = { ...trace, fechas_intentadas: [...fechasIntentadas] };
         const vencimiento = inv.due_date && inv.due_date >= fechaEnvio && inv.due_date <= ventana.lastDay ? inv.due_date : fechaEnvio;
         const payload: Record<string, unknown> = {
           document: { id: dsDocumentId },
