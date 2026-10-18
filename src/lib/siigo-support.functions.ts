@@ -148,11 +148,14 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       const paymentId = inv.payment_type_id ? Number(inv.payment_type_id) : await siigoPurchasePaymentTypeId(inv.payment_type_name ?? "crédito");
       if (!paymentId) throw new Error("No se encontró la forma de pago de compras en Siigo.");
       const costCenterId = inv.cost_center ? await siigoCostCenterId(inv.cost_center) : null;
-      // Siigo rechaza fechas futuras: si la fecha del documento es mayor a hoy, se envía con la fecha de hoy
-      // (el valor de la fuente no cambia; solo la fecha con que Siigo lo registra).
+      // Fecha de emisión en Siigo: "documento" (la de la cuenta de cobro) o "hoy" (configuración o reintento confirmado).
+      // Nunca se cambia automáticamente: "hoy" solo se usa si la empresa lo configuró o el usuario lo confirmó.
       const hoy = new Date().toISOString().slice(0, 10);
-      const fechaEnvio = inv.issue_date && inv.issue_date > hoy ? hoy : inv.issue_date;
-      const vencimiento = inv.due_date && inv.due_date > hoy ? hoy : (inv.due_date ?? fechaEnvio);
+      const modoHoy = data.useToday === true || params?.ds_date_mode === "hoy";
+      const fechaEnvio = modoHoy ? hoy : inv.issue_date;
+      const vencimiento = modoHoy ? hoy : (inv.due_date ?? inv.issue_date);
+      const fecOp = inv.issue_date ? inv.issue_date.split("-").reverse().join("/") : "";
+      const obsBase = modoHoy && fechaEnvio !== inv.issue_date ? `Fecha de la operación: ${fecOp} – Cuenta de cobro N° ${inv.number}. ` : "";
       const payload: Record<string, unknown> = {
         document: { id: dsDocumentId },
         date: fechaEnvio,
