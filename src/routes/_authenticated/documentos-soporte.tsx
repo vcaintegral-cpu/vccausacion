@@ -604,6 +604,7 @@ function Configuracion({ companyId }: { companyId: string }) {
         <p className="text-xs text-muted-foreground">Siigo acepta documentos soporte de un mes con fecha desde (fecha de referencia − N días) hasta la referencia. Si la fecha de la operación está fuera, se propone la fecha mínima y se pide confirmación antes de enviar.</p>
         <div className="grid grid-cols-2 gap-3">
           <label className="space-y-1 text-sm"><span className="text-muted-foreground">Días permitidos antes del cierre del mes</span><Input type="number" min={1} value={f.ds_window_days ?? "10"} onChange={(e) => setF({ ...f, ds_window_days: e.target.value })} /></label>
+          {ccMode && <p className="text-sm text-muted-foreground">Centro de costo del comprobante DS en Siigo: <strong>{ccMode === "exige" ? "lo exige" : ccMode === "permite" ? "lo permite" : "no lo admite (no se envía)"}</strong></p>}
           <label className="space-y-1 text-sm"><span className="text-muted-foreground">Fecha de referencia</span>
             <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={f.ds_date_ref ?? "fin_mes"} onChange={(e) => setF({ ...f, ds_date_ref: e.target.value })}>
               <option value="fin_mes">Último día del mes del documento</option>
