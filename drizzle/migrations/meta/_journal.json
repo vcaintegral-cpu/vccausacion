@@ -99,6 +99,13 @@
       "when": 1792284152753,
       "tag": "0013_ds_ventana_fechas",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792284466969,
+      "tag": "0014_ds_resoluciones_y_cxp",
+      "breakpoints": true
     }
   ]
 }
