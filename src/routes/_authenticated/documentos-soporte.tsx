@@ -255,7 +255,7 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
   const [busy, setBusy] = useState(false);
   const [envio, setEnvio] = useState<{ done: number; total: number } | null>(null);
   const elegidos = docs.filter((d) => sel.has(d.id));
-  const aprobables = elegidos.filter((d) => d.status === "borrador");
+  const aprobables = elegidos.filter((d) => d.status === "borrador" || d.status === "incompleto");
   const creables = elegidos.filter((d) => d.status === "aprobado" && !d.siigo_id && d.siigo_status !== "sincronizando" && d.siigo_status !== "error");
 
   const aprobar = async () => {
@@ -265,6 +265,7 @@ function Borradores({ companyId, docs, onDone }: { companyId: string; docs: Ds[]
     for (const d of aprobables) {
       const faltan = missingIdentity({ idNumber: d.provider_nit, idType: d.vendor_id_type, name: d.provider_name });
       if (faltan.length) { fallos.push(`${label(d)}: falta ${faltan.join(", ")}`); continue; }
+      if (!String(d.number ?? "").trim()) { fallos.push(`${label(d)}: falta número de cuenta de cobro`); continue; }
       if (d.invoice_lines.some((l) => !isValidExpenseAccount(l.account_code))) { fallos.push(`${label(d)}: Pendiente de cuenta`); continue; }
       if (Number(d.iva) > 0 && !d.iva_confirmed) { fallos.push(`${label(d)}: confirme el IVA`); continue; }
       const { error } = await supabase.from("invoices").update({ status: "aprobado", approved_at: new Date().toISOString(), approved_by: u.user?.id ?? null }).eq("id", d.id);
