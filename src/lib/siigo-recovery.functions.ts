@@ -19,15 +19,17 @@ import {
 type Supa = SupabaseClient<Database>;
 
 const INV_COLS =
-  "id, company_id, prefix, number, provider_nit, provider_name, issue_date, total, iva, impoconsumo, retefuente, reteiva, reteica, status, siigo_status, siigo_id, siigo_number, siigo_error_kind, siigo_trace, siigo_voided, siigo_last_attempt_at";
+  "id, company_id, prefix, number, provider_nit, provider_name, issue_date, total, iva, impoconsumo, retefuente, reteiva, reteica, status, siigo_status, siigo_id, siigo_number, siigo_error_kind, siigo_trace, siigo_voided, siigo_last_attempt_at, doc_kind";
 
 type InvRow = {
   id: string; company_id: string; prefix: string | null; number: string | null;
   provider_nit: string | null; provider_name: string | null; issue_date: string | null;
   total: number; iva: number; impoconsumo: number; retefuente: number; reteiva: number; reteica: number;
   status: string; siigo_status: string; siigo_id: string | null; siigo_number: string | null;
-  siigo_error_kind: string | null; siigo_trace: Json | null; siigo_voided: Json | null; siigo_last_attempt_at: string | null;
+  siigo_error_kind: string | null; siigo_trace: Json | null; siigo_voided: Json | null; siigo_last_attempt_at: string | null; doc_kind?: string | null;
 };
+/** Compras: /v1/purchases · Documentos soporte: /v1/purchase-support-documents. */
+const remotePath = (i: InvRow) => (i.doc_kind === "soporte" ? "/v1/purchase-support-documents" : "/v1/purchases");
 
 export type RecoveryResult = { ok: boolean; message: string; status?: string; comparacion?: ReadbackRow[] };
 
@@ -54,7 +56,7 @@ async function recheck(supabase: Supa, inv: InvRow, userId: string): Promise<Rec
   await siigoUseCompany(inv.company_id);
   let doc: PurchaseReadback & { retentions?: Array<{ value?: number }>; name?: string };
   try {
-    doc = await siigoGet(`/v1/purchases/${inv.siigo_id}`);
+    doc = await siigoGet(`${remotePath(inv)}/${inv.siigo_id}`);
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
     if (/404|not.?found/i.test(raw))
@@ -149,7 +151,7 @@ export const siigoReleaseInterrupted = createServerFn({ method: "POST" })
     return { released: (rows ?? []).length };
   });
 
-type SiigoListed = { id?: string; name?: string; supplier?: { identification?: string }; provider_invoice?: { prefix?: string; number?: string | number } };
+type SiigoListed = { id?: string; name?: string; supplier?: { identification?: string }; provider_invoice?: { prefix?: string; number?: string | number }; supplier_receipt_number?: { prefix?: string; number?: string | number } };
 const digits = (v: unknown) => String(v ?? "").split("-")[0]!.replace(/\D/g, "");
 
 /** After an interrupted send, searches Siigo by provider + invoice number before allowing a retry. */
@@ -174,11 +176,14 @@ export const siigoCheckInterrupted = createServerFn({ method: "POST" })
     for (const filtro of consultas) {
       try {
         for (let page = 1; page <= 5 && !encontrado; page += 1) {
-          const res = await siigoGet<{ results?: SiigoListed[]; pagination?: { total_results?: number } }>(`/v1/purchases?${filtro}&page_size=100&page=${page}`);
+          const res = await siigoGet<{ results?: SiigoListed[]; pagination?: { total_results?: number } }>(`${remotePath(inv)}?${filtro}&page_size=100&page=${page}`);
           const lista = res.results ?? [];
-          encontrado = lista.find((p) => digits(p.supplier?.identification) === nit
-            && String(p.provider_invoice?.number ?? "").replace(/\D/g, "") === numero
-            && String(p.provider_invoice?.prefix ?? "").trim().toUpperCase() === prefijo) ?? null;
+          encontrado = lista.find((p) => {
+            const ref = p.provider_invoice ?? p.supplier_receipt_number;
+            return digits(p.supplier?.identification) === nit
+              && String(ref?.number ?? "").replace(/\D/g, "").replace(/^0+/, "") === numero.replace(/^0+/, "")
+              && String(ref?.prefix ?? "").trim().toUpperCase() === prefijo;
+          }) ?? null;
           if (lista.length < 100) break;
         }
         consultadas += 1;
