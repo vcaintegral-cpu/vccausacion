@@ -571,7 +571,61 @@ function Configuracion({ companyId }: { companyId: string }) {
           </label>
         </div>
       </section>
+      <section className="space-y-3">
+        <h2 className="font-semibold">Cuenta por pagar de documentos soporte</h2>
+        <p className="text-xs text-muted-foreground">Se usa cuando el vendedor no tiene historial de cuenta por pagar. Si el vendedor ya tiene historial, se usa el de él.</p>
+        <div className="max-w-xs">{campo("ds_payable_account", "Cuenta CxP por defecto documento soporte")}</div>
+      </section>
+      <Resoluciones companyId={companyId} />
       <Button onClick={() => void guardar()}>Guardar</Button>
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ Resoluciones de numeración
+type Resolucion = { id: string; prefix: string; from_number: number; to_number: number; approval_date: string; validity_months: number; active: boolean };
+
+function Resoluciones({ companyId }: { companyId: string }) {
+  const qc = useQueryClient();
+  const { data: rows = [] } = useQuery({
+    queryKey: ["ds-res", companyId],
+    queryFn: async () => (await supabase.from("ds_resolutions").select("*").eq("company_id", companyId).order("created_at", { ascending: false })).data ?? [],
+  });
+  const [n, setN] = useState({ prefix: "", from: "", to: "", date: "", months: "12" });
+  const hoy = new Date().toISOString().slice(0, 10);
+  const agregar = async () => {
+    if (!n.prefix.trim() || !n.from || !n.to || !n.date) { toast.error("Complete prefijo, rango y fecha de aprobación."); return; }
+    const { error } = await supabase.from("ds_resolutions").insert({ company_id: companyId, prefix: n.prefix.trim().toUpperCase(), from_number: Number(n.from), to_number: Number(n.to), approval_date: n.date, validity_months: Number(n.months) || 12 });
+    if (error) toast.error(error.message);
+    else { toast.success("Resolución registrada."); setN({ prefix: "", from: "", to: "", date: "", months: "12" }); void qc.invalidateQueries({ queryKey: ["ds-res", companyId] }); }
+  };
+  const desactivar = async (id: string) => { await supabase.from("ds_resolutions").update({ active: false }).eq("id", id); void qc.invalidateQueries({ queryKey: ["ds-res", companyId] }); };
+  return (
+    <section className="space-y-3">
+      <h2 className="font-semibold">Resolución de numeración</h2>
+      {rows.map((r) => {
+        const vence = resolutionExpiry(r.approval_date, r.validity_months);
+        const dias = Math.round((Date.parse(`${vence}T00:00:00Z`) - Date.parse(`${hoy}T00:00:00Z`)) / 86400000);
+        return (
+          <div key={r.id} className="flex flex-wrap items-center gap-3 rounded-md border p-3 text-sm">
+            <span className="font-mono font-semibold">{r.prefix}</span>
+            <span>Rango {r.from_number} a {r.to_number}</span>
+            <span>Aprobada {fecha(r.approval_date)} · vigencia {r.validity_months} meses</span>
+            {r.active && dias <= 30 && <span className={dias < 0 ? "font-semibold text-destructive" : "font-semibold text-amber-600"}>La resolución {r.prefix} {dias < 0 ? "venció" : "vence"} el {fecha(vence)}</span>}
+            {!r.active && <span className="text-muted-foreground">(inactiva)</span>}
+            {r.active && rows.some((x) => x.id !== r.id && x.active) && <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => void desactivar(r.id)}>Desactivar</Button>}
+          </div>
+        );
+      })}
+      <div className="grid max-w-2xl grid-cols-2 gap-3 md:grid-cols-5">
+        <Input placeholder="Prefijo (DSEB)" value={n.prefix} onChange={(e) => setN({ ...n, prefix: e.target.value })} />
+        <Input placeholder="Desde (739)" type="number" value={n.from} onChange={(e) => setN({ ...n, from: e.target.value })} />
+        <Input placeholder="Hasta (10000)" type="number" value={n.to} onChange={(e) => setN({ ...n, to: e.target.value })} />
+        <Input type="date" value={n.date} onChange={(e) => setN({ ...n, date: e.target.value })} />
+        <Input placeholder="Vigencia meses" type="number" value={n.months} onChange={(e) => setN({ ...n, months: e.target.value })} />
+      </div>
+      <Button variant="outline" size="sm" onClick={() => void agregar()}>Registrar nueva resolución</Button>
+      <p className="text-xs text-muted-foreground">Registrar una nueva resolución no borra la anterior. Se bloquea el envío si la fecha del documento es posterior al vencimiento o si el consecutivo supera el rango.</p>
+    </section>
   );
 }
