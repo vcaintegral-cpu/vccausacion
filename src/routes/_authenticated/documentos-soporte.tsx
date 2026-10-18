@@ -523,13 +523,13 @@ function Terceros({ docs }: { docs: Ds[] }) {
 // ------------------------------------------------------------------ Configuración
 function Configuracion({ companyId }: { companyId: string }) {
   const listTypes = useServerFn(siigoListDsTypes);
-  type F = { address?: string; city?: string; department?: string; country?: string; phone?: string; email?: string; ds_document_id?: string; ds_document_code?: string; ds_window_days?: string; ds_date_ref?: string };
+  type F = { address?: string; city?: string; department?: string; country?: string; phone?: string; email?: string; ds_document_id?: string; ds_document_code?: string; ds_window_days?: string; ds_date_ref?: string; ds_payable_account?: string };
   const [f, setF] = useState<F>({});
   const [types, setTypes] = useState<Array<{ id: number; code: string; name: string }>>([]);
   const [loadingTypes, setLoadingTypes] = useState(false);
   useEffect(() => {
     void supabase.from("company_parameters").select("*").eq("company_id", companyId).maybeSingle().then(({ data }) => {
-      setF({ address: data?.address ?? "", city: data?.city ?? "", department: data?.department ?? "", country: data?.country ?? "", phone: data?.phone ?? "", email: data?.email ?? "", ds_document_id: data?.ds_document_id ? String(data.ds_document_id) : "", ds_document_code: data?.ds_document_code ?? "", ds_window_days: String(data?.ds_window_days ?? 10), ds_date_ref: data?.ds_date_ref ?? "fin_mes" });
+      setF({ address: data?.address ?? "", city: data?.city ?? "", department: data?.department ?? "", country: data?.country ?? "", phone: data?.phone ?? "", email: data?.email ?? "", ds_document_id: data?.ds_document_id ? String(data.ds_document_id) : "", ds_document_code: data?.ds_document_code ?? "", ds_window_days: String(data?.ds_window_days ?? 10), ds_date_ref: data?.ds_date_ref ?? "fin_mes", ds_payable_account: data?.ds_payable_account ?? "23359501" });
     });
   }, [companyId]);
   const sincronizar = async () => {
@@ -537,7 +537,7 @@ function Configuracion({ companyId }: { companyId: string }) {
     try { setTypes(await listTypes({ data: { companyId } })); } catch (e) { toast.error(e instanceof Error ? e.message : "No se pudo consultar Siigo."); } finally { setLoadingTypes(false); }
   };
   const guardar = async () => {
-    const { error } = await supabase.from("company_parameters").upsert({ company_id: companyId, address: f.address || null, city: f.city || null, department: f.department || null, country: f.country || null, phone: f.phone || null, email: f.email || null, ds_document_id: f.ds_document_id ? Number(f.ds_document_id) : null, ds_document_code: f.ds_document_code || null, ds_window_days: Math.max(1, Number(f.ds_window_days) || 10), ds_date_ref: f.ds_date_ref === "hoy" ? "hoy" : "fin_mes", updated_at: new Date().toISOString() });
+    const { error } = await supabase.from("company_parameters").upsert({ company_id: companyId, address: f.address || null, city: f.city || null, department: f.department || null, country: f.country || null, phone: f.phone || null, email: f.email || null, ds_document_id: f.ds_document_id ? Number(f.ds_document_id) : null, ds_document_code: f.ds_document_code || null, ds_window_days: Math.max(1, Number(f.ds_window_days) || 10), ds_date_ref: f.ds_date_ref === "hoy" ? "hoy" : "fin_mes", ds_payable_account: f.ds_payable_account || "23359501", updated_at: new Date().toISOString() });
     if (error) toast.error(error.message); else toast.success("Parámetros guardados.");
   };
   const campo = (k: keyof F, l: string) => <label className="space-y-1 text-sm"><span className="text-muted-foreground">{l}</span><Input value={f[k] ?? ""} onChange={(e) => setF({ ...f, [k]: e.target.value })} /></label>;
