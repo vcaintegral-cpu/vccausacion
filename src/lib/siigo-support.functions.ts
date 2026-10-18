@@ -30,7 +30,7 @@ export type DsSyncResult = { ok: boolean; status: string; message: string; siigo
 
 export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((i: { invoiceId: string }) => { if (!i?.invoiceId) throw new Error("invoiceId requerido"); return i; })
+  .inputValidator((i: { invoiceId: string; useToday?: boolean }) => { if (!i?.invoiceId) throw new Error("invoiceId requerido"); return i; })
   .handler(async ({ data, context }): Promise<DsSyncResult> => {
     const supabase = context.supabase;
     const { data: inv, error } = await supabase.from("invoices").select("*").eq("id", data.invoiceId).maybeSingle();
@@ -51,6 +51,7 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       // ---------- Validaciones ----------
       const faltan = missingIdentity({ idNumber: inv.provider_nit, idType: inv.vendor_id_type, name: inv.provider_name });
       if (faltan.length) throw new Error(`Vendedor incompleto: falta ${faltan.join(", ")}. No se envió el documento.`);
+      if (!String(inv.number ?? "").trim()) throw new Error("Falta número de cuenta de cobro. Escríbalo en Documentos soporte → Borradores antes de enviar.");
       if (toCents(inv.iva) > 0 && !inv.iva_confirmed) throw new Error("Revisar: documento soporte con IVA. Confírmelo antes de crear en Siigo.");
       const [{ data: lines }, { data: journal }, { data: params }] = await Promise.all([
         supabase.from("invoice_lines").select("*").eq("invoice_id", inv.id).order("position"),
