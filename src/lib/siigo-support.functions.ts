@@ -81,6 +81,15 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
       // Numeración: la app NUNCA calcula ni reserva el consecutivo; Siigo lo asigna al crear
       // y ese consecutivo (ej.: DSEB-1153) queda como número de la cuenta de cobro.
 
+      // ---------- Centro de costo según la configuración del tipo DS en Siigo ----------
+      // Si el tipo NO permite centro de costo, no se envía el campo (se conserva solo en la app).
+      // Si el tipo lo EXIGE y el borrador no lo tiene, no se envía y se marca "Falta centro de costo".
+      const tipoDs = tiposDs.find((d) => Number(d.id) === Number(dsDocumentId));
+      const ccMode = tipoDs?.cost_center_mandatory === true ? "exige" : tipoDs?.cost_center === true ? "permite" : "no";
+      if (params?.ds_cost_center_mode !== ccMode)
+        await supabase.from("company_parameters").upsert({ company_id: inv.company_id, ds_cost_center_mode: ccMode, updated_at: new Date().toISOString() }, { onConflict: "company_id" });
+      trace = { ...trace, centro_costo_tipo: ccMode };
+
       // ---------- Resolución de numeración (vigencia y rango) ----------
       const { data: resoluciones } = await supabase.from("ds_resolutions").select("*").eq("company_id", inv.company_id).eq("active", true);
       const resolucion = (resoluciones ?? [])[0];
