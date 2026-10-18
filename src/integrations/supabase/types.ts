@@ -546,6 +546,7 @@ export type Database = {
           country: string | null
           department: string | null
           ds_accepted_dates: Json
+          ds_batch_enabled: boolean
           ds_cost_center_mode: string | null
           ds_date_mode: string
           ds_date_ref: string
@@ -565,6 +566,7 @@ export type Database = {
           country?: string | null
           department?: string | null
           ds_accepted_dates?: Json
+          ds_batch_enabled?: boolean
           ds_cost_center_mode?: string | null
           ds_date_mode?: string
           ds_date_ref?: string
@@ -584,6 +586,7 @@ export type Database = {
           country?: string | null
           department?: string | null
           ds_accepted_dates?: Json
+          ds_batch_enabled?: boolean
           ds_cost_center_mode?: string | null
           ds_date_mode?: string
           ds_date_ref?: string
@@ -995,6 +998,7 @@ export type Database = {
           doc_kind: string
           ds_dian_status: string | null
           ds_sent_date: string | null
+          ds_unauthorized_transmission: boolean
           due_date: string | null
           file_name: string | null
           file_path: string | null
@@ -1090,6 +1094,7 @@ export type Database = {
           doc_kind?: string
           ds_dian_status?: string | null
           ds_sent_date?: string | null
+          ds_unauthorized_transmission?: boolean
           due_date?: string | null
           file_name?: string | null
           file_path?: string | null
@@ -1185,6 +1190,7 @@ export type Database = {
           doc_kind?: string
           ds_dian_status?: string | null
           ds_sent_date?: string | null
+          ds_unauthorized_transmission?: boolean
           due_date?: string | null
           file_name?: string | null
           file_path?: string | null
