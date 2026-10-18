@@ -101,6 +101,8 @@ export const siigoSyncSupportDocument = createServerFn({ method: "POST" })
         const maxConsec = (creados ?? []).reduce((a, r) => { const n = Number(String(r.siigo_number ?? "").replace(/\D/g, "")); return Number.isFinite(n) ? Math.max(a, n) : a; }, 0);
         if (maxConsec >= Number(resolucion.to_number))
           throw new Error(`La resolución ${resolucion.prefix} llegó a su consecutivo máximo (${resolucion.to_number}). Registre una nueva resolución en Configuración.`);
+        if (numeroManual != null && (numeroManual < Number(resolucion.from_number) || numeroManual > Number(resolucion.to_number)))
+          throw new Error(`El número de cuenta de cobro ${numeroManual} está fuera del rango de la resolución ${resolucion.prefix} (${resolucion.from_number} a ${resolucion.to_number}).`);
         trace = { ...trace, resolucion: { prefix: resolucion.prefix, rango: `${resolucion.from_number}-${resolucion.to_number}`, vence } };
       }
 
