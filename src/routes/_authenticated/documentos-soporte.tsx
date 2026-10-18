@@ -47,7 +47,7 @@ type Ds = {
   provider_address: string | null; provider_city: string | null; provider_phone: string | null; provider_email: string | null;
   subtotal: number; iva: number; retefuente: number; reteiva: number; reteica: number; total: number; cost_center: string | null; notes: string | null;
   status: string; siigo_status: string | null; siigo_id: string | null; siigo_number: string | null; siigo_error: string | null; siigo_error_kind: string | null;
-  siigo_trace: unknown; siigo_attempts: number | null; siigo_last_attempt_at: string | null; ds_dian_status: string | null;
+  siigo_trace: unknown; siigo_attempts: number | null; siigo_last_attempt_at: string | null; ds_dian_status: string | null; ds_sent_date: string | null;
   vendor_id_type: string | null; vendor_is_natural: boolean | null; vendor_declarant: boolean | null; vendor_filled: FilledField[] | null; iva_confirmed: boolean;
   raw_extraction: { account_decisions?: Record<string, Decision> } | null; source_override: unknown; doc_kind: string;
   invoice_lines: Array<{ account_code: string | null; account_name: string | null; description: string | null }>;
@@ -64,6 +64,7 @@ function estado(d: Ds): string {
   if (k === "creado_diferencia") return "Creado con diferencia";
   if (k === "interrumpido") return "Error – Envío interrumpido";
   if (k === "sin_crear") return "Error sin crear";
+  if (k === "fecha_invalida") return "Error – fecha no aceptada";
   if (d.status === "aprobado") return "Aprobada";
   return "Borrador";
 }
@@ -78,7 +79,7 @@ function DocumentosSoporte() {
     enabled: !!companyId,
     queryFn: async () => {
       const { data, error } = await supabase.from("invoices")
-        .select("id, prefix, number, issue_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, subtotal, iva, retefuente, reteiva, reteica, total, cost_center, notes, status, siigo_status, siigo_id, siigo_number, siigo_error, siigo_error_kind, siigo_trace, siigo_attempts, siigo_last_attempt_at, ds_dian_status, vendor_id_type, vendor_is_natural, vendor_declarant, vendor_filled, iva_confirmed, raw_extraction, source_override, doc_kind, invoice_lines(account_code, account_name, description)")
+        .select("id, prefix, number, issue_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, subtotal, iva, retefuente, reteiva, reteica, total, cost_center, notes, status, siigo_status, siigo_id, siigo_number, siigo_error, siigo_error_kind, siigo_trace, siigo_attempts, siigo_last_attempt_at, ds_dian_status, ds_sent_date, vendor_id_type, vendor_is_natural, vendor_declarant, vendor_filled, iva_confirmed, raw_extraction, source_override, doc_kind, invoice_lines(account_code, account_name, description)")
         .eq("company_id", companyId!).eq("doc_kind", "soporte").order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as unknown as Ds[];
@@ -213,6 +214,7 @@ function Alertas({ d }: { d: Ds }) {
   const a: string[] = [];
   const faltan = missingIdentity({ idNumber: d.provider_nit, idType: d.vendor_id_type, name: d.provider_name });
   if (faltan.length) a.push(`Incompleto: falta ${faltan.join(", ")}`);
+  if (!String(d.number ?? "").trim()) a.push("Falta número de cuenta de cobro");
   if (d.vendor_is_natural && d.vendor_declarant == null) a.push("Definir si es declarante");
   if (Number(d.iva) > 0 && !d.iva_confirmed) a.push("Revisar: documento soporte con IVA");
   if ((d.vendor_filled ?? []).length) a.push("Dato tomado de la empresa: " + (d.vendor_filled ?? []).map((f) => FILLED_LABEL[f]).join(", "));
