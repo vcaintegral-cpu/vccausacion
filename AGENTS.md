@@ -8,6 +8,7 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+- Password recovery uses a separate email-only form with persistent request feedback and session validation on the public reset page, so login-required fields and transient notifications cannot hide recovery failures.
 
 - RECIBIDOS purchases use a pure workbook parser and an adapter into the shared PDF draft-accounting function, with one persisted task per document, so extraction remains AI-free without duplicating accounting logic.
 - Purchase confirmation recomputes rules with user-scoped reads, then calls an atomic service-only SQL transaction after membership checks, to prevent client journal tampering and partial writes.
