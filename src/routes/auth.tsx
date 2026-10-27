@@ -32,6 +32,9 @@ function AuthPage() {
   const [fullName, setFullName] = useState("");
   const [nit, setNit] = useState("");
   const [loading, setLoading] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState("");
+  const [recoveryError, setRecoveryError] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -59,21 +62,27 @@ function AuthPage() {
     return true;
   }
 
-  async function recuperarContrasena(): Promise<void> {
-    if (!email) {
-      toast.error("Escribe tu correo para enviarte el enlace de recuperación.");
-      return;
-    }
+  async function recuperarContrasena(e: React.FormEvent<HTMLFormElement>): Promise<void> {
+    e.preventDefault();
+    if (loading) return;
     setLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
-    setLoading(false);
-    if (error) {
-      toast.error(error.message);
-      return;
+    setRecoveryMessage("");
+    setRecoveryError(false);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) throw error;
+      setRecoveryMessage("Si el correo está registrado, recibirás un enlace para cambiar tu contraseña. Revisa también la carpeta de spam.");
+    } catch (error) {
+      setRecoveryError(true);
+      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+      setRecoveryMessage(code === "over_email_send_rate_limit" || code === "over_request_rate_limit"
+        ? "Se alcanzó el límite de solicitudes de recuperación. Espera unos minutos antes de volver a intentarlo."
+        : "No se pudo solicitar el enlace de recuperación. Comprueba tu conexión y vuelve a intentarlo.");
+    } finally {
+      setLoading(false);
     }
-    toast.success("Te enviamos un correo con el enlace para restablecer tu contraseña.");
   }
 
   async function signIn(e: React.FormEvent): Promise<void> {
@@ -138,9 +147,20 @@ function AuthPage() {
 
       <div className="flex items-center justify-center bg-background p-6">
         <div className="w-full max-w-sm">
-          <h2 className="text-xl font-semibold">Bienvenida</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Ingresa o crea tu cuenta para continuar.</p>
+          <h2 className="text-xl font-semibold">{recovering ? "Recuperar contraseña" : "Bienvenida"}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{recovering ? "Correo de tu cuenta" : "Ingresa o crea tu cuenta para continuar."}</p>
 
+          {recovering ? (
+            <form onSubmit={recuperarContrasena} className="mt-6 space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="recovery-email">Correo</Label>
+                <Input id="recovery-email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} disabled={loading} />
+              </div>
+              {recoveryMessage && <p role={recoveryError ? "alert" : "status"} className={recoveryError ? "text-sm text-destructive" : "text-sm text-foreground"}>{recoveryMessage}</p>}
+              <Button type="submit" className="w-full" disabled={loading}>{loading ? "Solicitando enlace…" : "Enviar enlace de recuperación"}</Button>
+              <Button type="button" variant="ghost" className="w-full" disabled={loading} onClick={() => setRecovering(false)}>Volver a ingresar</Button>
+            </form>
+          ) : <>
           <Tabs defaultValue="login" className="mt-6">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="login">Ingresar</TabsTrigger>
@@ -164,13 +184,15 @@ function AuthPage() {
                 <Button type="submit" className="w-full" disabled={loading}>
                   Ingresar
                 </Button>
-                <button
+                <Button
                   type="button"
-                  onClick={recuperarContrasena}
+                  variant="link"
+                  disabled={loading}
+                  onClick={() => { setRecovering(true); setRecoveryMessage(""); }}
                   className="w-full text-center text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
                 >
                   ¿Olvidaste tu contraseña?
-                </button>
+                </Button>
               </form>
 
             </TabsContent>
@@ -202,6 +224,7 @@ function AuthPage() {
           <Button variant="outline" className="w-full" onClick={google}>
             Continuar con Google
           </Button>
+          </>}
         </div>
       </div>
     </div>

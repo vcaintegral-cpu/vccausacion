@@ -31,15 +31,31 @@ function ResetPasswordPage() {
   const [confirm, setConfirm] = useState("");
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
+  const [message, setMessage] = useState("");
 
   useEffect(() => {
     let active = true;
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    const isRecovery = hash.get("type") === "recovery";
+    if (hash.has("error") || hash.has("error_code")) {
+      setMessage("El enlace de recuperación venció o no es válido. Solicita un enlace nuevo.");
+      return;
+    }
     const { data } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY" || event === "SIGNED_IN") setReady(true);
+      if (active && event === "PASSWORD_RECOVERY") { setReady(true); setMessage(""); }
     });
-    supabase.auth.getSession().then(({ data: s }) => {
-      if (active && s.session) setReady(true);
-    });
+    void supabase.auth.getSession().then(async ({ data: s, error }) => {
+      if (!active) return;
+      if (error) throw error;
+      if (s.session) {
+        const { data: verified, error: verificationError } = await supabase.auth.getUser();
+        if (!active) return;
+        if (verificationError) throw verificationError;
+        setReady(!!verified.user);
+      } else if (!isRecovery) {
+        setMessage("El enlace de recuperación venció o no es válido. Solicita un enlace nuevo.");
+      }
+    }).catch(() => { if (active) setMessage("No se pudo comprobar el enlace. Revisa tu conexión y abre nuevamente el correo de recuperación."); });
     return () => {
       active = false;
       data.subscription.unsubscribe();
@@ -48,20 +64,24 @@ function ResetPasswordPage() {
 
   async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
+    if (!ready || loading) return;
     if (password !== confirm) {
-      toast.error("Las contraseñas no coinciden.");
+      setMessage("Las contraseñas no coinciden.");
       return;
     }
     setLoading(true);
-    const { error } = await supabase.auth.updateUser({ password });
-    setLoading(false);
-    if (error) {
-      toast.error(error.message);
-      return;
+    setMessage("");
+    try {
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) { setMessage(error.message); return; }
+      toast.success("Contraseña actualizada. Inicia sesión nuevamente.");
+      await supabase.auth.signOut();
+      navigate({ to: "/auth", replace: true });
+    } catch {
+      setMessage("No se pudo actualizar la contraseña. Comprueba tu conexión y vuelve a intentarlo.");
+    } finally {
+      setLoading(false);
     }
-    toast.success("Contraseña actualizada. Inicia sesión nuevamente.");
-    await supabase.auth.signOut();
-    navigate({ to: "/auth", replace: true });
   }
 
   return (
@@ -73,6 +93,7 @@ function ResetPasswordPage() {
             ? "Escribe tu nueva contraseña para continuar."
             : "Abre este enlace desde el correo de recuperación para poder cambiar tu contraseña."}
         </p>
+        {message && <p role="alert" className="mt-4 text-sm text-destructive">{message}</p>}
 
         <form onSubmit={submit} className="mt-6 space-y-4">
           <div className="space-y-1.5">
@@ -98,8 +119,9 @@ function ResetPasswordPage() {
             />
           </div>
           <Button type="submit" className="w-full" disabled={loading || !ready}>
-            Guardar contraseña
+            {loading ? "Guardando…" : "Guardar contraseña"}
           </Button>
+          <Button type="button" variant="ghost" className="w-full" onClick={() => navigate({ to: "/auth" })}>Volver a ingresar</Button>
         </form>
       </div>
     </div>
