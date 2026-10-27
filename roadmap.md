@@ -1,5 +1,6 @@
 # Compras desde Excel RECIBIDOS
-- [ ] Corregir «Olvidé la contraseña»: comprobar envío, enlace y pantalla de restablecimiento.
+- [x] Recuperación con formulario de solo correo, resultados persistentes y reintento; enlace vencido bloqueado, pruebas de pantalla con respuestas simuladas sin errores.
+- [ ] Comprobar entrega real del correo y cambio de contraseña: requiere que Maira solicite el enlace y lo abra; no se cambió su contraseña.
 - [ ] Envío DS en lote: comprobar configuración actual; confirmar prueba guardada sin transmisión DIAN antes de habilitar.
 - [x] Acciones persistentes para Error Siigo: sin crear (Reintentar/Volver a borrador), creado con diferencia (Consultar de nuevo/Marcar correcto/Marcado anulado), envíos interrumpidos >5 min con búsqueda en Siigo, detalle completo, filtros y lote, eliminación bloqueada con consecutivo. FE-3482 consultada de nuevo: pasó a Sincronizada.
 - [x] Corregir omisión de INC porcentual, validar importes desde la precisión enviada y eliminar tarifas IVA globales inferidas; reconstruir total bruto del readback con retenciones y conservar bloqueo de reenvíos. TELEVIGIA comprobada con sesión real: bloqueada antes del POST por IVA 4.968 frente a cálculo 49.679,68.
