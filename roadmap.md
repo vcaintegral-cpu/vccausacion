@@ -41,3 +41,10 @@
 - Pendiente: Maira debe escribir el número de cuenta de cobro del borrador de Natalia y reenviar (confirmará fecha 20/09/2026).
 - [x] DS: crear solo guardado en Siigo (stamp/mail send=false), detectar transmisión no autorizada y detener lote; 1 por vez hasta confirmar prueba.
 - [ ] DS: primera prueba segura (1 documento) la crea Maira y confirma en Siigo "Documento guardado"; luego habilita lote en Configuración.
+
+## Importador desde Google Drive (LED LIGHTS)
+- [x] Fase 1: conexión OAuth de solo lectura, carpeta raíz por empresa, recorrido <año>/<N. MES>/FACTURAS/** del mes actual y el anterior, PDF nuevos a la carga masiva, sin duplicar por ID de Drive ni huella; pista de pago del nombre ("Corriente16 - "); revisión diaria (pg_cron) y botón "Revisar ahora". Pruebas con la estructura real de octubre 2026.
+- [ ] Configurar credenciales Google, secretos, migración 0019 y docs/importador-drive-cron.sql (ver docs/importador-drive.md).
+- [ ] Fase 2: egresos — cruzar movimientos sin comprobante del Google Sheets del mes (Cte. (W), Ahorros, Davivienda, Efectivo) con facturas por NIT + valor exacto + pista de pago y proponer comprobante de pago en borrador; dudosos a alertas.
+- [ ] Fase 3: causación en servidor para que no dependa de abrir la app.
+- [ ] Documentos soporte desde CUENTAS DE COBRO.

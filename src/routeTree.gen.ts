@@ -25,6 +25,8 @@ import { Route as AuthenticatedIntegracionesRouteImport } from './routes/_authen
 import { Route as AuthenticatedPanelRouteImport } from './routes/_authenticated/panel'
 import { Route as AuthenticatedPendientesSiigoRouteImport } from './routes/_authenticated/pendientes-siigo'
 import { Route as AuthenticatedRevisarRouteImport } from './routes/_authenticated/revisar'
+import { Route as ApiCronDriveSyncRouteImport } from './routes/api/cron/drive-sync'
+import { Route as ApiGoogleCallbackRouteImport } from './routes/api/google/callback'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -109,6 +111,16 @@ const AuthenticatedRevisarRoute = AuthenticatedRevisarRouteImport.update({
   path: '/revisar',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const ApiCronDriveSyncRoute = ApiCronDriveSyncRouteImport.update({
+  id: '/api/cron/drive-sync',
+  path: '/api/cron/drive-sync',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGoogleCallbackRoute = ApiGoogleCallbackRouteImport.update({
+  id: '/api/google/callback',
+  path: '/api/google/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -126,6 +138,8 @@ export interface FileRoutesByFullPath {
   '/panel': typeof AuthenticatedPanelRoute
   '/pendientes-siigo': typeof AuthenticatedPendientesSiigoRoute
   '/revisar': typeof AuthenticatedRevisarRoute
+  '/api/cron/drive-sync': typeof ApiCronDriveSyncRoute
+  '/api/google/callback': typeof ApiGoogleCallbackRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -143,6 +157,8 @@ export interface FileRoutesByTo {
   '/panel': typeof AuthenticatedPanelRoute
   '/pendientes-siigo': typeof AuthenticatedPendientesSiigoRoute
   '/revisar': typeof AuthenticatedRevisarRoute
+  '/api/cron/drive-sync': typeof ApiCronDriveSyncRoute
+  '/api/google/callback': typeof ApiGoogleCallbackRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -162,6 +178,8 @@ export interface FileRoutesById {
   '/_authenticated/panel': typeof AuthenticatedPanelRoute
   '/_authenticated/pendientes-siigo': typeof AuthenticatedPendientesSiigoRoute
   '/_authenticated/revisar': typeof AuthenticatedRevisarRoute
+  '/api/cron/drive-sync': typeof ApiCronDriveSyncRoute
+  '/api/google/callback': typeof ApiGoogleCallbackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -181,6 +199,8 @@ export interface FileRouteTypes {
     | '/panel'
     | '/pendientes-siigo'
     | '/revisar'
+    | '/api/cron/drive-sync'
+    | '/api/google/callback'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -198,6 +218,8 @@ export interface FileRouteTypes {
     | '/panel'
     | '/pendientes-siigo'
     | '/revisar'
+    | '/api/cron/drive-sync'
+    | '/api/google/callback'
   id:
     | '__root__'
     | '/'
@@ -216,6 +238,8 @@ export interface FileRouteTypes {
     | '/_authenticated/panel'
     | '/_authenticated/pendientes-siigo'
     | '/_authenticated/revisar'
+    | '/api/cron/drive-sync'
+    | '/api/google/callback'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -223,6 +247,8 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  ApiCronDriveSyncRoute: typeof ApiCronDriveSyncRoute
+  ApiGoogleCallbackRoute: typeof ApiGoogleCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -339,6 +365,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedRevisarRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/api/cron/drive-sync': {
+      id: '/api/cron/drive-sync'
+      path: '/api/cron/drive-sync'
+      fullPath: '/api/cron/drive-sync'
+      preLoaderRoute: typeof ApiCronDriveSyncRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/google/callback': {
+      id: '/api/google/callback'
+      path: '/api/google/callback'
+      fullPath: '/api/google/callback'
+      preLoaderRoute: typeof ApiGoogleCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -380,6 +420,8 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  ApiCronDriveSyncRoute: ApiCronDriveSyncRoute,
+  ApiGoogleCallbackRoute: ApiGoogleCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
