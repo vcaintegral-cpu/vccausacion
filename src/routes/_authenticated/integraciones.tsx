@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useActiveCompany } from "@/lib/active-company";
@@ -268,9 +269,8 @@ function Integraciones() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="siigo-key">Clave de API (Access Key)</Label>
-              <Input
+              <PasswordInput
                 id="siigo-key"
-                type="password"
                 autoComplete="new-password"
                 placeholder="••••••••"
                 value={form.accessKey}
