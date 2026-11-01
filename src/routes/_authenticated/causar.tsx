@@ -79,6 +79,7 @@ import {
 } from "@/lib/invoice-duplicates";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -1275,9 +1276,8 @@ function Causar() {
           </DialogHeader>
           <div className="space-y-2">
             <Label htmlFor="pdf-password">Contraseña del archivo</Label>
-            <Input
+            <PasswordInput
               id="pdf-password"
-              type="password"
               autoComplete="off"
               autoFocus
               value={pdfPassword}

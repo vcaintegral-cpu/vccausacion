@@ -7,6 +7,7 @@ import { lovable } from "@/integrations/lovable/index";
 import { setActiveCompany, setCompanyLocked } from "@/lib/active-company";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -175,7 +176,7 @@ function AuthPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="password">Contraseña</Label>
-                  <Input id="password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+                  <PasswordInput id="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="nit">NIT de la empresa</Label>
@@ -209,7 +210,7 @@ function AuthPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="password2">Contraseña</Label>
-                  <Input id="password2" type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} />
+                  <PasswordInput id="password2" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} />
                 </div>
                 <Button type="submit" className="w-full" disabled={loading}>
                   Crear cuenta
