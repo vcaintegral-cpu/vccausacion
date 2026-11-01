@@ -41,3 +41,13 @@
 - Pendiente: Maira debe escribir el número de cuenta de cobro del borrador de Natalia y reenviar (confirmará fecha 20/09/2026).
 - [x] DS: crear solo guardado en Siigo (stamp/mail send=false), detectar transmisión no autorizada y detener lote; 1 por vez hasta confirmar prueba.
 - [ ] DS: primera prueba segura (1 documento) la crea Maira y confirma en Siigo "Documento guardado"; luego habilita lote en Configuración.
+
+## Fuentes de documentos (compras y egresos automáticos)
+- [x] Pestaña "Fuentes de documentos": carpeta de Compras y de Egresos por empresa, Google Drive u OneDrive/SharePoint, subcarpeta del mes opcional, revisión diaria (pg_cron) y "Revisar ahora".
+- [x] Compras: PDF y Excel RECIBIDOS a la carga masiva existente, sin duplicar (ID de la fuente, huella, CUFE); RECIBIDOS se relee si cambia. Pista de pago del nombre ("Corriente16 - ").
+- [x] Egresos: soportes de pago y extractos a la bandeja de egresos (abrir, revisado, descartado).
+- [ ] Configurar credenciales de Google y del registro de Entra ID, secretos, migración 0019 y docs/fuentes-documentos-cron.sql (ver docs/fuentes-documentos.md).
+- [ ] Ver la carpeta real de BALLET en OneDrive y ajustar la subcarpeta del mes.
+- [ ] Cruce de egresos: soportes/extractos contra facturas por NIT + valor exacto + pista de pago; proponer comprobante de egreso en borrador; dudosos a alertas.
+- [ ] Causación en servidor para que no dependa de abrir la app.
+- [ ] Documentos soporte desde CUENTAS DE COBRO.

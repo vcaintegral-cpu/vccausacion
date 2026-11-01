@@ -1,7 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, type ReactNode } from "react";
-import { Brain, Building2, ClipboardCheck, FileSignature, FileUp, FolderOpen, LayoutDashboard, ListChecks, LogOut, Plug, Scale, Settings2 } from "lucide-react";
+import { Brain, Building2, ClipboardCheck, FileSignature, FileUp, FolderOpen, FolderSync, LayoutDashboard, ListChecks, LogOut, Plug, Scale, Settings2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { BackgroundJobsPanel } from "@/components/background-jobs";
@@ -19,6 +19,7 @@ const NAV = [
   { to: "/pendientes-siigo", label: "Pendientes Siigo", icon: Scale },
   { to: "/documentos", label: "Documentos", icon: FolderOpen },
   { to: "/aprendizaje", label: "Aprendizaje contable", icon: Brain },
+  { to: "/fuentes", label: "Fuentes de documentos", icon: FolderSync },
   { to: "/integraciones", label: "Integraciones", icon: Plug },
   { to: "/admin", label: "Administración", icon: Settings2 },
   { to: "/empresas", label: "Empresas", icon: Building2 },
