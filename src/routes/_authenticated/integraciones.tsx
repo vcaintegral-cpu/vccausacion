@@ -19,7 +19,6 @@ import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { DriveSyncPanel } from "@/components/drive-sync-panel";
 import { useActiveCompany } from "@/lib/active-company";
 import { cop, fechaHora } from "@/lib/format";
 import {
@@ -300,8 +299,6 @@ function Integraciones() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {companyId ? <DriveSyncPanel companyId={companyId} /> : null}
 
       <div className="rounded-lg border border-border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">

@@ -1,7 +1,7 @@
-// Cliente mínimo de Google Drive (OAuth 2.0 + REST v3) para el importador.
-// Solo lectura: lista carpetas y descarga PDF. Nunca modifica, mueve ni borra
-// archivos en Drive.
-import type { SupabaseClient } from "@supabase/supabase-js";
+// Google Drive (OAuth 2.0 + REST v3) para las fuentes de documentos.
+// Solo lectura: lista carpetas y descarga archivos. Nunca modifica, mueve ni
+// borra nada en Drive.
+import type { FileNode, FileProvider } from "@/lib/file-providers";
 
 export const GOOGLE_SCOPES = [
   "openid",
@@ -13,7 +13,7 @@ export const GOOGLE_SCOPES = [
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const DRIVE = "https://www.googleapis.com/drive/v3";
-export const FOLDER_MIME = "application/vnd.google-apps.folder";
+const FOLDER_MIME = "application/vnd.google-apps.folder";
 
 export function googleConfig() {
   const clientId = process.env["GOOGLE_OAUTH_CLIENT_ID"] ?? "";
@@ -25,10 +25,9 @@ export function googleConfig() {
   return { clientId, clientSecret, missing };
 }
 
-export function authorizationUrl(params: { redirectUri: string; state: string }): string {
-  const { clientId } = googleConfig();
+export function googleAuthorizationUrl(params: { redirectUri: string; state: string }): string {
   const q = new URLSearchParams({
-    client_id: clientId,
+    client_id: googleConfig().clientId,
     redirect_uri: params.redirectUri,
     response_type: "code",
     scope: GOOGLE_SCOPES.join(" "),
@@ -41,7 +40,7 @@ export function authorizationUrl(params: { redirectUri: string; state: string })
   return `${AUTH_URL}?${q.toString()}`;
 }
 
-type TokenResponse = {
+export type TokenResponse = {
   access_token: string;
   expires_in: number;
   refresh_token?: string;
@@ -51,8 +50,12 @@ type TokenResponse = {
   error_description?: string;
 };
 
-async function tokenRequest(body: Record<string, string>): Promise<TokenResponse> {
-  const res = await fetch(TOKEN_URL, {
+export async function postToken(
+  url: string,
+  body: Record<string, string>,
+  quien: string,
+): Promise<TokenResponse> {
+  const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(body).toString(),
@@ -60,68 +63,74 @@ async function tokenRequest(body: Record<string, string>): Promise<TokenResponse
   const json = (await res.json().catch(() => ({}))) as TokenResponse;
   if (!res.ok || json.error) {
     throw new Error(
-      `Google rechazó la autorización: ${json.error_description ?? json.error ?? res.status}`,
+      `${quien} rechazó la autorización: ${json.error_description ?? json.error ?? res.status}`,
     );
   }
   return json;
 }
 
-export async function exchangeCode(code: string, redirectUri: string) {
-  const { clientId, clientSecret } = googleConfig();
-  const tok = await tokenRequest({
-    code,
-    client_id: clientId,
-    client_secret: clientSecret,
-    redirect_uri: redirectUri,
-    grant_type: "authorization_code",
-  });
-  return { ...tok, email: emailFromIdToken(tok.id_token) };
-}
-
-function emailFromIdToken(idToken: string | undefined): string | null {
+export function emailFromIdToken(idToken: string | undefined): string | null {
   if (!idToken) return null;
   try {
     const payload = idToken.split(".")[1] ?? "";
     const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))) as {
       email?: string;
+      preferred_username?: string;
+      upn?: string;
     };
-    return json.email ?? null;
+    return json.email ?? json.preferred_username ?? json.upn ?? null;
   } catch {
     return null;
   }
 }
 
-/** Access token vigente para la empresa, renovado con el refresh token guardado. */
-export async function accessTokenForCompany(
-  admin: SupabaseClient,
-  companyId: string,
-): Promise<string> {
-  const { data, error } = await admin
-    .from("google_drive_connections")
-    .select("refresh_token")
-    .eq("company_id", companyId)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  const refresh = (data as { refresh_token: string } | null)?.refresh_token;
-  if (!refresh) throw new Error("La empresa no tiene Google Drive conectado.");
+export async function googleExchangeCode(code: string, redirectUri: string) {
   const { clientId, clientSecret } = googleConfig();
-  const tok = await tokenRequest({
-    refresh_token: refresh,
-    client_id: clientId,
-    client_secret: clientSecret,
-    grant_type: "refresh_token",
-  });
-  return tok.access_token;
+  return postToken(
+    TOKEN_URL,
+    {
+      code,
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+      grant_type: "authorization_code",
+    },
+    "Google",
+  );
 }
 
-export type DriveItem = {
+export async function googleRefresh(refreshToken: string) {
+  const { clientId, clientSecret } = googleConfig();
+  return postToken(
+    TOKEN_URL,
+    {
+      refresh_token: refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: "refresh_token",
+    },
+    "Google",
+  );
+}
+
+type DriveFile = {
   id: string;
   name: string;
   mimeType: string;
   size?: string;
   modifiedTime?: string;
-  md5Checksum?: string;
+  parents?: string[];
 };
+
+const toNode = (f: DriveFile, parentId: string | null): FileNode => ({
+  id: f.id,
+  name: f.name,
+  isFolder: f.mimeType === FOLDER_MIME,
+  mimeType: f.mimeType,
+  size: f.size ? Number(f.size) : null,
+  modifiedAt: f.modifiedTime ?? null,
+  parentId: parentId ?? f.parents?.[0] ?? null,
+});
 
 async function driveGet(
   token: string,
@@ -138,67 +147,63 @@ async function driveGet(
   return res;
 }
 
-export async function getItem(token: string, id: string): Promise<DriveItem> {
-  const res = await driveGet(token, `/files/${encodeURIComponent(id)}`, {
-    fields: "id,name,mimeType,size,modifiedTime,md5Checksum",
-    supportsAllDrives: "true",
-  });
-  return (await res.json()) as DriveItem;
-}
+const esc = (id: string) => id.replace(/'/g, "\\'");
 
-/** Hijos directos de una carpeta (sin papelera), con paginación completa. */
-export async function listChildren(token: string, folderId: string): Promise<DriveItem[]> {
-  const out: DriveItem[] = [];
+/** Archivos que cumplen una consulta de Drive, con paginación completa. */
+async function query(token: string, q: string): Promise<DriveFile[]> {
+  const out: DriveFile[] = [];
   let pageToken: string | undefined;
   do {
     const res = await driveGet(token, "/files", {
-      q: `'${folderId.replace(/'/g, "\\'")}' in parents and trashed = false`,
-      fields: "nextPageToken,files(id,name,mimeType,size,modifiedTime,md5Checksum)",
+      q,
+      fields: "nextPageToken,files(id,name,mimeType,size,modifiedTime,parents)",
       pageSize: "1000",
       supportsAllDrives: "true",
       includeItemsFromAllDrives: "true",
       ...(pageToken ? { pageToken } : {}),
     });
-    const json = (await res.json()) as { files?: DriveItem[]; nextPageToken?: string };
+    const json = (await res.json()) as { files?: DriveFile[]; nextPageToken?: string };
     out.push(...(json.files ?? []));
     pageToken = json.nextPageToken;
   } while (pageToken);
   return out;
 }
 
-export type DriveChild = DriveItem & { parents?: string[] };
-
-/**
- * Hijos de varias carpetas a la vez ("'a' in parents or 'b' in parents ...").
- * Reduce las llamadas a Drive al recorrer una carpeta con muchas subcarpetas.
- */
-export async function listChildrenMany(token: string, folderIds: string[]): Promise<DriveChild[]> {
-  const out: DriveChild[] = [];
-  for (let i = 0; i < folderIds.length; i += 25) {
-    const grupo = folderIds.slice(i, i + 25);
-    const padres = grupo.map((id) => `'${id.replace(/'/g, "\\'")}' in parents`).join(" or ");
-    let pageToken: string | undefined;
-    do {
-      const res = await driveGet(token, "/files", {
-        q: `(${padres}) and trashed = false`,
-        fields: "nextPageToken,files(id,name,mimeType,size,modifiedTime,md5Checksum,parents)",
-        pageSize: "1000",
-        supportsAllDrives: "true",
-        includeItemsFromAllDrives: "true",
-        ...(pageToken ? { pageToken } : {}),
-      });
-      const json = (await res.json()) as { files?: DriveChild[]; nextPageToken?: string };
-      out.push(...(json.files ?? []));
-      pageToken = json.nextPageToken;
-    } while (pageToken);
-  }
-  return out;
-}
-
-export async function downloadFile(token: string, id: string): Promise<Uint8Array> {
-  const res = await driveGet(token, `/files/${encodeURIComponent(id)}`, {
-    alt: "media",
+/** Nombre y tipo de una carpeta, para confirmar a la usuaria que el enlace es el correcto. */
+export async function googleFolderInfo(token: string, folderId: string) {
+  const res = await driveGet(token, `/files/${encodeURIComponent(folderId)}`, {
+    fields: "id,name,mimeType",
     supportsAllDrives: "true",
   });
-  return new Uint8Array(await res.arrayBuffer());
+  const f = (await res.json()) as DriveFile;
+  return { id: f.id, name: f.name, isFolder: f.mimeType === FOLDER_MIME };
+}
+
+export function googleProvider(token: string): FileProvider {
+  return {
+    async listChildren(folderId) {
+      return (await query(token, `'${esc(folderId)}' in parents and trashed = false`)).map((f) =>
+        toNode(f, folderId),
+      );
+    },
+    async listChildrenMany(folderIds) {
+      const out: FileNode[] = [];
+      // "'a' in parents or 'b' in parents ..." en grupos: pocas llamadas para muchas carpetas.
+      for (let i = 0; i < folderIds.length; i += 25) {
+        const grupo = folderIds.slice(i, i + 25);
+        const padres = grupo.map((id) => `'${esc(id)}' in parents`).join(" or ");
+        for (const f of await query(token, `(${padres}) and trashed = false`)) {
+          out.push(toNode(f, f.parents?.find((p) => grupo.includes(p)) ?? null));
+        }
+      }
+      return out;
+    },
+    async download(file) {
+      const res = await driveGet(token, `/files/${encodeURIComponent(file.id)}`, {
+        alt: "media",
+        supportsAllDrives: "true",
+      });
+      return new Uint8Array(await res.arrayBuffer());
+    },
+  };
 }

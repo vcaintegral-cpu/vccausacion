@@ -114,12 +114,51 @@ export function pistaDePago(nombreArchivo: string): PistaPago | null {
   return { medios, dia };
 }
 
-/** Solo se importan PDF: los XML/ZIP/imágenes de la carpeta se ignoran. */
+/** true para carpetas que son solo un año ("2026"). */
+export function esCarpetaDeAnio(nombre: string): boolean {
+  return /^(19|20)\d{2}$/.test(normalizar(nombre));
+}
+
+/** Compara nombres de carpeta sin tildes, mayúsculas ni espacios de más. */
+export function mismoNombre(a: string, b: string): boolean {
+  return normalizar(a) === normalizar(b);
+}
+
 export function esPdf(nombre: string, mimeType: string | null | undefined): boolean {
   return mimeType === "application/pdf" || /\.pdf$/i.test(nombre);
 }
 
 /** Nombre seguro para Storage, igual criterio que la carga de ZIP. */
+/** Hojas de cálculo (Excel RECIBIDOS en compras, extractos en egresos). */
+export function esHojaDeCalculo(nombre: string, mimeType: string | null | undefined): boolean {
+  return (
+    /\.(xlsx|xls|xlsm|csv)$/i.test(nombre) ||
+    mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    mimeType === "application/vnd.ms-excel" ||
+    mimeType === "text/csv"
+  );
+}
+
+export type Proposito = "compras" | "egresos";
+
+/**
+ * Qué hace el importador con cada archivo según la carpeta:
+ * - compras: PDF → carga masiva (lectura IA); Excel → RECIBIDOS (sin IA).
+ * - egresos: PDF → soporte de pago; Excel/CSV o nombre con "extracto" → extracto bancario.
+ * Lo demás se ignora.
+ */
+export function tipoDeArchivo(
+  proposito: Proposito,
+  nombre: string,
+  mimeType: string | null | undefined,
+): "factura_pdf" | "recibidos_excel" | "soporte_pago" | "extracto" | null {
+  const pdf = esPdf(nombre, mimeType);
+  const hoja = esHojaDeCalculo(nombre, mimeType);
+  if (proposito === "compras") return pdf ? "factura_pdf" : hoja ? "recibidos_excel" : null;
+  if (hoja || (pdf && /extracto/i.test(sinTildes(nombre)))) return "extracto";
+  return pdf ? "soporte_pago" : null;
+}
+
 export function nombreSeguro(nombre: string): string {
   return nombre.replace(/[^\w.-]/g, "_");
 }
@@ -132,4 +171,56 @@ export function idDeCarpetaDrive(enlaceOId: string): string | null {
   const porParametro = /[?&]id=([\w-]{10,})/.exec(v);
   if (porParametro) return porParametro[1]!;
   return /^[\w-]{10,}$/.test(v) ? v : null;
+}
+
+export type EnlaceCarpeta =
+  | { proveedor: "google"; folderId: string }
+  | {
+      proveedor: "microsoft";
+      tipo: "ruta";
+      host: string;
+      sitio: string;
+      biblioteca: string;
+      ruta: string;
+    }
+  | { proveedor: "microsoft"; tipo: "compartido"; url: string };
+
+/**
+ * Interpreta el enlace que la usuaria pega para una carpeta:
+ * - Google Drive: https://drive.google.com/drive/folders/<id>
+ * - OneDrive/SharePoint navegando: .../_layouts/15/onedrive.aspx?id=/personal/<usuario>/Documents/<ruta>
+ *   o .../Forms/AllItems.aspx?id=/sites/<sitio>/Shared Documents/<ruta>
+ * - OneDrive/SharePoint "Copiar vínculo": https://<tenant>.sharepoint.com/:f:/...
+ */
+export function interpretarEnlace(enlace: string): EnlaceCarpeta | null {
+  const v = enlace.trim();
+  if (!v) return null;
+  if (/drive\.google\.com|docs\.google\.com/i.test(v) || /^[\w-]{25,}$/.test(v)) {
+    const folderId = idDeCarpetaDrive(v);
+    return folderId ? { proveedor: "google", folderId } : null;
+  }
+  let url: URL;
+  try {
+    url = new URL(v);
+  } catch {
+    return null;
+  }
+  if (!/\.sharepoint\.com$|^onedrive\.live\.com$|^1drv\.ms$/i.test(url.hostname)) return null;
+  const id = url.searchParams.get("id");
+  if (id && id.startsWith("/")) {
+    const partes = id.split("/").filter(Boolean);
+    // /personal/<usuario>/<biblioteca>/<ruta...>  ó  /sites|teams/<sitio>/<biblioteca>/<ruta...>
+    if (partes.length >= 3 && /^(personal|sites|teams)$/i.test(partes[0]!)) {
+      return {
+        proveedor: "microsoft",
+        tipo: "ruta",
+        host: url.hostname,
+        sitio: `/${partes[0]}/${partes[1]}`,
+        biblioteca: partes[2]!,
+        ruta: partes.slice(3).join("/"),
+      };
+    }
+    return null;
+  }
+  return { proveedor: "microsoft", tipo: "compartido", url: v };
 }

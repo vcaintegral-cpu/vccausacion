@@ -21,12 +21,13 @@ import { Route as AuthenticatedDocumentosRouteImport } from './routes/_authentic
 import { Route as AuthenticatedDocumentosSoporteRouteImport } from './routes/_authenticated/documentos-soporte'
 import { Route as AuthenticatedEmpresasRouteImport } from './routes/_authenticated/empresas'
 import { Route as AuthenticatedFacturasRouteImport } from './routes/_authenticated/facturas'
+import { Route as AuthenticatedFuentesRouteImport } from './routes/_authenticated/fuentes'
 import { Route as AuthenticatedIntegracionesRouteImport } from './routes/_authenticated/integraciones'
 import { Route as AuthenticatedPanelRouteImport } from './routes/_authenticated/panel'
 import { Route as AuthenticatedPendientesSiigoRouteImport } from './routes/_authenticated/pendientes-siigo'
 import { Route as AuthenticatedRevisarRouteImport } from './routes/_authenticated/revisar'
-import { Route as ApiCronDriveSyncRouteImport } from './routes/api/cron/drive-sync'
-import { Route as ApiGoogleCallbackRouteImport } from './routes/api/google/callback'
+import { Route as ApiCronDocumentSyncRouteImport } from './routes/api/cron/document-sync'
+import { Route as ApiOauthCallbackRouteImport } from './routes/api/oauth/callback'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -89,6 +90,11 @@ const AuthenticatedFacturasRoute = AuthenticatedFacturasRouteImport.update({
   path: '/facturas',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedFuentesRoute = AuthenticatedFuentesRouteImport.update({
+  id: '/fuentes',
+  path: '/fuentes',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedIntegracionesRoute =
   AuthenticatedIntegracionesRouteImport.update({
     id: '/integraciones',
@@ -111,14 +117,14 @@ const AuthenticatedRevisarRoute = AuthenticatedRevisarRouteImport.update({
   path: '/revisar',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
-const ApiCronDriveSyncRoute = ApiCronDriveSyncRouteImport.update({
-  id: '/api/cron/drive-sync',
-  path: '/api/cron/drive-sync',
+const ApiCronDocumentSyncRoute = ApiCronDocumentSyncRouteImport.update({
+  id: '/api/cron/document-sync',
+  path: '/api/cron/document-sync',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiGoogleCallbackRoute = ApiGoogleCallbackRouteImport.update({
-  id: '/api/google/callback',
-  path: '/api/google/callback',
+const ApiOauthCallbackRoute = ApiOauthCallbackRouteImport.update({
+  id: '/api/oauth/callback',
+  path: '/api/oauth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -134,12 +140,13 @@ export interface FileRoutesByFullPath {
   '/documentos-soporte': typeof AuthenticatedDocumentosSoporteRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
+  '/fuentes': typeof AuthenticatedFuentesRoute
   '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
   '/pendientes-siigo': typeof AuthenticatedPendientesSiigoRoute
   '/revisar': typeof AuthenticatedRevisarRoute
-  '/api/cron/drive-sync': typeof ApiCronDriveSyncRoute
-  '/api/google/callback': typeof ApiGoogleCallbackRoute
+  '/api/cron/document-sync': typeof ApiCronDocumentSyncRoute
+  '/api/oauth/callback': typeof ApiOauthCallbackRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -153,12 +160,13 @@ export interface FileRoutesByTo {
   '/documentos-soporte': typeof AuthenticatedDocumentosSoporteRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
+  '/fuentes': typeof AuthenticatedFuentesRoute
   '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
   '/pendientes-siigo': typeof AuthenticatedPendientesSiigoRoute
   '/revisar': typeof AuthenticatedRevisarRoute
-  '/api/cron/drive-sync': typeof ApiCronDriveSyncRoute
-  '/api/google/callback': typeof ApiGoogleCallbackRoute
+  '/api/cron/document-sync': typeof ApiCronDocumentSyncRoute
+  '/api/oauth/callback': typeof ApiOauthCallbackRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -174,12 +182,13 @@ export interface FileRoutesById {
   '/_authenticated/documentos-soporte': typeof AuthenticatedDocumentosSoporteRoute
   '/_authenticated/empresas': typeof AuthenticatedEmpresasRoute
   '/_authenticated/facturas': typeof AuthenticatedFacturasRoute
+  '/_authenticated/fuentes': typeof AuthenticatedFuentesRoute
   '/_authenticated/integraciones': typeof AuthenticatedIntegracionesRoute
   '/_authenticated/panel': typeof AuthenticatedPanelRoute
   '/_authenticated/pendientes-siigo': typeof AuthenticatedPendientesSiigoRoute
   '/_authenticated/revisar': typeof AuthenticatedRevisarRoute
-  '/api/cron/drive-sync': typeof ApiCronDriveSyncRoute
-  '/api/google/callback': typeof ApiGoogleCallbackRoute
+  '/api/cron/document-sync': typeof ApiCronDocumentSyncRoute
+  '/api/oauth/callback': typeof ApiOauthCallbackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -195,12 +204,13 @@ export interface FileRouteTypes {
     | '/documentos-soporte'
     | '/empresas'
     | '/facturas'
+    | '/fuentes'
     | '/integraciones'
     | '/panel'
     | '/pendientes-siigo'
     | '/revisar'
-    | '/api/cron/drive-sync'
-    | '/api/google/callback'
+    | '/api/cron/document-sync'
+    | '/api/oauth/callback'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -214,12 +224,13 @@ export interface FileRouteTypes {
     | '/documentos-soporte'
     | '/empresas'
     | '/facturas'
+    | '/fuentes'
     | '/integraciones'
     | '/panel'
     | '/pendientes-siigo'
     | '/revisar'
-    | '/api/cron/drive-sync'
-    | '/api/google/callback'
+    | '/api/cron/document-sync'
+    | '/api/oauth/callback'
   id:
     | '__root__'
     | '/'
@@ -234,12 +245,13 @@ export interface FileRouteTypes {
     | '/_authenticated/documentos-soporte'
     | '/_authenticated/empresas'
     | '/_authenticated/facturas'
+    | '/_authenticated/fuentes'
     | '/_authenticated/integraciones'
     | '/_authenticated/panel'
     | '/_authenticated/pendientes-siigo'
     | '/_authenticated/revisar'
-    | '/api/cron/drive-sync'
-    | '/api/google/callback'
+    | '/api/cron/document-sync'
+    | '/api/oauth/callback'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -247,8 +259,8 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
-  ApiCronDriveSyncRoute: typeof ApiCronDriveSyncRoute
-  ApiGoogleCallbackRoute: typeof ApiGoogleCallbackRoute
+  ApiCronDocumentSyncRoute: typeof ApiCronDocumentSyncRoute
+  ApiOauthCallbackRoute: typeof ApiOauthCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -337,6 +349,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedFacturasRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/fuentes': {
+      id: '/_authenticated/fuentes'
+      path: '/fuentes'
+      fullPath: '/fuentes'
+      preLoaderRoute: typeof AuthenticatedFuentesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/integraciones': {
       id: '/_authenticated/integraciones'
       path: '/integraciones'
@@ -365,18 +384,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedRevisarRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/api/cron/drive-sync': {
-      id: '/api/cron/drive-sync'
-      path: '/api/cron/drive-sync'
-      fullPath: '/api/cron/drive-sync'
-      preLoaderRoute: typeof ApiCronDriveSyncRouteImport
+    '/api/cron/document-sync': {
+      id: '/api/cron/document-sync'
+      path: '/api/cron/document-sync'
+      fullPath: '/api/cron/document-sync'
+      preLoaderRoute: typeof ApiCronDocumentSyncRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/google/callback': {
-      id: '/api/google/callback'
-      path: '/api/google/callback'
-      fullPath: '/api/google/callback'
-      preLoaderRoute: typeof ApiGoogleCallbackRouteImport
+    '/api/oauth/callback': {
+      id: '/api/oauth/callback'
+      path: '/api/oauth/callback'
+      fullPath: '/api/oauth/callback'
+      preLoaderRoute: typeof ApiOauthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -391,6 +410,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedDocumentosSoporteRoute: typeof AuthenticatedDocumentosSoporteRoute
   AuthenticatedEmpresasRoute: typeof AuthenticatedEmpresasRoute
   AuthenticatedFacturasRoute: typeof AuthenticatedFacturasRoute
+  AuthenticatedFuentesRoute: typeof AuthenticatedFuentesRoute
   AuthenticatedIntegracionesRoute: typeof AuthenticatedIntegracionesRoute
   AuthenticatedPanelRoute: typeof AuthenticatedPanelRoute
   AuthenticatedPendientesSiigoRoute: typeof AuthenticatedPendientesSiigoRoute
@@ -406,6 +426,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedDocumentosSoporteRoute: AuthenticatedDocumentosSoporteRoute,
   AuthenticatedEmpresasRoute: AuthenticatedEmpresasRoute,
   AuthenticatedFacturasRoute: AuthenticatedFacturasRoute,
+  AuthenticatedFuentesRoute: AuthenticatedFuentesRoute,
   AuthenticatedIntegracionesRoute: AuthenticatedIntegracionesRoute,
   AuthenticatedPanelRoute: AuthenticatedPanelRoute,
   AuthenticatedPendientesSiigoRoute: AuthenticatedPendientesSiigoRoute,
@@ -420,8 +441,8 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   ResetPasswordRoute: ResetPasswordRoute,
-  ApiCronDriveSyncRoute: ApiCronDriveSyncRoute,
-  ApiGoogleCallbackRoute: ApiGoogleCallbackRoute,
+  ApiCronDocumentSyncRoute: ApiCronDocumentSyncRoute,
+  ApiOauthCallbackRoute: ApiOauthCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

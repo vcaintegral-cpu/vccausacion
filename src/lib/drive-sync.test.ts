@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   esCarpetaAnio,
+  interpretarEnlace,
+  tipoDeArchivo,
   esCarpetaFacturas,
   esPdf,
   idDeCarpetaDrive,
@@ -93,5 +95,72 @@ describe("utilidades", () => {
       "1kx_g1JlMujvuYrYZtNDXeudSu5g9OIMK",
     );
     expect(idDeCarpetaDrive("no es un enlace")).toBeNull();
+  });
+});
+
+describe("interpretarEnlace", () => {
+  it("lee el enlace de OneDrive de BALLET (navegación onedrive.aspx)", () => {
+    expect(
+      interpretarEnlace(
+        "https://integralvc-my.sharepoint.com/personal/mbustamante_integralyasesores_com/_layouts/15/onedrive.aspx?id=%2Fpersonal%2Fmbustamante%5Fintegralyasesores%5Fcom%2FDocuments%2FMis%20Empresas%2FBALLET%2F2026%2FCONTABILIDAD&viewid=ff769d53%2Ded88%2D4b13%2Da6a9%2Dd0ff28c578f7&at=9&view=0",
+      ),
+    ).toEqual({
+      proveedor: "microsoft",
+      tipo: "ruta",
+      host: "integralvc-my.sharepoint.com",
+      sitio: "/personal/mbustamante_integralyasesores_com",
+      biblioteca: "Documents",
+      ruta: "Mis Empresas/BALLET/2026/CONTABILIDAD",
+    });
+  });
+  it("lee carpetas de SharePoint de un sitio y vínculos compartidos", () => {
+    expect(
+      interpretarEnlace(
+        "https://integralvc.sharepoint.com/sites/Contabilidad/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2FContabilidad%2FShared%20Documents%2FBALLET",
+      ),
+    ).toMatchObject({
+      proveedor: "microsoft",
+      tipo: "ruta",
+      sitio: "/sites/Contabilidad",
+      biblioteca: "Shared Documents",
+      ruta: "BALLET",
+    });
+    expect(
+      interpretarEnlace("https://integralvc-my.sharepoint.com/:f:/g/personal/x/EabcDEF"),
+    ).toEqual({
+      proveedor: "microsoft",
+      tipo: "compartido",
+      url: "https://integralvc-my.sharepoint.com/:f:/g/personal/x/EabcDEF",
+    });
+  });
+  it("lee Google Drive y rechaza otros sitios", () => {
+    expect(
+      interpretarEnlace(
+        "https://drive.google.com/drive/folders/1kx_g1JlMujvuYrYZtNDXeudSu5g9OIMK?usp=sharing",
+      ),
+    ).toEqual({
+      proveedor: "google",
+      folderId: "1kx_g1JlMujvuYrYZtNDXeudSu5g9OIMK",
+    });
+    expect(interpretarEnlace("https://www.dropbox.com/home/x")).toBeNull();
+    expect(interpretarEnlace("")).toBeNull();
+  });
+});
+
+describe("tipoDeArchivo", () => {
+  it("compras: PDF a lectura IA y Excel como RECIBIDOS", () => {
+    expect(tipoDeArchivo("compras", "fv0900047217.pdf", "application/pdf")).toBe("factura_pdf");
+    expect(tipoDeArchivo("compras", "RECIBIDOS - BALLET.xlsx", null)).toBe("recibidos_excel");
+    expect(tipoDeArchivo("compras", "foto.jpg", "image/jpeg")).toBeNull();
+  });
+  it("egresos: soportes de pago y extractos", () => {
+    expect(tipoDeArchivo("egresos", "Comprobante transferencia 123.pdf", "application/pdf")).toBe(
+      "soporte_pago",
+    );
+    expect(tipoDeArchivo("egresos", "Extracto Bancolombia octubre.pdf", "application/pdf")).toBe(
+      "extracto",
+    );
+    expect(tipoDeArchivo("egresos", "movimientos.xlsx", null)).toBe("extracto");
+    expect(tipoDeArchivo("egresos", "nota.txt", "text/plain")).toBeNull();
   });
 });
