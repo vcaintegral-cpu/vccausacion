@@ -124,13 +124,17 @@ export function cargarTablasBases(): Promise<TablaBases[]> {
   const promesa = (async () => {
     const { data, error } = await supabase
       .from("retention_base_tables" as never)
-      .select("year, uvt, concepts")
-      .order("year", { ascending: false });
+      .select("id, valid_from, valid_to, year, uvt, concepts, source")
+      .order("valid_from", { ascending: false });
     if (error) return [];
-    return ((data ?? []) as unknown as TablaBases[]).map((t) => ({
+    return ((data ?? []) as unknown as TablaBases[]).map((t): TablaBases => ({
+      ...(t.id ? { id: t.id } : {}),
+      valid_from: String(t.valid_from).slice(0, 10),
+      valid_to: t.valid_to ? String(t.valid_to).slice(0, 10) : null,
       year: Number(t.year),
       uvt: Number(t.uvt),
       concepts: Array.isArray(t.concepts) ? t.concepts : [],
+      source: t.source ?? null,
     }));
   })();
   tablasCache = { hasta: Date.now() + VIGENCIA_MS, promesa };

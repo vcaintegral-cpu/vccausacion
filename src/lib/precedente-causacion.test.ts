@@ -181,7 +181,13 @@ const lineas = [
   },
 ];
 const TABLA_2026 = [
-  { year: 2026, uvt: 50000, concepts: [{ id: "compras", concepto: "Compras", base_uvt: 10 }] },
+  {
+    year: 2026,
+    valid_from: "2026-01-01",
+    valid_to: null,
+    uvt: 50000,
+    concepts: [{ id: "compras", concepto: "Compras", base_uvt: 10 }],
+  },
 ];
 
 describe("causación con precedente tributario", () => {
@@ -210,7 +216,13 @@ describe("causación con precedente tributario", () => {
 
   it("si la base no alcanza la mínima no retiene y lo explica", async () => {
     const tablaAlta = [
-      { year: 2026, uvt: 50000, concepts: [{ id: "compras", concepto: "Compras", base_uvt: 27 }] },
+      {
+        year: 2026,
+        valid_from: "2026-01-01",
+        valid_to: null,
+        uvt: 50000,
+        concepts: [{ id: "compras", concepto: "Compras", base_uvt: 27 }],
+      },
     ];
     const acc = await computeDraftAccounting({
       companyId: "c1",

@@ -371,27 +371,62 @@ export type ConceptoBase = {
   tarifa_no_declarante?: number | null;
   notas?: string | null;
 };
-export type TablaBases = { year: number; uvt: number; concepts: ConceptoBase[] };
+/**
+ * Tabla de bases mínimas con su vigencia. Puede haber varias en un año: por
+ * ejemplo, la general de 2026 (desde el 1 de enero) y una excepción del 8 de
+ * mayo al 30 de junio de 2026 (suspensión del Decreto 572 de 2025) que solo
+ * cambia algunos conceptos. Para cada concepto manda la tabla vigente en la
+ * fecha de la factura que empezó más tarde y lo contiene.
+ */
+export type TablaBases = {
+  id?: string;
+  year: number;
+  /** Primer día de vigencia (AAAA-MM-DD). */
+  valid_from: string;
+  /** Último día de vigencia (AAAA-MM-DD); null = sin fin. */
+  valid_to: string | null;
+  uvt: number;
+  concepts: ConceptoBase[];
+  source?: string | null;
+};
 
 export type BaseMinima = { valor: number; origen: string } | null;
 
 /**
+ * UVT a pesos: valores absolutos redondeados al múltiplo de mil más cercano
+ * (art. 868 E.T.), igual que la tabla de la firma (10 UVT × $52.374 = $524.000).
+ */
+export function uvtAPesos(baseUvt: number, uvt: number): number {
+  return Math.round((Number(baseUvt) * Number(uvt)) / 1000) * 1000;
+}
+
+/** Tablas vigentes en la fecha, de la que empezó más tarde a la más antigua. */
+export function tablasVigentes(tablas: TablaBases[], fecha: string): TablaBases[] {
+  return tablas
+    .filter((t) => t.valid_from <= fecha && (!t.valid_to || fecha <= t.valid_to))
+    .sort((a, b) => b.valid_from.localeCompare(a.valid_from));
+}
+
+/**
  * Base mínima en pesos de una retención para la fecha de la factura:
- * concepto asociado × UVT del año; si no tiene concepto, la base fija del registro.
+ * concepto asociado × UVT de la tabla vigente; si no tiene concepto, la base fija del registro.
  */
 export function baseMinimaDe(
   tax: ImpuestoConfigurado,
   fecha: string | null,
   tablas: TablaBases[],
 ): BaseMinima {
-  const anio = Number(String(fecha ?? "").slice(0, 4)) || new Date().getFullYear();
+  const dia = /^\d{4}-\d{2}-\d{2}/.test(String(fecha ?? ""))
+    ? String(fecha).slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
   if (tax.retention_concept) {
-    const tabla = tablas.find((t) => t.year === anio);
-    const concepto = tabla?.concepts.find((c) => c.id === tax.retention_concept);
-    if (tabla && concepto) {
+    for (const tabla of tablasVigentes(tablas, dia)) {
+      const concepto = tabla.concepts.find((c) => c.id === tax.retention_concept);
+      if (!concepto) continue;
+      const valor = uvtAPesos(concepto.base_uvt, tabla.uvt);
       return {
-        valor: roundCOP(Number(concepto.base_uvt) * Number(tabla.uvt)),
-        origen: `${concepto.concepto}: ${concepto.base_uvt} UVT × $${Number(tabla.uvt).toLocaleString("es-CO")} (${anio})`,
+        valor,
+        origen: `${concepto.concepto}: ${concepto.base_uvt} UVT × $${Number(tabla.uvt).toLocaleString("es-CO")} = $${valor.toLocaleString("es-CO")}, tabla vigente desde ${tabla.valid_from}`,
       };
     }
   }

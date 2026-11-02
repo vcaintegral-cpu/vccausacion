@@ -51,6 +51,8 @@ const TAXES: ImpuestoConfigurado[] = [
 const TABLAS: TablaBases[] = [
   {
     year: 2026,
+    valid_from: "2026-01-01",
+    valid_to: "2026-12-31",
     uvt: 50000,
     concepts: [
       { id: "compras", concepto: "Compras generales", base_uvt: 10 },
@@ -269,7 +271,7 @@ describe("baseMinimaDe", () => {
   it("concepto × UVT del año de la factura; si no, la base fija del registro", () => {
     expect(baseMinimaDe(TAXES[3]!, "2026-10-15", TABLAS)).toEqual({
       valor: 500000,
-      origen: "Compras generales: 10 UVT × $50.000 (2026)",
+      origen: "Compras generales: 10 UVT × $50.000 = $500.000, tabla vigente desde 2026-01-01",
     });
     expect(baseMinimaDe(TAXES[3]!, "2025-10-15", TABLAS)).toBeNull();
     expect(baseMinimaDe({ ...TAXES[5]!, min_base: 1234567 }, "2026-10-01", TABLAS)?.valor).toBe(
@@ -315,7 +317,7 @@ describe("decidirRetenciones", () => {
     });
     expect(d.aplicar).toEqual([]);
     expect(d.avisos[0]).toBe(
-      "Retefuente (Retención compras 2,5%): no se practica porque la base $400.000 no alcanza la base mínima $500.000 (Compras generales: 10 UVT × $50.000 (2026)).",
+      "Retefuente (Retención compras 2,5%): no se practica porque la base $400.000 no alcanza la base mínima $500.000 (Compras generales: 10 UVT × $50.000 = $500.000, tabla vigente desde 2026-01-01).",
     );
   });
 

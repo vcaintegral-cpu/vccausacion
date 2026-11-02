@@ -7,6 +7,7 @@ vi.mock("@/lib/bulk-runner", () => ({ invalidateBulkDeps: () => undefined }));
 const { leerTablaBases, numero, sugerirConcepto } = await import("./bases-minimas-panel");
 const { bloquesDesdeDecision } = await import("./condicion-tributaria-panel");
 const { emptyRetBlocks } = await import("@/lib/retenciones-multi");
+const { CONCEPTOS_2026 } = await import("@/lib/bases-minimas-2026");
 
 describe("numero", () => {
   it("lee formatos colombianos y anglosajones", () => {
@@ -80,41 +81,27 @@ describe("leerTablaBases", () => {
   });
 });
 
-describe("sugerirConcepto", () => {
-  const conceptos = [
-    {
-      id: "compras",
-      concepto: "Compras generales",
-      base_uvt: 10,
-      tarifa_declarante: 2.5,
-      tarifa_no_declarante: 3.5,
-    },
-    {
-      id: "serv_decl",
-      concepto: "Servicios generales declarantes",
-      base_uvt: 2,
-      tarifa_declarante: 4,
-    },
-    {
-      id: "serv_no",
-      concepto: "Servicios generales no declarantes",
-      base_uvt: 2,
-      tarifa_no_declarante: 6,
-    },
-    { id: "hon", concepto: "Honorarios y comisiones", base_uvt: 0, tarifa_declarante: 11 },
+describe("sugerirConcepto con la tabla real 2026", () => {
+  // Nombres típicos de retenciones sincronizadas desde Siigo.
+  const casos: Array<[string, number, string | null]> = [
+    ["Retención en la fuente compras 2,5%", 2.5, "compras_generales_declarantes"],
+    ["Retefuente compras no declarantes 3,5%", 3.5, "compras_generales_no_declarantes"],
+    ["Retefuente servicios 4%", 4, "servicios_generales_declarantes"],
+    ["Retefuente servicios no declarantes 6%", 6, "servicios_generales_no_declarantes"],
+    ["Retención honorarios 11%", 11, null], // personas jurídicas y naturales >3.300 UVT: 11 % en ambos, no adivina
+    ["Honorarios no declarantes 10%", 10, "honorarios_no_declarantes"],
+    ["Retención transporte de carga 1%", 1, "transporte_carga"],
+    ["Arrendamiento bienes muebles 4%", 4, "arrendamiento_muebles"],
+    ["Retención combustibles 0,1%", 0.1, "combustibles"],
+    ["Licenciamiento software 3,5%", 3.5, "licenciamiento_software"],
+    ["Retención vigilancia y aseo 2%", 2, "vigilancia_aseo_aiu"],
+    ["Retención otros 1%", 1, null],
   ];
-  it("asocia por palabra clave y desempata por tarifa", () => {
-    expect(sugerirConcepto({ name: "Retención compras 2,5%", rate: 2.5 }, conceptos)).toBe(
-      "compras",
-    );
-    expect(sugerirConcepto({ name: "Rete servicios 4%", rate: 4 }, conceptos)).toBe("serv_decl");
-    expect(sugerirConcepto({ name: "Rete servicios 6%", rate: 6 }, conceptos)).toBe("serv_no");
-    expect(sugerirConcepto({ name: "Honorarios 11%", rate: 11 }, conceptos)).toBe("hon");
-  });
-  it("sin coincidencia clara no adivina", () => {
-    expect(sugerirConcepto({ name: "Rete servicios 3%", rate: 3 }, conceptos)).toBeNull();
-    expect(sugerirConcepto({ name: "Retención otros", rate: 1 }, conceptos)).toBeNull();
-  });
+  for (const [nombre, tarifa, esperado] of casos) {
+    it(`${nombre} → ${esperado ?? "sin sugerencia"}`, () => {
+      expect(sugerirConcepto({ name: nombre, rate: tarifa }, CONCEPTOS_2026)).toBe(esperado);
+    });
+  }
 });
 
 describe("bloquesDesdeDecision", () => {

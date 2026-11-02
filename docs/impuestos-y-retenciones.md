@@ -51,19 +51,38 @@ momento.
 ## Bases mínimas
 Administración → **Bases mínimas**:
 
-1. **Tabla del año (común a todas las empresas):** valor de la UVT y conceptos con
-   su base en UVT y sus tarifas. Se puede escribir a mano o **importar desde Excel**,
-   con columnas "Concepto", "Base UVT" o "Base en pesos", "Tarifa declarante" y
-   "Tarifa no declarante".
+1. **Tablas con vigencia (comunes a todas las empresas):** cada tabla tiene fecha
+   desde/hasta, UVT y conceptos con base en UVT y tarifas. Se escriben a mano o se
+   **importan desde Excel** (columnas "Concepto", "Base UVT" o "Base en pesos",
+   "Tarifa declarante", "Tarifa no declarante").
 2. **Concepto de cada retención de la empresa:** asocia cada retención sincronizada
-   de Siigo con su concepto ("Sugerir conceptos" lo propone por nombre y tarifa) y
-   muestra su base mínima en pesos.
+   de Siigo con su concepto. "Sugerir conceptos" lo propone por nombre y tarifa y
+   solo sugiere cuando hay un único candidato claro. La pantalla muestra la base
+   mínima en pesos.
 
-La base mínima se calcula con la UVT del **año de la factura**. Si una retención no
-tiene concepto ni base mínima propia, se practica y el borrador avisa que no se
-verificó la base.
+Reglas de cálculo:
+- **Base en pesos = base UVT × UVT, redondeada al múltiplo de mil más cercano**
+  (art. 868 E.T.), como en la tabla de la firma: 10 UVT × $52.374 = $524.000.
+- **Base 0** = se retiene sobre cualquier valor.
+- Se practica la retención cuando la base de la factura es **igual o superior** a
+  la base mínima.
+- Para cada concepto manda la tabla **vigente en la fecha de la factura** que
+  empezó más tarde. Así una excepción solo necesita los conceptos que cambian.
+
+### Carga inicial 2026 (de `Tabla_Retencion_Fuente_2026_Octubre.pdf`)
+- **Tabla general 2026** (1 de enero a 31 de diciembre de 2026): UVT $52.374,
+  Decreto 572 de 2025, 50 conceptos verificados fila por fila contra el PDF (base
+  en pesos y tarifa).
+- **Excepción del 8 de mayo al 30 de junio de 2026** (suspensión provisional del
+  Decreto 572): compras generales 27 UVT ($1.414.000) y servicios generales 4 UVT
+  ($209.000). El documento solo indica esas bases; los demás conceptos siguen la
+  tabla general.
+- No incluye (tienen tablas propias): pagos laborales (art. 383 E.T.), dividendos,
+  autorretención especial de renta y **ReteICA**. La ReteICA se sigue aplicando por
+  precedente, sin verificación de base mínima, salvo que su retención tenga base
+  fija configurada.
 
 ## Base de datos
-- `retention_base_tables`: tabla legal por año (global).
+- `retention_base_tables`: tablas legales con vigencia (globales), con la carga inicial 2026.
 - `tax_rates.retention_concept`: concepto de cada retención de la empresa.
 - `providers.purchase_tax_profile.condicion_retencion`: condición confirmada del proveedor.

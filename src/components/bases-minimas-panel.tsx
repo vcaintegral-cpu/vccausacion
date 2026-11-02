@@ -1,6 +1,6 @@
 // Bases mínimas de retención: tabla legal por año (global para todas las
 // empresas) y concepto de cada retención configurada en la empresa activa.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileUp, Plus, Save, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -20,9 +20,10 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { invalidateBulkDeps } from "@/lib/bulk-runner";
 import { cop } from "@/lib/format";
-import { roundCOP } from "@/lib/money";
 import {
   baseMinimaDe,
+  tablasVigentes,
+  uvtAPesos,
   type ConceptoBase,
   type ImpuestoConfigurado,
   type TablaBases,
@@ -93,51 +94,91 @@ export function leerTablaBases(filas: unknown[][], uvt: number): ConceptoBase[] 
   return out;
 }
 
-/** Concepto sugerido para una retención por palabras clave del nombre y, si hay varios, por tarifa. */
+const VACIAS = new Set([
+  "de",
+  "la",
+  "el",
+  "en",
+  "por",
+  "y",
+  "o",
+  "a",
+  "los",
+  "las",
+  "del",
+  "con",
+  "sin",
+  "para",
+  "retencion",
+  "rete",
+  "fuente",
+  "retefuente",
+  "rte",
+  "rtf",
+  "ret",
+  "tarifa",
+  "otros",
+  "otras",
+  "otro",
+  "varios",
+  "general",
+  "generales",
+  "pagos",
+  "valor",
+  "impuesto",
+]);
+const palabras = (t: string) =>
+  sinTildes(t)
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !VACIAS.has(w) && !/^\d/.test(w));
+
+/**
+ * Concepto sugerido para una retención: palabras en común entre el nombre del
+ * impuesto y el concepto (por raíz), más la tarifa igual a la del concepto. Si
+ * el nombre no dice "no declarante", se prefiere el concepto general de
+ * declarantes. Solo sugiere si hay un único mejor candidato.
+ */
 export function sugerirConcepto(
   tax: Pick<ImpuestoConfigurado, "name" | "rate">,
   conceptos: ConceptoBase[],
 ): string | null {
-  const nombre = sinTildes(tax.name);
-  const claves = [
-    "honorario",
-    "comision",
-    "servicio",
-    "arrend",
-    "transporte",
-    "compra",
-    "construc",
-    "rendimiento",
-    "emolumento",
-    "contrato",
-    "consultor",
-    "software",
-    "hotel",
-    "restaurante",
-    "vigilancia",
-    "aseo",
-    "temporal",
-    "combustible",
-    "agricola",
-    "pecuari",
-  ];
-  const clave = claves.find((k) => nombre.includes(k));
-  if (!clave) return null;
-  const candidatos = conceptos.filter((c) => sinTildes(c.concepto).includes(clave));
-  if (candidatos.length <= 1) return candidatos[0]?.id ?? null;
-  const porTarifa = candidatos.filter(
-    (c) =>
+  const delImpuesto = palabras(tax.name);
+  if (!delImpuesto.length) return null;
+  const noDeclarante = /no\s*declarante/.test(sinTildes(tax.name));
+  const raiz = (w: string) => w.slice(0, 5);
+  const puntajes = conceptos.map((c) => {
+    const delConcepto = new Set(palabras(c.concepto).map(raiz));
+    const comunes = delImpuesto.filter((w) => delConcepto.has(raiz(w))).length;
+    if (!comunes) return { c, p: 0 };
+    const tarifa = noDeclarante
+      ? c.tarifa_no_declarante
+      : (c.tarifa_declarante ?? c.tarifa_no_declarante);
+    let p = comunes * 10;
+    if (tarifa != null && Number(tarifa) === Number(tax.rate)) p += 5;
+    else if (
       Number(c.tarifa_declarante) === Number(tax.rate) ||
-      Number(c.tarifa_no_declarante) === Number(tax.rate),
-  );
-  return porTarifa.length === 1 ? porTarifa[0]!.id : null;
+      Number(c.tarifa_no_declarante) === Number(tax.rate)
+    )
+      p += 2;
+    const concepto = sinTildes(c.concepto);
+    if (/general/.test(concepto)) p += 2;
+    if (/no declarante/.test(concepto) !== noDeclarante) p -= 1;
+    return { c, p };
+  });
+  const orden = puntajes.filter((x) => x.p > 0).sort((a, b) => b.p - a.p);
+  if (!orden.length || (orden.length > 1 && orden[0]!.p === orden[1]!.p)) return null;
+  return orden[0]!.c.id;
 }
 
 export function BasesMinimasPanel({ companyId }: { companyId: string }) {
   const queryClient = useQueryClient();
   const archivo = useRef<HTMLInputElement>(null);
-  const anioActual = new Date().getFullYear();
-  const [anio, setAnio] = useState(anioActual);
+  const hoy = new Date().toISOString().slice(0, 10);
+  /** Tabla seleccionada (su fecha "desde") o "nueva". */
+  const [seleccion, setSeleccion] = useState<string>("");
+  const [desde, setDesde] = useState("");
+  const [hasta, setHasta] = useState("");
   const [uvt, setUvt] = useState("");
   const [conceptos, setConceptos] = useState<ConceptoBase[]>([]);
   const [fuente, setFuente] = useState("");
@@ -158,26 +199,45 @@ export function BasesMinimasPanel({ companyId }: { companyId: string }) {
     },
   });
 
-  const tabla = tablas.data?.find((t) => t.year === anio) ?? null;
+  // Por defecto, la tabla general vigente hoy (o la más reciente).
+  const lista = tablas.data ?? [];
   useEffect(() => {
+    if (seleccion || !lista.length) return;
+    const vigente = tablasVigentes(lista, hoy).at(-1) ?? lista[0]!;
+    setSeleccion(vigente.valid_from);
+  }, [lista, seleccion, hoy]);
+  const tabla = lista.find((t) => t.valid_from === seleccion) ?? null;
+  useEffect(() => {
+    if (seleccion === "nueva") return;
+    setDesde(tabla?.valid_from ?? "");
+    setHasta(tabla?.valid_to ?? "");
     setUvt(tabla ? String(tabla.uvt) : "");
     setConceptos(tabla ? tabla.concepts.map((c) => ({ ...c })) : []);
-  }, [tabla]);
+    setFuente("");
+  }, [tabla, seleccion]);
 
-  const anios = useMemo(
-    () =>
-      [
-        ...new Set([
-          anioActual + 1,
-          anioActual,
-          anioActual - 1,
-          ...(tablas.data ?? []).map((t) => t.year),
-        ]),
-      ].sort((a, b) => b - a),
-    [tablas.data, anioActual],
-  );
   const uvtNum = numero(uvt);
-  const tablaEditada: TablaBases = { year: anio, uvt: uvtNum, concepts: conceptos };
+  const anio = Number(desde.slice(0, 4)) || new Date().getFullYear();
+  const tablaEditada: TablaBases = {
+    year: anio,
+    valid_from: desde,
+    valid_to: hasta || null,
+    uvt: uvtNum,
+    concepts: conceptos,
+  };
+  /** Todas las tablas, con la que se edita en lugar de la guardada (para calcular bases en vivo). */
+  const tablasConEdicion = [
+    ...lista.filter((t) => t.valid_from !== seleccion),
+    ...(desde ? [tablaEditada] : []),
+  ];
+  /** Fecha de referencia para la base mínima de las retenciones de la empresa. */
+  const fechaRef = desde && desde <= hoy && (!hasta || hoy <= hasta) ? hoy : desde || hoy;
+  /** Conceptos de todas las tablas (sin repetir), para asociar retenciones. */
+  const todosConceptos = [
+    ...new Map(
+      [...lista.flatMap((t) => t.concepts), ...conceptos].map((c) => [c.id, c] as const),
+    ).values(),
+  ];
 
   async function importar(file: File) {
     try {
@@ -201,6 +261,10 @@ export function BasesMinimasPanel({ companyId }: { companyId: string }) {
       toast.error("Escribe el valor de la UVT del año.");
       return;
     }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(desde) || (hasta && hasta < desde)) {
+      toast.error("Revisa la vigencia: fecha desde obligatoria y hasta igual o posterior.");
+      return;
+    }
     const invalidos = conceptos.filter((c) => !c.concepto.trim() || !(Number(c.base_uvt) >= 0));
     if (invalidos.length) {
       toast.error("Cada concepto necesita nombre y base en UVT (0 si no tiene base).");
@@ -212,19 +276,22 @@ export function BasesMinimasPanel({ companyId }: { companyId: string }) {
       const { error } = await supabase.from("retention_base_tables" as never).upsert(
         {
           year: anio,
+          valid_from: desde,
+          valid_to: hasta || null,
           uvt: uvtNum,
           concepts: conceptos,
           ...(fuente ? { source: fuente } : {}),
           updated_by: auth.user?.id ?? null,
           updated_at: new Date().toISOString(),
         } as never,
-        { onConflict: "year" },
+        { onConflict: "valid_from" },
       );
       if (error) throw error;
       invalidarTablasBases();
       invalidateBulkDeps();
       await queryClient.invalidateQueries({ queryKey: ["tablas-bases"] });
-      toast.success(`Bases mínimas ${anio} guardadas para todas las empresas.`);
+      setSeleccion(desde);
+      toast.success(`Tabla vigente desde ${desde} guardada para todas las empresas.`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible guardar.");
     } finally {
@@ -250,7 +317,7 @@ export function BasesMinimasPanel({ companyId }: { companyId: string }) {
     const sinConcepto = (impuestos.data ?? []).filter((t) => !t.retention_concept);
     let n = 0;
     for (const t of sinConcepto) {
-      const id = sugerirConcepto(t, conceptos);
+      const id = sugerirConcepto(t, todosConceptos);
       if (id) {
         await asignarConcepto(t, id);
         n += 1;
@@ -280,21 +347,43 @@ export function BasesMinimasPanel({ companyId }: { companyId: string }) {
           </div>
           <div className="flex flex-wrap items-end gap-2">
             <div className="space-y-1">
-              <Label className="text-xs">Año</Label>
+              <Label className="text-xs">Tabla</Label>
               <select
                 className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                value={anio}
-                onChange={(e) => setAnio(Number(e.target.value))}
+                value={seleccion}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSeleccion(v);
+                  if (v === "nueva") {
+                    // Parte de la tabla abierta para no reescribir todos los conceptos.
+                    setDesde("");
+                    setHasta("");
+                  }
+                }}
               >
-                {anios.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
+                {lista.map((t) => (
+                  <option key={t.valid_from} value={t.valid_from}>
+                    {t.year} · {t.valid_from} → {t.valid_to ?? "sin fin"}
                   </option>
                 ))}
+                <option value="nueva">+ Nueva tabla o excepción…</option>
               </select>
             </div>
             <div className="w-36 space-y-1">
-              <Label className="text-xs">UVT del año ($)</Label>
+              <Label className="text-xs">Vigente desde</Label>
+              <Input
+                type="date"
+                value={desde}
+                disabled={seleccion !== "nueva"}
+                onChange={(e) => setDesde(e.target.value)}
+              />
+            </div>
+            <div className="w-36 space-y-1">
+              <Label className="text-xs">Hasta</Label>
+              <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} />
+            </div>
+            <div className="w-32 space-y-1">
+              <Label className="text-xs">UVT ($)</Label>
               <Input
                 value={uvt}
                 onChange={(e) => setUvt(e.target.value)}
@@ -316,12 +405,20 @@ export function BasesMinimasPanel({ companyId }: { companyId: string }) {
             </Button>
           </div>
         </div>
-        {!tabla && !conceptos.length ? (
+        {!lista.length && !conceptos.length ? (
           <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
-            No hay tabla para {anio}. Mientras tanto se usa la base mínima fija de cada retención
-            (si la tiene) y se avisa en el borrador.
+            No hay tablas de bases mínimas. Mientras tanto se usa la base mínima fija de cada
+            retención (si la tiene) y se avisa en el borrador.
           </p>
         ) : null}
+        {tabla?.source || fuente ? (
+          <p className="mt-2 text-xs text-muted-foreground">Fuente: {fuente || tabla?.source}</p>
+        ) : null}
+        <p className="mt-2 text-xs text-muted-foreground">
+          Bases en pesos redondeadas al múltiplo de mil más cercano (art. 868 E.T.). Base 0: se
+          retiene sobre cualquier valor. Una excepción (p. ej. del 8 de mayo al 30 de junio de 2026)
+          solo necesita los conceptos que cambian; los demás siguen la tabla general.
+        </p>
 
         <div className="mt-4 overflow-x-auto">
           <Table>
@@ -351,7 +448,7 @@ export function BasesMinimasPanel({ companyId }: { companyId: string }) {
                     />
                   </TableCell>
                   <TableCell className="text-right font-mono text-xs tabular-nums">
-                    {uvtNum > 0 ? cop(roundCOP(Number(c.base_uvt) * uvtNum)) : "—"}
+                    {uvtNum > 0 ? cop(uvtAPesos(c.base_uvt, uvtNum)) : "—"}
                   </TableCell>
                   <TableCell>
                     <Input
@@ -419,13 +516,13 @@ export function BasesMinimasPanel({ companyId }: { companyId: string }) {
             <h2 className="text-sm font-semibold">Concepto de cada retención de la empresa</h2>
             <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
               Asocia cada retención configurada (sincronizada de Siigo) con su concepto legal para
-              conocer su base mínima en {anio}.
+              conocer su base mínima al {fechaRef}.
             </p>
           </div>
           <Button
             variant="outline"
             onClick={() => void sugerirTodos()}
-            disabled={!conceptos.length}
+            disabled={!todosConceptos.length}
           >
             <Sparkles className="size-4" /> Sugerir conceptos
           </Button>
@@ -437,12 +534,12 @@ export function BasesMinimasPanel({ companyId }: { companyId: string }) {
                 <TableHead>Retención</TableHead>
                 <TableHead className="w-20">Tarifa</TableHead>
                 <TableHead>Concepto</TableHead>
-                <TableHead className="text-right">Base mínima {anio}</TableHead>
+                <TableHead className="text-right">Base mínima al {fechaRef}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {(impuestos.data ?? []).map((t) => {
-                const minima = baseMinimaDe(t, `${anio}-01-01`, [tablaEditada]);
+                const minima = baseMinimaDe(t, fechaRef, tablasConEdicion);
                 return (
                   <TableRow key={t.id}>
                     <TableCell>
@@ -459,7 +556,7 @@ export function BasesMinimasPanel({ companyId }: { companyId: string }) {
                         onChange={(e) => void asignarConcepto(t, e.target.value || null)}
                       >
                         <option value="">Sin concepto</option>
-                        {conceptos.map((c) => (
+                        {todosConceptos.map((c) => (
                           <option key={c.id} value={c.id}>
                             {c.concepto}
                           </option>
