@@ -16,6 +16,7 @@ import { ProductsPanel } from "@/components/products-panel";
 import { ProductCategoriesPanel } from "@/components/product-categories-panel";
 import { PaymentTypesPanel } from "@/components/payment-types-panel";
 import { ProviderRulesPanel } from "@/components/provider-rules-panel";
+import { EmpresasAlcancePanel } from "@/components/empresas-alcance-panel";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
@@ -219,7 +220,12 @@ function Admin() {
           <TabsTrigger value="impuestos">Retenciones</TabsTrigger>
           <TabsTrigger value="centros">Centros de costo</TabsTrigger>
           <TabsTrigger value="historial">Historial contable</TabsTrigger>
+          <TabsTrigger value="alcance">Empresas y alcance</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="alcance">
+          {wrap(<EmpresasAlcancePanel />)}
+        </TabsContent>
 
         <TabsContent value="puc">
           {wrap(<PucPanel companyId={companyId} />)}

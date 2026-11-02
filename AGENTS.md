@@ -25,3 +25,27 @@
 - DS numbering: the cuenta de cobro number is the DSEB consecutive Siigo assigns at creation (never computed in-app); batches send one-by-one ordered by operation date then vendor name; duplicates are detected by vendor+date+total and need user confirmation; after creation a numbered "Cuenta de cobro" PDF (src/lib/cc-pdf.server.ts, pdf-lib) is stored in the facturas bucket at <user_id>/<company_id>/soporte-cc/<invoice_id>.pdf and saved to invoices.cc_pdf_path.
 - Support documents are created in Siigo with stamp.send=false and mail.send=false and the app never calls any DIAN send/stamp endpoint; readback stamp status flags unauthorized transmission (invoices.ds_unauthorized_transmission) and stops the batch, because the user transmits to DIAN from Siigo. Batch creation stays limited to one document until company_parameters.ds_batch_enabled is confirmed.
 - After creating a DS, src/lib/ds-finalize.server.ts reads Siigo's consecutive (response → GET by id → date/vendor/total search), stores it as prefix-number using the active DIAN resolution prefix (fallback: Siigo document name), regenerates the cuenta de cobro PDF and PUTs observations only while the document is not yet sent to DIAN, never retrying; the same helper backs "Traer consecutivo de Siigo".
+
+## REGLA PERMANENTE: alcance de cada cambio (empresas)
+
+Mapa completo: `docs/ARQUITECTURA.md`. Perfiles: `src/empresas/README.md`.
+
+1. **Antes de modificar código por una instrucción, preguntar siempre a la usuaria
+   su alcance**: ¿aplica a **todas las empresas** registradas y futuras, o solo a
+   **empresas específicas** (cuáles, por nombre/NIT)? No asumirlo, aunque parezca obvio.
+   Se exceptúan solo las correcciones de errores que dejan el resultado igual para
+   todas (aun así, informar que el cambio es global).
+2. **Todas las empresas** → cambiar el núcleo (`src/lib`, `src/routes`,
+   `src/components`, `src/empresas/global.ts`).
+3. **Empresas específicas** → declarar una función en `src/empresas/global.ts`
+   (`FUNCIONES`), encenderla/apagarla en `src/empresas/<empresa>/perfil.ts` y
+   condicionar el comportamiento con `funcionActiva()` / `usePerfilActivo()`. El
+   comportamiento de las demás empresas no cambia. Empresa sin perfil → crearlo
+   desde `src/empresas/_plantilla/` y registrarlo en `src/empresas/registro.ts`.
+4. Nunca escribir NIT, nombres de empresa ni condiciones `if (empresa === …)`
+   dentro del núcleo: todo lo particular va en el perfil.
+5. Los datos contables de cada empresa (PUC, terceros, reglas por proveedor, IVA,
+   retenciones, Siigo) siguen en la base de datos aislados por `company_id`.
+6. Indicar el alcance elegido en el commit y en la solicitud de cambio
+   ("Alcance: todas las empresas" / "Alcance: LED LIGHTS (900.470.166-4)").
+7. Mantener actualizada la tabla de empresas con perfil en `docs/ARQUITECTURA.md`.
