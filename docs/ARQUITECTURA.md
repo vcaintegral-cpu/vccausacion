@@ -38,14 +38,14 @@ flowchart TD
 
   MOT --> MOT1["Cuentas y asiento<br/>causacion-engine, accounting, puc-hierarchy"]
   MOT --> MOT2["Reglas por proveedor y aprendizaje<br/>provider-rules, learning*, siigo-learning"]
-  MOT --> MOT3["Impuestos<br/>iva-treatment, retenciones*, tax-selection"]
+  MOT --> MOT3["Impuestos<br/>iva-treatment, retenciones*, tax-selection,<br/>precedente-tributario (IVA y retenciones por proveedor, bases mínimas)"]
   MOT --> MOT4["Valores de fuente y duplicados<br/>source-values, invoice-duplicates, draft-*"]
 
   SAL --> SAL1["Siigo: compras, DS, pagos, recuperación<br/>siigo*.ts, ds-finalize, siigo-recovery"]
   SAL --> SAL2["Contai y exportaciones<br/>export"]
   SAL --> SAL3["Pagos / egresos<br/>payments, payment-types"]
 
-  CONF --> CONF1["Administración: PUC, terceros, productos,<br/>reglas, retenciones, centros, historial,<br/>Empresas y alcance"]
+  CONF --> CONF1["Administración: PUC, terceros, productos,<br/>reglas, retenciones, bases mínimas, centros,<br/>historial, Empresas y alcance"]
   CONF --> CONF2["Integraciones: Siigo"]
 
   BASE --> BASE1["Sesión y empresa activa<br/>auth, active-company, app-shell"]
@@ -80,6 +80,9 @@ La base tiene 38 tablas (según `src/integrations/supabase/types.ts`):
   desde el código (revisar en Lovable → Cloud → Database).
 - `companies` (la empresa misma) se protege por membresía; `profiles` por usuario;
   `siigo_credentials` usa el ID de la empresa como llave y solo la lee el servidor.
+
+Tabla legal global (no es por empresa): `retention_base_tables` (UVT y bases
+mínimas por año).
 
 Configuración: `companies`, `company_parameters`, `purchase_import_settings`,
 `ai_settings`, `puc_accounts`, `providers`, `provider_rules`, `accounting_rules`,

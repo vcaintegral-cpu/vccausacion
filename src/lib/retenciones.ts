@@ -1,7 +1,10 @@
 // Motor único de retenciones de la causación.
 //
 // Reglas invariables:
-// 1. Una retención SOLO existe si la factura la reporta con valor > 0.
+// 1. Este módulo resuelve las retenciones que la factura REPORTA (valor > 0).
+//    Las que el documento no trae las decide el precedente tributario del
+//    proveedor (src/lib/precedente-tributario.ts): retención histórica en Siigo
+//    + base mínima del concepto, o confirmación de la condición del proveedor.
 // 2. La cuenta contable de cada retención proviene EXCLUSIVAMENTE del impuesto
 //    configurado de ese tipo (Administración → Retenciones) y se resuelve al
 //    auxiliar operativo del PUC de la empresa.
