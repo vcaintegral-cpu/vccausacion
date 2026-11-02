@@ -41,6 +41,8 @@ import {
   type TaxLike,
 } from "@/lib/retenciones-multi";
 import { RetencionesPanel } from "@/components/retenciones-panel";
+import { CondicionTributariaPanel } from "@/components/condicion-tributaria-panel";
+import type { ImpuestoConfigurado } from "@/lib/precedente-tributario";
 import { aprenderDeCausacion, buscarRegla, fetchCompanyRules } from "@/lib/learning-rules";
 import {
   applyIvaTreatment,
@@ -1667,6 +1669,24 @@ function Causar() {
               />
             </dl>
           </div>
+
+          {companyId && header.provider_nit ? (
+            <CondicionTributariaPanel
+              companyId={companyId}
+              nit={header.provider_nit}
+              nombre={header.provider_name}
+              fecha={header.issue_date}
+              baseGravable={baseGravable}
+              ivaTotal={ivaTotal}
+              taxes={impuestos as unknown as ImpuestoConfigurado[]}
+              puc={(config?.accounts ?? []) as PucAccount[]}
+              blocks={retBlocks}
+              onApply={(next) => {
+                setRetTocado(true);
+                setRetBlocks(next);
+              }}
+            />
+          ) : null}
 
           <RetencionesPanel
             blocks={retBlocks}

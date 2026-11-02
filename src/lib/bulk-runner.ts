@@ -20,6 +20,8 @@ import { excelDocKey, excelDocToExtracted } from "@/lib/excel-invoice-adapter";
 import { fetchProviderRules } from "@/lib/provider-rules";
 import { fetchIvaConfig } from "@/lib/iva-treatment";
 import { fetchCompanyKnowledge, type CompanyKnowledge } from "@/lib/causacion-engine";
+import { cargarPrecedentes, cargarTablasBases, invalidarPrecedentes, invalidarTablasBases } from "@/lib/precedente-tributario.data";
+import type { ImpuestoConfigurado } from "@/lib/precedente-tributario";
 import type { Rule, TaxRate } from "@/lib/accounting";
 import {
   ACTIVE_STATUSES,
@@ -160,12 +162,19 @@ export async function loadDeps(companyId: string): Promise<Deps> {
       ),
       fetchCompanyKnowledge(companyId),
       supabase.from("companies").select("id,name,nit,uses_cost_centers,default_payable_account").eq("id",companyId).single(),
-      fetchAll((from,to) => supabase.from("providers").select("nit,default_expense_account,default_payable_account,default_iva_account").eq("company_id",companyId).range(from,to)),
+      fetchAll((from,to) => supabase.from("providers").select("nit,default_expense_account,default_payable_account,default_iva_account,purchase_tax_profile").eq("company_id",companyId).range(from,to)),
       fetchProviderRules(companyId),
       supabase.auth.getUser(),
     ]);
     if (company.error || !company.data || !auth.data.user) throw new Error("No se pudieron cargar los parámetros de la empresa.");
     await fetchIvaConfig(companyId);
+    // Precedente tributario (IVA y retenciones sincronizados con Siigo) y bases
+    // mínimas: se precargan para el lote y quedan en una caché de 5 minutos, de
+    // modo que lo sincronizado después con Siigo se aprende sin recargar la app.
+    await Promise.all([
+      cargarPrecedentes(companyId, (taxes.data ?? []) as unknown as ImpuestoConfigurado[]),
+      cargarTablasBases(),
+    ]);
     const config: BulkConfig = {
       batch: { company: company.data, providers: Object.fromEntries(providers.map((p) => [p.nit,p])), providerRules, userId: auth.data.user.id },
       accounts,
@@ -184,6 +193,8 @@ export async function loadDeps(companyId: string): Promise<Deps> {
 
 /** Fuerza recarga de catálogos (tras importar PUC, productos, impuestos, etc.). */
 export function invalidateBulkDeps(companyId?: string) {
+  invalidarPrecedentes(companyId);
+  invalidarTablasBases();
   if (companyId) depsCache.delete(companyId);
   else depsCache.clear();
 }
