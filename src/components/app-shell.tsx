@@ -1,7 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, type ReactNode } from "react";
-import { Brain, Building2, ClipboardCheck, FileSignature, FileUp, FolderOpen, LayoutDashboard, ListChecks, LogOut, Plug, Scale, Settings2 } from "lucide-react";
+import { Brain, Building2, ClipboardCheck, FileSignature, FileUp, FolderOpen, LayoutDashboard, ListChecks, LogOut, Plug, Scale, Settings2, type LucideIcon } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { BackgroundJobsPanel } from "@/components/background-jobs";
@@ -9,20 +9,23 @@ import { resumeBackgroundUploads } from "@/lib/bulk-runner";
 import { setActiveCompany, setCompanyLocked, useActiveCompany, useCompanyLocked } from "@/lib/active-company";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { moduloActivo } from "@/empresas/registro";
+import type { ModuloId } from "@/empresas/tipos";
 
+// Cada entrada se puede apagar por empresa desde su perfil (src/empresas/<empresa>/perfil.ts).
 const NAV = [
-  { to: "/panel", label: "Panel", icon: LayoutDashboard },
-  { to: "/causar", label: "Causar factura", icon: FileUp },
-  { to: "/borradores", label: "Borradores", icon: ClipboardCheck },
-  { to: "/facturas", label: "Historial", icon: ListChecks },
-  { to: "/documentos-soporte", label: "Documentos soporte", icon: FileSignature },
-  { to: "/pendientes-siigo", label: "Pendientes Siigo", icon: Scale },
-  { to: "/documentos", label: "Documentos", icon: FolderOpen },
-  { to: "/aprendizaje", label: "Aprendizaje contable", icon: Brain },
-  { to: "/integraciones", label: "Integraciones", icon: Plug },
-  { to: "/admin", label: "Administración", icon: Settings2 },
-  { to: "/empresas", label: "Empresas", icon: Building2 },
-] as const;
+  { to: "/panel", label: "Panel", icon: LayoutDashboard, modulo: "panel" },
+  { to: "/causar", label: "Causar factura", icon: FileUp, modulo: "causar" },
+  { to: "/borradores", label: "Borradores", icon: ClipboardCheck, modulo: "borradores" },
+  { to: "/facturas", label: "Historial", icon: ListChecks, modulo: "historial" },
+  { to: "/documentos-soporte", label: "Documentos soporte", icon: FileSignature, modulo: "documentos_soporte" },
+  { to: "/pendientes-siigo", label: "Pendientes Siigo", icon: Scale, modulo: "pendientes_siigo" },
+  { to: "/documentos", label: "Documentos", icon: FolderOpen, modulo: "documentos" },
+  { to: "/aprendizaje", label: "Aprendizaje contable", icon: Brain, modulo: "aprendizaje" },
+  { to: "/integraciones", label: "Integraciones", icon: Plug, modulo: "integraciones" },
+  { to: "/admin", label: "Administración", icon: Settings2, modulo: "administracion" },
+  { to: "/empresas", label: "Empresas", icon: Building2, modulo: "empresas" },
+] as const satisfies ReadonlyArray<{ to: string; label: string; icon: LucideIcon; modulo: ModuloId }>;
 
 export function useCompanies() {
   return useQuery({
@@ -41,6 +44,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const active = useActiveCompany();
   const locked = useCompanyLocked();
   const { data: companies } = useCompanies();
+  const nitActivo = companies?.find((c) => c.id === active)?.nit ?? null;
+  const nav = NAV.filter((item) => moduloActivo(nitActivo, item.modulo));
 
   useEffect(() => {
     if (!locked && companies && companies.length > 0 && !companies.some((c) => c.id === active)) {
@@ -71,7 +76,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <p className="mt-1 text-base font-semibold text-sidebar-accent-foreground">Asistente Inteligente</p>
         </div>
         <nav className="flex-1 space-y-1 p-3">
-          {NAV.map((item) => (
+          {nav.map((item) => (
             <Link
               key={item.to}
               to={item.to}
@@ -93,7 +98,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-5 py-3">
           <div className="flex items-center gap-2 overflow-x-auto lg:hidden">
-            {NAV.map((item) => (
+            {nav.map((item) => (
               <Link
                 key={item.to}
                 to={item.to}
