@@ -5,6 +5,7 @@ import { telefonoSiigo } from "./siigo-telefono";
 import {
   ajustarPrecisionRenglones,
   dividirParaRedondeoIva,
+  motivoSinAjuste,
   purchasePayloadErrors,
   retefuenteRows,
   retentionRowsExcluding,
@@ -194,5 +195,55 @@ describe("dividirParaRedondeoIva (ARABESQUE FV-10797: IVA origen 282413.45, Siig
   it("con Retefuente no se divide (la retención se ubica por renglón)", () => {
     const r = ajustarPrecisionRenglones(renglon, [IVA19], esperado, { permitirFusion: false });
     expect(r.items).toEqual(renglon);
+  });
+});
+
+describe("productos de inventario (conservan unidades y valor total)", () => {
+  const esperado = { subtotal: 1486386.55, iva: 282413.45, impoconsumo: 0 };
+  const unidades = (lista: AdaptableItem[]) => lista.reduce((a, it) => a + it.quantity, 0);
+  const valor = (lista: AdaptableItem[]) =>
+    Math.round(lista.reduce((a, it) => a + it.quantity * it.price * 100, 0));
+
+  it("FV-10797 como producto de 10 unidades: se envía 9 + 1 y cuadra el IVA del proveedor", () => {
+    const items = [item({ type: "Product", code: "FALDA", quantity: 10, price: 148638.655 })];
+    const r = ajustarPrecisionRenglones(items, [IVA19], esperado, { permitirFusion: true });
+    expect(purchasePayloadErrors(r.items, [IVA19], esperado)).toEqual([]);
+    expect(r.items.every((it) => it.type === "Product" && it.code === "FALDA")).toBe(true);
+    expect(unidades(r.items)).toBe(10);
+    expect(valor(r.items)).toBe(148638655);
+  });
+
+  it("producto de 1 unidad: no se toca y el mensaje explica por qué", () => {
+    const items = [item({ type: "Product", code: "FALDA", quantity: 1, price: 1486386.55 })];
+    const r = ajustarPrecisionRenglones(items, [IVA19], esperado, { permitirFusion: true });
+    expect(r.items).toEqual(items);
+    expect(motivoSinAjuste(r.items, [IVA19], esperado, true)).toContain(
+      "productos de inventario de 1 unidad",
+    );
+  });
+
+  it("con Retefuente no se reorganiza y el mensaje lo explica", () => {
+    const items = [item({ price: 1486386.55 })];
+    expect(
+      ajustarPrecisionRenglones(items, [IVA19], esperado, { permitirFusion: false }).items,
+    ).toEqual(items);
+    expect(motivoSinAjuste(items, [IVA19], esperado, false)).toContain("tiene Retefuente");
+  });
+
+  it("diferencias grandes no se ajustan solas", () => {
+    expect(
+      motivoSinAjuste([item({ price: 1486386.55 })], [IVA19], { ...esperado, iva: 282414 }, true),
+    ).toContain("supera el ajuste automático");
+  });
+
+  it("sin diferencia no hay motivo", () => {
+    expect(
+      motivoSinAjuste(
+        [item({ price: 133831.93 })],
+        [IVA19],
+        { subtotal: 133831.93, iva: 25428.07, impoconsumo: 0 },
+        true,
+      ),
+    ).toBeNull();
   });
 });

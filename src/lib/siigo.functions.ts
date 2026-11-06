@@ -1,5 +1,5 @@
 import { effectiveSource, validateStoredJournal } from "@/lib/source-values";
-import { adaptPurchaseItems, ajustarPrecisionRenglones, capitalizedIvaRow, retentionRowsExcluding, purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, resolvePurchaseInc } from "@/lib/siigo-purchase-validation";
+import { adaptPurchaseItems, ajustarPrecisionRenglones, capitalizedIvaRow, motivoSinAjuste, retentionRowsExcluding, purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, resolvePurchaseInc } from "@/lib/siigo-purchase-validation";
 import { toCents } from "@/lib/money";
 import { esCeroCOP, roundCOP } from "@/lib/money";
 import { createServerFn } from "@tanstack/react-start";
@@ -1461,11 +1461,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // valor exacto y, si aún no cuadra, renglones de la misma cuenta agrupados. La
       // agrupación no se usa si hay Retefuente ni renglones excluidos de retención,
       // porque la retención se ubica por renglón (p. ej. solo sobre el AIU).
+      const permitirAjustePrecision = renglonesSinRetencion.size === 0 && !(Number(inv.retefuente ?? 0) > 0);
       const precision = ajustarPrecisionRenglones(
         items,
         purchaseTaxes,
         { subtotal, iva, impoconsumo },
-        { permitirFusion: renglonesSinRetencion.size === 0 && !(Number(inv.retefuente ?? 0) > 0) },
+        { permitirFusion: permitirAjustePrecision },
       );
       if (precision.notas.length) {
         items.splice(0, items.length, ...precision.items);
@@ -2088,7 +2089,10 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           })),
         });
       const forecastErrors = purchasePayloadErrors(itemsConRetencion, purchaseTaxes, { subtotal, iva, impoconsumo });
-      if (forecastErrors.length) throw new Error(forecastErrors.join("\n"));
+      if (forecastErrors.length) {
+        const motivo = motivoSinAjuste(itemsConRetencion, purchaseTaxes, { subtotal, iva, impoconsumo }, permitirAjustePrecision);
+        throw new Error([...forecastErrors, ...(motivo ? [motivo] : [])].join("\n"));
+      }
       const payload = construirPayload(totalDocumentoSiigo);
       siigoAttemptTrace = {
         ...siigoAttemptTrace,
