@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { telefonoSiigo } from "./siigo-telefono";
 import {
   ajustarPrecisionRenglones,
+  dividirParaRedondeoIva,
   purchasePayloadErrors,
   retefuenteRows,
   retentionRowsExcluding,
@@ -85,7 +86,16 @@ describe("ajustarPrecisionRenglones (centavos de Siigo)", () => {
     ];
     const esperado = { subtotal: 300.09, iva: 57.02, impoconsumo: 0 };
     const r = ajustarPrecisionRenglones(items, [IVA19], esperado, { permitirFusion: true });
-    expect(r.items).toEqual(items);
+    // Ninguna fila mezcla cuentas: la base de cada cuenta se conserva y el producto no se toca.
+    const porCuenta = (lista: AdaptableItem[]) =>
+      lista.reduce<Record<string, number>>((acc, it) => {
+        const k = `${it.type}|${it.account_code}`;
+        acc[k] = Math.round((acc[k] ?? 0) + it.price * it.quantity * 100);
+        return acc;
+      }, {});
+    expect(porCuenta(r.items)).toEqual(porCuenta(items));
+    expect(r.items.filter((it) => it.type === "Product")).toEqual([items[2]]);
+    expect(purchasePayloadErrors(r.items, [IVA19], esperado)).toEqual([]);
     const sinFusion = ajustarPrecisionRenglones(
       [item({ price: 100.03 }), item({ price: 100.03 })],
       [IVA19],
@@ -127,5 +137,62 @@ describe("retefuenteRows (ATILA: retención 2 % solo sobre el AIU en varios reng
   it("comportamiento anterior intacto", () => {
     expect(retefuenteRows([4615482, 461548], 2, 9230.96)).toEqual([1]);
     expect(retefuenteRows([2006900, 120414], 2, 42546.28)).toEqual([0, 1]);
+  });
+});
+
+describe("dividirParaRedondeoIva (ARABESQUE FV-10797: IVA origen 282413.45, Siigo 282413.44)", () => {
+  const esperado = { subtotal: 1486386.55, iva: 282413.45, impoconsumo: 0 };
+  const renglon = [
+    item({
+      price: 1486386.55,
+      account_code: "73451501",
+      code: "73451501",
+      description: "Faldas vestuario",
+    }),
+  ];
+
+  it("divide el renglón en dos de la misma cuenta para reproducir el IVA del proveedor", () => {
+    expect(purchasePayloadErrors(renglon, [IVA19], esperado)[0]).toContain(
+      "IVA, origen 282413.45, Siigo calcularía 282413.44",
+    );
+    const r = ajustarPrecisionRenglones(renglon, [IVA19], esperado, { permitirFusion: true });
+    expect(purchasePayloadErrors(r.items, [IVA19], esperado)).toEqual([]);
+    expect(r.items).toHaveLength(2);
+    expect(r.items.every((it) => it.account_code === "73451501" && it.tax_ids.join() === "1")).toBe(
+      true,
+    );
+    // La base total es exactamente la de la fuente.
+    expect(Math.round(r.items.reduce((s, it) => s + it.price * 100, 0))).toBe(148638655);
+    expect(r.notas[0]).toContain(
+      "dividido en dos para reproducir el IVA redondeado del proveedor (+0,01)",
+    );
+  });
+
+  it("también cuando el proveedor redondeó hacia abajo", () => {
+    // 19 % × 100,03 = 19,0057 → Siigo 19,01; proveedor 19,00.
+    const r = dividirParaRedondeoIva([item({ price: 100.03 })], [IVA19], {
+      subtotal: 100.03,
+      iva: 19.0,
+      impoconsumo: 0,
+    });
+    expect(r).not.toBeNull();
+    expect(
+      purchasePayloadErrors(r!.items, [IVA19], { subtotal: 100.03, iva: 19.0, impoconsumo: 0 }),
+    ).toEqual([]);
+  });
+
+  it("no actúa con diferencias grandes, con subtotal distinto ni sobre productos de inventario", () => {
+    expect(dividirParaRedondeoIva(renglon, [IVA19], { ...esperado, iva: 282413.6 })).toBeNull();
+    expect(
+      dividirParaRedondeoIva(renglon, [IVA19], { ...esperado, subtotal: 1486386.56 }),
+    ).toBeNull();
+    expect(
+      dividirParaRedondeoIva([item({ type: "Product", price: 1486386.55 })], [IVA19], esperado),
+    ).toBeNull();
+  });
+
+  it("con Retefuente no se divide (la retención se ubica por renglón)", () => {
+    const r = ajustarPrecisionRenglones(renglon, [IVA19], esperado, { permitirFusion: false });
+    expect(r.items).toEqual(renglon);
   });
 });

@@ -257,11 +257,15 @@ export function ajustarPrecisionRenglones<T extends AdaptableItem>(
     return { ...it, quantity: 1, price: base, discount: 0, description: `${it.description} (cant. ${it.quantity})` };
   });
   if (!purchasePayloadErrors(exacto, taxes, expected).length || !options.permitirFusion) return { items: exacto, notas };
+  const conDivision = (base: T[], previas: string[]) => {
+    const dividido = dividirParaRedondeoIva(base, taxes, expected);
+    return dividido ? { items: dividido.items, notas: [...previas, ...dividido.notas] } : null;
+  };
 
   const clave = (it: T) => `${it.account_code}|${[...it.tax_ids].map(String).sort().join(",")}`;
   const grupos = new Map<string, T[]>();
   for (const it of exacto) if (it.type === "Account") grupos.set(clave(it), [...(grupos.get(clave(it)) ?? []), it]);
-  if (![...grupos.values()].some((g) => g.length > 1)) return { items: exacto, notas };
+  if (![...grupos.values()].some((g) => g.length > 1)) return conDivision(exacto, notas) ?? { items: exacto, notas };
   const fusionados: T[] = [];
   const notasFusion: string[] = [];
   const hechos = new Set<string>();
@@ -276,7 +280,66 @@ export function ajustarPrecisionRenglones<T extends AdaptableItem>(
     fusionados.push({ ...it, quantity: 1, price: base, discount: 0, description: `${it.description} y ${grupo.length - 1} renglón(es) más de la misma cuenta` });
     notasFusion.push(`${grupo.length} renglones de la cuenta ${it.account_code} agrupados (IVA sobre su total).`);
   }
-  return purchasePayloadErrors(fusionados, taxes, expected).length
-    ? { items: exacto, notas }
-    : { items: fusionados, notas: [...notas, ...notasFusion] };
+  if (!purchasePayloadErrors(fusionados, taxes, expected).length) return { items: fusionados, notas: [...notas, ...notasFusion] };
+  return conDivision(fusionados, [...notas, ...notasFusion]) ?? conDivision(exacto, notas) ?? { items: exacto, notas };
+}
+
+/** IVA en centavos que Siigo calcularía: renglón por renglón, redondeado a 2 decimales. */
+function ivaSiigoCentavos(items: AdaptableItem[], taxes: PurchaseTax[]): number {
+  let iva = 0;
+  for (const it of items) {
+    for (const id of it.tax_ids) {
+      const tax = taxes.find((t) => String(t.id) === String(id) && t.active !== false);
+      if (tax && isIva(tax)) iva += toCents((baseOf(it) * Number(tax.percentage ?? 0)) / 100);
+    }
+  }
+  return iva;
+}
+
+/**
+ * El proveedor redondeó el IVA distinto a como lo hace Siigo (p. ej. $282.413,45
+ * contra 19 % × $1.486.386,55 = $282.413,4445). Siigo redondea renglón por renglón,
+ * así que un renglón de cuenta se divide en dos de la MISMA cuenta e impuestos,
+ * con el corte que hace que sus dos redondeos sumen el IVA de la fuente. La base,
+ * el IVA, el total y el asiento quedan idénticos. Solo para hasta 3 centavos.
+ */
+export function dividirParaRedondeoIva<T extends AdaptableItem>(
+  items: T[],
+  taxes: PurchaseTax[],
+  expected: { subtotal: number; iva: number; impoconsumo: number },
+): { items: T[]; notas: string[] } | null {
+  const subtotal = items.reduce((a, it) => a + toCents(baseOf(it)), 0);
+  if (subtotal !== toCents(expected.subtotal)) return null;
+  let diff = toCents(expected.iva) - ivaSiigoCentavos(items, taxes);
+  if (diff === 0 || Math.abs(diff) > 3) return null;
+  let out = [...items];
+  const notas: string[] = [];
+  while (diff !== 0) {
+    const paso = Math.sign(diff);
+    // Renglón de cuenta con un solo IVA, el de mayor base.
+    const candidatos = out
+      .map((it, i) => ({ it, i, ivas: it.tax_ids.map((id) => taxes.find((t) => String(t.id) === String(id) && t.active !== false)).filter((t): t is PurchaseTax => !!t && isIva(t)) }))
+      .filter((c) => c.it.type === "Account" && c.ivas.length === 1)
+      .sort((a, b) => baseOf(b.it) - baseOf(a.it));
+    let hecho = false;
+    for (const { it, i, ivas } of candidatos) {
+      const pct = Number(ivas[0]!.percentage ?? 0);
+      const base = toCents(baseOf(it));
+      const ivaRenglon = toCents((base / 100) * pct / 100);
+      for (let k = 1; k < Math.min(base, 100000); k++) {
+        const a = toCents((k / 100) * pct / 100);
+        const b = toCents(((base - k) / 100) * pct / 100);
+        if (a + b - ivaRenglon !== paso) continue;
+        const parte = (cents: number, n: number) => ({ ...it, quantity: 1, price: cents / 100, discount: 0, description: `${it.description} (parte ${n}/2, redondeo IVA)` });
+        out = [...out.slice(0, i), parte(base - k, 1), parte(k, 2), ...out.slice(i + 1)];
+        notas.push(`Renglón de la cuenta ${it.account_code} dividido en dos para reproducir el IVA redondeado del proveedor (${paso > 0 ? "+" : "−"}0,01).`);
+        hecho = true;
+        break;
+      }
+      if (hecho) break;
+    }
+    if (!hecho) return null;
+    diff -= paso;
+  }
+  return purchasePayloadErrors(out, taxes, expected).length ? null : { items: out, notas };
 }
