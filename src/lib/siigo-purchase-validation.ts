@@ -189,13 +189,34 @@ export function adaptPurchaseItems<T extends AdaptableItem>(
   return { items: out, incAsCost: incAsCost / 100, adjustment: Math.abs(diff) <= 100 ? diff / 100 : 0, providerRounding: 0, notes };
 }
 
-/** Retefuente goes only on the rows whose bases reproduce the source value exactly. */
-export function retefuenteRows(bases: number[], pct: number, target: number): number[] {
+const AIU = /\b(administraci[oó]n|utilidad(es)?|imprevistos?|a\.?\s?i\.?\s?u\.?)\b/i;
+
+/**
+ * Retefuente goes only on the rows whose bases reproduce the source value exactly:
+ * all rows, a single row, the AIU rows (administración, imprevistos, utilidad) or,
+ * with few rows, the smallest exact combination. Otherwise all rows (the caller
+ * then detects the difference and does not send).
+ */
+export function retefuenteRows(bases: number[], pct: number, target: number, descriptions: string[] = []): number[] {
   const all = bases.map((_, i) => i);
   const per = bases.map(b => toCents(b * pct / 100));
-  if (per.reduce((a, b) => a + b, 0) === toCents(target)) return all;
-  const single = per.findIndex(c => c === toCents(target));
-  return single >= 0 ? [single] : all;
+  const goal = toCents(target);
+  const sum = (rows: number[]) => rows.reduce((a, i) => a + per[i]!, 0);
+  if (sum(all) === goal) return all;
+  const single = per.findIndex(c => c === goal);
+  if (single >= 0) return [single];
+  const aiu = all.filter(i => per[i]! > 0 && AIU.test(descriptions[i] ?? ""));
+  if (aiu.length && sum(aiu) === goal) return aiu;
+  const candidates = all.filter(i => per[i]! > 0);
+  if (candidates.length <= 12) {
+    let best: number[] | null = null;
+    for (let mask = 1; mask < 1 << candidates.length; mask++) {
+      const rows = candidates.filter((_, k) => mask & (1 << k));
+      if (sum(rows) === goal && (!best || rows.length < best.length)) best = rows;
+    }
+    if (best) return best;
+  }
+  return all;
 }
 
 /** IVA capitalizado: un renglón adicional sin impuestos en la cuenta del activo; nunca lleva retención. */
@@ -204,7 +225,58 @@ export function capitalizedIvaRow<T extends AdaptableItem>(ref: T, account: stri
 }
 
 /** Rows that receive a line retention, excluding rows that must never carry one. */
-export function retentionRowsExcluding(bases: number[], pct: number, target: number, excluded: Set<number>): number[] {
+export function retentionRowsExcluding(bases: number[], pct: number, target: number, excluded: Set<number>, descriptions: string[] = []): number[] {
   const masked = bases.map((b, i) => (excluded.has(i) ? 0 : b));
-  return retefuenteRows(masked, pct, target).filter(i => !excluded.has(i));
+  return retefuenteRows(masked, pct, target, descriptions).filter(i => !excluded.has(i));
+}
+
+/**
+ * Siigo calcula cada renglón con 2 decimales (cantidad × precio unitario y el IVA
+ * renglón por renglón). La factura del proveedor calcula con más decimales o sobre
+ * el total, y pueden quedar centavos de diferencia que bloquean el envío. Sin
+ * cambiar ningún valor de la fuente:
+ * 1. Renglones de cuenta con cantidad ≠ 1 cuyo producto no da su base exacta → se
+ *    envían como cantidad 1 por su base exacta (la cantidad queda en la descripción).
+ * 2. Si el IVA aún no cuadra y se permite, se agrupan los renglones de cuenta con la
+ *    misma cuenta e impuestos (mismo asiento contable, IVA calculado sobre el total).
+ * Los renglones de producto (inventario) nunca se tocan.
+ */
+export function ajustarPrecisionRenglones<T extends AdaptableItem>(
+  items: T[],
+  taxes: PurchaseTax[],
+  expected: { subtotal: number; iva: number; impoconsumo: number },
+  options: { permitirFusion: boolean },
+): { items: T[]; notas: string[] } {
+  if (!purchasePayloadErrors(items, taxes, expected).length) return { items, notas: [] };
+  const notas: string[] = [];
+  const exacto = items.map((it, i) => {
+    if (it.type !== "Account" || Number(it.quantity) === 1) return it;
+    const base = roundCOP(Number(it.quantity) * Number(it.price) - Number(it.discount || 0));
+    if (toCents(baseOf(it)) === toCents(base)) return it;
+    notas.push(`Renglón ${i + 1}: cantidad ${it.quantity} enviada como 1 por su valor exacto ${base}.`);
+    return { ...it, quantity: 1, price: base, discount: 0, description: `${it.description} (cant. ${it.quantity})` };
+  });
+  if (!purchasePayloadErrors(exacto, taxes, expected).length || !options.permitirFusion) return { items: exacto, notas };
+
+  const clave = (it: T) => `${it.account_code}|${[...it.tax_ids].map(String).sort().join(",")}`;
+  const grupos = new Map<string, T[]>();
+  for (const it of exacto) if (it.type === "Account") grupos.set(clave(it), [...(grupos.get(clave(it)) ?? []), it]);
+  if (![...grupos.values()].some((g) => g.length > 1)) return { items: exacto, notas };
+  const fusionados: T[] = [];
+  const notasFusion: string[] = [];
+  const hechos = new Set<string>();
+  for (const it of exacto) {
+    if (it.type !== "Account") { fusionados.push(it); continue; }
+    const k = clave(it);
+    if (hechos.has(k)) continue;
+    hechos.add(k);
+    const grupo = grupos.get(k)!;
+    if (grupo.length === 1) { fusionados.push(it); continue; }
+    const base = roundCOP(grupo.reduce((s, g) => s + baseOf(g), 0));
+    fusionados.push({ ...it, quantity: 1, price: base, discount: 0, description: `${it.description} y ${grupo.length - 1} renglón(es) más de la misma cuenta` });
+    notasFusion.push(`${grupo.length} renglones de la cuenta ${it.account_code} agrupados (IVA sobre su total).`);
+  }
+  return purchasePayloadErrors(fusionados, taxes, expected).length
+    ? { items: exacto, notas }
+    : { items: fusionados, notas: [...notas, ...notasFusion] };
 }

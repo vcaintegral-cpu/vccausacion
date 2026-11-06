@@ -1,5 +1,5 @@
 import { effectiveSource, validateStoredJournal } from "@/lib/source-values";
-import { adaptPurchaseItems, capitalizedIvaRow, retentionRowsExcluding, purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, resolvePurchaseInc } from "@/lib/siigo-purchase-validation";
+import { adaptPurchaseItems, ajustarPrecisionRenglones, capitalizedIvaRow, retentionRowsExcluding, purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, resolvePurchaseInc } from "@/lib/siigo-purchase-validation";
 import { toCents } from "@/lib/money";
 import { esCeroCOP, roundCOP } from "@/lib/money";
 import { createServerFn } from "@tanstack/react-start";
@@ -1457,6 +1457,21 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const impoconsumo = r2(
         Number(inv.impoconsumo ?? 0) - adaptacion.incAsCost,
       );
+      // Centavos por la precisión de Siigo (2 decimales por renglón): cantidad 1 por el
+      // valor exacto y, si aún no cuadra, renglones de la misma cuenta agrupados. La
+      // agrupación no se usa si hay Retefuente ni renglones excluidos de retención,
+      // porque la retención se ubica por renglón (p. ej. solo sobre el AIU).
+      const precision = ajustarPrecisionRenglones(
+        items,
+        purchaseTaxes,
+        { subtotal, iva, impoconsumo },
+        { permitirFusion: renglonesSinRetencion.size === 0 && !(Number(inv.retefuente ?? 0) > 0) },
+      );
+      if (precision.notas.length) {
+        items.splice(0, items.length, ...precision.items);
+        adaptacion.notes.push(...precision.notas);
+        console.log("[siigo][precision]", precision.notas);
+      }
 
       const totalesSiigo = calculateSiigoPurchaseTotals({
         subtotal,
@@ -1885,7 +1900,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         const pct = porcentajePorTaxId.get(String(r.id)) ?? 0;
         const enRenglon = r.kind === "retefuente";
         if (enRenglon) {
-          const filas = retentionRowsExcluding(basesRenglones.map((b) => b.base), pct, r.value, renglonesSinRetencion);
+          const filas = retentionRowsExcluding(basesRenglones.map((b) => b.base), pct, r.value, renglonesSinRetencion, items.map((it) => it.description));
           renglonesPorRetencion.set(String(r.id), new Set(filas));
         }
         const renglonesRet = enRenglon ? basesRenglones.filter((_, i) => renglonesPorRetencion.get(String(r.id))?.has(i)) : basesRenglones.filter((_, i) => !renglonesSinRetencion.has(i));
