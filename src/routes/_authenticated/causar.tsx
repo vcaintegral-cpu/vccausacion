@@ -1,5 +1,6 @@
 import { captureSource, sourceFromRaw, sourceErrors, alignJournalToSource, type SourceValues } from "@/lib/source-values";
 import { SourceValuesCorrection } from "@/components/source-values-correction";
+import { usePerfilActivo } from "@/empresas/use-perfil";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -712,6 +713,8 @@ function Causar() {
     return payableBase ? applyPucToPayable(payableBase, (config?.accounts ?? []) as PucAccount[]) : null;
   }, [payableBase, config?.accounts, payableManual]);
   // El impoconsumo se registra en la cuenta auxiliar configurada, nunca en la mayor.
+  // Perfil de la empresa: el INC se suma al gasto/costo (p. ej. LED LIGHTS).
+  const incAlGasto = usePerfilActivo().funcion("impoconsumo_al_gasto");
   const impoconsumoCuenta = useMemo(
     () => resolveImpoconsumoAccount(impuestos as TaxRecord[], (config?.accounts ?? []) as PucAccount[]),
     [impuestos, config?.accounts],
@@ -727,8 +730,9 @@ function Causar() {
         ivaDetalle: ivaDetalle,
         payableAccount: payable,
         impoconsumoAccount: impoconsumoCuenta,
+        impoconsumoAlGasto: incAlGasto,
       })),
-    [source, lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaDetalle, costPolicy, payable, impoconsumoCuenta],
+    [source, lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaDetalle, costPolicy, payable, impoconsumoCuenta, incAlGasto],
   );
   const operationalJournal = useMemo(() => {
     const puc = (config?.accounts ?? []) as PucAccount[];

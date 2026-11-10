@@ -51,8 +51,11 @@ describe("registro de empresas", () => {
 });
 
 describe("alcance global vs. empresa", () => {
-  it("hoy ninguna empresa cambia nada: todo sale del núcleo global", () => {
-    for (const p of PERFILES) expect(diferenciasConGlobal(p)).toEqual([]);
+  it("solo LED LIGHTS se aparta del núcleo global, y únicamente en el impoconsumo al gasto", () => {
+    for (const p of PERFILES) {
+      const dif = diferenciasConGlobal(p).map((d) => [d.tipo, d.clave, d.empresa]);
+      expect(dif).toEqual(p.nit === "900470166" ? [["función", "impoconsumo_al_gasto", true]] : []);
+    }
     for (const modulo of Object.keys(MODULOS) as Array<keyof typeof MODULOS>) {
       expect(moduloActivo("900470166", modulo)).toBe(MODULOS_POR_DEFECTO[modulo]);
       expect(moduloActivo("999999999", modulo)).toBe(true);

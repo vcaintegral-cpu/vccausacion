@@ -1,3 +1,4 @@
+import { funcionActiva } from "@/empresas/registro";
 import { estadoFacturaAfectada, facturaReferidaEnTexto, facturaReferidaEnValor, mensajeNotaCredito, pareceNotaCredito } from "@/lib/nota-credito";
 import { unzipSync } from "fflate";
 import { supabase } from "@/integrations/supabase/client";
@@ -359,6 +360,21 @@ function evidenciaIvaDe(companyId: string, nit: string | null | undefined) {
  * (saveExtractedInvoice) y el botón "Recalcular cuentas" de Borradores, de
  * modo que ambos aplican EXACTAMENTE las mismas reglas.
  */
+const nitsEmpresa = new Map<string, Promise<string | null>>();
+/** NIT de la empresa (del lote si está cargado; si no, una consulta guardada en memoria). */
+async function nitDeEmpresa(companyId: string, config: BulkConfig): Promise<string | null> {
+  if (config.batch?.company?.nit) return config.batch.company.nit;
+  let p = nitsEmpresa.get(companyId);
+  if (!p) {
+    p = Promise.resolve(
+      supabase.from("companies").select("nit").eq("id", companyId).maybeSingle(),
+    ).then((r) => (r.data as { nit: string | null } | null)?.nit ?? null);
+    nitsEmpresa.set(companyId, p);
+    p.catch(() => nitsEmpresa.delete(companyId));
+  }
+  return p;
+}
+
 export async function computeDraftAccounting(params: {
   companyId: string;
   config: BulkConfig;
@@ -594,6 +610,8 @@ export async function computeDraftAccounting(params: {
     lines,
     iva: ivaTotal,
     impoconsumo: Number(header.impoconsumo || 0),
+    // Perfil de la empresa: el INC se suma al gasto/costo en lugar de causarse aparte.
+    impoconsumoAlGasto: funcionActiva(await nitDeEmpresa(companyId, config), "impoconsumo_al_gasto"),
     retenciones,
     costCenter: centroFactura,
     ...(ivaDetalle !== undefined && ivaDetalle !== null ? { ivaDetalle } : {}),
