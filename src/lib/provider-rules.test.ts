@@ -134,6 +134,10 @@ describe("ivaDetalleDesdeRegla", () => {
       { account_code: "24081013", account_name: "IVA", amount: 19000 },
     ]);
   });
+  it("descontable sin cuenta en la regla: no inventa una cuenta fija (decide el IVA de cada renglón)", () => {
+    expect(ivaDetalleDesdeRegla(regla({ iva_account: null }), [linea({})], 19000)).toBeNull();
+    expect(ivaDetalleDesdeRegla(regla({ iva_account: "  " }), [linea({})], 19000)).toBeNull();
+  });
   it("asumido: 51157001", () => {
     const d = ivaDetalleDesdeRegla(regla({ iva_treatment: "asumido", iva_account: null }), [linea({})], 19000);
     expect(d?.[0]?.account_code).toBe("51157001");

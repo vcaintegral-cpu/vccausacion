@@ -206,7 +206,7 @@ export function retencionDesdeRegla(rule: ProviderRule | null, lines: Line[]): R
 
 /**
  * Detalle del IVA según el tratamiento de la regla del proveedor:
- * - descontable: débito a la cuenta de la regla o 24081013.
+ * - descontable: débito a la cuenta de la regla; sin cuenta en la regla, null (decide el IVA por renglón).
  * - asumido: débito a 51157001 (o la cuenta de la regla).
  * - capitalizado: el IVA se suma a la MISMA cuenta de cada línea, en proporción.
  * - na: sin línea de IVA.
@@ -244,10 +244,14 @@ export function ivaDetalleDesdeRegla(
       amount,
     }));
   }
+  // IVA descontable sin cuenta en la regla: no se inventa una cuenta fija (24081013 no
+  // existe en el PUC de todas las empresas). Decide el IVA exacto de cada renglón
+  // (impuesto configurado + precedente del proveedor) con la cuenta de ese impuesto.
+  if (rule.iva_treatment !== "asumido" && !rule.iva_account?.trim()) return null;
   const cuenta =
     rule.iva_treatment === "asumido"
       ? rule.iva_account || CTA_IVA_ASUMIDO
-      : rule.iva_account || CTA_IVA_DESCONTABLE;
+      : rule.iva_account!.trim();
   return [{ account_code: cuenta, account_name: "IVA", amount: total }];
 }
 
