@@ -41,6 +41,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-10",
   },
+  productos_inventario: {
+    descripcion:
+      "Renglones de compra de inventario: se emparejan con el producto del catálogo (o se crea en Siigo) y usan la cuenta 14 que corresponda (p. ej. 1435, 1498)",
+    porDefecto: false,
+    agregada: "2026-11-11",
+  },
 } satisfies Record<string, DefinicionFuncion>;
 
 export type FuncionId = keyof typeof FUNCIONES;

@@ -1,4 +1,4 @@
-import { isValidExpenseAccount } from "@/lib/provider-rules";
+import { isValidExpenseAccount, isValidPurchaseAccount } from "@/lib/provider-rules";
 import { roundCOP, sumCOP } from "@/lib/money";
 
 export type Rule = {
@@ -137,6 +137,8 @@ export function buildJournal(params: {
    * encabezado, a la cuenta de gasto/costo de mayor valor.
    */
   impoconsumoAlGasto?: boolean;
+  /** Función por empresa "productos_inventario": los renglones pueden ir a cuentas 14. */
+  permitirInventario?: boolean;
 }): JournalLine[] {
   const { lines, iva, retenciones, provider, costCenter, ivaDetalle } = params;
   const impoconsumo = params.impoconsumo ?? 0;
@@ -144,7 +146,7 @@ export function buildJournal(params: {
 
   const grouped = new Map<string, { name: string | null; value: number }>();
   for (const l of lines) {
-    const code = isValidExpenseAccount(l.account_code) ? (l.account_code ?? "") : "";
+    const code = isValidPurchaseAccount(l.account_code, params.permitirInventario) ? (l.account_code ?? "") : "";
     const prev = grouped.get(code);
     const value = l.subtotal ?? round(Number(l.quantity ?? 0) * Number(l.unit_value ?? 0) - Number(l.discount ?? 0));
     grouped.set(code, { name: l.account_name ?? prev?.name ?? null, value: sumCOP(prev?.value ?? 0, value) });
@@ -157,7 +159,7 @@ export function buildJournal(params: {
     for (const l of incRenglones > round(impoconsumo) ? [] : lines) {
       const inc = round(Number(l.impoconsumo ?? 0));
       if (!(inc > 0)) continue;
-      const code = isValidExpenseAccount(l.account_code) ? (l.account_code ?? "") : "";
+      const code = isValidPurchaseAccount(l.account_code, params.permitirInventario) ? (l.account_code ?? "") : "";
       const g = grouped.get(code)!;
       g.value = sumCOP(g.value, inc);
       incAlGasto = sumCOP(incAlGasto, inc);

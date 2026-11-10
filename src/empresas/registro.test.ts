@@ -51,10 +51,17 @@ describe("registro de empresas", () => {
 });
 
 describe("alcance global vs. empresa", () => {
-  it("solo LED LIGHTS se aparta del núcleo global, y únicamente en el impoconsumo al gasto", () => {
+  it("solo LED LIGHTS se aparta del núcleo global: impoconsumo al gasto y productos de inventario", () => {
     for (const p of PERFILES) {
       const dif = diferenciasConGlobal(p).map((d) => [d.tipo, d.clave, d.empresa]);
-      expect(dif).toEqual(p.nit === "900470166" ? [["función", "impoconsumo_al_gasto", true]] : []);
+      expect(dif).toEqual(
+        p.nit === "900470166"
+          ? [
+              ["función", "impoconsumo_al_gasto", true],
+              ["función", "productos_inventario", true],
+            ]
+          : [],
+      );
     }
     for (const modulo of Object.keys(MODULOS) as Array<keyof typeof MODULOS>) {
       expect(moduloActivo("900470166", modulo)).toBe(MODULOS_POR_DEFECTO[modulo]);

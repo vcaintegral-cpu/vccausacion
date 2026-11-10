@@ -50,18 +50,19 @@ import { PaymentReceiptDialog, type FacturaPagable } from "@/components/payment-
 import { ESTADO_PAGO_LABEL, saldoPendiente, type EstadoPago } from "@/lib/payments";
 import { roundCOP } from "@/lib/money";
 import { recalcularCuentasBorrador } from "@/lib/bulk-invoices";
-import { isValidExpenseAccount } from "@/lib/provider-rules";
+import { isValidExpenseAccount, isValidPurchaseAccount } from "@/lib/provider-rules";
+import { usePerfilActivo } from "@/empresas/use-perfil";
 import { loadDeps, invalidateBulkDeps } from "@/lib/bulk-runner";
 
 /** Muestra código + nombre de todas las cuentas de una categoría del asiento. */
-function Cuentas({ items, nombres, expense = false, decisions }: { items: Cuenta[] | undefined; nombres: Map<string, string>; expense?: boolean; decisions?: DraftInvoice["raw_extraction"] }) {
+function Cuentas({ items, nombres, expense = false, decisions, inventario = false }: { items: Cuenta[] | undefined; nombres: Map<string, string>; expense?: boolean; decisions?: DraftInvoice["raw_extraction"]; inventario?: boolean }) {
   const list = (items ?? []).filter((c) => !!c?.code);
   if (list.length === 0) return <span className={expense ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>{expense ? "Pendiente de cuenta" : "—"}</span>;
   return (
     <div className="space-y-1">
       {list.map((c) => {
         const name = c.name ?? nombres.get(c.code) ?? "";
-        const invalid = expense && !isValidExpenseAccount(c.code);
+        const invalid = expense && !isValidPurchaseAccount(c.code, inventario);
         const origins = Object.values(decisions?.account_decisions ?? {}).filter((d) => d.code === c.code);
         return (
           <div key={c.code}>
@@ -143,6 +144,8 @@ function Borradores() {
   const queryClient = useQueryClient();
   const { data: companies, isLoading: loadingCompanies } = useCompanies();
   const sync = useServerFn(siigoSyncInvoice);
+  // Función por empresa: compras de inventario con cuentas 14 (p. ej. LED LIGHTS).
+  const inventario = usePerfilActivo().funcion("productos_inventario");
 
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [q, setQ] = useState("");
@@ -393,7 +396,7 @@ function Borradores() {
         if (proveedor && r.provider_name !== proveedor) return false;
         if (origen) {
           const acc = accounts.get(r.id);
-          const pending = !acc?.gasto || acc.gastos.some((g) => !isValidExpenseAccount(g.code)) || Object.values(r.raw_extraction?.account_decisions ?? {}).some((d) => !isValidExpenseAccount(d.code));
+          const pending = !acc?.gasto || acc.gastos.some((g) => !isValidPurchaseAccount(g.code, inventario)) || Object.values(r.raw_extraction?.account_decisions ?? {}).some((d) => !isValidPurchaseAccount(d.code, inventario));
           const labels = Object.values(r.raw_extraction?.account_decisions ?? {}).map((d) => originLabel(d.origin));
           if (origen === "Pendiente" ? !pending : !labels.includes(origen)) return false;
         }
@@ -419,8 +422,8 @@ function Borradores() {
 
   // Advertencias de cada fila calculadas una sola vez (no en cada clic o tecla).
   const alertasPorFactura = useMemo(
-    () => new Map(rows.map((r) => [r.id, alertasBorrador(r, accounts.get(r.id), pucCodes)])),
-    [rows, accounts, pucCodes],
+    () => new Map(rows.map((r) => [r.id, alertasBorrador(r, accounts.get(r.id), pucCodes, inventario)])),
+    [rows, accounts, pucCodes, inventario],
   );
   // Durante un lote no se recarga la lista con cada cambio en tiempo real.
   useEffect(() => {
@@ -580,7 +583,7 @@ function Borradores() {
       for (const inv of objetivo) {
         const etiqueta = etiquetaFactura(inv);
         try {
-          if (tipo === "aprobar") out.push(await aprobarBorrador(inv, accounts.get(inv.id), pucCodes, etiqueta, userId));
+          if (tipo === "aprobar") out.push(await aprobarBorrador(inv, accounts.get(inv.id), pucCodes, etiqueta, userId, inventario));
           else if (tipo === "causar") out.push(await causarFactura(inv, etiqueta));
           else if (tipo === "devolver") out.push(await devolverABorrador(inv, etiqueta));
           else if (tipo === "revertir") out.push(await revertirCausacion(inv, etiqueta));
@@ -876,7 +879,7 @@ function Borradores() {
           <tbody className="divide-y divide-border">
             {rows.map((r) => {
               const acc = accounts.get(r.id);
-              const alertas = alertasPorFactura.get(r.id) ?? alertasBorrador(r, acc, pucCodes);
+              const alertas = alertasPorFactura.get(r.id) ?? alertasBorrador(r, acc, pucCodes, inventario);
               const nivel = alertas.some((a) => a.level === "error") ? "error" : alertas.some((a) => a.level === "warn") ? "warn" : "ok";
               const fila = nivel === "error" ? "bg-destructive/5" : nivel === "warn" ? "bg-amber-500/5" : "";
               const e = estadoUnico(r);
@@ -908,7 +911,7 @@ function Borradores() {
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.subtotal)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.iva)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.total)}</td>
-                  <td className="px-3 py-2"><Cuentas items={acc?.gastos} nombres={pucNames} expense decisions={r.raw_extraction} /></td>
+                  <td className="px-3 py-2"><Cuentas items={acc?.gastos} nombres={pucNames} expense decisions={r.raw_extraction} inventario={inventario} /></td>
                   <td className="px-3 py-2"><Cuentas items={acc?.ivas} nombres={pucNames} /></td>
                   <td className="px-3 py-2"><Cuentas items={acc?.retefuente} nombres={pucNames} /></td>
                   <td className="px-3 py-2"><Cuentas items={acc?.reteiva} nombres={pucNames} /></td>

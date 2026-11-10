@@ -34,6 +34,7 @@ import {
 } from "@/lib/precedente-tributario";
 import { cargarHistorialCompras, cargarPrecedentes, cargarTablasBases } from "@/lib/precedente-tributario.data";
 import { cuentaGastoHistorica, perfilDe, type PerfilHistorico } from "@/lib/auxiliar-historico";
+import { buscarProducto, codigoProductoNuevo, type ProductoCatalogo } from "@/lib/producto-coincidencia";
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
@@ -58,6 +59,7 @@ import {
   marcarUsoRegla,
   retencionDesdeRegla,
   isValidExpenseAccount,
+  isValidPurchaseAccount,
   type ProviderRule,
 } from "@/lib/provider-rules";
 import { totals as totalesJournal } from "@/lib/accounting";
@@ -341,7 +343,12 @@ export type DraftAccounting = {
   ivaPorLinea: Array<{ tax: ImpuestoConfigurado; motivo: string } | null>;
   /** Pide confirmar la condición tributaria del proveedor (retención sin precedente). */
   confirmarCondicion: string | null;
+  /** Productos que no existen en el catálogo y se crearán en Siigo al causar (por renglón). */
+  productosNuevos: Record<number, ProductoNuevo>;
 };
+
+/** Producto que se crea en Siigo al causar (función "productos_inventario"). */
+export type ProductoNuevo = { codigo: string; nombre: string; tipo: "producto" | "servicio"; grupo: string | null; cuenta: string };
 
 // Evidencia de IVA por proveedor: una lectura por proveedor y empresa cada 5 minutos,
 // también en la carga masiva (antes el lote la omitía y decidía sin historial).
@@ -478,6 +485,67 @@ export async function computeDraftAccounting(params: {
       const code = op?.operationalAccount ?? h.cuenta;
       lines[i] = { ...l, account_code: code, account_name: op?.operational?.name ?? h.nombre };
       decisions[i] = { code, name: lines[i]!.account_name ?? "", origin: "HISTORIAL", reason: h.motivo, confidence: "ALTA", score: 0.9, error: null };
+    });
+  }
+  // Inventario (función por empresa "productos_inventario"): renglones de proveedores que
+  // en el historial van a la 14, o cuya descripción coincide claramente con un producto
+  // del catálogo, pasan a «producto» con su producto y su cuenta 14. Si el proveedor es de
+  // inventario y no hay producto parecido, se propone crearlo en Siigo al causar.
+  const nitEmpresa = await nitDeEmpresa(companyId, config);
+  const inventario = funcionActiva(nitEmpresa, "productos_inventario");
+  const productosNuevos: Record<number, ProductoNuevo> = {};
+  if (inventario) {
+    const catalogo = config.products as ProductoCatalogo[];
+    const cuentas14 = (perfilHistorico?.gastos ?? []).filter((g) => /^14/.test(g.cuenta));
+    const vecesInventario = cuentas14.reduce((s, g) => s + g.veces, 0);
+    const proveedorInventario = !!perfilHistorico && vecesInventario > 0 && vecesInventario >= perfilHistorico.compras / 2;
+    // Cuenta 14 de la empresa más usada (para productos sin cuenta propia ni precedente del proveedor).
+    const cuenta14Empresa = (() => {
+      const uso = new Map<string, number>();
+      for (const p of perfilesHistoricos.values())
+        for (const g of p.gastos) if (/^14/.test(g.cuenta)) uso.set(g.cuenta, (uso.get(g.cuenta) ?? 0) + g.veces);
+      return [...uso].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    })();
+    const operativa = (c: string | null | undefined) => {
+      if (!c || !/^14\d+$/.test(c)) return null;
+      const r = config.accounts.length ? resolveOperationalAccount(config.accounts, c) : null;
+      return r ? (r.valid && r.operationalAccount ? { code: r.operationalAccount, name: r.operational?.name ?? null } : null) : { code: c, name: null };
+    };
+    // La cuenta 14 del proveedor que más se parece al renglón (1435 mercancías, 1498…).
+    const cuenta14Proveedor = (descripcion: string) =>
+      operativa(cuentaGastoHistorica(perfilHistorico, descripcion, (c) => /^14/.test(c))?.cuenta ?? cuentas14[0]?.cuenta);
+    const usados = new Set(catalogo.map((p) => String(p.code ?? "").toLowerCase()));
+    lines.forEach((l, i) => {
+      const d = decisions[i];
+      if (d?.origin === "REGLA") return; // la regla del proveedor manda
+      const r = buscarProducto(l.description ?? "", catalogo, { codigo: l.code ?? null, tipos: ["producto", "servicio"] });
+      if (!r.elegido && !proveedorInventario) return;
+      if (r.elegido) {
+        const prod = r.elegido.producto;
+        const cuenta =
+          operativa(prod.account_code) ?? cuenta14Proveedor(l.description ?? "") ?? operativa(cuenta14Empresa);
+        if (!cuenta) return;
+        lines[i] = { ...l, item_type: prod.kind === "servicio" ? "servicio" : "producto", code: prod.code, account_code: cuenta.code, account_name: cuenta.name ?? prod.account_name ?? prod.name };
+        decisions[i] = { code: cuenta.code, name: lines[i]!.account_name ?? "", origin: "PRODUCTO", reason: `Producto ${prod.code} · ${prod.name} (${r.elegido.motivo}).`, confidence: "ALTA", score: Math.max(0.8, r.elegido.puntaje), error: null };
+        return;
+      }
+      // Proveedor de inventario sin producto parecido: se crea en Siigo al causar.
+      const cuenta = cuenta14Proveedor(l.description ?? "") ?? operativa(cuenta14Empresa);
+      if (!cuenta) return;
+      const codigo = codigoProductoNuevo(l.description ?? "", usados);
+      usados.add(codigo.toLowerCase());
+      const grupo = r.candidatos[0]?.producto.category ?? null;
+      productosNuevos[i] = { codigo, nombre: String(l.description ?? "").trim().slice(0, 100), tipo: "producto", grupo, cuenta: cuenta.code };
+      lines[i] = { ...l, item_type: "producto", code: codigo, account_code: cuenta.code, account_name: cuenta.name ?? "Inventario" };
+      decisions[i] = {
+        code: cuenta.code,
+        name: lines[i]!.account_name ?? "",
+        origin: "PRODUCTO",
+        reason: `Producto nuevo ${codigo}: no hay uno parecido en el catálogo; se creará en Siigo al causar${grupo ? ` (grupo ${grupo})` : ""}.${r.candidatos.length ? ` Más parecidos: ${r.candidatos.slice(0, 3).map((c) => c.producto.name).join(" · ")}.` : ""}`,
+        confidence: "MEDIA",
+        score: 0.7,
+        error: null,
+      };
     });
   }
   // Nivel de confianza del lote: manda la decisión más débil de la factura.
@@ -660,6 +728,7 @@ export async function computeDraftAccounting(params: {
       : ivaPorImpuesto);
   let journal = buildJournal({
     lines,
+    permitirInventario: inventario,
     iva: ivaTotal,
     impoconsumo: Number(header.impoconsumo || 0),
     // Perfil de la empresa: el INC se suma al gasto/costo en lugar de causarse aparte.
@@ -681,7 +750,7 @@ export async function computeDraftAccounting(params: {
   const ajuste = ajusteAlPeso(cuadre.debito, cuadre.credito);
   if (ajuste.linea) journal.push({ ...ajuste.linea, cost_center: centroFactura ?? null });
   if (reglaProveedor?.id && !config.batch) void marcarUsoRegla(reglaProveedor.id);
-  const unresolvedAccounts: string[] = lines.flatMap((l, i) => isValidExpenseAccount(l.account_code) ? [] : [`Pendiente de cuenta: línea ${i + 1}.`]);
+  const unresolvedAccounts: string[] = lines.flatMap((l, i) => isValidPurchaseAccount(l.account_code, inventario) ? [] : [`Pendiente de cuenta: línea ${i + 1}.`]);
   unresolvedAccounts.push(...erroresRetencion);
   if (ajuste.descuadre)
     unresolvedAccounts.push(
@@ -709,6 +778,7 @@ export async function computeDraftAccounting(params: {
   });
 
   return {
+    productosNuevos,
     lines,
     journal: operationalJournal,
     payable,
@@ -826,7 +896,15 @@ export async function recalcularCuentasBorrador(
     const i = Number(k);
     const anterior = acc.lines[i]?.account_code;
     if (!acc.lines[i] || !d.code || anterior === d.code) continue;
-    acc.lines[i] = { ...acc.lines[i]!, account_code: d.code, account_name: (d as { name?: string }).name ?? acc.lines[i]!.account_name ?? null };
+    // Cuenta manual de gasto: el renglón vuelve a «gasto» y no se crea producto en Siigo.
+    const manualGasto = !/^14/.test(d.code);
+    acc.lines[i] = {
+      ...acc.lines[i]!,
+      account_code: d.code,
+      account_name: (d as { name?: string }).name ?? acc.lines[i]!.account_name ?? null,
+      ...(manualGasto && acc.lines[i]!.item_type === "producto" ? { item_type: "gasto" } : {}),
+    };
+    if (manualGasto) delete acc.productosNuevos[i];
     acc.decisions[i] = d as never;
     const j = acc.journal.find((x) => x.account_code === anterior && x.debit > 0);
     if (j) { j.account_code = d.code; j.account_name = (d as { name?: string }).name ?? j.account_name; }
@@ -853,7 +931,7 @@ export async function recalcularCuentasBorrador(
       reteiva: roundCOP(acc.retenciones.reteiva),
       reteica: roundCOP(acc.retenciones.reteica),
       ...(source ? { subtotal: source.subtotal / 100, iva: source.iva / 100, impoconsumo: source.impoconsumo / 100, total: source.total / 100, discount: source.discount / 100 } : {}),
-      raw_extraction: { ...raw, account_decisions: acc.decisions } as never,
+      raw_extraction: { ...raw, account_decisions: acc.decisions, productos_nuevos: acc.productosNuevos } as never,
       ...payablePatch,
       updated_at: new Date().toISOString(),
     } as never)
@@ -892,6 +970,9 @@ export async function recalcularCuentasBorrador(
       .update({
         account_code: nueva.account_code,
         account_name: nueva.account_name ?? null,
+        // Tipo y producto del catálogo (inventario) también se refrescan.
+        item_type: nueva.item_type ?? "gasto",
+        ...(nueva.item_type === "producto" || nueva.item_type === "servicio" ? { code: nueva.code ?? null } : {}),
         ...(source ? { total: nueva.subtotal ?? nueva.total, iva: nueva.iva, impoconsumo: nueva.impoconsumo } : {}),
         ...(ivaTrace
           ? {
@@ -1103,6 +1184,7 @@ export async function saveExtractedInvoice(params: {
         valores_origen: valoresOrigen,
         source_errors: sourceProblems,
         account_decisions: acc.decisions,
+        productos_nuevos: acc.productosNuevos,
         lectura: params.readMode,
         texto: textoDocumento ? textoDocumento.slice(0, 20000) : null,
         archivo: fileName,
