@@ -34,6 +34,13 @@ export const MODULOS_POR_DEFECTO: Record<ModuloId, boolean> = {
  *     agregada: "2026-11-02",
  *   },
  */
-export const FUNCIONES = {} satisfies Record<string, DefinicionFuncion>;
+export const FUNCIONES = {
+  impoconsumo_al_gasto: {
+    descripcion:
+      "El impoconsumo (INC) no se causa aparte: se suma a la cuenta de gasto o costo de la compra (también en Siigo)",
+    porDefecto: false,
+    agregada: "2026-11-10",
+  },
+} satisfies Record<string, DefinicionFuncion>;
 
 export type FuncionId = keyof typeof FUNCIONES;

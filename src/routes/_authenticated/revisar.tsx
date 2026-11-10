@@ -1,6 +1,7 @@
 import { sourceFromRaw, alignJournalToSource, sourceErrors } from "@/lib/source-values";
 import { SourceValuesCorrection } from "@/components/source-values-correction";
 import type { SourceValues } from "@/lib/source-values";
+import { usePerfilActivo } from "@/empresas/use-perfil";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -441,6 +442,8 @@ function Revisar() {
     [payableBase, puc],
   );
   // El impoconsumo se registra en la cuenta auxiliar configurada, nunca en la mayor.
+  // Perfil de la empresa: el INC se suma al gasto/costo (p. ej. LED LIGHTS).
+  const incAlGasto = usePerfilActivo().funcion("impoconsumo_al_gasto");
   const impoconsumoCuenta = useMemo(() => resolveImpoconsumoAccount(impuestos, puc), [impuestos, puc]);
   const journal: JournalLine[] = useMemo(
     () =>
@@ -465,6 +468,7 @@ function Revisar() {
         ivaDetalle: ivaDetalle,
         payableAccount: payable,
         impoconsumoAccount: impoconsumoCuenta,
+        impoconsumoAlGasto: incAlGasto,
       })),
     [
       lines,
@@ -476,6 +480,7 @@ function Revisar() {
       costPolicy,
       payable,
       impoconsumoCuenta,
+      incAlGasto,
     ],
   );
   const operationalJournal = useMemo(() => {

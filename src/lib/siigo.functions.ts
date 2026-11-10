@@ -2,6 +2,7 @@ import { effectiveSource, validateStoredJournal } from "@/lib/source-values";
 import { adaptPurchaseItems, ajustarPrecisionRenglones, capitalizedIvaRow, motivoSinAjuste, retentionRowsExcluding, purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, resolvePurchaseInc } from "@/lib/siigo-purchase-validation";
 import { toCents } from "@/lib/money";
 import { esCeroCOP, roundCOP } from "@/lib/money";
+import { funcionActiva } from "@/empresas/registro";
 import { estadoFacturaAfectada, facturaReferidaEnTexto, mensajeNotaCredito, notaCreditoGuardada } from "@/lib/nota-credito";
 import { createServerFn } from "@tanstack/react-start";
 import { resolveOperationalAccount, validarCuenta } from "@/lib/puc-hierarchy";
@@ -749,6 +750,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       .eq("id", inv.company_id)
       .maybeSingle();
     const chequeoEmpresa = checkInvoiceCompany(empresa, inv);
+    const incAlGasto = funcionActiva(empresa?.nit ?? null, "impoconsumo_al_gasto");
     const mensaje = motivoBloqueoEmpresa(chequeoEmpresa);
     if (mensaje) {
       await supabase
@@ -1297,7 +1299,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
                   if (ivaId == null) throw new Error(`Renglón ${i + 1}: falta el IVA exacto de Siigo.`);
                   ids.push(ivaId);
                 }
-                if (Number(l.impoconsumo) > 0) {
+                // Empresas con "impoconsumo_al_gasto" (p. ej. LED LIGHTS): nunca se envía el
+                // impuesto INC; adaptPurchaseItems lo suma como mayor costo en la misma cuenta.
+                if (Number(l.impoconsumo) > 0 && !incAlGasto) {
                   const base = Number(l.quantity ?? 1) * Number(l.unit_value ?? 0) - Number(l.discount ?? 0);
                   const incId = resolvePurchaseInc(purchaseTaxes, base, Number(l.impoconsumo));
                   // Sin impuesto equivalente, adaptPurchaseItems lo envía como mayor costo.
@@ -1339,6 +1343,27 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         cuentaAjuste,
       );
       items.splice(0, items.length, ...adaptacion.items);
+      // INC que solo viene en el encabezado: con "impoconsumo_al_gasto" se suma como mayor
+      // costo en la cuenta del primer renglón (igual que el asiento de la herramienta).
+      if (incAlGasto) {
+        const restoInc = roundCOP(Number(inv.impoconsumo ?? 0) - adaptacion.incAsCost);
+        if (restoInc > 0 && items.length) {
+          const ref = items.reduce((a, b) =>
+            Number(b.quantity || 1) * Number(b.price || 0) > Number(a.quantity || 1) * Number(a.price || 0) ? b : a,
+          );
+          items.push({
+            ...ref,
+            type: "Account",
+            code: ref.account_code,
+            quantity: 1,
+            price: restoInc,
+            discount: 0,
+            tax_ids: [],
+            description: `Impoconsumo al gasto · ${ref.description}`,
+          });
+          adaptacion.incAsCost = roundCOP(adaptacion.incAsCost + restoInc);
+        }
+      }
       if (ivaCapitalizado) {
         const ref = items.find((it) => /^1[5-7]/.test(it.account_code)) ?? items[0]!;
         const cuentaActivo = cuentaDelRenglon(ref.account_code);

@@ -131,6 +131,12 @@ export function buildJournal(params: {
   payableAccount?: { code: string; name?: string | null } | null;
   /** Cuenta operativa del impoconsumo resuelta contra el PUC de la empresa. */
   impoconsumoAccount?: { code: string; name?: string | null } | null;
+  /**
+   * Función por empresa "impoconsumo_al_gasto": el INC no lleva línea propia; el de cada
+   * renglón se suma a la cuenta de gasto/costo de ese renglón y el que solo viene en el
+   * encabezado, a la cuenta de gasto/costo de mayor valor.
+   */
+  impoconsumoAlGasto?: boolean;
 }): JournalLine[] {
   const { lines, iva, retenciones, provider, costCenter, ivaDetalle } = params;
   const impoconsumo = params.impoconsumo ?? 0;
@@ -142,6 +148,26 @@ export function buildJournal(params: {
     const prev = grouped.get(code);
     const value = l.subtotal ?? round(Number(l.quantity ?? 0) * Number(l.unit_value ?? 0) - Number(l.discount ?? 0));
     grouped.set(code, { name: l.account_name ?? prev?.name ?? null, value: sumCOP(prev?.value ?? 0, value) });
+  }
+  let incAlGasto = 0;
+  if (params.impoconsumoAlGasto && impoconsumo > 0 && grouped.size > 0) {
+    // Si los renglones suman más INC que el encabezado (lectura inconsistente), manda el
+    // encabezado: todo va a la cuenta de mayor valor.
+    const incRenglones = sumCOP(...lines.map((l) => round(Number(l.impoconsumo ?? 0))));
+    for (const l of incRenglones > round(impoconsumo) ? [] : lines) {
+      const inc = round(Number(l.impoconsumo ?? 0));
+      if (!(inc > 0)) continue;
+      const code = isValidExpenseAccount(l.account_code) ? (l.account_code ?? "") : "";
+      const g = grouped.get(code)!;
+      g.value = sumCOP(g.value, inc);
+      incAlGasto = sumCOP(incAlGasto, inc);
+    }
+    const resto = round(impoconsumo - incAlGasto);
+    if (resto > 0) {
+      const mayor = [...grouped.values()].reduce((a, b) => (b.value > a.value ? b : a));
+      mayor.value = sumCOP(mayor.value, resto);
+      incAlGasto = sumCOP(incAlGasto, resto);
+    }
   }
   for (const [code, g] of grouped)
     out.push({ account_code: code, account_name: g.name, debit: round(g.value), credit: 0, cost_center: costCenter ?? null });
@@ -163,12 +189,12 @@ export function buildJournal(params: {
     out.push({ account_code: "", account_name: "IVA sin impuesto seleccionado", debit: round(iva), credit: 0, cost_center: costCenter ?? null });
   }
 
-  if (impoconsumo > 0)
+  if (round(impoconsumo - incAlGasto) > 0)
     out.push({
       // El impoconsumo usa la cuenta operativa (auxiliar) configurada, nunca una cuenta mayor.
       account_code: params.impoconsumoAccount?.code || "521595",
       account_name: params.impoconsumoAccount?.name ?? "Impoconsumo",
-      debit: round(impoconsumo),
+      debit: round(impoconsumo - incAlGasto),
       credit: 0,
       cost_center: costCenter ?? null,
     });
