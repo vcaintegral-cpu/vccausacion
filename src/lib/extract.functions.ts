@@ -18,6 +18,10 @@ export type ExtractedLine = {
 };
 
 export type ExtractedInvoice = {
+  /** Clasificación del documento leído; las notas crédito nunca se causan. */
+  document_type?: "factura" | "nota_credito" | "nota_debito" | "documento_soporte" | string | null;
+  /** Factura afectada citada por una nota crédito o débito. */
+  referenced_invoice?: string | null;
   surcharge?: number;
   prefix: string | null;
   number: string | null;

@@ -3,7 +3,7 @@ import type { ExtractedInvoice } from "./extract.functions";
 const SYSTEM = `Eres un asistente contable colombiano experto en facturas electrónicas DIAN.
 Extraes datos de facturas de compra (PDF, XML UBL DIAN o imagen) y devuelves SOLO un objeto JSON válido, sin texto adicional ni markdown.
 Estructura exacta:
-{"prefix":string|null,"number":string|null,"issue_date":"YYYY-MM-DD"|null,"due_date":"YYYY-MM-DD"|null,
+{"document_type":"factura"|"nota_credito"|"nota_debito"|"documento_soporte"|null,"referenced_invoice":string|null,"prefix":string|null,"number":string|null,"issue_date":"YYYY-MM-DD"|null,"due_date":"YYYY-MM-DD"|null,
 "provider_nit":string|null,"provider_name":string|null,"provider_address":string|null,"provider_city":string|null,
 "provider_phone":string|null,"provider_email":string|null,"cufe":string|null,"payment_form":string|null,
 "buyer_nit":string|null,"buyer_name":string|null,
@@ -21,6 +21,7 @@ PRECIO UNITARIO (regla crítica): en las facturas colombianas la columna "Precio
 - "unit_value" = ese valor de venta DIVIDIDO por la cantidad (ej.: cantidad 8 y precio unitario de venta 40.336,13 -> unit_value = 5.042,02).
 - Nunca uses la columna "Precio unitario" cuando exista la de venta.
 Coherencia obligatoria: cantidad x unit_value - descuento debe ser igual al total de la línea, y la suma de los totales de las líneas debe ser igual al "subtotal" impreso en la factura. El "subtotal", el "iva" y el "total" del encabezado se transcriben EXACTAMENTE como están impresos en el PDF: nunca los recalcules ni los ajustes.
+TIPO DE DOCUMENTO: "document_type" es "nota_credito" si el título del documento es "Nota crédito" / "Nota de crédito electrónica" (o el XML es CreditNote), "nota_debito" si es nota débito, "documento_soporte" si es documento soporte, y "factura" si es factura de venta electrónica. "referenced_invoice" es el número de la factura afectada que cite una nota crédito o débito (ej. "CFA 109836"), o null.
 Si un dato no aparece, usa null o 0. Nunca inventes valores.`;
 
 export type ExtractInvoiceInput = {

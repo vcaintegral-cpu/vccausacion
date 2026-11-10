@@ -268,6 +268,7 @@ export async function deleteUpload(uploadId: string) {
 }
 
 export function mensajeUsuario(fileName: string, error: string): string {
+  if (/NOTA CR[EÉ]DITO\s+[—-]\s+REGISTRO MANUAL/i.test(error)) return `${fileName}: es una nota crédito; se registra manualmente en Siigo.`;
   if (/duplicad|ya fue causada|ya existe/i.test(error)) return `${fileName}: este documento ya fue procesado.`;
   if (/identificar el comprador/i.test(error)) return "No fue posible identificar el comprador de la factura.";
   if (/no pertenece|no coincide/i.test(error)) return "Comprador diferente a la empresa activa.";

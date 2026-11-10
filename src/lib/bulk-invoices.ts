@@ -1,3 +1,4 @@
+import { estadoFacturaAfectada, facturaReferidaEnTexto, facturaReferidaEnValor, mensajeNotaCredito, pareceNotaCredito } from "@/lib/nota-credito";
 import { unzipSync } from "fflate";
 import { supabase } from "@/integrations/supabase/client";
 import { companyUsesCostCenters, costCenterForCompany, costCentersEnabled } from "@/lib/cost-center-config";
@@ -843,6 +844,26 @@ export async function saveExtractedInvoice(params: {
   if (bloqueo) throw new BulkInvoiceStageError(bloqueo, "validating_company", trace);
   if (!sameNit(header.buyer_nit, empresa?.nit)) {
     throw new BulkInvoiceStageError("Comprador diferente a la empresa activa.", "validating_company", trace);
+  }
+  // Una nota crédito nunca se causa ni se envía a Siigo: se registra manualmente en Siigo
+  // sobre la factura de compra ya causada (la API de Siigo no crea notas crédito de compra).
+  if (
+    pareceNotaCredito({
+      documentType: header.document_type ?? null,
+      texto: textoDocumento,
+      archivo: fileName,
+      total: header.total,
+      tipoDocumento: typeof params.rawExtraction?.["tipo_documento"] === "string" ? params.rawExtraction["tipo_documento"] : null,
+    })
+  ) {
+    const referida = facturaReferidaEnValor(header.referenced_invoice) ?? facturaReferidaEnTexto(header.referenced_invoice) ?? facturaReferidaEnTexto(header.notes) ?? facturaReferidaEnTexto(textoDocumento);
+    const estado = await estadoFacturaAfectada(supabase, companyId, header.provider_nit, referida);
+    throw new BulkInvoiceStageError(
+      mensajeNotaCredito({ numero: trace.invoiceNumber, proveedor: header.provider_name, nit: header.provider_nit, total: header.total, estado }),
+      "validating_company",
+      trace,
+      true,
+    );
   }
   await params.onStage?.("ready_for_accounting", trace);
 
