@@ -32,7 +32,8 @@ import {
   type PrecedentesEmpresa,
   type TablaBases,
 } from "@/lib/precedente-tributario";
-import { cargarPrecedentes, cargarTablasBases } from "@/lib/precedente-tributario.data";
+import { cargarHistorialCompras, cargarPrecedentes, cargarTablasBases } from "@/lib/precedente-tributario.data";
+import { cuentaGastoHistorica, perfilDe, type PerfilHistorico } from "@/lib/auxiliar-historico";
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
@@ -155,6 +156,8 @@ export type BulkConfig = {
   precedentes?: PrecedentesEmpresa;
   /** Tablas de bases mínimas de retención (UVT y conceptos por año). */
   tablasBases?: TablaBases[];
+  /** Perfil de cada proveedor aprendido del auxiliar histórico de Siigo, una vez por lote. */
+  perfilesHistoricos?: Map<string, PerfilHistorico>;
   batch?: {
     company: { id: string; name: string; nit: string | null; uses_cost_centers: boolean | null; default_payable_account: string | null };
     providers: Record<string, { nit: string; default_expense_account: string | null; default_payable_account: string | null; default_iva_account: string | null; purchase_tax_profile?: unknown }>;
@@ -428,13 +431,25 @@ export async function computeDraftAccounting(params: {
   const base = params.knowledge ?? config.knowledge ?? (await fetchCompanyKnowledge(companyId)) ?? emptyKnowledge();
   const conocimiento = await knowledgeForProvider(companyId, header.provider_nit, base);
   const profile = conocimiento.profiles?.find((p) => sameNit(p.provider_nit, header.provider_nit));
+  // Precedente del auxiliar histórico (compras completas reconstruidas) y tributario.
+  const perfilesHistoricos =
+    config.perfilesHistoricos ?? (await cargarHistorialCompras(companyId).then((h) => h.perfiles).catch(() => new Map<string, PerfilHistorico>()));
+  const perfilHistorico = perfilDe(perfilesHistoricos, header.provider_nit);
+  const impuestosPrevios = config.taxes as unknown as ImpuestoConfigurado[];
+  const precedentesPrevios =
+    config.precedentes ?? (await cargarPrecedentes(companyId, impuestosPrevios).catch(() => new Map() as PrecedentesEmpresa));
+  // Si el precedente identifica el impuesto exacto de Retefuente (cuenta + tarifa del
+  // auxiliar), la retención la decide ese precedente con su base mínima, y no la regla
+  // sintética armada con la última compra.
+  const retefuentePrecisa = !!precedenteDe(precedentesPrevios, header.provider_nit)?.retenciones.retefuente.some((u) => u.taxId);
   if (!reglaProveedor && profile) {
     reglaProveedor = {
       id: "", company_id: companyId, provider_nit: header.provider_nit ?? "", provider_name: null,
       keyword: "(todas)", expense_account: null, expense_account_name: null,
       iva_treatment: profile.iva_account === "51157001" ? "asumido" : "descontable",
-      iva_account: profile.iva_account, inc_account: null, retention_account: profile.retention_account,
-      retention_rate: profile.retention_rate ? Number(profile.retention_rate.replace(",", ".")) : null,
+      iva_account: profile.iva_account, inc_account: null,
+      retention_account: retefuentePrecisa ? null : profile.retention_account,
+      retention_rate: !retefuentePrecisa && profile.retention_rate ? Number(profile.retention_rate.replace(",", ".")) : null,
       retention_base: profile.aiu ? "AIU" : "Subtotal", payable_account: profile.payable_account,
       source: "historial", times_used: 0, last_used_at: null, active: true,
     };
@@ -448,6 +463,23 @@ export async function computeDraftAccounting(params: {
     puc: config.accounts,
     provider,
   });
+  // Auxiliar histórico: cuenta de gasto/costo del propio proveedor (por palabras de la
+  // descripción, o la que usa en casi todas sus compras) para renglones sin cuenta o
+  // resueltos solo por descripciones de OTROS proveedores. Nunca reemplaza una regla.
+  if (perfilHistorico) {
+    const valida = (c: string) =>
+      isValidExpenseAccount(c) && (config.accounts.length === 0 || resolveOperationalAccount(config.accounts, c).valid);
+    lines.forEach((l, i) => {
+      const d = decisions[i];
+      if (d && d.origin !== "NINGUNA" && d.origin !== "HISTORIAL_DESCRIPCION") return;
+      const h = cuentaGastoHistorica(perfilHistorico, l.description ?? "", valida);
+      if (!h) return;
+      const op = config.accounts.length ? resolveOperationalAccount(config.accounts, h.cuenta) : null;
+      const code = op?.operationalAccount ?? h.cuenta;
+      lines[i] = { ...l, account_code: code, account_name: op?.operational?.name ?? h.nombre };
+      decisions[i] = { code, name: lines[i]!.account_name ?? "", origin: "HISTORIAL", reason: h.motivo, confidence: "ALTA", score: 0.9, error: null };
+    });
+  }
   // Nivel de confianza del lote: manda la decisión más débil de la factura.
   const tomadas = Object.values(decisions);
   const peor = tomadas.sort((a, b) => a.score - b.score)[0];
@@ -486,13 +518,16 @@ export async function computeDraftAccounting(params: {
   // (Subtotal o AIU). Si difiere de lo retenido en el documento, se alerta sin bloquear.
   const retRegla = retencionDesdeRegla(reglaProveedor, lines);
   if (retRegla) {
-    erroresRetencion.length = 0;
+    // La regla define solo la Retefuente: la ReteIVA y la ReteICA que trae el documento se conservan.
+    const conservaOtras = roundCOP(reportado.reteiva) > 0 || roundCOP(reportado.reteica) > 0;
+    if (!conservaOtras) erroresRetencion.length = 0;
     retenciones = {
       retefuente: retRegla.amount,
-      reteiva: 0,
-      reteica: 0,
+      reteiva: conservaOtras ? retenciones.reteiva : 0,
+      reteica: conservaOtras ? retenciones.reteica : 0,
       autorretencion: 0,
       detalle: [
+        ...(conservaOtras ? (retenciones.detalle ?? []).filter((d) => d.kind === "reteiva" || d.kind === "reteica") : []),
         {
           kind: "retefuente",
           name: retRegla.name,
@@ -513,10 +548,8 @@ export async function computeDraftAccounting(params: {
   // Precedente tributario del proveedor (lo sincronizado con Siigo): IVA exacto
   // por renglón y retenciones que el documento no trae. La regla por proveedor y
   // lo retenido en el documento mandan sobre el precedente.
-  const impuestos = config.taxes as unknown as ImpuestoConfigurado[];
-  const precedentes =
-    config.precedentes ?? (await cargarPrecedentes(companyId, impuestos).catch(() => new Map() as PrecedentesEmpresa));
-  const precedente = precedenteDe(precedentes, header.provider_nit);
+  const impuestos = impuestosPrevios;
+  const precedente = precedenteDe(precedentesPrevios, header.provider_nit);
   const ivaPorLinea: DraftAccounting["ivaPorLinea"] = lines.map((l, i) => {
     const fijado = params.ivaFijado?.[i];
     const elegido = fijado ? impuestos.find((t) => String(t.id) === String(fijado)) : undefined;
@@ -533,9 +566,10 @@ export async function computeDraftAccounting(params: {
     return e.tax ? { tax: e.tax, motivo: e.motivo } : null;
   });
   let confirmarCondicion: string | null = null;
-  if (!retRegla) {
+  {
+    // Con regla por proveedor, la Retefuente ya está decidida: el precedente decide las demás.
     const decision = decidirRetenciones({
-      kinds: RETENCIONES.filter((k) => !(roundCOP(reportado[k]) > 0)),
+      kinds: RETENCIONES.filter((k) => !(roundCOP(reportado[k]) > 0) && !(retRegla && k === "retefuente")),
       precedente,
       condicion: condicionDePerfil((provider as { purchase_tax_profile?: unknown } | null)?.purchase_tax_profile),
       taxes: impuestos,
@@ -563,11 +597,29 @@ export async function computeDraftAccounting(params: {
   }
   // La empresa define si maneja centros de costo; si no, nunca se guarda ninguno.
   const costPolicy = config.batch ? config.batch.company.uses_cost_centers : await companyUsesCostCenters(companyId);
-  const centroFactura = costCenterForCompany(costPolicy, header.cost_center);
+  // Sin centro de costo en el documento: el que el proveedor usa en sus compras de Siigo.
+  const centroHistorico = !header.cost_center && costPolicy ? perfilHistorico?.centros[0]?.centro ?? null : null;
+  const centroFactura = costCenterForCompany(costPolicy, header.cost_center || centroHistorico);
+  if (centroHistorico && centroFactura) alertas.push(`Centro de costo ${centroFactura} tomado del historial del proveedor en Siigo.`);
   // Contrapartida: primero la cuenta CxP de la regla del proveedor; si no hay,
   // el histórico de esta empresa con este proveedor.
+  const cxpAuxiliar = perfilHistorico?.cuentasPorPagar.find((c) => isPayableCode(c.cuenta)) ?? null;
   const payableHistorico = config.batch
-    ? { code: provider?.default_payable_account || config.batch.company.default_payable_account || "22050501", name: null, source: "fallback", confidence: 0.4 }
+    ? provider?.default_payable_account
+      ? { code: provider.default_payable_account, name: null, source: "proveedor", confidence: 0.8 }
+      : cxpAuxiliar
+        ? applyPucToPayable(
+            {
+              code: cxpAuxiliar.cuenta,
+              name: cxpAuxiliar.nombre,
+              origin: "HISTORIAL",
+              source: "historical",
+              reason: `Cuenta por pagar usada en ${cxpAuxiliar.veces} compra(s) del proveedor en Siigo.`,
+              confidence: 0.9,
+            },
+            config.accounts,
+          )
+        : { code: config.batch.company.default_payable_account || "22050501", name: null, source: "fallback", confidence: 0.4 }
     : applyPucToPayable(await fetchPayableAccount(companyId, header.provider_nit), config.accounts);
   const payable =
     reglaProveedor?.payable_account && isPayableCode(reglaProveedor.payable_account)
@@ -681,6 +733,56 @@ export async function computeDraftAccounting(params: {
  * extracción original (raw_extraction.ia) y reemplaza solo el comprobante
  * contable y la CxP sugerida. Devuelve el motivo/alertas del nuevo cálculo.
  */
+/**
+ * Recalcula TODOS los borradores de compra de la empresa (estado Borrador o Error, sin
+ * documento en Siigo) con el conocimiento actual: se usa al terminar de aprender del
+ * auxiliar histórico. Respeta lo manual (cuentas, IVA elegido, cuenta por pagar) y no
+ * toca lo aprobado, causado ni sincronizado.
+ */
+export async function recalcularBorradoresEmpresa(
+  companyId: string,
+  config: BulkConfig,
+  onAvance?: (hechas: number, total: number) => void,
+): Promise<{ total: number; ok: number; fallidas: Array<{ id: string; message: string }> }> {
+  const ids: string[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("invoices")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("doc_kind", "compra")
+      .in("status", ["borrador", "error"])
+      .is("siigo_id", null)
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw new Error(error.message);
+    const page = (data ?? []) as Array<{ id: string }>;
+    ids.push(...page.map((r) => r.id));
+    if (page.length < 1000) break;
+  }
+  let hechas = 0;
+  let ok = 0;
+  const fallidas: Array<{ id: string; message: string }> = [];
+  onAvance?.(0, ids.length);
+  for (let i = 0; i < ids.length; i += 5) {
+    await Promise.all(
+      ids.slice(i, i + 5).map(async (id) => {
+        try {
+          const r = await recalcularCuentasBorrador(id, config);
+          if (r.ok) ok += 1;
+          else fallidas.push({ id, message: r.message });
+        } catch (e) {
+          fallidas.push({ id, message: e instanceof Error ? e.message : String(e) });
+        } finally {
+          hechas += 1;
+          onAvance?.(hechas, ids.length);
+        }
+      }),
+    );
+  }
+  return { total: ids.length, ok, fallidas };
+}
+
 export async function recalcularCuentasBorrador(
   invoiceId: string,
   config: BulkConfig,

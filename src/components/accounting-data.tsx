@@ -13,7 +13,12 @@ import {
 } from "@/lib/siigo.functions";
 import { downloadSheet, num, pick, readSheet, readSheetIndexed } from "@/lib/spreadsheet";
 import { compareCodes, parsePucSheet, type PucRowError } from "@/lib/puc-import";
-import { analyzeHistory, isSiigoAuxiliary, type HistoryAnalysis } from "@/lib/history-import";
+import { analizarAuxiliar, fechaISO, fechasDelRango, rangoDelPeriodo, type InformeAnalisis } from "@/lib/auxiliar-historico";
+import { invalidarPrecedentes } from "@/lib/precedente-tributario.data";
+import { invalidateBulkDeps, loadDeps } from "@/lib/bulk-runner";
+import { recalcularBorradoresEmpresa } from "@/lib/bulk-invoices";
+import { clearHistoryCache } from "@/lib/causacion-engine";
+import { clearProviderRulesCache } from "@/lib/provider-rules";
 import { compareHistory, readRawHistory, type HistoryValidation, type RawHistoryFile } from "@/lib/history-raw";
 import { fetchAllKeys, runReliableImport, sameImportValues, type ImportDetail, type ImportIssue } from "@/lib/import-system";
 import { ImportDetailPanel } from "@/components/import-detail";
@@ -1155,7 +1160,8 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
 export function HistoryPanel({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
-  const [analysis, setAnalysis] = useState<HistoryAnalysis | null>(null);
+  const [informe, setInforme] = useState<InformeAnalisis | null>(null);
+  const [recalculados, setRecalculados] = useState<{ total: number; ok: number; fallidas: Array<{ id: string; message: string }> } | null>(null);
   const [progreso, setProgreso] = useState<string | null>(null);
   const [detail, setDetail] = useState<ImportDetail | null>(null);
   const [buscar, setBuscar] = useState("");
@@ -1209,6 +1215,7 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
         .from("accounting_history")
         .select("*")
         .eq("company_id", companyId)
+        .eq("file_name", raw?.fileName ?? "")
         .order("excel_row", { ascending: true })
         .range(from, from + PAGE - 1);
       if (error) throw new Error(error.message);
@@ -1280,9 +1287,27 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
       const { data: authUser } = await supabase.auth.getUser();
       const userId = authUser.user?.id;
       if (!userId) throw new Error("Sesión no válida.");
-      // Un archivo nuevo reemplaza el historial anterior de la empresa.
-      const { error: delError } = await supabase.from("accounting_history").delete().eq("company_id", companyId);
-      if (delError) throw new Error(delError.message);
+      // El historial se ACUMULA por periodo: solo se reemplazan los movimientos de las
+      // fechas que trae este archivo (recargar un mes corregido no duplica; cargar otro
+      // año se suma a lo que ya había).
+      const fechasArchivo = original.rows.map((r) => fechaISO(r.entry_date_text)).filter((f): f is string => !!f).sort();
+      const rango =
+        rangoDelPeriodo(original.period) ??
+        (fechasArchivo.length ? { desde: fechasArchivo[0]!, hasta: fechasArchivo[fechasArchivo.length - 1]! } : null);
+      if (rango) {
+        const dias = fechasDelRango(rango.desde, rango.hasta);
+        for (let i = 0; i < dias.length; i += 150) {
+          setProgreso(`Reemplazando el periodo ${rango.desde} a ${rango.hasta} en el historial…`);
+          const { error: delError } = await supabase
+            .from("accounting_history")
+            .delete()
+            .eq("company_id", companyId)
+            .in("entry_date_text", dias.slice(i, i + 150));
+          if (delError) throw new Error(delError.message);
+        }
+      }
+      // Movimientos sin fecha de un archivo con el mismo nombre (cargas anteriores del mismo reporte).
+      await supabase.from("accounting_history").delete().eq("company_id", companyId).eq("file_name", original.fileName).is("entry_date_text", null);
 
       const rawPayload = original.rows.map((r) => ({
         company_id: companyId,
@@ -1323,7 +1348,7 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
           return { error };
         },
         verifyKeys: () => fetchAllKeys(async (from, to) => {
-          const { data, error } = await supabase.from("accounting_history").select("excel_row").eq("company_id", companyId).range(from, to);
+          const { data, error } = await supabase.from("accounting_history").select("excel_row").eq("company_id", companyId).eq("file_name", original.fileName).range(from, to);
           if (error) return { keys: [], error: error.message };
           return { keys: (data ?? []).map((r) => String(r.excel_row)) };
         }),
@@ -1335,82 +1360,29 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
       if (rawResult.status === "COMPLETADA") toast.success(`Historial importado: ${fmt(rawResult.saved)} movimientos guardados.`);
       else toast.warning("La importación del historial terminó con novedades. Revisa el detalle.");
 
-      // ---------- CAPA 2: análisis / aprendizaje IA (no altera la capa 1) ----------
-      setProgreso("Analizando patrones para la IA…");
-      const sheet = await readSheet(file);
-      if (!isSiigoAuxiliary(sheet)) {
-        const keys = Object.keys(sheet[0] ?? {});
-        const generico = ["cuenta", "codigo cuenta", "cuenta contable", "nit", "identificacion"].some((k) =>
-          keys.some((x) => x.includes(k)),
-        );
-        if (!generico) {
-          // La capa original ya fue validada y almacenada. Un formato de títulos
-          // no reconocido solo impide generar reglas automáticas; nunca debe
-          // cancelar ni presentar como fallida la importación del historial.
-          setAnalysis(null);
-          toast.warning("El historial fue importado correctamente, pero no se generaron reglas automáticas para este formato de columnas.");
-          return;
-        }
-      }
-      const result = analyzeHistory(sheet);
-      if (result.rules.length === 0) {
-        setAnalysis(null);
-        return;
-      }
-      const payload = result.rules.map((r) => ({
-        company_id: companyId,
-        provider_nit: r.provider_nit,
-        provider_name: r.provider_name,
-        concept: r.concept,
-        account_code: r.account_code,
-        account_name: r.account_name,
-        cost_center: r.cost_center,
-        iva: r.iva,
-        retentions: r.retentions,
-        taxes: r.taxes,
-        times_used: r.times_used,
-        last_used_at: r.last_used_at,
-        item_type: "gasto",
-        active: true,
-        source: "excel",
-      }));
-      const keyOf = (r: (typeof payload)[number]) => `${r.provider_nit ?? "-"}|${(r.concept ?? "").toLowerCase()}|${r.account_code}`;
-      const existingKeys = await fetchAllKeys(async (from, to) => {
-        const { data, error } = await supabase.from("learning_rules").select("provider_nit,concept,account_code").eq("company_id", companyId).eq("source", "excel").range(from, to);
-        if (error) return { keys: [], error: error.message };
-        return { keys: (data ?? []).map((r) => `${r.provider_nit ?? "-"}|${(r.concept ?? "").toLowerCase()}|${r.account_code}`) };
-      });
-      const existing = new Map(payload.filter((r) => existingKeys.has(keyOf(r))).map((r) => [keyOf(r), r]));
-      const { data: auth } = await supabase.auth.getUser();
-      const importResult = await runReliableImport({
-        module: "Aprendizaje IA", fileName: file.name, user: auth.user?.email ?? null,
-        found: result.rowsRead, rows: payload, duplicateCount: 0, keyOf, existingByKey: existing,
-        saveBatch: async (rows) => {
-          // Sin restricción única compuesta, se actualizan coincidencias y se insertan únicamente reglas nuevas.
-          let firstError: { message: string; details?: string | null; hint?: string | null } | null = null;
-          for (const row of rows) {
-            const { data: current, error: readError } = await supabase.from("learning_rules").select("id").eq("company_id", companyId).eq("source", "excel").eq("account_code", row.account_code).eq("provider_nit", row.provider_nit ?? "").eq("concept", row.concept ?? "").maybeSingle();
-            if (readError) { firstError = readError; continue; }
-            const { error } = current
-              ? await supabase.from("learning_rules").update(row).eq("id", current.id)
-              : await supabase.from("learning_rules").insert(row);
-            if (error && !firstError) firstError = error;
-          }
-          return { error: firstError };
-        },
-        verifyKeys: () => fetchAllKeys(async (from, to) => {
-          const { data, error } = await supabase.from("learning_rules").select("provider_nit,concept,account_code").eq("company_id", companyId).eq("source", "excel").range(from, to);
-          if (error) return { keys: [], error: error.message };
-          return { keys: (data ?? []).map((r) => `${r.provider_nit ?? "-"}|${(r.concept ?? "").toLowerCase()}|${r.account_code}`) };
-        }),
-        onProgress: (p) => setProgreso(`Generando aprendizaje IA… Lote ${p.batch} de ${p.batches} · Registros ${fmt(p.from)} - ${fmt(p.to)} de ${fmt(p.total)}`),
-      });
-      // Los movimientos se leen y procesan todos; las filas almacenadas son reglas consolidadas por proveedor/concepto/cuenta.
-      importResult.found = result.rowsRead;
-      importResult.processed = result.rowsRead;
-      importResult.invalid = result.rowsSkipped;
-      setAnalysis(result);
-      await qc.invalidateQueries({ queryKey: ["learning_rules"] });
+      // ---------- CAPA 2: aprendizaje del auxiliar en cinco pasadas ----------
+      // Lectura → reconstrucción y cuadre de cada compra → IVA (base × tarifa) →
+      // retenciones (concepto, base × tarifa) → precedente por proveedor.
+      setProgreso("Analizando el auxiliar: reconstruyendo compras y verificando impuestos…");
+      const { informe: inf } = analizarAuxiliar(original.rows);
+      setInforme(inf);
+      // El precedente nuevo se usa de inmediato: se olvidan los datos guardados en memoria.
+      invalidarPrecedentes(companyId);
+      invalidateBulkDeps(companyId);
+      clearHistoryCache();
+      clearProviderRulesCache(companyId);
+      // Los borradores pendientes se ajustan solos con lo aprendido (sin tocar lo manual).
+      setProgreso("Ajustando los borradores con el precedente aprendido…");
+      const { config } = await loadDeps(companyId);
+      const recalculo = await recalcularBorradoresEmpresa(companyId, config, (hechas, total) =>
+        setProgreso(`Ajustando los borradores con el precedente aprendido… ${hechas} de ${total}`),
+      );
+      setRecalculados(recalculo);
+      await qc.invalidateQueries({ queryKey: ["borradores", companyId] });
+      await qc.invalidateQueries({ queryKey: ["invoices", companyId] });
+      toast.success(
+        `Aprendizaje listo: ${fmt(inf.compras)} compras de ${fmt(inf.proveedores)} proveedores. ${fmt(recalculo.ok)} de ${fmt(recalculo.total)} borrador(es) ajustados.`,
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "No fue posible analizar el historial.");
     } finally {
@@ -1485,14 +1457,7 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
             ) : null}
           </div>
         ) : null}
-        {analysis && (
-          <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4">
-            <p>Filas leídas: <strong>{analysis.rowsRead}</strong></p>
-            <p>Movimientos procesados: <strong>{analysis.rowsUsed}</strong></p>
-            <p>Omitidos: <strong>{analysis.rowsSkipped}</strong></p>
-            <p>Terceros aprendidos: <strong>{analysis.providers}</strong></p>
-          </div>
-        )}
+        {informe ? <InformeAuxiliar informe={informe} recalculados={recalculados} /> : null}
       </div>
 
       <div className="space-y-3">
@@ -1592,6 +1557,68 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/** Resultado de las cinco pasadas del aprendizaje del auxiliar y del ajuste de borradores. */
+function InformeAuxiliar({
+  informe,
+  recalculados,
+}: {
+  informe: InformeAnalisis;
+  recalculados: { total: number; ok: number; fallidas: Array<{ id: string; message: string }> } | null;
+}) {
+  const [verNovedades, setVerNovedades] = useState(false);
+  return (
+    <div className="mt-3 space-y-3 rounded-lg border border-border bg-muted/20 p-4 text-sm">
+      <p className="font-semibold">
+        Aprendizaje del auxiliar · {informe.desde ?? "?"} a {informe.hasta ?? "?"}
+      </p>
+      <div className="grid gap-2 sm:grid-cols-4">
+        <p>Movimientos: <strong>{fmt(informe.movimientos)}</strong></p>
+        <p>Movimientos de compras (FC/DS): <strong>{fmt(informe.movimientosDeCompra)}</strong></p>
+        <p>Compras reconstruidas: <strong>{fmt(informe.compras)}</strong></p>
+        <p>Proveedores aprendidos: <strong>{fmt(informe.proveedores)}</strong></p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-left text-muted-foreground">
+            <tr><th className="py-1 pr-3">Pasada</th><th className="py-1 pr-3">Revisados</th><th className="py-1 pr-3">Correctos</th><th className="py-1">Novedades</th></tr>
+          </thead>
+          <tbody>
+            {informe.pasadas.map((p) => (
+              <tr key={p.numero} className="border-t border-border">
+                <td className="py-1 pr-3">{p.numero}. {p.nombre}</td>
+                <td className="py-1 pr-3">{fmt(p.revisados)}</td>
+                <td className="py-1 pr-3">{fmt(p.correctos)}</td>
+                <td className={`py-1 ${p.novedades ? "text-amber-600" : "text-emerald-600"}`}>{fmt(p.novedades)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {recalculados ? (
+        <p>
+          Borradores ajustados con el precedente: <strong>{fmt(recalculados.ok)}</strong> de {fmt(recalculados.total)}
+          {recalculados.fallidas.length ? ` · ${fmt(recalculados.fallidas.length)} no se pudieron recalcular (revísalos en Borradores).` : "."}
+          {" "}Lo que se cambió a mano no se tocó.
+        </p>
+      ) : null}
+      {informe.novedades.length ? (
+        <div>
+          <button type="button" className="text-xs font-medium text-primary underline" onClick={() => setVerNovedades((v) => !v)}>
+            {verNovedades ? "Ocultar" : "Ver"} {fmt(informe.novedades.length)} novedad(es) encontradas (no se corrigió nada)
+          </button>
+          {verNovedades ? (
+            <ul className="mt-2 max-h-60 list-disc space-y-1 overflow-auto pl-5 text-xs">
+              {informe.novedades.slice(0, 500).map((n, i) => (
+                <li key={i}>Pasada {n.pasada}{n.comprobante ? ` · ${n.comprobante}` : ""}: {n.mensaje}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

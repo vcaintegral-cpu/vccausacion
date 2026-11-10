@@ -1,6 +1,13 @@
 // Lectura del precedente tributario desde la base (sesión del usuario, RLS por empresa).
 import { supabase } from "@/integrations/supabase/client";
 import {
+  aprenderPerfiles,
+  reconstruirCompras,
+  type CompraHistorica,
+  type MovimientoAux,
+  type PerfilHistorico,
+} from "@/lib/auxiliar-historico";
+import {
   construirPrecedentes,
   type AsientoSincronizado,
   type FacturaSincronizada,
@@ -35,8 +42,43 @@ const cache = new Map<string, { hasta: number; promesa: Promise<PrecedentesEmpre
 
 /** Olvida el precedente cargado (tras sincronizar con Siigo o confirmar una condición). */
 export function invalidarPrecedentes(companyId?: string) {
-  if (companyId) cache.delete(companyId);
-  else cache.clear();
+  if (companyId) {
+    cache.delete(companyId);
+    historialCache.delete(companyId);
+  } else {
+    cache.clear();
+    historialCache.clear();
+  }
+}
+
+export type HistorialCompras = { compras: CompraHistorica[]; perfiles: Map<string, PerfilHistorico> };
+const historialCache = new Map<string, { hasta: number; promesa: Promise<HistorialCompras> }>();
+
+/**
+ * Compras del auxiliar histórico de Siigo importado (comprobantes FC y DS completos) y
+ * el perfil aprendido de cada proveedor. Solo se leen los movimientos de compra.
+ */
+export function cargarHistorialCompras(companyId: string): Promise<HistorialCompras> {
+  const previo = historialCache.get(companyId);
+  if (previo && previo.hasta > Date.now()) return previo.promesa;
+  const promesa = (async () => {
+    const movs = await todas<MovimientoAux>((d, h) =>
+      supabase
+        .from("accounting_history")
+        .select(
+          "account_code, account_name, provider_nit, provider_name, voucher, entry_date_text, description, detail, cost_center, debit, credit",
+        )
+        .eq("company_id", companyId)
+        .or("voucher.ilike.FC-%,voucher.ilike.DS-%")
+        .order("id")
+        .range(d, h),
+    ).catch(() => [] as MovimientoAux[]);
+    const compras = reconstruirCompras(movs);
+    return { compras, perfiles: aprenderPerfiles(compras) };
+  })();
+  historialCache.set(companyId, { hasta: Date.now() + VIGENCIA_MS, promesa });
+  promesa.catch(() => historialCache.delete(companyId));
+  return promesa;
 }
 
 /**
@@ -51,11 +93,11 @@ export function cargarPrecedentes(
   const previo = cache.get(companyId);
   if (previo && previo.hasta > Date.now()) return previo.promesa;
   const promesa = (async () => {
-    const [facturas, lineas, asientos, historico] = await Promise.all([
+    const [facturas, lineas, asientos, historico, historial] = await Promise.all([
       todas<FacturaSincronizada>((d, h) =>
         supabase
           .from("invoices")
-          .select("id, provider_nit, issue_date, subtotal, iva, retefuente, reteiva, reteica")
+          .select("id, provider_nit, issue_date, subtotal, iva, retefuente, reteiva, reteica, siigo_number")
           .eq("company_id", companyId)
           .or(
             "siigo_status.eq.sincronizada,status.eq.sincronizada,status.eq.historico,siigo_id.not.is.null,siigo_number.not.is.null",
@@ -95,6 +137,7 @@ export function cargarPrecedentes(
           .order("id")
           .range(d, h),
       ).catch(() => [] as MovimientoHistorico[]),
+      cargarHistorialCompras(companyId),
     ]);
     // Solo renglones y asientos de documentos sincronizados.
     const ids = new Set(facturas.map((f) => f.id));
@@ -103,6 +146,18 @@ export function cargarPrecedentes(
       lineas: lineas.filter((l) => ids.has(l.invoice_id)),
       asientos: asientos.filter((a) => ids.has(a.invoice_id)),
       historico,
+      // Con compras reconstruidas del auxiliar, cada compra cuenta una vez con su tarifa
+      // real; un comprobante que ya está como documento sincronizado no se repite.
+      ...(historial.compras.length
+        ? {
+            comprasHistoricas: historial.compras,
+            comprobantesSincronizados: new Set(
+              facturas
+                .map((f) => String((f as { siigo_number?: string | null }).siigo_number ?? "").toUpperCase())
+                .filter(Boolean),
+            ),
+          }
+        : {}),
       taxes,
     });
   })();

@@ -38,6 +38,7 @@ vi.mock("@/lib/provider-rules", () => ({ fetchProviderRules: () => Promise.resol
 vi.mock("@/lib/iva-treatment", () => ({ fetchIvaConfig: () => Promise.resolve() }));
 vi.mock("@/lib/precedente-tributario.data", () => ({
   cargarPrecedentes: () => Promise.resolve(),
+  cargarHistorialCompras: () => Promise.resolve({ compras: [], perfiles: new Map() }),
   cargarTablasBases: () => Promise.resolve(),
   invalidarPrecedentes: () => undefined,
   invalidarTablasBases: () => undefined,

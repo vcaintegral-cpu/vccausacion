@@ -13,6 +13,7 @@
 // Nunca cambia valores de la factura ni inventa tarifas: el IVA solo se elige
 // entre los impuestos configurados de la tarifa del documento (o, sin tarifa,
 // solo si el precedente del proveedor cuadra al peso con el valor del renglón).
+import type { CompraHistorica } from "@/lib/auxiliar-historico";
 import { roundCOP } from "@/lib/money";
 import type { RetencionKind } from "@/lib/retenciones";
 
@@ -87,10 +88,14 @@ export type PrecedenteProveedor = {
   documentosSiigo: number;
   /** Movimientos de impuestos del auxiliar histórico de Siigo. */
   movimientosHistoricos: number;
+  /** Compras reconstruidas del auxiliar histórico (comprobantes FC / DS completos). */
+  comprasHistoricas: number;
   iva: UsoImpuesto[];
   retenciones: Record<RetencionKind, UsoImpuesto[]>;
   /** Documentos sincronizados en los que NO se practicó cada retención. */
   sinRetencion: Record<RetencionKind, number>;
+  /** Mayor base de las compras en las que NO se practicó cada retención. */
+  sinRetencionBaseMax: Record<RetencionKind, number>;
 };
 
 export type PrecedentesEmpresa = Map<string, PrecedenteProveedor>;
@@ -106,9 +111,11 @@ const vacio = (nit: string): PrecedenteProveedor => ({
   nit,
   documentosSiigo: 0,
   movimientosHistoricos: 0,
+  comprasHistoricas: 0,
   iva: [],
   retenciones: { retefuente: [], reteiva: [], reteica: [] },
   sinRetencion: { retefuente: 0, reteiva: 0, reteica: 0 },
+  sinRetencionBaseMax: { retefuente: 0, reteiva: 0, reteica: 0 },
 });
 
 const masReciente = (a: string | null, b: string | null) => (!a ? b : !b ? a : a > b ? a : b);
@@ -162,6 +169,14 @@ export function construirPrecedentes(input: {
   lineas: LineaSincronizada[];
   asientos: AsientoSincronizado[];
   historico: MovimientoHistorico[];
+  /**
+   * Compras reconstruidas del auxiliar de Siigo (con base y tarifa de cada impuesto).
+   * Cuando se entregan, reemplazan a `historico`: cada compra cuenta una vez, con la
+   * tarifa observada (identifica el impuesto exacto) y cuenta las compras SIN retención.
+   */
+  comprasHistoricas?: CompraHistorica[];
+  /** Comprobantes de Siigo ya contados como documentos sincronizados (no se cuentan dos veces). */
+  comprobantesSincronizados?: Set<string>;
   taxes: ImpuestoConfigurado[];
 }): PrecedentesEmpresa {
   const out: PrecedentesEmpresa = new Map();
@@ -221,6 +236,8 @@ export function construirPrecedentes(input: {
       const valor = roundCOP(Number(f[kind] ?? 0));
       if (!(valor > 0)) {
         p.sinRetencion[kind] += 1;
+        const baseSin = kind === "reteiva" ? Number(f.iva ?? 0) : Number(f.subtotal ?? 0);
+        p.sinRetencionBaseMax[kind] = Math.max(p.sinRetencionBaseMax[kind], roundCOP(baseSin));
         continue;
       }
       const base = kind === "reteiva" ? Number(f.iva ?? 0) : Number(f.subtotal ?? 0);
@@ -241,9 +258,37 @@ export function construirPrecedentes(input: {
     }
   }
 
-  // Auxiliar histórico de Siigo: evidencia adicional de cuentas usadas (sin base
-  // confiable, así que no infiere tarifa ni cuenta facturas "sin retención").
-  for (const m of input.historico) {
+  // Compras completas del auxiliar histórico: IVA y retenciones con su tarifa real.
+  for (const c of input.comprasHistoricas ?? []) {
+    const nit = nitBase(c.nit);
+    if (!nit || input.comprobantesSincronizados?.has(c.comprobante.toUpperCase())) continue;
+    const p = de(nit);
+    p.comprasHistoricas += 1;
+    const fecha = c.fecha;
+    for (const i of c.iva) {
+      const t = impuestoDeCuenta(input.taxes, "iva", i.cuenta, i.tarifa);
+      sumarUso(p.iva, { taxId: t ? String(t.id) : null, cuenta: i.cuenta, tarifa: t ? Number(t.rate) : i.tarifa, ultima: fecha });
+    }
+    for (const kind of RETENCIONES) {
+      const lista = c.retenciones[kind];
+      if (!lista.length) {
+        p.sinRetencion[kind] += 1;
+        const baseSin = kind === "reteiva" ? c.iva.reduce((s, i) => s + i.valor, 0) : c.base;
+        p.sinRetencionBaseMax[kind] = Math.max(p.sinRetencionBaseMax[kind], roundCOP(baseSin));
+        continue;
+      }
+      for (const r of lista) {
+        const observada = r.tarifa ?? (r.base ? Math.round((r.valor / r.base) * 100000) / 1000 : null);
+        const t = impuestoDeCuenta(input.taxes, kind, r.cuenta, observada);
+        sumarUso(p.retenciones[kind], { taxId: t ? String(t.id) : null, cuenta: r.cuenta, tarifa: t ? Number(t.rate) : observada, ultima: fecha });
+      }
+    }
+  }
+
+  // Auxiliar histórico de Siigo (movimientos sueltos, sin compras reconstruidas):
+  // evidencia adicional de cuentas usadas (sin base confiable, así que no infiere
+  // tarifa ni cuenta facturas "sin retención").
+  for (const m of input.comprasHistoricas ? [] : input.historico) {
     const nit = nitBase(m.provider_nit);
     const cuenta = String(m.account_code ?? "").trim();
     if (!nit || !cuenta) continue;
@@ -570,6 +615,16 @@ export function decidirRetenciones(params: {
           .join(", ");
         out.avisos.push(
           `${ETIQUETA[kind]}: históricamente se le retuvo (cuenta ${cuentas}), pero no se identificó el impuesto configurado; selecciónalo.`,
+        );
+      } else if (
+        kind === "retefuente" &&
+        (precedente?.sinRetencion.retefuente ?? 0) >= 2 &&
+        roundCOP(params.baseGravable) <= (precedente?.sinRetencionBaseMax.retefuente ?? 0)
+      ) {
+        // Precedente claro: nunca se le retuvo, en 2 o más compras y con bases iguales o
+        // mayores a la de esta factura (no basta con compras pequeñas bajo la base mínima).
+        out.avisos.push(
+          `${ETIQUETA[kind]}: no se practica, igual que en sus ${precedente!.sinRetencion.retefuente} compra(s) registradas en Siigo sin retención, con bases de hasta ${pesos(precedente!.sinRetencionBaseMax.retefuente)} (precedente histórico).`,
         );
       } else if (kind === "retefuente") {
         const n = precedente?.sinRetencion.retefuente ?? 0;

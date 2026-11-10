@@ -199,10 +199,20 @@ export async function readRawHistory(file: File): Promise<RawHistoryFile> {
     const isCode = /^\d[\d.]*$/.test(codeCell);
     if (!isCode) {
       const joined = cells.map((c) => (c ?? "").trim()).filter(Boolean).join(" ");
-      const group = joined.match(/(?:codigo|código)\s+contable\s*:?\s*(\d[\d.]*)\s*(.*)$/i);
+      // Encabezado de grupo del informe: "Código contable: 5135 …" o, en el reporte
+      // "Movimiento auxiliar por cuenta contable", "Cuenta contable: 11050501Caja general"
+      // (código y nombre pegados). Trae los subtotales de la cuenta: NUNCA es un movimiento.
+      const group = joined.match(/^(?:c[oó]digo|cuenta)\s+contable\s*:\s*(\d[\d.]*)\s*(.*)$/i);
       if (group) {
         currentCode = group[1] ?? currentCode;
-        currentName = (group[2] ?? "").trim() || currentName;
+        currentName = (group[2] ?? "").replace(/\s+-?[\d.,]+(\s+-?[\d.,]+)*$/, "").trim() || currentName;
+        groupRows += 1;
+        continue;
+      }
+      // Totales del informe ("Total cuenta …", "Total general") y pie ("Procesado en: …").
+      if (/^(total\b|procesado en\b)/i.test(joined)) {
+        groupRows += 1;
+        continue;
       }
       // ¿Es una fila de movimiento aunque no repita la cuenta?
       const hasMovement =

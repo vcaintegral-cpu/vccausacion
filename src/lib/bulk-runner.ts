@@ -21,7 +21,7 @@ import { fetchProviderRules } from "@/lib/provider-rules";
 import { estadoFacturaAfectada, facturaReferidaEnExcel, mensajeNotaCredito } from "@/lib/nota-credito";
 import { fetchIvaConfig } from "@/lib/iva-treatment";
 import { fetchCompanyKnowledge, type CompanyKnowledge } from "@/lib/causacion-engine";
-import { cargarPrecedentes, cargarTablasBases, invalidarPrecedentes, invalidarTablasBases } from "@/lib/precedente-tributario.data";
+import { cargarHistorialCompras, cargarPrecedentes, cargarTablasBases, invalidarPrecedentes, invalidarTablasBases } from "@/lib/precedente-tributario.data";
 import type { ImpuestoConfigurado } from "@/lib/precedente-tributario";
 import type { Rule, TaxRate } from "@/lib/accounting";
 import {
@@ -173,10 +173,11 @@ export async function loadDeps(companyId: string): Promise<Deps> {
     // Precedente tributario (IVA y retenciones sincronizados con Siigo) y bases
     // mínimas: se precargan para el lote y quedan en una caché de 5 minutos, de
     // modo que lo sincronizado después con Siigo se aprende sin recargar la app.
-    const [precedentes, tablasBases] = await Promise.all([
+    const [precedentes, tablasBases, , historial] = await Promise.all([
       cargarPrecedentes(companyId, (taxes.data ?? []) as unknown as ImpuestoConfigurado[]),
       cargarTablasBases(),
       fetchIvaConfig(companyId),
+      cargarHistorialCompras(companyId).catch(() => null),
     ]);
     const config: BulkConfig = {
       batch: { company: company.data, providers: Object.fromEntries(providers.map((p) => [p.nit,p])), providerRules, userId: auth.data.user.id },
@@ -190,6 +191,7 @@ export async function loadDeps(companyId: string): Promise<Deps> {
       // el precedente tributario completo a mitad de camino.
       precedentes,
       tablasBases,
+      ...(historial ? { perfilesHistoricos: historial.perfiles } : {}),
     };
     return { config, knowledge };
   })();
