@@ -447,8 +447,16 @@ export function PucPanel({ companyId }: { companyId: string }) {
             const current = existentes.get(row.code);
             return current ? { ...current, ...row } : row;
           });
-          const { error } = await supabase.from("puc_accounts").upsert(merged, { onConflict: "company_id,code", ignoreDuplicates: false });
-          return { error };
+          // Existentes (con id) y nuevas (sin id) por separado: mezcladas, PostgREST manda
+          // id = NULL para las nuevas y la base rechaza el lote (not-null en "id").
+          const conId = merged.filter((r) => (r as { id?: string }).id);
+          const nuevas = merged.filter((r) => !(r as { id?: string }).id);
+          for (const grupo of [conId, nuevas]) {
+            if (!grupo.length) continue;
+            const { error } = await supabase.from("puc_accounts").upsert(grupo as never, { onConflict: "company_id,code", ignoreDuplicates: false });
+            if (error) return { error };
+          }
+          return { error: null };
         },
         verifyKeys: () => fetchAllKeys(async (from, to) => {
           const { data, error } = await supabase.from("puc_accounts").select("code").eq("company_id", companyId).order("code").range(from, to);

@@ -263,10 +263,29 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
       return { imported: 0 };
     }
 
-    const { data: inserted, error } = await context.supabase
-      .from("puc_accounts")
-      .upsert(rows, { onConflict: "company_id,code", ignoreDuplicates: false })
-      .select("id");
+    // Las cuentas que ya existen llevan su id; las nuevas de Siigo no. Si se envían
+    // mezcladas en un mismo upsert, PostgREST manda id = NULL para las nuevas (en vez de
+    // generarlo) y la base las rechaza: "null value in column id … violates not-null
+    // constraint". Por eso se envían en grupos separados, de a 500.
+    const conId = rows.filter((r) => (r as { id?: string }).id);
+    const nuevas = rows
+      .filter((r) => !(r as { id?: string }).id)
+      .map((r) => {
+        const { id: _sinId, ...resto } = r as typeof r & { id?: string };
+        return resto;
+      });
+    let inserted: Array<{ id: string }> = [];
+    let error: { code?: string; message: string; details?: string | null; hint?: string | null } | null = null;
+    for (const grupo of [conId, nuevas]) {
+      for (let i = 0; i < grupo.length && !error; i += 500) {
+        const res = await context.supabase
+          .from("puc_accounts")
+          .upsert(grupo.slice(i, i + 500) as never, { onConflict: "company_id,code", ignoreDuplicates: false })
+          .select("id");
+        if (res.error) error = res.error;
+        else inserted = inserted.concat((res.data ?? []) as Array<{ id: string }>);
+      }
+    }
     if (error) {
       console.error("[siigo][puc] error de Supabase al insertar:", JSON.stringify(error));
       throw new Error(
