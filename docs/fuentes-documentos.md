@@ -66,7 +66,7 @@ nada a Siigo sin aprobación.
 | `DOCUMENT_SYNC_MAX_FILES` | Opcional. Archivos por carpeta y pasada (20 por defecto) |
 
 ### Base de datos
-Aplicar `drizzle/migrations/0019_fuentes_documentos.sql` y ejecutar
+Aplicar `drizzle/migrations/0020_fuentes_documentos.sql` y ejecutar
 `docs/fuentes-documentos-cron.sql` con la URL publicada y el mismo
 `DOCUMENT_SYNC_CRON_SECRET`.
 

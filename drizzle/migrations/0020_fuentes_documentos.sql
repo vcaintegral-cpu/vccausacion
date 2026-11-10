@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS public.document_sources (
 GRANT SELECT ON public.document_sources TO authenticated;
 GRANT ALL ON public.document_sources TO service_role;
 ALTER TABLE public.document_sources ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "members read document sources" ON public.document_sources;
 CREATE POLICY "members read document sources" ON public.document_sources
   FOR SELECT TO authenticated USING (public.is_company_member(company_id));
 
@@ -83,6 +84,7 @@ CREATE INDEX IF NOT EXISTS document_source_files_company_idx ON public.document_
 GRANT SELECT ON public.document_source_files TO authenticated;
 GRANT ALL ON public.document_source_files TO service_role;
 ALTER TABLE public.document_source_files ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "members read document source files" ON public.document_source_files;
 CREATE POLICY "members read document source files" ON public.document_source_files
   FOR SELECT TO authenticated USING (public.is_company_member(company_id));
 
@@ -112,5 +114,6 @@ CREATE INDEX IF NOT EXISTS payment_documents_company_idx ON public.payment_docum
 GRANT SELECT ON public.payment_documents TO authenticated;
 GRANT ALL ON public.payment_documents TO service_role;
 ALTER TABLE public.payment_documents ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "members read payment documents" ON public.payment_documents;
 CREATE POLICY "members read payment documents" ON public.payment_documents
   FOR SELECT TO authenticated USING (public.is_company_member(company_id));
