@@ -26,6 +26,7 @@ import type { ImpuestoConfigurado } from "@/lib/precedente-tributario";
 import type { Rule, TaxRate } from "@/lib/accounting";
 import {
   ACTIVE_STATUSES,
+  cancelPendingItems,
   fileFromStorage,
   listItems,
   listUploads,
@@ -207,6 +208,9 @@ type QueuedUpload = { uploadId: string; companyId: string; fileName: string };
 
 const queue: QueuedUpload[] = [];
 let loop: Promise<void> | null = null;
+
+/** Cargas que el usuario pidió detener: no se toma ninguna factura nueva de ellas. */
+const detenciones = new Map<string, "pausar" | "cancelar">();
 
 function counters(items: BulkItem[]) {
   const done = items.filter((i) => i.status === "completed").length;
@@ -402,6 +406,7 @@ async function processItem(item: BulkItem, companyId: string, deps: Deps) {
 export const CONCURRENCIA = 5;
 
 async function runUpload(job: QueuedUpload) {
+  if (detenciones.has(job.uploadId)) return;
   resetBulkBatch();
   invalidateBulkDeps(job.companyId);
   const deps = await loadDeps(job.companyId);
@@ -421,13 +426,15 @@ async function runUpload(job: QueuedUpload) {
     });
     // Una factura con error nunca detiene el lote: solo se toman las pendientes.
     const pendientes = items.filter((i) => PENDING_STATUSES.includes(i.status));
-    if (pendientes.length === 0) break;
+    if (pendientes.length === 0 || detenciones.has(job.uploadId)) break;
 
     // Varias facturas en paralelo: la espera de la IA de una no bloquea a las demás.
     let cursor = 0;
     let activos = 0;
     const worker = async () => {
       for (;;) {
+        // Pausar/Cancelar: las facturas en curso terminan, no se toma ninguna más.
+        if (detenciones.has(job.uploadId)) return;
         const item = pendientes[cursor++];
         if (!item) return;
         activos += 1;
@@ -443,9 +450,35 @@ async function runUpload(job: QueuedUpload) {
     await Promise.all(Array.from({ length: Math.min(CONCURRENCIA, pendientes.length) }, worker));
   }
 
+  const modo = detenciones.get(job.uploadId);
+  if (modo === "cancelar") await cancelPendingItems(job.uploadId);
   const items = await listItems(job.uploadId);
-  await refreshUploadCounters(job.uploadId, items);
+  await refreshUploadCounters(
+    job.uploadId,
+    items,
+    modo === "pausar" ? "paused" : modo === "cancelar" ? "cancelled" : undefined,
+  );
   emit({ active: 0, ...counters(items) });
+}
+
+/**
+ * Detiene una carga masiva a pedido del usuario.
+ * - "pausar": las facturas que se están leyendo terminan; las demás quedan pendientes
+ *   y no se retoman solas al abrir la aplicación, solo con "Reanudar".
+ * - "cancelar": igual, pero las pendientes quedan canceladas (se pueden reintentar una a una).
+ */
+export async function detenerCarga(uploadId: string, modo: "pausar" | "cancelar") {
+  detenciones.set(uploadId, modo);
+  for (let i = queue.length - 1; i >= 0; i--) if (queue[i]!.uploadId === uploadId) queue.splice(i, 1);
+  if (modo === "cancelar") await cancelPendingItems(uploadId);
+  const items = await listItems(uploadId);
+  await refreshUploadCounters(uploadId, items, modo === "pausar" ? "paused" : "cancelled");
+  emit({ queued: queue.length, ...(snapshot.uploadId === uploadId ? counters(items) : {}) });
+}
+
+/** true mientras el motor sigue terminando las facturas en curso de una carga detenida. */
+export function cargaDeteniendose(uploadId: string | null | undefined) {
+  return !!uploadId && detenciones.has(uploadId) && snapshot.running && snapshot.uploadId === uploadId;
 }
 
 
@@ -475,6 +508,11 @@ function kick() {
 
 /** Encola una carga para que se procese en segundo plano (no requiere pantalla abierta). */
 export function startBackgroundUpload(job: QueuedUpload) {
+  // Reanudar (o reintentar) una carga detenida la vuelve a habilitar.
+  if (detenciones.has(job.uploadId)) {
+    if (snapshot.running && snapshot.uploadId === job.uploadId) return; // aún termina las facturas en curso
+    detenciones.delete(job.uploadId);
+  }
   if (snapshot.uploadId === job.uploadId && snapshot.running) return;
   if (queue.some((q) => q.uploadId === job.uploadId)) return;
   queue.push(job);
