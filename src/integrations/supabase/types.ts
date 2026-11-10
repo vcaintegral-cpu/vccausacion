@@ -644,6 +644,200 @@ export type Database = {
           },
         ]
       }
+      document_connections: {
+        Row: {
+          account_email: string | null
+          company_id: string
+          connected_at: string
+          connected_by: string | null
+          provider: string
+          refresh_token: string
+          scopes: string | null
+        }
+        Insert: {
+          account_email?: string | null
+          company_id: string
+          connected_at?: string
+          connected_by?: string | null
+          provider: string
+          refresh_token: string
+          scopes?: string | null
+        }
+        Update: {
+          account_email?: string | null
+          company_id?: string
+          connected_at?: string
+          connected_by?: string | null
+          provider?: string
+          refresh_token?: string
+          scopes?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_connections_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_source_files: {
+        Row: {
+          bulk_item_id: string | null
+          company_id: string
+          external_id: string
+          external_modified_at: string | null
+          file_type: string | null
+          fingerprint: string | null
+          first_seen_at: string
+          folder_path: string | null
+          id: string
+          message: string | null
+          mime_type: string | null
+          name: string
+          payment_day: number | null
+          payment_sources: string[] | null
+          period: string | null
+          provider: string
+          purpose: string
+          size_bytes: number | null
+          status: string
+          updated_at: string
+          upload_id: string | null
+        }
+        Insert: {
+          bulk_item_id?: string | null
+          company_id: string
+          external_id: string
+          external_modified_at?: string | null
+          file_type?: string | null
+          fingerprint?: string | null
+          first_seen_at?: string
+          folder_path?: string | null
+          id?: string
+          message?: string | null
+          mime_type?: string | null
+          name: string
+          payment_day?: number | null
+          payment_sources?: string[] | null
+          period?: string | null
+          provider: string
+          purpose: string
+          size_bytes?: number | null
+          status?: string
+          updated_at?: string
+          upload_id?: string | null
+        }
+        Update: {
+          bulk_item_id?: string | null
+          company_id?: string
+          external_id?: string
+          external_modified_at?: string | null
+          file_type?: string | null
+          fingerprint?: string | null
+          first_seen_at?: string
+          folder_path?: string | null
+          id?: string
+          message?: string | null
+          mime_type?: string | null
+          name?: string
+          payment_day?: number | null
+          payment_sources?: string[] | null
+          period?: string | null
+          provider?: string
+          purpose?: string
+          size_bytes?: number | null
+          status?: string
+          updated_at?: string
+          upload_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_source_files_bulk_item_id_fkey"
+            columns: ["bulk_item_id"]
+            isOneToOne: false
+            referencedRelation: "bulk_upload_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_source_files_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_source_files_upload_id_fkey"
+            columns: ["upload_id"]
+            isOneToOne: false
+            referencedRelation: "bulk_uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_sources: {
+        Row: {
+          company_id: string
+          drive_id: string | null
+          enabled: boolean
+          folder_id: string
+          folder_name: string | null
+          folder_url: string
+          id: string
+          last_result: Json | null
+          last_run_at: string | null
+          last_status: string | null
+          month_subfolder: string | null
+          provider: string
+          purpose: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          company_id: string
+          drive_id?: string | null
+          enabled?: boolean
+          folder_id: string
+          folder_name?: string | null
+          folder_url: string
+          id?: string
+          last_result?: Json | null
+          last_run_at?: string | null
+          last_status?: string | null
+          month_subfolder?: string | null
+          provider: string
+          purpose: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          company_id?: string
+          drive_id?: string | null
+          enabled?: boolean
+          folder_id?: string
+          folder_name?: string | null
+          folder_url?: string
+          id?: string
+          last_result?: Json | null
+          last_run_at?: string | null
+          last_status?: string | null
+          month_subfolder?: string | null
+          provider?: string
+          purpose?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_sources_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       draft_sync_events: {
         Row: {
           action: string
@@ -1609,6 +1803,113 @@ export type Database = {
           },
         ]
       }
+      oauth_states: {
+        Row: {
+          company_id: string
+          created_at: string
+          provider: string
+          redirect_uri: string
+          state: string
+          user_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          provider: string
+          redirect_uri: string
+          state?: string
+          user_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          provider?: string
+          redirect_uri?: string
+          state?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "oauth_states_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_documents: {
+        Row: {
+          company_id: string
+          created_at: string
+          file_name: string
+          fingerprint: string
+          folder_path: string | null
+          id: string
+          kind: string
+          mime_type: string | null
+          notes: string | null
+          period: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          size_bytes: number | null
+          source_file_id: string | null
+          status: string
+          storage_path: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          file_name: string
+          fingerprint: string
+          folder_path?: string | null
+          id?: string
+          kind: string
+          mime_type?: string | null
+          notes?: string | null
+          period?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          size_bytes?: number | null
+          source_file_id?: string | null
+          status?: string
+          storage_path: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          file_name?: string
+          fingerprint?: string
+          folder_path?: string | null
+          id?: string
+          kind?: string
+          mime_type?: string | null
+          notes?: string | null
+          period?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          size_bytes?: number | null
+          source_file_id?: string | null
+          status?: string
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_documents_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_documents_source_file_id_fkey"
+            columns: ["source_file_id"]
+            isOneToOne: false
+            referencedRelation: "document_source_files"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payment_receipt_lines: {
         Row: {
           account_code: string
@@ -2369,6 +2670,42 @@ export type Database = {
           },
         ]
       }
+      retention_base_tables: {
+        Row: {
+          concepts: Json
+          id: string
+          source: string | null
+          updated_at: string
+          updated_by: string | null
+          uvt: number
+          valid_from: string
+          valid_to: string | null
+          year: number
+        }
+        Insert: {
+          concepts?: Json
+          id?: string
+          source?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          uvt: number
+          valid_from: string
+          valid_to?: string | null
+          year: number
+        }
+        Update: {
+          concepts?: Json
+          id?: string
+          source?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          uvt?: number
+          valid_from?: string
+          valid_to?: string | null
+          year?: number
+        }
+        Relationships: []
+      }
       siigo_credentials: {
         Row: {
           access_key: string
@@ -2529,6 +2866,7 @@ export type Database = {
           min_base: number
           name: string
           rate: number
+          retention_concept: string | null
           siigo_code: string | null
           siigo_id: string | null
           siigo_name: string | null
@@ -2545,6 +2883,7 @@ export type Database = {
           min_base?: number
           name: string
           rate?: number
+          retention_concept?: string | null
           siigo_code?: string | null
           siigo_id?: string | null
           siigo_name?: string | null
@@ -2561,6 +2900,7 @@ export type Database = {
           min_base?: number
           name?: string
           rate?: number
+          retention_concept?: string | null
           siigo_code?: string | null
           siigo_id?: string | null
           siigo_name?: string | null
