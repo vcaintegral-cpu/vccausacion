@@ -18,6 +18,7 @@ import { BulkInvoiceStageError, processInvoiceFile, resetBulkBatch, saveExtracte
 import { parsePurchaseWorkbook, type PurchaseDocument } from "@/lib/purchase-excel";
 import { excelDocKey, excelDocToExtracted } from "@/lib/excel-invoice-adapter";
 import { fetchProviderRules } from "@/lib/provider-rules";
+import { estadoFacturaAfectada, facturaReferidaEnExcel, mensajeNotaCredito } from "@/lib/nota-credito";
 import { fetchIvaConfig } from "@/lib/iva-treatment";
 import { fetchCompanyKnowledge, type CompanyKnowledge } from "@/lib/causacion-engine";
 import { cargarPrecedentes, cargarTablasBases, invalidarPrecedentes, invalidarTablasBases } from "@/lib/precedente-tributario.data";
@@ -262,8 +263,17 @@ async function processExcelItem(item: BulkItem, companyId: string, deps: Deps) {
     read_status: "Leída (Excel)",
   });
   if (doc.kind === "credit_note") {
+    // Las notas crédito de compra se registran manualmente en Siigo sobre la factura causada.
+    const referida = facturaReferidaEnExcel(doc.rawHeader);
+    const estado = await estadoFacturaAfectada(supabase, companyId, doc.header.provider_nit, referida);
     throw new BulkInvoiceStageError(
-      "Nota de crédito electrónica: requiere revisión manual; no se causa automáticamente.",
+      mensajeNotaCredito({
+        numero: [doc.header.prefix, doc.header.number].join("") || null,
+        proveedor: doc.header.provider_name,
+        nit: doc.header.provider_nit,
+        total: doc.header.total,
+        estado,
+      }),
       "validating_company",
       trace,
       true,

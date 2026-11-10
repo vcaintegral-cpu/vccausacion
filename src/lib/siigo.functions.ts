@@ -2,6 +2,7 @@ import { effectiveSource, validateStoredJournal } from "@/lib/source-values";
 import { adaptPurchaseItems, ajustarPrecisionRenglones, capitalizedIvaRow, motivoSinAjuste, retentionRowsExcluding, purchaseLineErrors, purchaseReadbackComparison, purchaseReadbackErrors, purchasePayloadErrors, resolvePurchaseInc } from "@/lib/siigo-purchase-validation";
 import { toCents } from "@/lib/money";
 import { esCeroCOP, roundCOP } from "@/lib/money";
+import { estadoFacturaAfectada, facturaReferidaEnTexto, mensajeNotaCredito, notaCreditoGuardada } from "@/lib/nota-credito";
 import { createServerFn } from "@tanstack/react-start";
 import { resolveOperationalAccount, validarCuenta } from "@/lib/puc-hierarchy";
 import { mensajeSiigoAmigable } from "@/lib/siigo-errors";
@@ -750,6 +751,23 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         })
         .eq("id", inv.id);
       throw new Error(mensaje);
+    }
+
+    // Barrera: una nota crédito de compra nunca se envía a Siigo como factura de compra.
+    // La API de Siigo no crea notas crédito de compra; se registran manualmente en Siigo.
+    if (!inv.siigo_id && !inv.siigo_number && notaCreditoGuardada(inv)) {
+      const aviso = mensajeNotaCredito({
+        numero: [inv.prefix, inv.number].filter(Boolean).join("") || null,
+        proveedor: inv.provider_name,
+        nit: inv.provider_nit,
+        total: inv.total,
+        estado: await estadoFacturaAfectada(supabase, inv.company_id, inv.provider_nit, facturaReferidaEnTexto(inv.notes)),
+      });
+      await supabase
+        .from("invoices")
+        .update({ siigo_status: "error", siigo_error: aviso, siigo_error_kind: "sin_crear" })
+        .eq("id", inv.id);
+      throw new Error(aviso);
     }
 
     // Protección contra doble envío: si ya está sincronizada o ya tiene consecutivo real

@@ -13,6 +13,7 @@ import { ITEM_TYPES, normalizeItemType } from "@/lib/item-type";
 import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { extractInvoice, type ExtractedInvoice } from "@/lib/extract.functions";
+import { estadoFacturaAfectada, facturaReferidaEnTexto, facturaReferidaEnValor, mensajeNotaCredito, pareceNotaCredito } from "@/lib/nota-credito";
 import { buildJournal, suggestAccount, totals, type Line, type Rule, type TaxRate } from "@/lib/accounting";
 import {
   PAYABLE_SOURCE_LABEL,
@@ -787,6 +788,14 @@ function Causar() {
       const data = (await extract({
         data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
       })) as ExtractedInvoice;
+      // Las notas crédito de compra no se causan aquí: se registran manualmente en Siigo.
+      if (pareceNotaCredito({ documentType: data.document_type ?? null, texto: content.text ?? "", archivo: file.name, total: data.total })) {
+        const referida = facturaReferidaEnValor(data.referenced_invoice) ?? facturaReferidaEnTexto(data.notes) ?? facturaReferidaEnTexto(content.text ?? "");
+        const estado = companyId ? await estadoFacturaAfectada(supabase, companyId, data.provider_nit, referida) : { tipo: "sin_referencia" as const };
+        const numero = [data.prefix, data.number].filter(Boolean).join("") || null;
+        toast.error(mensajeNotaCredito({ numero, proveedor: data.provider_name, nit: data.provider_nit, total: data.total, estado }), { duration: 30000 });
+        return;
+      }
       setSource(captureSource(data, "pdf"));
       const { lines: extracted, ...rest } = data;
       // Control de duplicados por empresa antes de crear cualquier borrador.

@@ -15,6 +15,7 @@ const TEXTOS: Record<string, string> = {
   DUPLICATE: "Esta factura ya fue procesada anteriormente: no se volverá a causar.",
   BUYER_MISMATCH: "La factura no corresponde al NIT de la empresa activa.",
   AI_EXTRACT_ERROR: "No fue posible extraer los datos de la factura. Puede intentar nuevamente.",
+  CREDIT_NOTE: "Es una nota crédito: no se causa ni se envía a Siigo desde la herramienta. Regístrela manualmente en Siigo con el comprobante de notas crédito sobre la factura de compra ya causada.",
   UNKNOWN_ERROR: "Factura no procesada. Puede intentar nuevamente.",
 };
 
@@ -26,6 +27,7 @@ export function codigoTecnico(item: BulkItem): string {
 /** Mensaje comprensible para el usuario final. */
 export function mensajeAmigable(item: BulkItem): string {
   if (item.status === "duplicate") return TEXTOS["DUPLICATE"]!;
+  if (codigoTecnico(item) === "CREDIT_NOTE") return TEXTOS["CREDIT_NOTE"]!;
   if (item.status === "requires_review") return "La factura se leyó pero necesita revisión manual antes de causarla.";
   if (item.status !== "error") return "";
   return TEXTOS[codigoTecnico(item)] ?? TEXTOS["UNKNOWN_ERROR"]!;

@@ -22,6 +22,7 @@ export type BulkDiagnosis = {
 
 /** Etapa + código legible para cualquier error del flujo masivo. */
 export function errorCode(stage: string, message: string): string {
+  if (/NOTA CR[EÉ]DITO\s+[—-]\s+REGISTRO MANUAL|NOTA_CREDITO_REVISION_MANUAL/i.test(message)) return "CREDIT_NOTE";
   if (/ERROR_ARCHIVO_NO_ENCONTRADO|not found|Object not found/i.test(message)) return "STORAGE_NOT_FOUND";
   if (/ERROR_STORAGE/i.test(message)) return "STORAGE_DOWNLOAD_ERROR";
   if (/ERROR_SUBIDA_PDF/i.test(message)) return "STORAGE_UPLOAD_ERROR";
