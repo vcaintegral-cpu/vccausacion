@@ -16,6 +16,33 @@ const HEADER_HINTS = [
   "centro", "impuesto", "tarifa", "nit", "proveedor", "fecha",
 ];
 
+/**
+ * Algunos reportes (p. ej. "Movimiento auxiliar por cuenta contable" de Siigo) declaran
+ * en el archivo un rango de una sola columna (A1:A59290) aunque traen 16. Se recalcula
+ * el rango real a partir de las celdas presentes para no perder columnas.
+ */
+export function corregirRangoHoja(sheet: XLSX.WorkSheet): XLSX.WorkSheet {
+  let maxR = 0;
+  let maxC = 0;
+  let hay = false;
+  for (const clave of Object.keys(sheet)) {
+    if (clave.startsWith("!")) continue;
+    const c = XLSX.utils.decode_cell(clave);
+    if (c.r > maxR) maxR = c.r;
+    if (c.c > maxC) maxC = c.c;
+    hay = true;
+  }
+  if (!hay) return sheet;
+  const actual = sheet["!ref"] ? XLSX.utils.decode_range(sheet["!ref"]) : null;
+  if (!actual || actual.e.r < maxR || actual.e.c < maxC) {
+    sheet["!ref"] = XLSX.utils.encode_range({
+      s: { r: 0, c: 0 },
+      e: { r: Math.max(maxR, actual?.e.r ?? 0), c: Math.max(maxC, actual?.e.c ?? 0) },
+    });
+  }
+  return sheet;
+}
+
 /** Lee la primera hoja de un Excel/CSV y devuelve filas con encabezados normalizados.
  *  Detecta automáticamente la fila de encabezados (ignora títulos/filas vacías arriba). */
 export async function readSheet(file: File): Promise<SheetRow[]> {
@@ -29,7 +56,7 @@ export async function readSheetIndexed(file: File): Promise<{ row: SheetRow; row
   const first = wb.SheetNames[0];
   if (!first) return [];
   // raw: false => los códigos contables llegan como texto formateado (conserva ceros a la izquierda).
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[first]!, {
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(corregirRangoHoja(wb.Sheets[first]!), {
     header: 1,
     defval: "",
     blankrows: true,
@@ -81,7 +108,7 @@ export async function readSheetMatrix(file: File): Promise<SheetMatrix> {
   const wb = XLSX.read(buffer, { type: "array", cellDates: false });
   const first = wb.SheetNames[0];
   if (!first) return { text: [], raw: [] };
-  const sheet = wb.Sheets[first]!;
+  const sheet = corregirRangoHoja(wb.Sheets[first]!);
   const text = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: "", blankrows: true, raw: false });
   const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "", blankrows: true, raw: true });
   return {
