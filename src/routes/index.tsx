@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { BrainCircuit, FileCheck2, FileSpreadsheet, ScanLine } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { LegalFooter } from "@/components/legal-page";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -69,6 +70,7 @@ function Index() {
           ))}
         </div>
       </section>
+      <LegalFooter className="text-navy-foreground" />
     </div>
   );
 }
