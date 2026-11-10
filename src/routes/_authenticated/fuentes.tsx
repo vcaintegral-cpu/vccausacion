@@ -30,6 +30,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
+import { resumeBackgroundUploads } from "@/lib/bulk-runner";
 import { useActiveCompany } from "@/lib/active-company";
 import {
   egresosListar,
@@ -288,6 +289,8 @@ function TarjetaFuente({
         total.egresos += ultimo.egresosRecibidos;
         total.conciliados += ultimo.conciliados ?? 0;
         onChange();
+        // Las facturas encoladas empiezan a procesarse de inmediato (sin "Continuar procesamiento").
+        if (ultimo.facturasEncoladas || ultimo.documentosExcel) void resumeBackgroundUploads(companyId).catch(() => undefined);
         if (ultimo.errores.length || !ultimo.pendientesProximaEjecucion) break;
         setAvance(`Tanda ${tanda}: ${ultimo.pendientesProximaEjecucion} archivo(s) pendientes…`);
       }

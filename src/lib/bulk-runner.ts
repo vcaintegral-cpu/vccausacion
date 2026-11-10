@@ -25,12 +25,11 @@ import { cargarPrecedentes, cargarTablasBases, invalidarPrecedentes, invalidarTa
 import type { ImpuestoConfigurado } from "@/lib/precedente-tributario";
 import type { Rule, TaxRate } from "@/lib/accounting";
 import {
-  ACTIVE_STATUSES,
   cancelPendingItems,
   fileFromStorage,
   listItemStatuses,
+  listActiveUploads,
   listItems,
-  listUploads,
   mensajeUsuario,
   refreshUploadCounters,
   updateItem,
@@ -558,14 +557,30 @@ export async function retryBulkItems(job: QueuedUpload, itemIds: string[]) {
   startBackgroundUpload(job);
 }
 
-/** Al abrir la aplicación retoma automáticamente las cargas que quedaron a medias. */
-export async function resumeBackgroundUploads(companyId: string) {
-  if (!companyId) return;
-  const uploads: BulkUpload[] = await listUploads(companyId, 10);
-  for (const up of uploads.filter((u) => ACTIVE_STATUSES.includes(u.status))) {
-    const items = await listItems(up.id);
-    if (items.some((i) => PENDING_STATUSES.includes(i.status))) {
-      startBackgroundUpload({ uploadId: up.id, companyId, fileName: up.file_name });
+/**
+ * Retoma las cargas masivas con facturas pendientes: al abrir la aplicación, después de
+ * cada tanda de "Revisar ahora" y cada minuto mientras la aplicación está abierta. Así
+ * las cargas que crea la revisión de carpetas (Drive / OneDrive), también la programada,
+ * se procesan solas sin entrar a "Ver detalle → Continuar procesamiento".
+ * Las cargas pausadas o canceladas por la usuaria no se tocan.
+ */
+let revisandoPendientes: Promise<void> | null = null;
+export function resumeBackgroundUploads(companyId: string): Promise<void> {
+  if (!companyId) return Promise.resolve();
+  // Una sola revisión a la vez (el aviso periódico y el de "Revisar ahora" pueden coincidir).
+  revisandoPendientes ??= (async () => {
+    try {
+      const uploads: BulkUpload[] = await listActiveUploads(companyId);
+      for (const up of uploads) {
+        if (queue.some((q) => q.uploadId === up.id) || (snapshot.running && snapshot.uploadId === up.id)) continue;
+        const estados = await listItemStatuses(up.id);
+        if (estados.some((i) => PENDING_STATUSES.includes(i.status))) {
+          startBackgroundUpload({ uploadId: up.id, companyId, fileName: up.file_name });
+        }
+      }
+    } finally {
+      revisandoPendientes = null;
     }
-  }
+  })();
+  return revisandoPendientes;
 }

@@ -206,6 +206,20 @@ export async function listItems(uploadId: string): Promise<BulkItem[]> {
   return out;
 }
 
+/** Cargas de compras de la empresa que aún pueden tener facturas por procesar (sin límite de antigüedad). */
+export async function listActiveUploads(companyId: string): Promise<BulkUpload[]> {
+  const { data, error } = await supabase
+    .from("bulk_uploads")
+    .select("*")
+    .eq("company_id", companyId)
+    .eq("doc_kind", "compra")
+    .in("status", ACTIVE_STATUSES)
+    .order("created_at", { ascending: true })
+    .limit(200);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as unknown as BulkUpload[];
+}
+
 export async function listUploads(companyId: string, limit = 30): Promise<BulkUpload[]> {
   const { data, error } = await supabase
     .from("bulk_uploads")
