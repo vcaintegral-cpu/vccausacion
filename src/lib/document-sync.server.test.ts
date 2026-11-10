@@ -578,6 +578,31 @@ describe("LED LIGHTS octubre: carpeta del mes + FACTURAS + RECIBIDOS (conciliaci
     expect(r.conciliados).toBe(1);
   });
 
+  it("un Excel que quedó en error se vuelve a leer en la siguiente revisión", async () => {
+    const db = base({
+      document_source_files: [
+        {
+          id: "f-x1",
+          company_id: EMPRESA,
+          provider: "google",
+          external_id: "x1",
+          name: "RECIBIDOS - LED LIGHTS SAS - 2026-10-01 a 2026-10-31.xlsx",
+          external_modified_at: "2026-10-20T10:00:00Z",
+          status: "error",
+        },
+      ],
+    });
+    const r = await syncSource(db.client, fuente("compras", "FACTURAS"), {
+      provider,
+      ahora: AHORA,
+    });
+    expect(descargas).toContain("x1");
+    expect(r.documentosExcel).toBe(2);
+    expect(
+      db.tablas["document_source_files"]!.find((f) => f["external_id"] === "x1"),
+    ).toMatchObject({ status: "queued" });
+  });
+
   it("si falta la subcarpeta no importa nada (nunca toma la carpeta completa)", async () => {
     const db = base();
     const r = await syncSource(db.client, fuente("compras", "COMPRAS"), { provider, ahora: AHORA });

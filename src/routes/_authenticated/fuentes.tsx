@@ -273,20 +273,42 @@ function TarjetaFuente({
     onError: (err) =>
       toast.error(err instanceof Error ? err.message : "No fue posible guardar la carpeta."),
   });
+  const [avance, setAvance] = useState<string | null>(null);
   const revisarM = useMutation({
-    mutationFn: () => revisar({ data: { companyId, purpose: proposito } }),
-    onSuccess: (r) => {
-      if (r.errores.length)
-        toast.error(`Revisión con ${r.errores.length} error(es). Mira el detalle.`);
+    // Revisa en tandas (cada una toma hasta 20 archivos nuevos) hasta que no quede nada
+    // pendiente, con un máximo de 30 tandas por clic.
+    mutationFn: async () => {
+      const total = { facturas: 0, excel: 0, egresos: 0, conciliados: 0 };
+      let ultimo: Awaited<ReturnType<typeof revisar>> | null = null;
+      for (let tanda = 1; tanda <= 30; tanda++) {
+        setAvance(`Tanda ${tanda}…`);
+        ultimo = await revisar({ data: { companyId, purpose: proposito } });
+        total.facturas += ultimo.facturasEncoladas;
+        total.excel += ultimo.documentosExcel;
+        total.egresos += ultimo.egresosRecibidos;
+        total.conciliados += ultimo.conciliados ?? 0;
+        onChange();
+        if (ultimo.errores.length || !ultimo.pendientesProximaEjecucion) break;
+        setAvance(`Tanda ${tanda}: ${ultimo.pendientesProximaEjecucion} archivo(s) pendientes…`);
+      }
+      return { ultimo: ultimo!, total };
+    },
+    onSuccess: ({ ultimo, total }) => {
+      setAvance(null);
+      if (ultimo.errores.length)
+        toast.error(`Revisión con ${ultimo.errores.length} error(es). Mira el detalle.`);
       else if (proposito === "compras") {
         toast.success(
-          `${r.facturasEncoladas + r.documentosExcel} factura(s) nuevas enviadas a la carga masiva.`,
+          `${total.facturas} PDF y ${total.excel} documento(s) del Excel enviados a la carga masiva` +
+            (total.conciliados ? `; ${total.conciliados} PDF ya estaban en el Excel o en la app.` : "."),
         );
-      } else toast.success(`${r.egresosRecibidos} archivo(s) nuevos en la bandeja de egresos.`);
+      } else toast.success(`${total.egresos} archivo(s) nuevos en la bandeja de egresos.`);
       onChange();
     },
-    onError: (err) =>
-      toast.error(err instanceof Error ? err.message : "No fue posible revisar la carpeta."),
+    onError: (err) => {
+      setAvance(null);
+      toast.error(err instanceof Error ? err.message : "No fue posible revisar la carpeta.");
+    },
   });
 
   const r = fuente?.lastResult;
@@ -374,7 +396,7 @@ function TarjetaFuente({
               ) : (
                 <RefreshCw className="size-4" />
               )}
-              Revisar ahora
+              {avance ?? "Revisar ahora"}
             </Button>
           ) : null}
         </div>
@@ -390,7 +412,7 @@ function TarjetaFuente({
             <>
               <p>
                 {r.modo === "carpeta_directa"
-                  ? "Carpeta sin meses (se revisa completa)"
+                  ? "Carpeta sin subcarpetas por mes"
                   : r.periodos.join(" y ")}
                 : {r.encontrados} archivo(s) ·{" "}
                 {proposito === "compras"
