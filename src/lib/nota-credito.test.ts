@@ -13,7 +13,7 @@ import {
 } from "./nota-credito";
 
 describe("factura afectada", () => {
-  it("lee la columna NOTA real de LAUMAYER (Excel RECIBIDOS de octubre)", () => {
+  it("lee la columna NOTA del Excel RECIBIDOS", () => {
     expect(
       facturaReferidaEnExcel({
         "TIPO DE OPERACION": "Nota crédito sin referencia",
@@ -44,9 +44,9 @@ describe("pareceNotaCredito", () => {
     expect(pareceNotaCredito({ documentType: "nota_credito" })).toBe(true);
     expect(pareceNotaCredito({ tipoDocumento: "Nota de crédito electrónica" })).toBe(true);
     expect(pareceNotaCredito({ texto: '<CreditNote xmlns="urn:oasis">' })).toBe(true);
-    expect(pareceNotaCredito({ texto: "LAUMAYER S.A.S.\nNOTA CRÉDITO ELECTRÓNICA No. LYNA6692" })).toBe(true);
-    expect(pareceNotaCredito({ archivo: "nc08909213350002600006692.pdf" })).toBe(true);
-    expect(pareceNotaCredito({ archivo: "Corriente07 - nc08909213350002600006692.pdf" })).toBe(true);
+    expect(pareceNotaCredito({ texto: "PROVEEDOR EJEMPLO S.A.S.\nNOTA CRÉDITO ELECTRÓNICA No. LYNA6692" })).toBe(true);
+    expect(pareceNotaCredito({ archivo: "nc09000000050002600006692.pdf" })).toBe(true);
+    expect(pareceNotaCredito({ archivo: "Corriente07 - nc09000000050002600006692.pdf" })).toBe(true);
     expect(pareceNotaCredito({ total: -235000 })).toBe(true);
   });
   it("una factura normal no es nota crédito, aunque su letra pequeña las mencione", () => {
@@ -69,26 +69,26 @@ describe("pareceNotaCredito", () => {
 
 describe("estado de la factura afectada y aviso", () => {
   const filas = [
-    { prefix: "CFA", number: "109836", provider_nit: "890921335", siigo_id: "abc", siigo_number: "FC-1-757", siigo_status: "sincronizada", status: "sincronizada" },
-    { prefix: "CFA", number: "109976", provider_nit: "890921335", siigo_id: null, siigo_number: null, siigo_status: null, status: "borrador" },
+    { prefix: "CFA", number: "109836", provider_nit: "900000005", siigo_id: "abc", siigo_number: "FC-1-757", siigo_status: "sincronizada", status: "sincronizada" },
+    { prefix: "CFA", number: "109976", provider_nit: "900000005", siigo_id: null, siigo_number: null, siigo_status: null, status: "borrador" },
     { prefix: "X", number: "109836", provider_nit: "800000000", siigo_id: "z", siigo_number: "FC-1-1", siigo_status: "sincronizada", status: "sincronizada" },
   ];
   it("distingue causada en Siigo, pendiente y no registrada (mismo proveedor y prefijo)", () => {
-    expect(estadoDeFactura({ prefijo: "CFA", numero: "109836" }, "890921335", filas)).toEqual({
+    expect(estadoDeFactura({ prefijo: "CFA", numero: "109836" }, "900000005", filas)).toEqual({
       tipo: "en_siigo",
       factura: { prefijo: "CFA", numero: "109836" },
       siigo: "FC-1-757",
     });
-    expect(estadoDeFactura({ prefijo: "CFA", numero: "109976" }, "890921335", filas).tipo).toBe("pendiente_siigo");
-    expect(estadoDeFactura({ prefijo: "CFA", numero: "1" }, "890921335", filas).tipo).toBe("no_registrada");
+    expect(estadoDeFactura({ prefijo: "CFA", numero: "109976" }, "900000005", filas).tipo).toBe("pendiente_siigo");
+    expect(estadoDeFactura({ prefijo: "CFA", numero: "1" }, "900000005", filas).tipo).toBe("no_registrada");
     expect(estadoDeFactura({ prefijo: "CFA", numero: "109836" }, "811111111", filas).tipo).toBe("no_registrada");
-    expect(estadoDeFactura(null, "890921335", filas).tipo).toBe("sin_referencia");
+    expect(estadoDeFactura(null, "900000005", filas).tipo).toBe("sin_referencia");
   });
   it("aviso completo y reconocible en pantalla", () => {
     const m = mensajeNotaCredito({
       numero: "LYNA6692",
-      proveedor: "LAUMAYER COLOMBIANA COMERCIALIZADORA S.A.S.",
-      nit: "890921335",
+      proveedor: "PROVEEDOR EJEMPLO S.A.S.",
+      nit: "900000005",
       total: -1111794.39,
       estado: { tipo: "en_siigo", factura: { prefijo: "CFA", numero: "109836" }, siigo: "FC-1-757" },
     });
@@ -101,9 +101,9 @@ describe("estado de la factura afectada y aviso", () => {
     expect(esAvisoNotaCredito(m)).toBe(true);
     expect(errorCode("validating_company", m)).toBe("CREDIT_NOTE");
 
-    const sinRef = mensajeNotaCredito({ numero: "NC241", proveedor: "LEIDY TATIANA HOYOS DUQUE", nit: "1036643870", total: -235000, estado: { tipo: "sin_referencia" } });
+    const sinRef = mensajeNotaCredito({ numero: "NC241", proveedor: "PERSONA NATURAL EJEMPLO", nit: "10000004", total: -235000, estado: { tipo: "sin_referencia" } });
     expect(sinRef).toContain("no indica la factura afectada");
-    const pendiente = mensajeNotaCredito({ numero: "LYNA6691", proveedor: "LAUMAYER", nit: "890921335", total: -462710.08, estado: { tipo: "pendiente_siigo", factura: { prefijo: "CFA", numero: "109976" } } });
+    const pendiente = mensajeNotaCredito({ numero: "LYNA6691", proveedor: "PROVEEDOR EJEMPLO", nit: "900000005", total: -462710.08, estado: { tipo: "pendiente_siigo", factura: { prefijo: "CFA", numero: "109976" } } });
     expect(pendiente).toContain("aún no se ha causado en Siigo: cáusela primero");
   });
 });
