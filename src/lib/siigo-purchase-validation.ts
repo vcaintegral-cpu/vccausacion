@@ -189,13 +189,34 @@ export function adaptPurchaseItems<T extends AdaptableItem>(
   return { items: out, incAsCost: incAsCost / 100, adjustment: Math.abs(diff) <= 100 ? diff / 100 : 0, providerRounding: 0, notes };
 }
 
-/** Retefuente goes only on the rows whose bases reproduce the source value exactly. */
-export function retefuenteRows(bases: number[], pct: number, target: number): number[] {
+const AIU = /\b(administraci[oó]n|utilidad(es)?|imprevistos?|a\.?\s?i\.?\s?u\.?)\b/i;
+
+/**
+ * Retefuente goes only on the rows whose bases reproduce the source value exactly:
+ * all rows, a single row, the AIU rows (administración, imprevistos, utilidad) or,
+ * with few rows, the smallest exact combination. Otherwise all rows (the caller
+ * then detects the difference and does not send).
+ */
+export function retefuenteRows(bases: number[], pct: number, target: number, descriptions: string[] = []): number[] {
   const all = bases.map((_, i) => i);
   const per = bases.map(b => toCents(b * pct / 100));
-  if (per.reduce((a, b) => a + b, 0) === toCents(target)) return all;
-  const single = per.findIndex(c => c === toCents(target));
-  return single >= 0 ? [single] : all;
+  const goal = toCents(target);
+  const sum = (rows: number[]) => rows.reduce((a, i) => a + per[i]!, 0);
+  if (sum(all) === goal) return all;
+  const single = per.findIndex(c => c === goal);
+  if (single >= 0) return [single];
+  const aiu = all.filter(i => per[i]! > 0 && AIU.test(descriptions[i] ?? ""));
+  if (aiu.length && sum(aiu) === goal) return aiu;
+  const candidates = all.filter(i => per[i]! > 0);
+  if (candidates.length <= 12) {
+    let best: number[] | null = null;
+    for (let mask = 1; mask < 1 << candidates.length; mask++) {
+      const rows = candidates.filter((_, k) => mask & (1 << k));
+      if (sum(rows) === goal && (!best || rows.length < best.length)) best = rows;
+    }
+    if (best) return best;
+  }
+  return all;
 }
 
 /** IVA capitalizado: un renglón adicional sin impuestos en la cuenta del activo; nunca lleva retención. */
@@ -204,7 +225,176 @@ export function capitalizedIvaRow<T extends AdaptableItem>(ref: T, account: stri
 }
 
 /** Rows that receive a line retention, excluding rows that must never carry one. */
-export function retentionRowsExcluding(bases: number[], pct: number, target: number, excluded: Set<number>): number[] {
+export function retentionRowsExcluding(bases: number[], pct: number, target: number, excluded: Set<number>, descriptions: string[] = []): number[] {
   const masked = bases.map((b, i) => (excluded.has(i) ? 0 : b));
-  return retefuenteRows(masked, pct, target).filter(i => !excluded.has(i));
+  return retefuenteRows(masked, pct, target, descriptions).filter(i => !excluded.has(i));
+}
+
+/**
+ * Siigo calcula cada renglón con 2 decimales (cantidad × precio unitario y el IVA
+ * renglón por renglón). La factura del proveedor calcula con más decimales o sobre
+ * el total, y pueden quedar centavos de diferencia que bloquean el envío. Sin
+ * cambiar ningún valor de la fuente:
+ * 1. Renglones de cuenta con cantidad ≠ 1 cuyo producto no da su base exacta → se
+ *    envían como cantidad 1 por su base exacta (la cantidad queda en la descripción).
+ *    Un producto de inventario con varias unidades se reparte en (n − 1) + 1 unidades.
+ * 2. Si el IVA aún no cuadra y se permite, se agrupan los renglones de cuenta con la
+ *    misma cuenta e impuestos (mismo asiento contable, IVA calculado sobre el total) o
+ *    se divide un renglón para reproducir el IVA redondeado del proveedor.
+ * Los productos de inventario conservan siempre sus unidades y su valor total.
+ */
+export function ajustarPrecisionRenglones<T extends AdaptableItem>(
+  items: T[],
+  taxes: PurchaseTax[],
+  expected: { subtotal: number; iva: number; impoconsumo: number },
+  options: { permitirFusion: boolean },
+): { items: T[]; notas: string[] } {
+  if (!purchasePayloadErrors(items, taxes, expected).length) return { items, notas: [] };
+  const notas: string[] = [];
+  const exacto = items.flatMap((it, i): T[] => {
+    if (Number(it.quantity) === 1) return [it];
+    const base = roundCOP(Number(it.quantity) * Number(it.price) - Number(it.discount || 0));
+    if (toCents(baseOf(it)) === toCents(base)) return [it];
+    if (it.type === "Account") {
+      notas.push(`Renglón ${i + 1}: cantidad ${it.quantity} enviada como 1 por su valor exacto ${base}.`);
+      return [{ ...it, quantity: 1, price: base, discount: 0, description: `${it.description} (cant. ${it.quantity})` }];
+    }
+    // Producto de inventario: se conservan las unidades, repartidas en (n − 1) + 1. Agrega
+    // un renglón (cambia las posiciones), así que solo cuando no hay retención por renglón.
+    if (!options.permitirFusion) return [it];
+    const q = Number(it.quantity);
+    const p1 = toCents(it.price);
+    const p2 = toCents(base) - (q - 1) * p1;
+    if (!Number.isInteger(q) || q < 2 || !(p2 > 0)) return [it];
+    notas.push(`Renglón ${i + 1}: producto de ${q} unidades enviado como ${q - 1} + 1 para conservar su valor exacto ${base}.`);
+    return [
+      { ...it, quantity: q - 1, price: p1 / 100, discount: 0 },
+      { ...it, quantity: 1, price: p2 / 100, discount: 0 },
+    ];
+  });
+  if (!purchasePayloadErrors(exacto, taxes, expected).length || !options.permitirFusion) return { items: exacto, notas };
+  const conDivision = (base: T[], previas: string[]) => {
+    const dividido = dividirParaRedondeoIva(base, taxes, expected);
+    return dividido ? { items: dividido.items, notas: [...previas, ...dividido.notas] } : null;
+  };
+
+  const clave = (it: T) => `${it.account_code}|${[...it.tax_ids].map(String).sort().join(",")}`;
+  const grupos = new Map<string, T[]>();
+  for (const it of exacto) if (it.type === "Account") grupos.set(clave(it), [...(grupos.get(clave(it)) ?? []), it]);
+  if (![...grupos.values()].some((g) => g.length > 1)) return conDivision(exacto, notas) ?? { items: exacto, notas };
+  const fusionados: T[] = [];
+  const notasFusion: string[] = [];
+  const hechos = new Set<string>();
+  for (const it of exacto) {
+    if (it.type !== "Account") { fusionados.push(it); continue; }
+    const k = clave(it);
+    if (hechos.has(k)) continue;
+    hechos.add(k);
+    const grupo = grupos.get(k)!;
+    if (grupo.length === 1) { fusionados.push(it); continue; }
+    const base = roundCOP(grupo.reduce((s, g) => s + baseOf(g), 0));
+    fusionados.push({ ...it, quantity: 1, price: base, discount: 0, description: `${it.description} y ${grupo.length - 1} renglón(es) más de la misma cuenta` });
+    notasFusion.push(`${grupo.length} renglones de la cuenta ${it.account_code} agrupados (IVA sobre su total).`);
+  }
+  if (!purchasePayloadErrors(fusionados, taxes, expected).length) return { items: fusionados, notas: [...notas, ...notasFusion] };
+  return conDivision(fusionados, [...notas, ...notasFusion]) ?? conDivision(exacto, notas) ?? { items: exacto, notas };
+}
+
+/** IVA en centavos que Siigo calcularía: renglón por renglón, redondeado a 2 decimales. */
+function ivaSiigoCentavos(items: AdaptableItem[], taxes: PurchaseTax[]): number {
+  let iva = 0;
+  for (const it of items) {
+    for (const id of it.tax_ids) {
+      const tax = taxes.find((t) => String(t.id) === String(id) && t.active !== false);
+      if (tax && isIva(tax)) iva += toCents((baseOf(it) * Number(tax.percentage ?? 0)) / 100);
+    }
+  }
+  return iva;
+}
+
+/**
+ * El proveedor redondeó el IVA distinto a como lo hace Siigo (p. ej. $282.413,45
+ * contra 19 % × $1.486.386,55 = $282.413,4445). Siigo redondea renglón por renglón,
+ * así que un renglón de cuenta se divide en dos de la MISMA cuenta e impuestos,
+ * con el corte que hace que sus dos redondeos sumen el IVA de la fuente. La base,
+ * el IVA, el total y el asiento quedan idénticos. Solo para hasta 3 centavos.
+ */
+export function dividirParaRedondeoIva<T extends AdaptableItem>(
+  items: T[],
+  taxes: PurchaseTax[],
+  expected: { subtotal: number; iva: number; impoconsumo: number },
+): { items: T[]; notas: string[] } | null {
+  const subtotal = items.reduce((a, it) => a + toCents(baseOf(it)), 0);
+  if (subtotal !== toCents(expected.subtotal)) return null;
+  let diff = toCents(expected.iva) - ivaSiigoCentavos(items, taxes);
+  if (diff === 0 || Math.abs(diff) > 3) return null;
+  let out = [...items];
+  const notas: string[] = [];
+  while (diff !== 0) {
+    const paso = Math.sign(diff);
+    // Renglón de cuenta con un solo IVA, el de mayor base.
+    const candidatos = out
+      .map((it, i) => ({ it, i, ivas: it.tax_ids.map((id) => taxes.find((t) => String(t.id) === String(id) && t.active !== false)).filter((t): t is PurchaseTax => !!t && isIva(t)) }))
+      .filter((c) => c.ivas.length === 1 && (c.it.type === "Account" || (Number.isInteger(Number(c.it.quantity)) && Number(c.it.quantity) >= 2)))
+      // Primero renglones de cuenta; luego productos (se dividen por unidades).
+      .sort((a, b) => (a.it.type === "Account" ? 0 : 1) - (b.it.type === "Account" ? 0 : 1) || baseOf(b.it) - baseOf(a.it));
+    let hecho = false;
+    for (const { it, i, ivas } of candidatos) {
+      const pct = Number(ivas[0]!.percentage ?? 0);
+      const base = toCents(baseOf(it));
+      const ivaRenglon = toCents((base / 100) * pct / 100);
+      const ivaDe = (cents: number) => toCents(((cents / 100) * pct) / 100);
+      if (it.type === "Account") {
+        for (let k = 1; k < Math.min(base, 100000); k++) {
+          if (ivaDe(k) + ivaDe(base - k) - ivaRenglon !== paso) continue;
+          const parte = (cents: number, n: number) => ({ ...it, quantity: 1, price: cents / 100, discount: 0, description: `${it.description} (parte ${n}/2, redondeo IVA)` });
+          out = [...out.slice(0, i), parte(base - k, 1), parte(k, 2), ...out.slice(i + 1)];
+          notas.push(`Renglón de la cuenta ${it.account_code} dividido en dos para reproducir el IVA redondeado del proveedor (${paso > 0 ? "+" : "−"}0,01).`);
+          hecho = true;
+          break;
+        }
+      } else {
+        // Producto: (q − 1) unidades a P1 + 1 unidad a P2; mismas unidades y mismo valor total.
+        const q = Number(it.quantity);
+        const centro = Math.round(base / q);
+        for (let d = 0; d < 5000 && !hecho; d++) {
+          for (const p1 of d === 0 ? [centro] : [centro + d, centro - d]) {
+            const p2 = base - (q - 1) * p1;
+            if (!(p1 > 0) || !(p2 > 0) || ivaDe((q - 1) * p1) + ivaDe(p2) - ivaRenglon !== paso) continue;
+            out = [
+              ...out.slice(0, i),
+              { ...it, quantity: q - 1, price: p1 / 100, discount: 0 },
+              { ...it, quantity: 1, price: p2 / 100, discount: 0 },
+              ...out.slice(i + 1),
+            ];
+            notas.push(`Producto ${it.code} (${q} unidades) enviado como ${q - 1} + 1 para reproducir el IVA redondeado del proveedor (${paso > 0 ? "+" : "−"}0,01).`);
+            hecho = true;
+            break;
+          }
+        }
+      }
+      if (hecho) break;
+    }
+    if (!hecho) return null;
+    diff -= paso;
+  }
+  return purchasePayloadErrors(out, taxes, expected).length ? null : { items: out, notas };
+}
+
+/** Por qué no se pudo ajustar la precisión (se agrega al mensaje de error para no adivinar). */
+export function motivoSinAjuste(
+  items: AdaptableItem[],
+  taxes: PurchaseTax[],
+  expected: { subtotal: number; iva: number; impoconsumo: number },
+  permitirAjuste: boolean,
+): string | null {
+  if (!purchasePayloadErrors(items, taxes, expected).length) return null;
+  if (!permitirAjuste)
+    return "No se dividen ni agrupan renglones porque la factura tiene Retefuente o renglones excluidos de retención (la retención se ubica por renglón).";
+  const conIva = items.filter((it) => it.tax_ids.some((id) => taxes.some((t) => String(t.id) === String(id) && isIva(t))));
+  const diff = Math.abs(toCents(expected.iva) - ivaSiigoCentavos(items, taxes));
+  if (diff > 3) return `La diferencia de IVA es de ${diff / 100}: supera el ajuste automático de 3 centavos; revise la lectura de la factura.`;
+  if (conIva.length && conIva.every((it) => it.type !== "Account" && !(Number.isInteger(Number(it.quantity)) && Number(it.quantity) >= 2)))
+    return "El IVA está en productos de inventario de 1 unidad: no se pueden dividir sin cambiar el inventario. Cambie el renglón a cuenta de gasto/costo o ajuste el centavo en Siigo.";
+  return null;
 }

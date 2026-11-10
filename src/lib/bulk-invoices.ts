@@ -19,7 +19,18 @@ import {
   sameNit,
 } from "@/lib/company-validation";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
-import { findSourceIvaTax, resolveImpoconsumoAccount, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
+import { buildIvaGroups, resolveImpoconsumoAccount, resolveTaxAccount, taxTrace, type TaxRecord } from "@/lib/tax-selection";
+import {
+  RETENCIONES,
+  condicionDePerfil,
+  decidirRetenciones,
+  elegirIva,
+  precedenteDe,
+  type ImpuestoConfigurado,
+  type PrecedentesEmpresa,
+  type TablaBases,
+} from "@/lib/precedente-tributario";
+import { cargarPrecedentes, cargarTablasBases } from "@/lib/precedente-tributario.data";
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
@@ -138,9 +149,13 @@ export type BulkConfig = {
   categories: { id?: string | null; name: string; kind: string; account_code: string | null; account_name: string | null }[];
   /** Conocimiento contable de la empresa (se lee una sola vez para todo el lote). */
   knowledge?: CompanyKnowledge;
+  /** Precedente tributario por proveedor (IVA y retenciones sincronizados con Siigo), una vez por lote. */
+  precedentes?: PrecedentesEmpresa;
+  /** Tablas de bases mínimas de retención (UVT y conceptos por año). */
+  tablasBases?: TablaBases[];
   batch?: {
     company: { id: string; name: string; nit: string | null; uses_cost_centers: boolean | null; default_payable_account: string | null };
-    providers: Record<string, { nit: string; default_expense_account: string | null; default_payable_account: string | null; default_iva_account: string | null }>;
+    providers: Record<string, { nit: string; default_expense_account: string | null; default_payable_account: string | null; default_iva_account: string | null; purchase_tax_profile?: unknown }>;
     providerRules: ProviderRule[];
     userId: string;
   };
@@ -233,7 +248,7 @@ export async function processInvoiceFile(params: {
   knowledge?: CompanyKnowledge;
   batch?: {
     company: { id: string; name: string; nit: string | null; uses_cost_centers: boolean | null; default_payable_account: string | null };
-    providers: Record<string, { nit: string; default_expense_account: string | null; default_payable_account: string | null; default_iva_account: string | null }>;
+    providers: Record<string, { nit: string; default_expense_account: string | null; default_payable_account: string | null; default_iva_account: string | null; purchase_tax_profile?: unknown }>;
     providerRules: ProviderRule[];
     userId: string;
   };
@@ -317,7 +332,24 @@ export type DraftAccounting = {
   unresolvedAccounts: string[];
   alertas: string[];
   decisions: import("@/lib/causacion-engine").LineDecisions;
+  /** IVA exacto elegido para cada renglón (tarifa del documento + precedente del proveedor). */
+  ivaPorLinea: Array<{ tax: ImpuestoConfigurado; motivo: string } | null>;
+  /** Pide confirmar la condición tributaria del proveedor (retención sin precedente). */
+  confirmarCondicion: string | null;
 };
+
+// Evidencia de IVA por proveedor: una lectura por proveedor y empresa cada 5 minutos,
+// también en la carga masiva (antes el lote la omitía y decidía sin historial).
+const evidenciaIva = new Map<string, { hasta: number; promesa: ReturnType<typeof fetchIvaEvidence> }>();
+function evidenciaIvaDe(companyId: string, nit: string | null | undefined) {
+  const clave = `${companyId}|${nit ?? ""}`;
+  const previa = evidenciaIva.get(clave);
+  if (previa && previa.hasta > Date.now()) return previa.promesa;
+  const promesa = fetchIvaEvidence(companyId, nit ?? null);
+  evidenciaIva.set(clave, { hasta: Date.now() + 5 * 60 * 1000, promesa });
+  promesa.catch(() => evidenciaIva.delete(clave));
+  return promesa;
+}
 
 /**
  * Núcleo contable compartido: toma la extracción (de la IA o del adaptador
@@ -332,6 +364,8 @@ export async function computeDraftAccounting(params: {
   header: Omit<ExtractedInvoice, "lines">;
   extracted: ExtractedInvoice["lines"];
   knowledge?: CompanyKnowledge | undefined;
+  /** IVA ya elegido por la usuaria en cada renglón (al recalcular): se respeta. */
+  ivaFijado?: Array<string | null> | undefined;
 }): Promise<DraftAccounting> {
   const { companyId, config, header, extracted } = params;
 
@@ -459,6 +493,57 @@ export async function computeDraftAccounting(params: {
       );
     }
   }
+  // Precedente tributario del proveedor (lo sincronizado con Siigo): IVA exacto
+  // por renglón y retenciones que el documento no trae. La regla por proveedor y
+  // lo retenido en el documento mandan sobre el precedente.
+  const impuestos = config.taxes as unknown as ImpuestoConfigurado[];
+  const precedentes =
+    config.precedentes ?? (await cargarPrecedentes(companyId, impuestos).catch(() => new Map() as PrecedentesEmpresa));
+  const precedente = precedenteDe(precedentes, header.provider_nit);
+  const ivaPorLinea: DraftAccounting["ivaPorLinea"] = lines.map((l, i) => {
+    const fijado = params.ivaFijado?.[i];
+    const elegido = fijado ? impuestos.find((t) => String(t.id) === String(fijado)) : undefined;
+    if (elegido) return { tax: elegido, motivo: "IVA seleccionado en el borrador." };
+    const e = elegirIva({
+      taxes: impuestos,
+      linea: {
+        iva: roundCOP(Number(l.iva || 0)),
+        iva_rate: extracted[i]?.iva_rate ?? null,
+        base: roundCOP(l.subtotal ?? Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
+      },
+      precedente,
+    });
+    return e.tax ? { tax: e.tax, motivo: e.motivo } : null;
+  });
+  let confirmarCondicion: string | null = null;
+  if (!retRegla) {
+    const decision = decidirRetenciones({
+      kinds: RETENCIONES.filter((k) => !(roundCOP(reportado[k]) > 0)),
+      precedente,
+      condicion: condicionDePerfil((provider as { purchase_tax_profile?: unknown } | null)?.purchase_tax_profile),
+      taxes: impuestos,
+      baseGravable,
+      ivaTotal,
+      fecha: header.issue_date ?? null,
+      tablas: config.tablasBases ?? (await cargarTablasBases()),
+    });
+    for (const r of decision.aplicar) {
+      const cuenta = resolveTaxAccount(r.tax as TaxRecord, config.accounts);
+      if (cuenta.error) erroresRetencion.push(cuenta.error);
+      retenciones = {
+        ...retenciones,
+        [r.kind]: roundCOP(Number(retenciones[r.kind] ?? 0) + r.amount),
+        detalle: [
+          ...(retenciones.detalle ?? []),
+          { kind: r.kind, name: cuenta.name ?? r.tax.name, rate: Number(r.tax.rate), base: r.base, amount: r.amount, account_code: cuenta.code || null },
+        ],
+      };
+      alertas.push(`${r.tax.name}: ${r.amount.toLocaleString("es-CO")} sobre base ${r.base.toLocaleString("es-CO")}, por ${r.origen}.`);
+    }
+    alertas.push(...decision.avisos);
+    confirmarCondicion = decision.confirmar;
+    if (confirmarCondicion) alertas.push(`Confirmar condición del proveedor: ${confirmarCondicion}`);
+  }
   // La empresa define si maneja centros de costo; si no, nunca se guarda ninguno.
   const costPolicy = config.batch ? config.batch.company.uses_cost_centers : await companyUsesCostCenters(companyId);
   const centroFactura = costCenterForCompany(costPolicy, header.cost_center);
@@ -478,7 +563,7 @@ export async function computeDraftAccounting(params: {
     !ivaDetalleRegla && ivaTotal > 0
       ? resolveIvaTreatment({
           config: await fetchIvaConfig(companyId),
-          evidence: config.batch ? { history: [], rules: [] } : await fetchIvaEvidence(companyId, header.provider_nit),
+          evidence: await evidenciaIvaDe(companyId, header.provider_nit),
           providerNit: header.provider_nit,
           expenseAccounts: [...new Set(lines.map((l) => String(l.account_code ?? "").trim()).filter(Boolean))],
           concepts: lines.map((l) => l.description ?? ""),
@@ -487,11 +572,23 @@ export async function computeDraftAccounting(params: {
         })
       : null;
   // El IVA que no es descontable se registra SIEMPRE como una línea independiente por el total.
+  // IVA descontable: si cada renglón con IVA tiene su impuesto exacto, el asiento
+  // sale con la cuenta de cada impuesto (igual que lo arma la revisión).
+  const ivaPorImpuesto = (() => {
+    if (!(ivaTotal > 0)) return undefined;
+    const entradas = lines.flatMap((l, i) =>
+      roundCOP(Number(l.iva || 0)) > 0 ? [{ tax: ivaPorLinea[i]?.tax ?? null, amount: roundCOP(Number(l.iva || 0)) }] : [],
+    );
+    if (!entradas.length || entradas.some((e) => !e.tax)) return undefined;
+    const { groups, errors } = buildIvaGroups(entradas as never, config.accounts);
+    if (errors.length || Math.abs(roundCOP(groups.reduce((s, g) => s + g.amount, 0)) - ivaTotal) > 0.01) return undefined;
+    return groups.map((g) => ({ account_code: g.account_code, account_name: g.account_name, amount: g.amount }));
+  })();
   const ivaDetalle =
     ivaDetalleRegla ??
     (ivaDecision && ivaDecision.treatment !== "descontable"
       ? applyIvaTreatment([{ account_code: "", account_name: "IVA", amount: ivaTotal }], ivaDecision)
-      : undefined);
+      : ivaPorImpuesto);
   let journal = buildJournal({
     lines,
     iva: ivaTotal,
@@ -554,6 +651,8 @@ export async function computeDraftAccounting(params: {
     unresolvedAccounts,
     alertas,
     decisions,
+    ivaPorLinea,
+    confirmarCondicion,
   };
 }
 
@@ -587,11 +686,19 @@ export async function recalcularCuentasBorrador(
   // Las cuentas elegidas manualmente por el usuario nunca se recalculan.
   const manuales = Object.entries(((raw as Record<string, unknown> | null)?.["account_decisions"] ?? {}) as Record<string, { code?: string; origin?: string }>)
     .filter(([, d]) => d?.origin === "MANUAL" && d.code);
+  // El IVA ya elegido en cada renglón se respeta; los que no tienen se resuelven con el precedente.
+  const { data: ivaActual } = await supabase
+    .from("invoice_lines")
+    .select("position, iva_tax_id")
+    .eq("invoice_id", invoiceId)
+    .order("position");
+  const ivaFijado = lines.map((_, i) => (ivaActual ?? []).find((l) => l.position === i)?.iva_tax_id ?? null);
   const acc = await computeDraftAccounting({
     companyId: inv.company_id as string,
     config,
     header,
     extracted: lines,
+    ivaFijado,
   });
 
   for (const [k, d] of manuales) {
@@ -650,15 +757,33 @@ export async function recalcularCuentasBorrador(
   // Las cuentas sugeridas por línea también se refrescan (sin tocar valores).
   const { data: lineasDb } = await supabase
     .from("invoice_lines")
-    .select("id, position")
+    .select("id, position, iva_tax_id")
     .eq("invoice_id", invoiceId)
     .order("position");
   for (const l of lineasDb ?? []) {
     const nueva = acc.lines[l.position as number];
     if (!nueva) continue;
+    // IVA del precedente solo en renglones que aún no lo tienen elegido.
+    const ivaNuevo = !l.iva_tax_id ? (acc.ivaPorLinea[l.position as number]?.tax as TaxRecord | undefined) : undefined;
+    const ivaTrace = ivaNuevo ? taxTrace(ivaNuevo, resolveTaxAccount(ivaNuevo, config.accounts).code || null) : null;
     await supabase
       .from("invoice_lines")
-      .update({ account_code: nueva.account_code, account_name: nueva.account_name ?? null, ...(source ? { total: nueva.subtotal ?? nueva.total, iva: nueva.iva, impoconsumo: nueva.impoconsumo } : {}) } as never)
+      .update({
+        account_code: nueva.account_code,
+        account_name: nueva.account_name ?? null,
+        ...(source ? { total: nueva.subtotal ?? nueva.total, iva: nueva.iva, impoconsumo: nueva.impoconsumo } : {}),
+        ...(ivaTrace
+          ? {
+              iva_tax_id: ivaTrace.tax_id,
+              iva_tax_name: ivaTrace.tax_name,
+              iva_tax_rate: ivaTrace.tax_rate,
+              iva_account_code: ivaTrace.account_code,
+              iva_operational_account: ivaTrace.operational_account,
+              iva_siigo_id: ivaTrace.siigo_id,
+              iva_siigo_name: ivaTrace.siigo_name,
+            }
+          : {}),
+      } as never)
       .eq("id", l.id);
   }
 
@@ -860,7 +985,8 @@ export async function saveExtractedInvoice(params: {
         item_type: l.item_type ?? "gasto",
         position: i,
         ...(() => {
-          const tax = findSourceIvaTax(config.taxes as unknown as TaxRecord[], valoresOrigen.lines[i]);
+          // IVA exacto: tarifa del documento + precedente del proveedor en Siigo.
+          const tax = acc.ivaPorLinea[i]?.tax as TaxRecord | undefined;
           if (!tax) return {};
           const trace = taxTrace(tax, resolveTaxAccount(tax, config.accounts).code || null);
           return {
@@ -895,7 +1021,7 @@ export async function saveExtractedInvoice(params: {
     total,
     score,
     // 95% o más: automática. 80–94%: sugerida y marcada para revisión. Menos de 80%: revisión obligatoria.
-    needsReview: score < 0.95 || unresolvedAccounts.length > 0,
+    needsReview: score < 0.95 || unresolvedAccounts.length > 0 || !!acc.confirmarCondicion,
     reason: [
       reason,
       ...unresolvedAccounts,

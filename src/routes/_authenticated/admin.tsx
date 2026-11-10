@@ -16,6 +16,9 @@ import { ProductsPanel } from "@/components/products-panel";
 import { ProductCategoriesPanel } from "@/components/product-categories-panel";
 import { PaymentTypesPanel } from "@/components/payment-types-panel";
 import { ProviderRulesPanel } from "@/components/provider-rules-panel";
+import { EmpresasAlcancePanel } from "@/components/empresas-alcance-panel";
+import { BasesMinimasPanel } from "@/components/bases-minimas-panel";
+import { PrecedenteTributarioPanel } from "@/components/precedente-tributario-panel";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({
@@ -217,9 +220,24 @@ function Admin() {
           <TabsTrigger value="reglas">Reglas</TabsTrigger>
           <TabsTrigger value="reglas-proveedor">Reglas por proveedor</TabsTrigger>
           <TabsTrigger value="impuestos">Retenciones</TabsTrigger>
+          <TabsTrigger value="bases-minimas">Bases mínimas</TabsTrigger>
+          <TabsTrigger value="precedente">Precedente tributario</TabsTrigger>
           <TabsTrigger value="centros">Centros de costo</TabsTrigger>
           <TabsTrigger value="historial">Historial contable</TabsTrigger>
+          <TabsTrigger value="alcance">Empresas y alcance</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="bases-minimas">
+          {wrap(<BasesMinimasPanel companyId={companyId} />)}
+        </TabsContent>
+
+        <TabsContent value="precedente">
+          {wrap(<PrecedenteTributarioPanel companyId={companyId} />)}
+        </TabsContent>
+
+        <TabsContent value="alcance">
+          {wrap(<EmpresasAlcancePanel />)}
+        </TabsContent>
 
         <TabsContent value="puc">
           {wrap(<PucPanel companyId={companyId} />)}

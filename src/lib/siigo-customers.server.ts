@@ -2,6 +2,7 @@
 // Usa la MISMA conexión de Siigo ya configurada por empresa (siigo.server.ts).
 // Endpoints oficiales: GET /v1/customers?identification=..., POST /v1/customers.
 import { siigoGet, siigoPost } from "@/lib/siigo.server";
+import { telefonoSiigo } from "@/lib/siigo-telefono";
 
 export type SiigoCustomer = {
   id?: string;
@@ -145,6 +146,8 @@ export async function siigoEnsureCustomer(p: ProviderInput): Promise<EnsureCusto
   // Persona jurídica cuando el documento tiene estructura de NIT (9+ dígitos).
   const esEmpresa = p.idType ? p.idType === "31" && !p.person : nit.length >= 9;
   const nombre = String(p.name ?? "").trim();
+  // Siigo exige el teléfono numérico (máx. 10 dígitos); uno inválido se omite.
+  const telefono = telefonoSiigo(p.phone);
   const partes = nombre.split(/\s+/);
   const payload: Record<string, unknown> = {
     type: "Supplier",
@@ -168,12 +171,12 @@ export async function siigoEnsureCustomer(p: ProviderInput): Promise<EnsureCusto
         first_name: (esEmpresa ? nombre : partes[0] || nombre).slice(0, 50),
         last_name: (esEmpresa ? "Contacto" : partes.slice(1).join(" ") || "Contacto").slice(0, 50),
         email: String(p.email ?? "").trim() || undefined,
-        phone: String(p.phone ?? "").trim() ? { number: String(p.phone).trim() } : undefined,
+        phone: telefono != null ? { number: telefono } : undefined,
       },
     ],
   };
   if (esEmpresa || p.idType === "31") payload["check_digit"] = checkDigit(nit);
-  if (String(p.phone ?? "").trim()) payload["phones"] = [{ number: String(p.phone).trim() }];
+  if (telefono != null) payload["phones"] = [{ number: telefono }];
 
   try {
     const creado = await siigoPost<SiigoCustomer>("/v1/customers", payload);

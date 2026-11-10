@@ -26,3 +26,29 @@
 - Support documents are created in Siigo with stamp.send=false and mail.send=false and the app never calls any DIAN send/stamp endpoint; readback stamp status flags unauthorized transmission (invoices.ds_unauthorized_transmission) and stops the batch, because the user transmits to DIAN from Siigo. Batch creation stays limited to one document until company_parameters.ds_batch_enabled is confirmed.
 - After creating a DS, src/lib/ds-finalize.server.ts reads Siigo's consecutive (response → GET by id → date/vendor/total search), stores it as prefix-number using the active DIAN resolution prefix (fallback: Siigo document name), regenerates the cuenta de cobro PDF and PUTs observations only while the document is not yet sent to DIAN, never retrying; the same helper backs "Traer consecutivo de Siigo".
 - Document sources (Fuentes de documentos): per company one COMPRAS and one EGRESOS folder on Google Drive or OneDrive/SharePoint, behind a shared read-only FileProvider. Imports run server-side only: purchase PDFs and RECIBIDOS documents go into the existing bulk queue (bulk_uploads/items "pending", storage <owner>/<company>/fuentes|excel/...) so the browser bulk-runner keeps doing extraction/causación with one engine; egresos files go to payment_documents. Dedup by external ID (document_source_files) and SHA-256 / excel:<key> fingerprints; RECIBIDOS is re-read when modified. OAuth refresh tokens live in document_connections (service-only; Microsoft rotates them). Runs from pg_cron → /api/cron/document-sync (x-cron-secret); listing is batched because the Worker caps subrequests.
+
+- Tax precedent per provider (src/lib/precedente-tributario.ts, global): learned from documents with Siigo identity (invoice_lines.iva_tax_id, header retentions + 2365/2367/2368 journal accounts) and Siigo auxiliar history (accounting_history 2408/236x). Drafts pick the exact IVA tax among same-rate taxes by provider precedent (no rate inference: without a source rate, only a precedent tax whose rate matches the line to the peso) and fill the IVA journal account; retentions not reported by the document are applied from precedent only if the base reaches the concept's base mínima (retention_base_tables: dated tables, per concept the latest valid_from covering the invoice date; UVT × base rounded to the nearest 1,000 per art. 868 E.T.; × tax_rates.retention_concept, fallback tax_rates.min_base; seeded with the firm's 2026 table from src/lib/bases-minimas-2026.ts); provider rules and document-reported retentions still win. Providers without retefuente precedent require confirming their condition, stored in providers.purchase_tax_profile.condicion_retencion. Precedent and bases are cached 5 minutes and shared by the batch.
+
+## REGLA PERMANENTE: alcance de cada cambio (empresas)
+
+Mapa completo: `docs/ARQUITECTURA.md`. Perfiles: `src/empresas/README.md`.
+
+1. **Antes de modificar código por una instrucción, preguntar siempre a la usuaria
+   su alcance**: ¿aplica a **todas las empresas** registradas y futuras, o solo a
+   **empresas específicas** (cuáles, por nombre/NIT)? No asumirlo, aunque parezca obvio.
+   Se exceptúan solo las correcciones de errores que dejan el resultado igual para
+   todas (aun así, informar que el cambio es global).
+2. **Todas las empresas** → cambiar el núcleo (`src/lib`, `src/routes`,
+   `src/components`, `src/empresas/global.ts`).
+3. **Empresas específicas** → declarar una función en `src/empresas/global.ts`
+   (`FUNCIONES`), encenderla/apagarla en `src/empresas/<empresa>/perfil.ts` y
+   condicionar el comportamiento con `funcionActiva()` / `usePerfilActivo()`. El
+   comportamiento de las demás empresas no cambia. Empresa sin perfil → crearlo
+   desde `src/empresas/_plantilla/` y registrarlo en `src/empresas/registro.ts`.
+4. Nunca escribir NIT, nombres de empresa ni condiciones `if (empresa === …)`
+   dentro del núcleo: todo lo particular va en el perfil.
+5. Los datos contables de cada empresa (PUC, terceros, reglas por proveedor, IVA,
+   retenciones, Siigo) siguen en la base de datos aislados por `company_id`.
+6. Indicar el alcance elegido en el commit y en la solicitud de cambio
+   ("Alcance: todas las empresas" / "Alcance: LED LIGHTS (900.470.166-4)").
+7. Mantener actualizada la tabla de empresas con perfil en `docs/ARQUITECTURA.md`.
