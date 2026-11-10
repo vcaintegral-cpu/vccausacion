@@ -397,6 +397,9 @@ function TarjetaFuente({
                   ? `${r.facturasEncoladas} PDF y ${r.documentosExcel} documento(s) del Excel enviados a la carga masiva`
                   : `${r.egresosRecibidos} nuevo(s) en la bandeja`}{" "}
                 · {r.duplicados} ya cargado(s) antes
+                {r.conciliados
+                  ? ` · ${r.conciliados} PDF no cargado(s) porque su factura ya está en el Excel RECIBIDOS o en la app`
+                  : ""}
                 {r.renombrados ? ` · ${r.renombrados} renombrado(s)` : ""}
                 {r.pendientesProximaEjecucion
                   ? ` · ${r.pendientesProximaEjecucion} quedan para la próxima revisión`

@@ -34,6 +34,7 @@ async function ejecutar(
       documentosExcel: 0,
       egresosRecibidos: 0,
       duplicados: 0,
+      conciliados: 0,
       renombrados: 0,
       pendientesProximaEjecucion: 0,
       uploadIds: [],

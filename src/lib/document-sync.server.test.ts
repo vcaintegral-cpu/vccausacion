@@ -76,6 +76,12 @@ function fakeDb(tablas: Record<string, Fila[]>) {
       select: () => b,
       eq: (k: string, v: unknown) => (filtros.push((f) => f[k] === v), b),
       in: (k: string, vs: unknown[]) => (filtros.push((f) => vs.includes(f[k])), b),
+      like: (k: string, patron: string) => (
+        filtros.push((f) => new RegExp(`^${patron.replace(/%/g, ".*")}$`).test(String(f[k] ?? ""))),
+        b
+      ),
+      gte: (k: string, v: unknown) => (filtros.push((f) => String(f[k] ?? "") >= String(v)), b),
+      range: () => b,
       insert: (p: Fila | Fila[]) => ((op = "insert"), (payload = Array.isArray(p) ? p : [p]), b),
       upsert: (p: Fila | Fila[], o: { onConflict: string }) => (
         (op = "upsert"),
@@ -473,6 +479,110 @@ describe("BALLET: OneDrive CONTABILIDAD → mes → COMPRAS / PAGOS", () => {
     expect(bandeja.every((p) => typeof p["source_file_id"] === "string")).toBe(true);
     // Los egresos no tocan la carga masiva de compras.
     expect(db.tablas["bulk_uploads"]).toHaveLength(0);
+  });
+});
+
+describe("LED LIGHTS octubre: carpeta del mes + FACTURAS + RECIBIDOS (conciliación)", () => {
+  // Proveedor del Excel de prueba: NIT 890903407, facturas FE1001 y FE1002.
+  beforeEach(() => {
+    arbol = [
+      DIR("fact", "FACTURAS", "raiz"),
+      DIR("cc", "CUENTAS DE COBRO", "raiz"),
+      DIR("ext", "EXTRACTOS", "raiz"),
+      PDF("cc1", "cuenta de cobro.pdf", "cc"),
+      PDF("ex1", "Extracto Bancolombia.pdf", "ext"),
+      DIR("prov", "PROVEEDOR XYZ", "fact"),
+      // Misma factura FE-1001 subida por la empresa con el nombre de la DIAN.
+      PDF("p1", "Corriente07 - fv089090340702826FE00001001.pdf", "prov"),
+      // Factura que NO está en el token: se lee con IA.
+      PDF("p2", "Efectivo08 - ad086001664002726566920261028175206607.pdf", "prov"),
+      DIR("rec", "RECIBIDOS - LED LIGHTS SAS - 2026-10-01 a 2026-10-31", "fact"),
+      {
+        id: "x1",
+        name: "RECIBIDOS - LED LIGHTS SAS - 2026-10-01 a 2026-10-31.xlsx",
+        parent: "rec",
+        content: recibidos([
+          { numero: "1001", cufe: "a" },
+          { numero: "1002", cufe: "b" },
+        ]),
+      },
+      {
+        id: "x2",
+        name: "RECIBIDOS - LED LIGHTS SAS - 2026-10-01 a 2026-10-31 (2).xlsx",
+        parent: "rec",
+        content: recibidos([{ numero: "1002", cufe: "b" }]),
+      },
+      PDF("r1", "FE1001_890903407_PROVEEDOR XYZ.pdf", "rec"),
+      PDF("r2", "FE1002_890903407_PROVEEDOR XYZ.pdf", "rec"),
+      { id: "xml1", name: "FE1001_890903407_PROVEEDOR XYZ.xml", parent: "rec" },
+    ];
+  });
+
+  it("toma solo FACTURAS, el Excel primero y no vuelve a cargar los PDF que ya están en el token", async () => {
+    const db = base();
+    const r = await syncSource(db.client, fuente("compras", "FACTURAS"), {
+      provider,
+      ahora: AHORA,
+    });
+    expect(r.errores).toEqual([]);
+    expect(r.modo).toBe("carpeta_directa");
+    // Ni CUENTAS DE COBRO, ni EXTRACTOS, ni XML.
+    expect(descargas).not.toContain("cc1");
+    expect(descargas).not.toContain("ex1");
+    expect(descargas).not.toContain("xml1");
+    // Excel: FE1001 y FE1002 una sola vez entre los dos archivos.
+    expect(r.documentosExcel).toBe(2);
+    expect(
+      db.tablas["bulk_upload_items"]!.filter((i) =>
+        String(i["fingerprint"]).startsWith("excel:"),
+      ).map((i) => i["fingerprint"]),
+    ).toEqual(["excel:FE1001|a", "excel:FE1002|b"]);
+    // Los PDF de FE1001 y FE1002 (nombre DIAN y nombre RECIBIDOS) no se descargan ni se leen.
+    expect(r.conciliados).toBe(3);
+    for (const id of ["p1", "r1", "r2"]) {
+      expect(descargas).not.toContain(id);
+      expect(
+        db.tablas["document_source_files"]!.find((f) => f["external_id"] === id),
+      ).toMatchObject({ status: "duplicate" });
+    }
+    expect(
+      db.tablas["document_source_files"]!.find((f) => f["external_id"] === "p1")!["message"],
+    ).toContain("FE-1001 del NIT 890903407 ya está en el Excel RECIBIDOS");
+    // Solo el PDF que no está en el token entra a la lectura con IA.
+    expect(r.facturasEncoladas).toBe(1);
+    expect(descargas.filter((d) => d.startsWith("p") || d.startsWith("r"))).toEqual(["p2"]);
+  });
+
+  it("un PDF de una factura ya causada en la app tampoco se vuelve a cargar", async () => {
+    arbol = arbol.filter((n) => !["x1", "x2"].includes(n.id));
+    const db = base({
+      invoices: [
+        {
+          id: "i1",
+          company_id: EMPRESA,
+          provider_nit: "890903407",
+          prefix: "FE",
+          number: "1002",
+          issue_date: "2026-10-05",
+        },
+      ],
+    });
+    const r = await syncSource(db.client, fuente("compras", "FACTURAS"), {
+      provider,
+      ahora: AHORA,
+    });
+    expect(descargas).not.toContain("r2");
+    expect(
+      db.tablas["document_source_files"]!.find((f) => f["external_id"] === "r2")!["message"],
+    ).toContain("ya está en la app");
+    expect(r.conciliados).toBe(1);
+  });
+
+  it("si falta la subcarpeta no importa nada (nunca toma la carpeta completa)", async () => {
+    const db = base();
+    const r = await syncSource(db.client, fuente("compras", "COMPRAS"), { provider, ahora: AHORA });
+    expect(descargas).toEqual([]);
+    expect(r.advertencias[0]).toContain('no tiene la subcarpeta "COMPRAS"');
   });
 });
 

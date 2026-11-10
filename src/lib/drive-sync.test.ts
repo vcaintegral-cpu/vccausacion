@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   esCarpetaAnio,
+  facturaEnNombre,
   interpretarEnlace,
   tipoDeArchivo,
   esCarpetaFacturas,
@@ -162,5 +163,25 @@ describe("tipoDeArchivo", () => {
     );
     expect(tipoDeArchivo("egresos", "movimientos.xlsx", null)).toBe("extracto");
     expect(tipoDeArchivo("egresos", "nota.txt", "text/plain")).toBeNull();
+  });
+});
+
+describe("facturaEnNombre (conciliación de PDF con el Excel RECIBIDOS)", () => {
+  const conocidas = [
+    { nit: "900047217", prefijo: "FECT", numero: "272708", origen: "Excel RECIBIDOS" },
+    { nit: "900053978", prefijo: "Z0", numero: "9837584", origen: "Excel RECIBIDOS" },
+    { nit: "800242106", prefijo: "", numero: "4304100398362", origen: "app" },
+  ];
+  it("reconoce el nombre del Procesador XML FE y el de la DIAN", () => {
+    expect(facturaEnNombre("FECT272708_900047217_MEGA LUCES S.A.S.pdf", conocidas)?.numero).toBe("272708");
+    expect(facturaEnNombre("Corriente07 - fv090004721702826FECT00272708.pdf", conocidas)?.numero).toBe("272708");
+    expect(facturaEnNombre("Z09837584_900053978_GLOBAL MENSAJERIA S.A.S.pdf", conocidas)?.nit).toBe("900053978");
+    expect(facturaEnNombre("4304100398362_800242106_SODIMAC.pdf", conocidas)?.origen).toBe("app");
+  });
+  it("no confunde otra factura del mismo proveedor ni el NIT con el número", () => {
+    expect(facturaEnNombre("Corriente16 - fv090004721702826FECT00274124.pdf", conocidas)).toBeNull();
+    expect(facturaEnNombre("FECT2727080_900047217_MEGA.pdf", conocidas)).toBeNull();
+    expect(facturaEnNombre("ad086001664002726566920261028175206607.pdf", conocidas)).toBeNull();
+    expect(facturaEnNombre("FECT272708.pdf", conocidas)).toBeNull(); // sin NIT no se concilia
   });
 });

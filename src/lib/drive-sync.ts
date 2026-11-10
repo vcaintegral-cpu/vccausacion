@@ -224,3 +224,34 @@ export function interpretarEnlace(enlace: string): EnlaceCarpeta | null {
   }
   return { proveedor: "microsoft", tipo: "compartido", url: v };
 }
+
+/** Factura ya conocida (en el Excel RECIBIDOS o causada en la app), para conciliar PDF por su nombre. */
+export type FacturaConocida = { nit: string; prefijo: string; numero: string; origen: string };
+
+const alfanum = (s: string) => sinTildes(s).toUpperCase().replace(/[^A-Z0-9]/g, "");
+const escaparRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Factura conocida a la que corresponde un PDF por su nombre: debe contener el NIT
+ * del proveedor y el prefijo + número (con o sin ceros a la izquierda). Reconoce los
+ * nombres del Procesador XML FE ("FECT272708_900047217_MEGA LUCES S.A.S.pdf") y los de
+ * la DIAN ("Corriente07 - fv090004721702826FECT00272708.pdf"). Sin coincidencia clara, null.
+ */
+export function facturaEnNombre(nombre: string, conocidas: FacturaConocida[]): FacturaConocida | null {
+  const base = alfanum(nombre.replace(/\.pdf$/i, ""));
+  for (const f of conocidas) {
+    const nit = f.nit.replace(/\D/g, "");
+    const numero = alfanum(f.numero).replace(/^0+/, "");
+    const prefijo = alfanum(f.prefijo);
+    if (nit.length < 5 || !numero || !base.includes(nit)) continue;
+    // Se quita el NIT para que sus dígitos no se confundan con el número.
+    const sinNit = base.split(nit).join("|");
+    const patron = prefijo
+      ? new RegExp(`${escaparRe(prefijo)}0*${escaparRe(numero)}(?![0-9])`)
+      : numero.length >= 5
+        ? new RegExp(`(?<![0-9])0*${escaparRe(numero)}(?![0-9])`)
+        : null;
+    if (patron?.test(sinNit)) return f;
+  }
+  return null;
+}
