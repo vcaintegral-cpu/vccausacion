@@ -35,26 +35,32 @@ export async function findExistingInvoice(
   excludeId?: string | null,
 ): Promise<DuplicateInvoice | null> {
   const cufe = (key.cufe ?? "").trim();
-  if (cufe) {
+  const nit = (key.provider_nit ?? "").trim();
+  const numero = (key.number ?? "").trim();
+  // Las dos búsquedas van a la vez (antes una después de la otra); se respeta la prioridad.
+  const porCufe = async () => {
+    if (!cufe) return null;
     let q = supabase.from("invoices").select(COLS).eq("company_id", companyId).eq("cufe", cufe);
     if (excludeId) q = q.neq("id", excludeId);
     const { data } = await q.limit(1).maybeSingle();
-    if (data) return data as DuplicateInvoice;
-  }
-  const nit = (key.provider_nit ?? "").trim();
-  const numero = (key.number ?? "").trim();
-  if (!nit || !numero) return null;
-  let q = supabase
-    .from("invoices")
-    .select(COLS)
-    .eq("company_id", companyId)
-    .eq("provider_nit", nit)
-    .eq("number", numero);
-  const prefix = (key.prefix ?? "").trim();
-  q = prefix ? q.eq("prefix", prefix) : q.or("prefix.is.null,prefix.eq.");
-  if (excludeId) q = q.neq("id", excludeId);
-  const { data } = await q.limit(1).maybeSingle();
-  return (data as DuplicateInvoice | null) ?? null;
+    return (data as DuplicateInvoice | null) ?? null;
+  };
+  const porNumero = async () => {
+    if (!nit || !numero) return null;
+    let q = supabase
+      .from("invoices")
+      .select(COLS)
+      .eq("company_id", companyId)
+      .eq("provider_nit", nit)
+      .eq("number", numero);
+    const prefix = (key.prefix ?? "").trim();
+    q = prefix ? q.eq("prefix", prefix) : q.or("prefix.is.null,prefix.eq.");
+    if (excludeId) q = q.neq("id", excludeId);
+    const { data } = await q.limit(1).maybeSingle();
+    return (data as DuplicateInvoice | null) ?? null;
+  };
+  const [a, b] = await Promise.all([porCufe(), porNumero()]);
+  return a ?? b;
 }
 
 /**

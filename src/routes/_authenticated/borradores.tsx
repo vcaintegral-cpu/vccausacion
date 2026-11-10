@@ -11,6 +11,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany, useCompanies } from "@/components/app-shell";
 import { fetchCompanyPuc } from "@/lib/puc-data";
+import { enParalelo } from "@/lib/concurrencia";
+
+const VACIO_CODIGOS = new Set<string>();
+const VACIO_NOMBRES = new Map<string, string>();
 import { cop, fecha } from "@/lib/format";
 import { ESTADO_LABEL, estadoUnico, type EstadoFactura } from "@/lib/invoice-duplicates";
 import { siigoSyncInvoice } from "@/lib/siigo.functions";
@@ -102,7 +106,7 @@ export const Route = createFileRoute("/_authenticated/borradores")({
 const originLabel = (origin: string) => ({ REGLA: "Regla", APRENDIZAJE: "Historial NIT", HISTORIAL: "Historial NIT", HISTORIAL_DESCRIPCION: "Historial descripción", IA: "IA", NINGUNA: "Pendiente" }[origin] ?? origin);
 
 const COLS =
-  "source_override, siigo_trace, impoconsumo, discount, raw_extraction, id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, siigo_error_kind, siigo_attempts, siigo_last_attempt_at, siigo_reconciled_at, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id, paid_amount, payment_status, payment_enabled, payment_method, payment_type_id, payment_type_name, payment_form_manual";
+  "source_override, impoconsumo, discount, raw_extraction, id, company_id, prefix, number, issue_date, due_date, provider_nit, provider_name, cufe, cost_center, subtotal, iva, retefuente, reteiva, reteica, total, status, siigo_status, siigo_id, siigo_number, siigo_error, siigo_error_kind, siigo_attempts, siigo_last_attempt_at, siigo_reconciled_at, voucher_number, posted_at, approved_at, processing_at, posting_error, file_path, file_name, payable_account, payable_source, payable_manual, sync_source_label, sync_applied_at, sync_event_id, paid_amount, payment_status, payment_enabled, payment_method, payment_type_id, payment_type_name, payment_form_manual";
 
 /** Origen visible de la cuenta por pagar del borrador. */
 const origenPayable = (i: DraftInvoice) => {
@@ -179,33 +183,77 @@ function Borradores() {
   const sincronizando = useRef(false);
 
 
-  // Tiempo real: los cambios contables de otras sesiones se reflejan solos.
+  // Tiempo real: los cambios contables de otras sesiones se reflejan solos. Mientras corre
+  // un proceso por lotes (aprobar, causar, Siigo) no se recarga con cada factura: la
+  // lista se actualiza una sola vez al terminar el lote.
+  const enLoteRef = useRef(false);
   useDraftsRealtime(companyId, () => {
+    if (enLoteRef.current) return;
     void queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+  });
+
+  // El PUC cambia poco: se lee aparte y se conserva 10 minutos (antes se descargaba
+  // completo cada vez que cambiaba un borrador).
+  const pucQuery = useQuery({
+    queryKey: ["borradores-puc", companyId],
+    enabled: !!companyId,
+    staleTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      const puc = await fetchCompanyPuc(companyId!);
+      return {
+        puc,
+        pucCodes: new Set(puc.map((p) => p.code)),
+        pucNames: new Map(puc.map((p) => [p.code, p.name])),
+      };
+    },
   });
 
   const { data, isLoading } = useQuery({
     queryKey: ["borradores", companyId],
     enabled: !!companyId,
+    staleTime: 15 * 1000,
     queryFn: async () => {
-      const inv = await supabase
-        .from("invoices")
-        .select(COLS)
-        .eq("company_id", companyId!)
-        .eq("doc_kind", "compra")
-        .order("issue_date", { ascending: false });
-      if (inv.error) throw inv.error;
-      const invoices = (inv.data ?? []) as unknown as DraftInvoice[];
-      const ids = invoices.map((i) => i.id);
-      const journal: JournalRow[] = [];
-      for (let i = 0; i < ids.length; i += 200) {
-        const { data: rows, error } = await supabase
-          .from("journal_lines")
-          .select("invoice_id, account_code, account_name, debit, credit, cost_center")
-          .in("invoice_id", ids.slice(i, i + 200));
-        if (error) throw error;
-        journal.push(...((rows ?? []) as unknown as JournalRow[]));
+      // Todas las facturas, de a 1000 (el servidor no entrega más de 1000 por consulta).
+      const invoices: DraftInvoice[] = [];
+      for (let from = 0; ; from += 1000) {
+        const inv = await supabase
+          .from("invoices")
+          .select(COLS)
+          .eq("company_id", companyId!)
+          .eq("doc_kind", "compra")
+          .order("issue_date", { ascending: false })
+          .order("id")
+          .range(from, from + 999);
+        if (inv.error) throw inv.error;
+        const page = (inv.data ?? []) as unknown as DraftInvoice[];
+        invoices.push(...page);
+        if (page.length < 1000) break;
       }
+      const ids = invoices.map((i) => i.id);
+      const grupos: string[][] = [];
+      for (let i = 0; i < ids.length; i += 150) grupos.push(ids.slice(i, i + 150));
+      // Asientos y traza de Siigo (solo de las facturas con error) en paralelo.
+      const conError = invoices.filter((i) => i.siigo_status === "error" || i.siigo_error || i.siigo_error_kind).map((i) => i.id);
+      const gruposError: string[][] = [];
+      for (let i = 0; i < conError.length; i += 150) gruposError.push(conError.slice(i, i + 150));
+      const [partes, trazas] = await Promise.all([
+        enParalelo(grupos, 4, async (grupo) => {
+          const { data: rows, error } = await supabase
+            .from("journal_lines")
+            .select("invoice_id, account_code, account_name, debit, credit, cost_center")
+            .in("invoice_id", grupo);
+          if (error) throw error;
+          return (rows ?? []) as unknown as JournalRow[];
+        }),
+        enParalelo(gruposError, 4, async (grupo) => {
+          const { data: rows, error } = await supabase.from("invoices").select("id, siigo_trace").in("id", grupo);
+          if (error) throw error;
+          return (rows ?? []) as Array<{ id: string; siigo_trace: unknown }>;
+        }),
+      ]);
+      const trazaPorId = new Map(trazas.flat().map((t) => [t.id, t.siigo_trace]));
+      for (const inv of invoices) if (trazaPorId.has(inv.id)) (inv as { siigo_trace?: unknown }).siigo_trace = trazaPorId.get(inv.id);
+      const journal = partes.flat();
       const porFactura = new Map<string, JournalRow[]>();
       for (const r of journal) {
         const list = porFactura.get(r.invoice_id) ?? [];
@@ -225,24 +273,16 @@ function Borradores() {
           Number(inv.total ?? 0) - Number(inv.retefuente ?? 0) - Number(inv.reteiva ?? 0) - Number(inv.reteica ?? 0);
         cxp.set(inv.id, roundCOP(desdeAsiento > 0 ? desdeAsiento : fallback));
       }
-      const puc = await fetchCompanyPuc(companyId!);
-      return {
-        invoices,
-        accounts,
-        cxp,
-        puc,
-        pucCodes: new Set(puc.map((p) => p.code)),
-        pucNames: new Map(puc.map((p) => [p.code, p.name])),
-      };
+      return { invoices, accounts, cxp };
     },
   });
 
   const invoices = data?.invoices ?? [];
   const accounts = data?.accounts ?? new Map<string, DraftAccounts>();
-  const pucCodes = data?.pucCodes ?? new Set<string>();
-  const pucNames = data?.pucNames ?? new Map<string, string>();
+  const pucCodes = pucQuery.data?.pucCodes ?? VACIO_CODIGOS;
+  const pucNames = pucQuery.data?.pucNames ?? VACIO_NOMBRES;
   const cxpPorFactura = data?.cxp ?? new Map<string, number>();
-  const puc = data?.puc ?? [];
+  const puc = pucQuery.data?.puc ?? [];
   // Solo cuentas por pagar (grupos 22 y 23) para el selector de CxP.
   const cuentasPagar = useMemo(() => puc.filter((p) => isPayableCode(p.code)), [puc]);
   const formasPago = usePaymentTypes(companyId).data ?? [];
@@ -376,6 +416,16 @@ function Borradores() {
       }),
     [invoices, accounts, estado, tipoError, q, proveedor, desde, hasta, cuenta, origen],
   );
+
+  // Advertencias de cada fila calculadas una sola vez (no en cada clic o tecla).
+  const alertasPorFactura = useMemo(
+    () => new Map(rows.map((r) => [r.id, alertasBorrador(r, accounts.get(r.id), pucCodes)])),
+    [rows, accounts, pucCodes],
+  );
+  // Durante un lote no se recarga la lista con cada cambio en tiempo real.
+  useEffect(() => {
+    enLoteRef.current = !!busy || !!lote;
+  }, [busy, lote]);
 
   const seleccionadas = rows.filter((r) => sel[r.id]);
   const paraReintentar = seleccionadas.filter((r) => { const k = siigoErrorKind(r); return k === "sin_crear" || k === "interrumpido"; });
@@ -826,7 +876,7 @@ function Borradores() {
           <tbody className="divide-y divide-border">
             {rows.map((r) => {
               const acc = accounts.get(r.id);
-              const alertas = alertasBorrador(r, acc, pucCodes);
+              const alertas = alertasPorFactura.get(r.id) ?? alertasBorrador(r, acc, pucCodes);
               const nivel = alertas.some((a) => a.level === "error") ? "error" : alertas.some((a) => a.level === "warn") ? "warn" : "ok";
               const fila = nivel === "error" ? "bg-destructive/5" : nivel === "warn" ? "bg-amber-500/5" : "";
               const e = estadoUnico(r);

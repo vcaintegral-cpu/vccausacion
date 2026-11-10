@@ -293,6 +293,31 @@ export async function siigoGet<T>(path: string): Promise<T> {
   return siigoRequest<T>("GET", path);
 }
 
+/**
+ * Catálogos de Siigo que no cambian durante un lote (impuestos, tipos de comprobante,
+ * formas de pago, centros de costo). Se guardan 2 minutos por empresa: al causar varias
+ * facturas seguidas ya no se piden en cada una. Cada uso recibe su propia copia.
+ */
+const catalogos = new Map<string, { vence: number; valor: Promise<unknown> }>();
+const VIGENCIA_CATALOGO = 2 * 60 * 1000;
+
+export async function siigoGetCatalogo<T>(path: string): Promise<T> {
+  const clave = `${companyKey()}|${path}`;
+  const previo = catalogos.get(clave);
+  if (previo && previo.vence > Date.now()) return structuredClone((await previo.valor) as T);
+  const valor = siigoGet<T>(path);
+  catalogos.set(clave, { vence: Date.now() + VIGENCIA_CATALOGO, valor });
+  // Un error no se guarda: la siguiente factura vuelve a consultar.
+  valor.catch(() => catalogos.delete(clave));
+  return structuredClone(await valor);
+}
+
+/** Olvida los catálogos guardados de la empresa activa (p. ej. tras importar impuestos). */
+export function siigoOlvidarCatalogos() {
+  const prefijo = `${companyKey()}|`;
+  for (const k of [...catalogos.keys()]) if (k.startsWith(prefijo)) catalogos.delete(k);
+}
+
 export async function siigoDelete<T>(path: string): Promise<T> {
   return siigoRequest<T>("DELETE", path);
 }
@@ -333,7 +358,7 @@ export async function siigoJournalDocumentId(): Promise<number> {
 
   for (const path of candidates) {
     try {
-      const res = await siigoGet<DocType[] | { results?: DocType[] }>(path);
+      const res = await siigoGetCatalogo<DocType[] | { results?: DocType[] }>(path);
       const list: DocType[] = Array.isArray(res) ? res : (res?.results ?? []);
       const journals = list.filter((t) => {
         const kind = String(t.type ?? "").toUpperCase();
@@ -531,7 +556,7 @@ export async function siigoPurchasePaymentTypeId(preferido?: string | null): Pro
 
   type PayType = { id?: number; name?: string; active?: boolean; type?: string };
   try {
-    const res = await siigoGet<PayType[] | { results?: PayType[] }>("/v1/payment-types?document_type=FC");
+    const res = await siigoGetCatalogo<PayType[] | { results?: PayType[] }>("/v1/payment-types?document_type=FC");
     const list = (Array.isArray(res) ? res : (res?.results ?? [])).filter((p) => p.id && p.active !== false);
     if (list.length === 0) return null;
     if (forced && /^\d+$/.test(forced)) {
@@ -599,7 +624,7 @@ export async function siigoCostCenterId(value: string | null | undefined): Promi
   type CC = { id?: number; code?: string | number; name?: string; active?: boolean };
   const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
   try {
-    const res = await siigoGet<CC[] | { results?: CC[] }>("/v1/cost-centers");
+    const res = await siigoGetCatalogo<CC[] | { results?: CC[] }>("/v1/cost-centers");
     const list = (Array.isArray(res) ? res : (res?.results ?? [])).filter((c) => c.id != null && c.active !== false);
     const match =
       list.find((c) => String(c.id) === clean) ??

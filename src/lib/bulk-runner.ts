@@ -28,11 +28,13 @@ import {
   ACTIVE_STATUSES,
   cancelPendingItems,
   fileFromStorage,
+  listItemStatuses,
   listItems,
   listUploads,
   mensajeUsuario,
   refreshUploadCounters,
   updateItem,
+  updateItems,
   updateUpload,
   type BulkItem,
   type BulkUpload,
@@ -169,13 +171,13 @@ export async function loadDeps(companyId: string): Promise<Deps> {
       supabase.auth.getUser(),
     ]);
     if (company.error || !company.data || !auth.data.user) throw new Error("No se pudieron cargar los parámetros de la empresa.");
-    await fetchIvaConfig(companyId);
     // Precedente tributario (IVA y retenciones sincronizados con Siigo) y bases
     // mínimas: se precargan para el lote y quedan en una caché de 5 minutos, de
     // modo que lo sincronizado después con Siigo se aprende sin recargar la app.
-    await Promise.all([
+    const [precedentes, tablasBases] = await Promise.all([
       cargarPrecedentes(companyId, (taxes.data ?? []) as unknown as ImpuestoConfigurado[]),
       cargarTablasBases(),
+      fetchIvaConfig(companyId),
     ]);
     const config: BulkConfig = {
       batch: { company: company.data, providers: Object.fromEntries(providers.map((p) => [p.nit,p])), providerRules, userId: auth.data.user.id },
@@ -185,6 +187,10 @@ export async function loadDeps(companyId: string): Promise<Deps> {
       products: products as BulkConfig["products"],
       categories: categories as BulkConfig["categories"],
       knowledge,
+      // Fijos para todo el lote: un lote de más de 5 minutos ya no vuelve a descargar
+      // el precedente tributario completo a mitad de camino.
+      precedentes,
+      tablasBases,
     };
     return { config, knowledge };
   })();
@@ -212,7 +218,7 @@ let loop: Promise<void> | null = null;
 /** Cargas que el usuario pidió detener: no se toma ninguna factura nueva de ellas. */
 const detenciones = new Map<string, "pausar" | "cancelar">();
 
-function counters(items: BulkItem[]) {
+function counters(items: Array<Pick<BulkItem, "status" | "needs_review">>) {
   const done = items.filter((i) => i.status === "completed").length;
   const errors = items.filter((i) => i.status === "error").length;
   const review = items.filter((i) => i.status === "requires_review" || (i.status === "completed" && i.needs_review)).length;
@@ -321,14 +327,19 @@ async function processItem(item: BulkItem, companyId: string, deps: Deps) {
     }
     if (!item.storage_path) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene storage_path.");
     const stored = await fileFromStorage(item.storage_path, item.file_name, item.storage_bucket ?? "facturas");
-    await updateItem(item.id, {
+    // Los datos de la descarga viajan con la siguiente actualización (una escritura menos).
+    let descarga: Partial<BulkItem> | null = {
       download_status: "OK",
       stored_size_bytes: stored.size,
       mime_type: stored.mimeType,
       content_status: "OK",
-    });
+    };
+    let textoGuardado = false;
     const saveTrace = async (stage: string, trace?: InvoiceReadTrace) => {
-      await updateItem(item.id, {
+      // "Lista para causar" va seguida de inmediato por "Procesada": no se escribe aparte.
+      if (stage === "ready_for_accounting") return;
+      const patch: Partial<BulkItem> = {
+        ...(descarga ?? {}),
         status: stage as BulkItem["status"],
         stage,
         ...(trace
@@ -339,11 +350,15 @@ async function processItem(item: BulkItem, companyId: string, deps: Deps) {
               buyer_nit: trace.buyerNit,
               invoice_number: trace.invoiceNumber,
               issue_date: trace.issueDate,
-              extracted_text: trace.text,
               read_status: trace.readMode === "texto" ? "Leída (texto)" : "Leída (imagen)",
+              // El texto leído (hasta 20.000 caracteres) se guarda una sola vez.
+              ...(textoGuardado ? {} : { extracted_text: trace.text }),
             }
           : {}),
-      });
+      };
+      descarga = null;
+      if (trace) textoGuardado = true;
+      await updateItem(item.id, patch);
     };
     const result = await processInvoiceFile({
       file: stored.file,
@@ -355,6 +370,7 @@ async function processItem(item: BulkItem, companyId: string, deps: Deps) {
       knowledge: deps.knowledge,
     });
     await updateItem(item.id, {
+      ...(descarga ?? {}),
       status: "completed",
       stage: "guardado",
       invoice_id: result.invoiceId,
@@ -431,6 +447,21 @@ async function runUpload(job: QueuedUpload) {
     // Varias facturas en paralelo: la espera de la IA de una no bloquea a las demás.
     let cursor = 0;
     let activos = 0;
+    // Contadores de avance con una consulta liviana (solo estados), a lo sumo cada 2 s
+    // y sin que la siguiente factura tenga que esperarla.
+    let ultimoConteo = 0;
+    let conteoEnCurso = false;
+    const refrescarConteo = () => {
+      if (conteoEnCurso || Date.now() - ultimoConteo < 2000) return;
+      conteoEnCurso = true;
+      ultimoConteo = Date.now();
+      void listItemStatuses(job.uploadId)
+        .then((estados) => emit({ ...counters(estados) }))
+        .catch(() => undefined)
+        .finally(() => {
+          conteoEnCurso = false;
+        });
+    };
     const worker = async () => {
       for (;;) {
         // Pausar/Cancelar: las facturas en curso terminan, no se toma ninguna más.
@@ -443,7 +474,8 @@ async function runUpload(job: QueuedUpload) {
           await processItem(item, job.companyId, deps);
         } finally {
           activos -= 1;
-          emit({ active: activos, ...counters(await listItems(job.uploadId)) });
+          emit({ active: activos });
+          refrescarConteo();
         }
       }
     };
@@ -522,9 +554,7 @@ export function startBackgroundUpload(job: QueuedUpload) {
 
 /** Reintenta tareas puntuales sin reiniciar todo el ZIP. */
 export async function retryBulkItems(job: QueuedUpload, itemIds: string[]) {
-  for (const id of itemIds) {
-    await updateItem(id, { status: "pending", stage: null, error_message: null, user_message: null });
-  }
+  await updateItems(itemIds, { status: "pending", stage: null, error_message: null, user_message: null });
   startBackgroundUpload(job);
 }
 

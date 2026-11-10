@@ -58,6 +58,10 @@ vi.mock("@/lib/bulk-upload-store", () => {
     ACTIVE_STATUSES: ["uploaded", "extracting", "processing", "completed_with_errors"],
     fileFromStorage: async () => ({ file: {}, size: 1, mimeType: "application/pdf" }),
     listItems: async () => db.items.map((i) => ({ ...i })),
+    listItemStatuses: async () => db.items.map((i) => ({ id: i.id, status: i.status, needs_review: false })),
+    updateItems: async (ids: string[], patch: Partial<Item>) => {
+      for (const it of db.items) if (ids.includes(it.id)) Object.assign(it, patch);
+    },
     listUploads: async () => [],
     mensajeUsuario: (_f: string, e: string) => e,
     updateItem: async (id: string, patch: Partial<Item>) => {

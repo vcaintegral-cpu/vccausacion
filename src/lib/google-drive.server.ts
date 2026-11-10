@@ -1,6 +1,7 @@
 // Google Drive (OAuth 2.0 + REST v3) para las fuentes de documentos.
 // Solo lectura: lista carpetas y descarga archivos. Nunca modifica, mueve ni
 // borra nada en Drive.
+import { enParalelo } from "@/lib/concurrencia";
 import type { FileNode, FileProvider } from "@/lib/file-providers";
 
 export const GOOGLE_SCOPES = [
@@ -187,16 +188,17 @@ export function googleProvider(token: string): FileProvider {
       );
     },
     async listChildrenMany(folderIds) {
-      const out: FileNode[] = [];
-      // "'a' in parents or 'b' in parents ..." en grupos: pocas llamadas para muchas carpetas.
-      for (let i = 0; i < folderIds.length; i += 25) {
-        const grupo = folderIds.slice(i, i + 25);
+      // "'a' in parents or 'b' in parents ..." en grupos: pocas llamadas para muchas carpetas,
+      // y hasta 3 grupos a la vez.
+      const grupos: string[][] = [];
+      for (let i = 0; i < folderIds.length; i += 25) grupos.push(folderIds.slice(i, i + 25));
+      const partes = await enParalelo(grupos, 3, async (grupo) => {
         const padres = grupo.map((id) => `'${esc(id)}' in parents`).join(" or ");
-        for (const f of await query(token, `(${padres}) and trashed = false`)) {
-          out.push(toNode(f, f.parents?.find((p) => grupo.includes(p)) ?? null));
-        }
-      }
-      return out;
+        return (await query(token, `(${padres}) and trashed = false`)).map((f) =>
+          toNode(f, f.parents?.find((p) => grupo.includes(p)) ?? null),
+        );
+      });
+      return partes.flat();
     },
     async download(file) {
       const res = await driveGet(token, `/files/${encodeURIComponent(file.id)}`, {

@@ -31,6 +31,13 @@ import {
 import { excelDocKey, excelDocLabel } from "@/lib/excel-invoice-adapter";
 import type { FileNode, FileProvider, ProveedorArchivos } from "@/lib/file-providers";
 import { parsePurchaseWorkbook } from "@/lib/purchase-excel";
+import { enParalelo } from "@/lib/concurrencia";
+
+/**
+ * Descargas y subidas simultáneas por revisión. Cloudflare Workers admite 6 conexiones
+ * abiertas a la vez; se dejan 2 libres para la base de datos.
+ */
+const EN_PARALELO = 4;
 
 /** Archivos nuevos por revisión (DOCUMENT_SYNC_MAX_FILES); el resto se toma en la siguiente. */
 export function limitePorEjecucion(): number {
@@ -159,22 +166,28 @@ async function carpetasObjetivo(
 /** Archivos útiles bajo una carpeta (incluidas subcarpetas de proveedor), listando por niveles. */
 async function archivosBajo(
   provider: FileProvider,
-  o: Objetivo,
+  objetivos: Objetivo[],
   proposito: Proposito,
 ): Promise<Archivo[]> {
   const out: Archivo[] = [];
-  let nivel = new Map<string, string>([[o.id, o.ruta]]);
+  // Todas las carpetas objetivo (mes actual y anterior) se recorren juntas, nivel por
+  // nivel: una sola llamada de listado por nivel para todas.
+  type Pos = { ruta: string; periodo: Objetivo["periodo"] };
+  let nivel = new Map<string, Pos>();
+  for (const o of objetivos) if (!nivel.has(o.id)) nivel.set(o.id, { ruta: o.ruta, periodo: o.periodo });
+  const vistos = new Set<string>();
   for (let profundidad = 0; nivel.size > 0 && profundidad < 6; profundidad++) {
-    const siguiente = new Map<string, string>();
+    const siguiente = new Map<string, Pos>();
     for (const n of await provider.listChildrenMany([...nivel.keys()])) {
-      const rutaPadre = n.parentId ? nivel.get(n.parentId) : undefined;
-      if (rutaPadre === undefined) continue;
+      const padre = n.parentId ? nivel.get(n.parentId) : undefined;
+      if (padre === undefined || vistos.has(n.id)) continue;
+      vistos.add(n.id);
       if (n.isFolder) {
-        siguiente.set(n.id, rutaPadre ? `${rutaPadre}/${n.name}` : n.name);
+        siguiente.set(n.id, { ruta: padre.ruta ? `${padre.ruta}/${n.name}` : n.name, periodo: padre.periodo });
         continue;
       }
       const tipo = tipoDeArchivo(proposito, n.name, n.mimeType);
-      if (tipo) out.push({ node: n, ruta: rutaPadre, periodo: o.periodo, tipo });
+      if (tipo) out.push({ node: n, ruta: padre.ruta, periodo: padre.periodo, tipo });
     }
     nivel = siguiente;
   }
@@ -279,10 +292,11 @@ export async function syncSource(
     const ownerId = opts.userId ?? empresa.created_by;
 
     const provider = opts.provider;
-    const archivos: Archivo[] = [];
-    for (const o of await carpetasObjetivo(provider, source, ahora, result)) {
-      archivos.push(...(await archivosBajo(provider, o, source.purpose)));
-    }
+    const archivos = await archivosBajo(
+      provider,
+      await carpetasObjetivo(provider, source, ahora, result),
+      source.purpose,
+    );
     result.encontrados = archivos.length;
 
     // Archivos ya vistos por ID de la fuente.
@@ -331,18 +345,19 @@ export async function syncSource(
         result.renombrados += 1;
       }
     }
+    // Varias descargas a la vez (el orden de la lista se conserva).
     const descargar = async (lista: Archivo[]) => {
-      const out: Descargado[] = [];
-      for (const a of lista) {
+      const out = await enParalelo(lista, EN_PARALELO, async (a): Promise<Descargado | null> => {
         try {
           const bytes = await provider.download(a.node);
-          out.push({ ...a, bytes, huella: await sha256Hex(bytes) });
+          return { ...a, bytes, huella: await sha256Hex(bytes) };
         } catch (e) {
           // No se registra: se reintenta en la próxima revisión.
           result.errores.push(`${a.ruta}/${a.node.name}: ${e instanceof Error ? e.message : String(e)}`);
+          return null;
         }
-      }
-      return out;
+      });
+      return out.filter((d): d is Descargado => d !== null);
     };
 
     const pagos: Array<Record<string, unknown> & { external_id: string }> = [];
@@ -355,9 +370,10 @@ export async function syncSource(
       }
       // 2) Conciliación: un PDF cuya factura ya está en el Excel RECIBIDOS o causada en la
       //    app no se vuelve a cargar (no se descarga ni se lee con IA).
-      const conocidas = await facturasConocidas(admin, source.company_id);
+      const pdfsNuevos = aProcesar.filter((x) => x.tipo === "factura_pdf");
+      const conocidas = pdfsNuevos.length ? await facturasConocidas(admin, source.company_id) : [];
       const pdfs: Archivo[] = [];
-      for (const a of aProcesar.filter((x) => x.tipo === "factura_pdf")) {
+      for (const a of pdfsNuevos) {
         const f = facturaEnNombre(a.node.name, conocidas);
         if (!f) {
           pdfs.push(a);
@@ -386,6 +402,7 @@ export async function syncSource(
         descargados.map((d) => d.huella),
       );
       const enLote = new Set<string>();
+      const porSubir: Descargado[] = [];
       for (const d of descargados) {
         if (previos.has(d.huella) || enLote.has(d.huella)) {
           filas.set(d.node.id, {
@@ -400,10 +417,17 @@ export async function syncSource(
           continue;
         }
         enLote.add(d.huella);
+        porSubir.push(d);
+      }
+      // Subidas simultáneas; el registro se arma después en el orden original.
+      const subidas = await enParalelo(porSubir, EN_PARALELO, async (d) => {
         const path = `${ownerId}/${source.company_id}/egresos/${source.id}/${d.huella.slice(0, 16)}-${nombreSeguro(d.node.name)}`;
         const { error } = await admin.storage
           .from("facturas")
           .upload(path, d.bytes, { upsert: true, contentType: contentType(d) });
+        return { d, path, error };
+      });
+      for (const { d, path, error } of subidas) {
         if (error) {
           result.errores.push(`${d.ruta}/${d.node.name}: ERROR_SUBIDA ${error.message}`);
           continue;
@@ -570,11 +594,15 @@ async function comprasPdf(
 
   const items: Array<Record<string, unknown>> = [];
   const subidos: Descargado[] = [];
-  for (const d of nuevos) {
-    const path = `${ownerId}/${source.company_id}/fuentes/${uploadId}/${items.length}-${nombreSeguro(d.node.name)}`;
+  // Subidas simultáneas; cada archivo conserva su número de orden en la ruta.
+  const subidas = await enParalelo(nuevos, EN_PARALELO, async (d, i) => {
+    const path = `${ownerId}/${source.company_id}/fuentes/${uploadId}/${i}-${nombreSeguro(d.node.name)}`;
     const { error } = await admin.storage
       .from("facturas")
       .upload(path, d.bytes, { upsert: true, contentType: "application/pdf" });
+    return { d, path, error };
+  });
+  for (const { d, path, error } of subidas) {
     if (error) {
       result.errores.push(`${d.ruta}/${d.node.name}: ERROR_SUBIDA_PDF ${error.message}`);
       continue;
