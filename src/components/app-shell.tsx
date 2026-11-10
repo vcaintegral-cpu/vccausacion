@@ -54,10 +54,15 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   }, [companies, active, locked]);
 
-  // Retoma automáticamente las cargas masivas que quedaron pendientes.
+  // Retoma automáticamente las cargas masivas pendientes: al abrir la app y cada minuto,
+  // para que las cargas creadas por la revisión de carpetas (también la programada)
+  // se procesen solas, sin entrar a "Ver detalle → Continuar procesamiento".
   useEffect(() => {
     if (!active) return;
-    void resumeBackgroundUploads(active);
+    const revisar = () => void resumeBackgroundUploads(active).catch(() => undefined);
+    revisar();
+    const timer = window.setInterval(revisar, 60_000);
+    return () => window.clearInterval(timer);
   }, [active]);
 
   async function signOut() {

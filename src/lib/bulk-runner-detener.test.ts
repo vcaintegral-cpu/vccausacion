@@ -7,6 +7,7 @@ const db = vi.hoisted(() => ({
   items: [] as Item[],
   uploadStatus: [] as string[],
   procesadas: [] as string[],
+  activas: [] as Array<{ id: string; file_name: string; status: string }>,
 }));
 
 // Cliente de base de datos de mentira: cualquier consulta encadenada devuelve vacío.
@@ -63,6 +64,7 @@ vi.mock("@/lib/bulk-upload-store", () => {
       for (const it of db.items) if (ids.includes(it.id)) Object.assign(it, patch);
     },
     listUploads: async () => [],
+    listActiveUploads: async () => db.activas,
     mensajeUsuario: (_f: string, e: string) => e,
     updateItem: async (id: string, patch: Partial<Item>) => {
       const it = db.items.find((i) => i.id === id);
@@ -82,7 +84,7 @@ vi.mock("@/lib/bulk-upload-store", () => {
   };
 });
 
-const { detenerCarga, getBulkProgress, startBackgroundUpload } = await import("./bulk-runner");
+const { detenerCarga, getBulkProgress, resumeBackgroundUploads, startBackgroundUpload } = await import("./bulk-runner");
 
 const esperar = async (cond: () => boolean) => {
   for (let i = 0; i < 400 && !cond(); i++) await new Promise((r) => setTimeout(r, 5));
@@ -139,5 +141,34 @@ describe("detener la carga masiva", () => {
     expect(db.items.filter((i) => i.status === "cancelled").length).toBeGreaterThanOrEqual(15);
     expect(db.items.some((i) => i.status === "pending")).toBe(false);
     expect(db.uploadStatus.at(-1)).toBe("cancelled");
+  });
+});
+
+describe("cargas creadas por la revisión de carpetas", () => {
+  beforeEach(async () => {
+    await esperar(() => !getBulkProgress().running);
+  });
+
+  it("se procesan solas (sin Continuar procesamiento) y no se duplican si el aviso coincide", async () => {
+    cargar(8);
+    db.activas = [{ id: "up1", file_name: "Fuente automática · PDF", status: "processing" }];
+    // El aviso periódico y el de "Revisar ahora" llegan a la vez.
+    await Promise.all([resumeBackgroundUploads("c1"), resumeBackgroundUploads("c1")]);
+    await resumeBackgroundUploads("c1"); // mientras ya está procesando, no se vuelve a encolar
+    await esperar(() => !getBulkProgress().running && db.items.every((i) => i.status === "completed"));
+    expect(db.items.every((i) => i.status === "completed")).toBe(true);
+    expect(db.procesadas.length).toBe(8);
+    expect(new Set(db.procesadas).size).toBe(8);
+    db.activas = [];
+  });
+
+  it("sin facturas pendientes no inicia nada", async () => {
+    cargar(3);
+    for (const i of db.items) i.status = "completed";
+    db.activas = [{ id: "up1", file_name: "x", status: "completed_with_errors" }];
+    await resumeBackgroundUploads("c1");
+    expect(getBulkProgress().running).toBe(false);
+    expect(db.procesadas).toEqual([]);
+    db.activas = [];
   });
 });
