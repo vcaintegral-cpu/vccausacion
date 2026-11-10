@@ -81,6 +81,22 @@ function fakeDb(tablas: Record<string, Fila[]>) {
         b
       ),
       gte: (k: string, v: unknown) => (filtros.push((f) => String(f[k] ?? "") >= String(v)), b),
+      neq: (k: string, v: unknown) => (filtros.push((f) => f[k] !== v), b),
+      // Solo la forma usada por el importador: "col.neq.valor,col.not.is.null".
+      or: (expr: string) => (
+        filtros.push((f) =>
+          expr.split(",").some((cond) => {
+            const [col, ...resto] = cond.split(".");
+            const regla = resto.join(".");
+            if (regla === "not.is.null") return f[col!] != null;
+            if (regla.startsWith("neq.")) return f[col!] !== regla.slice(4);
+            if (regla === "is.null") return f[col!] == null;
+            if (regla.startsWith("eq.")) return f[col!] === regla.slice(3);
+            return false;
+          }),
+        ),
+        b
+      ),
       range: () => b,
       insert: (p: Fila | Fila[]) => ((op = "insert"), (payload = Array.isArray(p) ? p : [p]), b),
       upsert: (p: Fila | Fila[], o: { onConflict: string }) => (
@@ -299,6 +315,37 @@ describe("LED LIGHTS: Google Drive año → mes → FACTURAS", () => {
     });
   });
 
+  it("si se eliminaron las cargas masivas, la siguiente revisión vuelve a enviar los archivos", async () => {
+    const db = base();
+    const r1 = await syncSource(db.client, fuente("compras", "FACTURAS"), { provider, ahora: AHORA });
+    expect(r1.facturasEncoladas).toBeGreaterThan(0);
+    // Borrar la carga elimina sus tareas y deja sin carga el registro del archivo (ON DELETE SET NULL).
+    db.tablas["bulk_uploads"] = [];
+    db.tablas["bulk_upload_items"] = [];
+    for (const f of db.tablas["document_source_files"]!) Object.assign(f, { upload_id: null, bulk_item_id: null });
+    descargas.length = 0;
+    const r2 = await syncSource(db.client, fuente("compras", "FACTURAS"), { provider, ahora: AHORA });
+    expect(r2.facturasEncoladas).toBe(r1.facturasEncoladas);
+    expect(r2.duplicados).toBe(0);
+    expect(descargas.length).toBe(r1.facturasEncoladas);
+  });
+
+  it("si se eliminaron los borradores, se vuelven a enviar y se libera la huella; los vigentes no", async () => {
+    const db = base();
+    const r1 = await syncSource(db.client, fuente("compras", "FACTURAS"), { provider, ahora: AHORA });
+    const tareas = db.tablas["bulk_upload_items"]!;
+    // Todas procesadas; la primera conserva su borrador, las demás lo perdieron.
+    tareas.forEach((t, i) => Object.assign(t, { status: "completed", invoice_id: i === 0 ? "inv-vigente" : null }));
+    const r2 = await syncSource(db.client, fuente("compras", "FACTURAS"), { provider, ahora: AHORA });
+    expect(r2.facturasEncoladas).toBe(r1.facturasEncoladas - 1);
+    expect(r2.duplicados).toBe(0);
+    // Las tareas muertas liberaron su huella para las nuevas (índice único por empresa).
+    expect(tareas.slice(1, r1.facturasEncoladas).every((t) => t["fingerprint"] === null)).toBe(true);
+    // Una tercera revisión no repite nada: las nuevas tareas están vivas.
+    const r3 = await syncSource(db.client, fuente("compras", "FACTURAS"), { provider, ahora: AHORA });
+    expect(r3.facturasEncoladas).toBe(0);
+  });
+
   it("no encola un PDF ya cargado por ZIP ni repetidos en la carpeta", async () => {
     arbol.find((n) => n.id === "f2")!.content = "igual";
     arbol.find((n) => n.id === "f3")!.content = "igual";
@@ -315,6 +362,7 @@ describe("LED LIGHTS: Google Drive año → mes → FACTURAS", () => {
           company_id: EMPRESA,
           fingerprint: h,
           status: "completed",
+          invoice_id: "inv-zip",
         },
       ],
     });
@@ -433,6 +481,28 @@ describe("BALLET: OneDrive CONTABILIDAD → mes → COMPRAS / PAGOS", () => {
     expect(
       db.tablas["bulk_upload_items"]!.filter((i) => String(i["fingerprint"]).startsWith("excel:")),
     ).toHaveLength(3);
+  });
+
+  it("Excel RECIBIDOS: si se eliminaron sus borradores, se vuelve a leer y entran otra vez todos sus documentos", async () => {
+    const db = base();
+    await syncSource(db.client, fuente("compras", "COMPRAS", "microsoft"), { provider, ahora: AHORA });
+    // Tareas del Excel procesadas cuyos borradores la usuaria eliminó (el Excel no cambió).
+    for (const t of db.tablas["bulk_upload_items"]!) Object.assign(t, { status: "completed", invoice_id: null });
+    const r = await syncSource(db.client, fuente("compras", "COMPRAS", "microsoft"), { provider, ahora: AHORA });
+    expect(r.documentosExcel).toBe(2);
+    expect(r.facturasEncoladas).toBe(1);
+    expect(r.errores).toEqual([]);
+  });
+
+  it("Excel RECIBIDOS vigente (borradores existentes) no se vuelve a leer si no cambió", async () => {
+    const db = base();
+    await syncSource(db.client, fuente("compras", "COMPRAS", "microsoft"), { provider, ahora: AHORA });
+    for (const t of db.tablas["bulk_upload_items"]!) Object.assign(t, { status: "completed", invoice_id: "inv" });
+    descargas.length = 0;
+    const r = await syncSource(db.client, fuente("compras", "COMPRAS", "microsoft"), { provider, ahora: AHORA });
+    expect(r.documentosExcel).toBe(0);
+    expect(r.facturasEncoladas).toBe(0);
+    expect(descargas).toEqual([]);
   });
 
   it("un Excel de otra empresa no se carga y queda advertido", async () => {
