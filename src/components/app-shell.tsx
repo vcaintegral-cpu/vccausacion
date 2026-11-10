@@ -14,6 +14,7 @@ import { moduloActivo } from "@/empresas/registro";
 import type { ModuloId } from "@/empresas/tipos";
 
 // Cada entrada se puede apagar por empresa desde su perfil (src/empresas/<empresa>/perfil.ts).
+const NAV = [
   { to: "/panel", label: "Panel", icon: LayoutDashboard, modulo: "panel" },
   { to: "/causar", label: "Causar factura", icon: FileUp, modulo: "causar" },
   { to: "/borradores", label: "Borradores", icon: ClipboardCheck, modulo: "borradores" },
@@ -22,6 +23,7 @@ import type { ModuloId } from "@/empresas/tipos";
   { to: "/pendientes-siigo", label: "Pendientes Siigo", icon: Scale, modulo: "pendientes_siigo" },
   { to: "/documentos", label: "Documentos", icon: FolderOpen, modulo: "documentos" },
   { to: "/aprendizaje", label: "Aprendizaje contable", icon: Brain, modulo: "aprendizaje" },
+  { to: "/fuentes", label: "Fuentes de documentos", icon: FolderSync, modulo: "fuentes" },
   { to: "/integraciones", label: "Integraciones", icon: Plug, modulo: "integraciones" },
   { to: "/admin", label: "Administración", icon: Settings2, modulo: "administracion" },
   { to: "/empresas", label: "Empresas", icon: Building2, modulo: "empresas" },

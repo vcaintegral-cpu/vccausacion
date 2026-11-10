@@ -17,6 +17,7 @@ export const MODULOS_POR_DEFECTO: Record<ModuloId, boolean> = {
   pendientes_siigo: true,
   documentos: true,
   aprendizaje: true,
+  fuentes: true,
   integraciones: true,
   administracion: true,
   empresas: true,
