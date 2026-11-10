@@ -1,8 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, type ReactNode } from "react";
-import { Brain, Building2, ClipboardCheck, FileSignature, FileUp, FolderOpen, FolderSync, LayoutDashboard, ListChecks, LogOut, Plug, Scale, Settings2 } from "lucide-react";
-import { Brain, Building2, ClipboardCheck, FileSignature, FileUp, FolderOpen, LayoutDashboard, ListChecks, LogOut, Plug, Scale, Settings2, type LucideIcon } from "lucide-react";
+import { Brain, Building2, ClipboardCheck, FileSignature, FileUp, FolderOpen, FolderSync, LayoutDashboard, ListChecks, LogOut, Plug, Scale, Settings2, type LucideIcon } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { BackgroundJobsPanel } from "@/components/background-jobs";
@@ -15,19 +14,6 @@ import type { ModuloId } from "@/empresas/tipos";
 
 // Cada entrada se puede apagar por empresa desde su perfil (src/empresas/<empresa>/perfil.ts).
 const NAV = [
-  { to: "/panel", label: "Panel", icon: LayoutDashboard },
-  { to: "/causar", label: "Causar factura", icon: FileUp },
-  { to: "/borradores", label: "Borradores", icon: ClipboardCheck },
-  { to: "/facturas", label: "Historial", icon: ListChecks },
-  { to: "/documentos-soporte", label: "Documentos soporte", icon: FileSignature },
-  { to: "/pendientes-siigo", label: "Pendientes Siigo", icon: Scale },
-  { to: "/documentos", label: "Documentos", icon: FolderOpen },
-  { to: "/aprendizaje", label: "Aprendizaje contable", icon: Brain },
-  { to: "/fuentes", label: "Fuentes de documentos", icon: FolderSync },
-  { to: "/integraciones", label: "Integraciones", icon: Plug },
-  { to: "/admin", label: "Administración", icon: Settings2 },
-  { to: "/empresas", label: "Empresas", icon: Building2 },
-] as const;
   { to: "/panel", label: "Panel", icon: LayoutDashboard, modulo: "panel" },
   { to: "/causar", label: "Causar factura", icon: FileUp, modulo: "causar" },
   { to: "/borradores", label: "Borradores", icon: ClipboardCheck, modulo: "borradores" },
@@ -36,6 +22,7 @@ const NAV = [
   { to: "/pendientes-siigo", label: "Pendientes Siigo", icon: Scale, modulo: "pendientes_siigo" },
   { to: "/documentos", label: "Documentos", icon: FolderOpen, modulo: "documentos" },
   { to: "/aprendizaje", label: "Aprendizaje contable", icon: Brain, modulo: "aprendizaje" },
+  { to: "/fuentes", label: "Fuentes de documentos", icon: FolderSync, modulo: "fuentes" },
   { to: "/integraciones", label: "Integraciones", icon: Plug, modulo: "integraciones" },
   { to: "/admin", label: "Administración", icon: Settings2, modulo: "administracion" },
   { to: "/empresas", label: "Empresas", icon: Building2, modulo: "empresas" },
