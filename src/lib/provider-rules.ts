@@ -57,6 +57,16 @@ const norm = (s?: string | null) =>
     .trim();
 
 /** ¿La cuenta es un gasto/costo/activo válido? Solo grupos 5, 6, 7, 15, 16 o 17. */
+/**
+ * Cuenta válida para el débito de un renglón de compra. Con inventario (función por
+ * empresa "productos_inventario") también se aceptan las cuentas 14 (inventarios).
+ */
+export function isValidPurchaseAccount(code: string | null | undefined, inventario = false): boolean {
+  if (isValidExpenseAccount(code)) return true;
+  const c = String(code ?? "").trim();
+  return inventario && /^14\d+$/.test(c);
+}
+
 export function isValidExpenseAccount(code?: string | null): boolean {
   const c = String(code ?? "").trim();
   return /^\d+$/.test(c) && /^(5|6|7|15|16|17)/.test(c);

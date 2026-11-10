@@ -1,4 +1,4 @@
-import { isValidExpenseAccount } from "./provider-rules";
+import { isValidExpenseAccount, isValidPurchaseAccount } from "./provider-rules";
 import { roundCOP, sumCents, toCents } from "./money";
 
 export type PurchaseTax = { id?: string | number; type?: string; name?: string; percentage?: number; active?: boolean };
@@ -31,10 +31,18 @@ export function purchasePayloadErrors(items: Array<{ quantity: number; price: nu
 }
 
 /** Same purchase safety gate for PDF and RECIBIDOS; origin never grants an exemption. */
-export function purchaseLineErrors(lines: Array<{ account_code?: string | null }>): string[] {
+export function purchaseLineErrors(
+  lines: Array<{ account_code?: string | null; item_type?: string | null }>,
+  inventario = false,
+): string[] {
   if (!lines.length) return ["No hay renglones de compra para enviar."];
-  return lines.flatMap((line, i) => isValidExpenseAccount(line.account_code)
-    ? [] : [`Renglón ${i + 1}: Pendiente de cuenta de gasto válida (grupos 5, 6, 7 o 15-17).`]);
+  // Con la función "productos_inventario", los renglones de producto/servicio pueden ir a la 14.
+  return lines.flatMap((line, i) => {
+    const deInventario = inventario && (line.item_type === "producto" || line.item_type === "servicio");
+    return isValidPurchaseAccount(line.account_code, deInventario)
+      ? []
+      : [`Renglón ${i + 1}: Pendiente de cuenta de gasto válida (grupos 5, 6, 7 o 15-17${inventario ? "; inventario 14 solo en renglones de producto" : ""}).`];
+  });
 }
 
 export type PurchaseReadback = {

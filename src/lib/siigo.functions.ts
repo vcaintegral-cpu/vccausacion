@@ -770,6 +770,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       .maybeSingle();
     const chequeoEmpresa = checkInvoiceCompany(empresa, inv);
     const incAlGasto = funcionActiva(empresa?.nit ?? null, "impoconsumo_al_gasto");
+    // Compras de inventario: renglones de producto con cuentas 14 y productos nuevos creados en Siigo.
+    const inventario = funcionActiva(empresa?.nit ?? null, "productos_inventario");
     const mensaje = motivoBloqueoEmpresa(chequeoEmpresa);
     if (mensaje) {
       await supabase
@@ -829,9 +831,9 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         throw new Error("El CUFE ya fue enviado a Siigo o tiene un envío en curso. No se enviará nuevamente.");
     }
     const { data: purchaseLines, error: purchaseLinesError } = await supabase.from("invoice_lines")
-      .select("account_code").eq("invoice_id", inv.id);
+      .select("account_code, item_type").eq("invoice_id", inv.id);
     if (purchaseLinesError) throw new Error(purchaseLinesError.message);
-    const expenseErrors = purchaseLineErrors(purchaseLines ?? []);
+    const expenseErrors = purchaseLineErrors(purchaseLines ?? [], inventario);
     if (expenseErrors.length) throw new Error(expenseErrors.join("\n"));
 
     const { data: journal, error: jErr } = await supabase
@@ -1239,6 +1241,60 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             .eq("company_id", inv.company_id)
             .in("code", faltantes);
           for (const p of recargado ?? []) porCodigo.set(String(p.code ?? "").trim(), p);
+        }
+      }
+
+      // Inventario: productos que no existían en el catálogo (decididos en el borrador)
+      // se crean ahora en Siigo, en el grupo de inventario del producto más parecido.
+      const productosNuevos = Object.values(
+        ((inv.raw_extraction as { productos_nuevos?: Record<string, { codigo: string; nombre: string; tipo: string; grupo: string | null; cuenta: string }> } | null)?.productos_nuevos) ?? {},
+      ).filter((pn) => pn?.codigo && !porCodigo.has(pn.codigo) && (invoiceLines ?? []).some((l) => String(l.code ?? "").trim() === pn.codigo));
+      if (inventario && productosNuevos.length) {
+        const { fetchSiigoProductByCode } = await import("./siigo-products.server");
+        type Grupo = { id?: number | undefined; name?: string | undefined; active?: boolean | undefined };
+        const gruposResp = await siigoGetCatalogo<Grupo[] | { results?: Grupo[] }>("/v1/account-groups");
+        const grupos = (Array.isArray(gruposResp) ? gruposResp : (gruposResp.results ?? [])).filter((g) => g.id && g.active !== false);
+        const normal = (x: string | null | undefined) => String(x ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+        // Grupo más usado por los productos de la empresa (si el producto nuevo no trae uno).
+        const { data: categorias } = await supabase.from("products").select("category").eq("company_id", inv.company_id).eq("kind", "producto").not("category", "is", null).limit(5000);
+        const conteo = new Map<string, number>();
+        for (const c of categorias ?? []) conteo.set(normal(c.category), (conteo.get(normal(c.category)) ?? 0) + 1);
+        const grupoFrecuente = [...conteo].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+        for (const pn of productosNuevos) {
+          let existente = await fetchSiigoProductByCode(pn.codigo).catch(() => null);
+          let grupo = grupos.find((g) => normal(g.name) === normal(pn.grupo)) ?? grupos.find((g) => normal(g.name) === grupoFrecuente) ?? grupos[0];
+          if (!existente) {
+            if (!grupo?.id) throw new Error(`No se pudo crear el producto ${pn.codigo} en Siigo: no hay grupos de inventario activos.`);
+            const creado = await siigoPost<{ id?: string; code?: string; name?: string }>("/v1/products", {
+              code: pn.codigo,
+              name: pn.nombre,
+              account_group: grupo.id,
+              type: pn.tipo === "servicio" ? "Service" : "Product",
+              stock_control: pn.tipo !== "servicio",
+            });
+            existente = { code: creado.code ?? pn.codigo, name: creado.name ?? pn.nombre, type: pn.tipo === "servicio" ? "Service" : "Product", active: true, ...(creado.id ? { id: creado.id } : {}) };
+          } else if (existente.account_group?.name) {
+            grupo = { id: existente.account_group.id, name: existente.account_group.name };
+          }
+          if (!existente) continue;
+          const fila = {
+            company_id: inv.company_id,
+            code: String(existente.code ?? pn.codigo),
+            name: String(existente.name ?? pn.nombre),
+            kind: pn.tipo === "servicio" ? "servicio" : "producto",
+            category: grupo?.name ?? null,
+            account_code: pn.cuenta,
+            active: true,
+            source: "siigo",
+            siigo_id: existente.id ? String(existente.id) : null,
+          };
+          const { data: guardado } = await supabase
+            .from("products")
+            .upsert(fila as never, { onConflict: "company_id,code" })
+            .select("id, code, name, active, category_id, category, account_code, account_name")
+            .maybeSingle();
+          porCodigo.set(fila.code, (guardado ?? { ...fila, id: "", category_id: null, account_name: null }) as never);
+          console.log("[siigo][productos] producto creado para la compra", pn.codigo, grupo?.name);
         }
       }
 

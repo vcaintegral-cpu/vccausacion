@@ -5,7 +5,7 @@ import { sourceFromRaw, sourceErrors, compareSource } from "@/lib/source-values"
 import { supabase } from "@/integrations/supabase/client";
 import { estadoUnico, findExistingInvoice, type EstadoFactura } from "@/lib/invoice-duplicates";
 import { isPayableCode, learnPayableAccount } from "@/lib/payable-account";
-import { isValidExpenseAccount } from "@/lib/provider-rules";
+import { isValidExpenseAccount, isValidPurchaseAccount } from "@/lib/provider-rules";
 import { EPS_COP, toCents } from "@/lib/money";
 
 export type DraftInvoice = {
@@ -160,7 +160,7 @@ export function classifyJournal(rows: JournalRow[]): DraftAccounts {
 export type Alerta = { level: "ok" | "warn" | "error"; message: string };
 
 /** Alertas visuales; no modifican la causación, solo indican qué revisar con el lápiz. */
-export function alertasBorrador(inv: DraftInvoice, acc: DraftAccounts | undefined, pucCodes: Set<string>): Alerta[] {
+export function alertasBorrador(inv: DraftInvoice, acc: DraftAccounts | undefined, pucCodes: Set<string>, inventario = false): Alerta[] {
   const a: Alerta[] = [];
   const source = inv.source_override ?? sourceFromRaw(inv.raw_extraction);
   if (source) for (const message of [...sourceErrors(source), ...compareSource(source, inv)]) a.push({ level: "error", message });
@@ -172,7 +172,7 @@ export function alertasBorrador(inv: DraftInvoice, acc: DraftAccounts | undefine
   if (!acc.gasto) a.push({ level: "error", message: "Cuenta de gasto/costo faltante." });
   else if (pucCodes.size && !pucCodes.has(acc.gasto.code)) a.push({ level: "error", message: `Cuenta ${acc.gasto.code} no existe en el PUC.` });
   for (const g of acc.gastos) {
-    if (!isValidExpenseAccount(g.code)) a.push({ level: "error", message: `Pendiente de cuenta: ${g.code || "sin cuenta"} no es gasto válido (5, 6, 7, 15, 16, 17).` });
+    if (!isValidPurchaseAccount(g.code, inventario)) a.push({ level: "error", message: `Pendiente de cuenta: ${g.code || "sin cuenta"} no es gasto válido (5, 6, 7, 15, 16, 17${inventario ? " o inventario 14" : ""}).` });
     else if (pucCodes.size && !pucCodes.has(g.code)) a.push({ level: "error", message: `Cuenta ${g.code} no existe en el PUC.` });
   }
   if (Number(inv.iva || 0) > 0) {
@@ -216,8 +216,9 @@ export async function aprobarBorrador(
   pucCodes: Set<string>,
   etiqueta: string,
   userId: string | null,
+  inventario = false,
 ): Promise<ResultadoFactura> {
-  const fallas = alertasBorrador(inv, acc, pucCodes).filter((x) => x.level === "error");
+  const fallas = alertasBorrador(inv, acc, pucCodes, inventario).filter((x) => x.level === "error");
   if (inv.status !== "borrador" && inv.status !== "error")
     return { id: inv.id, etiqueta, ok: false, message: "La factura ya no está en borrador." };
   if (inv.processing_at) return { id: inv.id, etiqueta, ok: false, message: "La factura está siendo procesada." };

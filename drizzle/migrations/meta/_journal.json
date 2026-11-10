@@ -155,6 +155,13 @@
       "when": 1794332855659,
       "tag": "0021_fuentes_documentos",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794354334158,
+      "tag": "0022_inventario_cuentas_14",
+      "breakpoints": true
     }
   ]
 }
