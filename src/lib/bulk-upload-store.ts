@@ -10,6 +10,7 @@ export type UploadStatus =
   | "completed"
   | "completed_with_errors"
   | "failed"
+  | "paused"
   | "cancelled";
 
 export type ItemStatus =
@@ -24,7 +25,8 @@ export type ItemStatus =
   | "requires_review"
   | "completed"
   | "error"
-  | "duplicate";
+  | "duplicate"
+  | "cancelled";
 
 export type BulkUpload = {
   id: string;
@@ -87,6 +89,7 @@ export const UPLOAD_LABEL: Record<UploadStatus, string> = {
   completed: "Completado",
   completed_with_errors: "Con errores",
   failed: "Fallido",
+  paused: "Pausado",
   cancelled: "Cancelado",
 };
 
@@ -103,6 +106,7 @@ export const ITEM_LABEL: Record<ItemStatus, string> = {
   completed: "Procesada",
   error: "Error",
   duplicate: "Duplicada",
+  cancelled: "Cancelada",
 };
 
 export async function createUpload(params: {
@@ -202,18 +206,20 @@ export async function existingFingerprints(companyId: string, hashes: string[]):
 }
 
 /** Recalcula contadores del proceso a partir del estado real de sus tareas. */
-export async function refreshUploadCounters(uploadId: string, items: BulkItem[]) {
+export async function refreshUploadCounters(uploadId: string, items: BulkItem[], statusFijo?: UploadStatus) {
   const processed = items.filter((i) => i.status === "completed").length;
   const errors = items.filter((i) => i.status === "error" || i.status === "requires_review").length;
   const pending = items.filter((i) =>
     ["pending", "downloading", "reading", "ocr", "extracting_data", "validating_company", "ready_for_accounting", "processing"].includes(i.status),
   ).length;
-  const status: UploadStatus = pending > 0 ? "processing" : errors > 0 ? "completed_with_errors" : "completed";
+  // Una carga pausada o cancelada por el usuario conserva ese estado.
+  const status: UploadStatus =
+    statusFijo ?? (pending > 0 ? "processing" : errors > 0 ? "completed_with_errors" : "completed");
   await updateUpload(uploadId, {
     processed_count: processed,
     error_count: errors,
     status,
-    ...(pending === 0 ? { finished_at: new Date().toISOString() } : { finished_at: null }),
+    ...(pending === 0 || status === "cancelled" ? { finished_at: new Date().toISOString() } : { finished_at: null }),
   });
   return status;
 }
@@ -276,4 +282,19 @@ export function mensajeUsuario(fileName: string, error: string): string {
   if (/ERROR_ARCHIVO_VACIO|ERROR_PDF_INVALIDO/i.test(error)) return "El contenido recuperado no es un PDF válido.";
   if (/pdf|ilegible|dañad|contraseñ/i.test(error)) return `${fileName} no pudo ser leída. Puede reintentarse.`;
   return `${fileName} no pudo ser procesada. Puede reintentarse.`;
+}
+
+/** Cancela las tareas que aún no han empezado (las que se están leyendo terminan). */
+export async function cancelPendingItems(uploadId: string) {
+  const { error } = await supabase
+    .from("bulk_upload_items")
+    .update({
+      status: "cancelled",
+      stage: null,
+      error_message: null,
+      user_message: "Cancelada por el usuario: no se procesó. Puede reintentarla.",
+    })
+    .eq("upload_id", uploadId)
+    .eq("status", "pending");
+  if (error) throw new Error(error.message);
 }

@@ -27,6 +27,7 @@ export function codigoTecnico(item: BulkItem): string {
 /** Mensaje comprensible para el usuario final. */
 export function mensajeAmigable(item: BulkItem): string {
   if (item.status === "duplicate") return TEXTOS["DUPLICATE"]!;
+  if (item.status === "cancelled") return "Cancelada por el usuario: no se procesó. Puede reintentarla.";
   if (codigoTecnico(item) === "CREDIT_NOTE") return TEXTOS["CREDIT_NOTE"]!;
   if (item.status === "requires_review") return "La factura se leyó pero necesita revisión manual antes de causarla.";
   if (item.status !== "error") return "";

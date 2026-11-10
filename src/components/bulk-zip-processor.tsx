@@ -11,6 +11,9 @@ import {
   Copy,
   Download,
   Layers,
+  Pause,
+  Play,
+  Square,
   Loader2,
   RefreshCw,
   Sparkles,
@@ -31,6 +34,8 @@ import { readZipContents, type BulkConfig } from "@/lib/bulk-invoices";
 import { parsePurchaseWorkbook } from "@/lib/purchase-excel";
 import { excelDocKey, excelDocLabel } from "@/lib/excel-invoice-adapter";
 import {
+  cargaDeteniendose,
+  detenerCarga,
   retryBulkItems,
   startBackgroundUpload,
   useBulkProgress,
@@ -93,7 +98,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     let cancel = false;
     void (async () => {
       const uploads = await listUploads(companyId, 10);
-      const pendiente = uploads.find((u) => ACTIVE_STATUSES.includes(u.status));
+      const pendiente = uploads.find((u) => ACTIVE_STATUSES.includes(u.status) || u.status === "paused");
       if (!pendiente || cancel) return;
       const rows = await listItems(pendiente.id);
       if (cancel) return;
@@ -107,6 +112,8 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
 
   // El proceso corre en segundo plano; "running" refleja el motor global, no la pantalla.
   const running = progress.running && (!upload || progress.uploadId === upload.id || progress.queued > 0);
+  // Pausada/cancelada pero aún terminando las facturas que ya estaban en lectura.
+  const deteniendo = cargaDeteniendose(upload?.id) || (running && (upload?.status === "paused" || upload?.status === "cancelled"));
 
   useEffect(() => {
     if (!running) { started.current = null; return; }
@@ -123,7 +130,8 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       ["downloading", "reading", "ocr", "extracting_data", "validating_company", "ready_for_accounting", "processing"].includes(i.status),
     ).length;
     const review = items.filter((i) => i.status === "requires_review").length;
-    const pending = total - done - failed - dup - review - active;
+    const cancelled = items.filter((i) => i.status === "cancelled").length;
+    const pending = total - done - failed - dup - review - active - cancelled;
     const terminados = done + failed + dup + review;
     const eta = null;
     return {
@@ -133,6 +141,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       dup,
       active,
       pending,
+      cancelled,
       percent: total ? Math.round(((done + failed + dup + review) / total) * 100) : 0,
       eta: eta as number | null,
       review: review + items.filter((i) => i.status === "completed" && i.needs_review).length,
@@ -363,12 +372,39 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
 
   function continuar() {
     if (!upload) return;
+    if (upload.status === "paused" || upload.status === "cancelled") setUpload({ ...upload, status: "processing" });
     startBackgroundUpload({ uploadId: upload.id, companyId, fileName: upload.file_name });
+  }
+
+  /** Pausar (reanudable) o cancelar (definitivo) la carga masiva en curso. */
+  async function detener(modo: "pausar" | "cancelar") {
+    if (!upload) return;
+    if (
+      modo === "cancelar" &&
+      !window.confirm(
+        "¿Cancelar la carga masiva? Las facturas que se están leyendo en este momento terminan; las pendientes quedan canceladas y no se procesarán (podrás reintentarlas una por una).",
+      )
+    )
+      return;
+    try {
+      await detenerCarga(upload.id, modo);
+      setUpload({ ...upload, status: modo === "pausar" ? "paused" : "cancelled" });
+      setItems(await listItems(upload.id));
+      void historial.refetch();
+      toast.success(
+        modo === "pausar"
+          ? "Carga pausada. Las facturas en curso terminan; presiona «Reanudar» para seguir."
+          : "Carga cancelada. Las facturas en curso terminan; las pendientes no se procesarán.",
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible detener la carga.");
+    }
   }
 
   /** Reintenta solo las tareas indicadas, sin reiniciar el ZIP completo. */
   async function reintentar(ids: string[]) {
     if (!upload || ids.length === 0) return;
+    if (upload.status === "paused" || upload.status === "cancelled") setUpload({ ...upload, status: "processing" });
     await retryBulkItems({ uploadId: upload.id, companyId, fileName: upload.file_name }, ids);
   }
 
@@ -469,7 +505,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     URL.revokeObjectURL(url);
   }
 
-  const errores = items.filter((i) => i.status === "error");
+  const errores = items.filter((i) => i.status === "error" || i.status === "cancelled");
   const duplicados = items.filter((i) => i.status === "duplicate");
   const procesadas = items.filter((i) => i.status === "completed");
   const revision = items.filter((i) => i.status === "requires_review" || (i.status === "completed" && i.needs_review));
@@ -526,7 +562,16 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold">
-                {running ? "Carga masiva en proceso" : "Carga finalizada"} · {upload.file_name}
+                {deteniendo
+                  ? "Deteniendo: terminando las facturas en curso…"
+                  : running
+                    ? "Carga masiva en proceso"
+                    : upload.status === "paused"
+                      ? "Carga pausada"
+                      : upload.status === "cancelled"
+                        ? "Carga cancelada"
+                        : "Carga finalizada"}{" "}
+                · {upload.file_name}
               </p>
               <p className="text-xs text-muted-foreground">
                 {UPLOAD_LABEL[upload.status]} · {fechaHora(upload.created_at)}
@@ -546,7 +591,27 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                   Ver duplicados
                 </Button>
               ) : null}
-              {!running && stats.pending > 0 ? (
+              {running && !deteniendo && upload.status !== "paused" && upload.status !== "cancelled" ? (
+                <>
+                  <Button size="sm" variant="outline" onClick={() => void detener("pausar")}>
+                    <Pause className="size-4" /> Pausar
+                  </Button>
+                  <Button size="sm" variant="outline" className="text-destructive" onClick={() => void detener("cancelar")}>
+                    <Square className="size-4" /> Cancelar carga
+                  </Button>
+                </>
+              ) : null}
+              {!running && upload.status === "paused" && stats.pending > 0 ? (
+                <>
+                  <Button size="sm" onClick={() => continuar()}>
+                    <Play className="size-4" /> Reanudar
+                  </Button>
+                  <Button size="sm" variant="outline" className="text-destructive" onClick={() => void detener("cancelar")}>
+                    <Square className="size-4" /> Cancelar carga
+                  </Button>
+                </>
+              ) : null}
+              {!running && upload.status !== "paused" && upload.status !== "cancelled" && stats.pending > 0 ? (
                 <Button size="sm" variant="outline" onClick={() => continuar()}>
                   <RefreshCw className="size-4" /> Continuar procesamiento
                 </Button>
@@ -579,6 +644,11 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
                 <Copy className="size-3.5" /> {stats.dup} duplicadas
               </span>
             ) : null}
+            {stats.cancelled > 0 ? (
+              <span className="inline-flex items-center gap-1 text-muted-foreground">
+                <Square className="size-3.5" /> {stats.cancelled} canceladas
+              </span>
+            ) : null}
             {stats.review > 0 ? (
               <span className="inline-flex items-center gap-1 text-warning">
                 <AlertTriangle className="size-3.5" /> {stats.review} requieren revisión
@@ -590,7 +660,8 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
             <div>
               <div className="mb-1 flex justify-between text-xs text-muted-foreground">
                 <span>
-                  Procesando facturas… {stats.done + stats.failed + stats.dup + stats.review} de {stats.total}
+                  {upload.status === "paused" && !running ? "En pausa:" : "Procesando facturas…"}{" "}
+                  {stats.done + stats.failed + stats.dup + stats.review} de {stats.total}
                 </span>
                 <span>{stats.percent}% · {elapsed}s</span>
               </div>
@@ -630,6 +701,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
               ["Duplicadas", String(stats.dup)],
               ["No compatibles", String(upload?.skipped_files ?? 0)],
               ["Requieren revisión", String(stats.review)],
+              ["Canceladas", String(stats.cancelled)],
             ].map(([label, value]) => (
               <div key={label} className="rounded-md border border-border p-2">
                 <p className="text-[11px] text-muted-foreground">{label}</p>
@@ -689,7 +761,7 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
           >
             <AccordionItem value="errores">
               <AccordionTrigger className="text-xs font-semibold">
-                Archivos con error ({errores.length})
+                Archivos con error o cancelados ({errores.length})
               </AccordionTrigger>
               <AccordionContent>
                 <div className="max-h-72 space-y-2 overflow-auto pr-1">
