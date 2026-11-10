@@ -16,6 +16,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   esCarpetaDeAnio,
+  facturaEnNombre,
+  type FacturaConocida,
   esCarpetaAnio,
   etiquetaPeriodo,
   mesDeCarpeta,
@@ -57,6 +59,8 @@ export type SyncResult = {
   documentosExcel: number;
   egresosRecibidos: number;
   duplicados: number;
+  /** PDF no cargados porque su factura ya está en el Excel RECIBIDOS o en la app. */
+  conciliados: number;
   renombrados: number;
   pendientesProximaEjecucion: number;
   uploadIds: string[];
@@ -96,6 +100,17 @@ async function carpetasObjetivo(
   if (!anios.length && !tieneMeses(raiz)) {
     result.modo = "carpeta_directa";
     result.periodos = [];
+    // Carpeta de un solo mes elegida directamente: la subcarpeta indicada (p. ej. FACTURAS)
+    // se aplica aquí también, para no tomar CUENTAS DE COBRO, EXTRACTOS, etc.
+    const sub = source.month_subfolder?.trim();
+    if (sub) {
+      const hija = raiz.find((n) => n.isFolder && mismoNombre(n.name, sub));
+      if (!hija) {
+        result.advertencias.push(`La carpeta no tiene la subcarpeta "${sub}"; no se importó nada para no tomar otras carpetas.`);
+        return [];
+      }
+      return [{ id: hija.id, ruta: hija.name, periodo: null }];
+    }
     return [{ id: source.folder_id, ruta: "", periodo: null }];
   }
 
@@ -245,6 +260,7 @@ export async function syncSource(
     documentosExcel: 0,
     egresosRecibidos: 0,
     duplicados: 0,
+    conciliados: 0,
     renombrados: 0,
     pendientesProximaEjecucion: 0,
     uploadIds: [],
@@ -311,36 +327,54 @@ export async function syncSource(
         result.renombrados += 1;
       }
     }
-    result.pendientesProximaEjecucion = Math.max(0, aProcesar.length - limite);
-
-    const descargados: Descargado[] = [];
-    for (const a of aProcesar.slice(0, limite)) {
-      try {
-        const bytes = await provider.download(a.node);
-        descargados.push({ ...a, bytes, huella: await sha256Hex(bytes) });
-      } catch (e) {
-        // No se registra: se reintenta en la próxima revisión.
-        result.errores.push(
-          `${a.ruta}/${a.node.name}: ${e instanceof Error ? e.message : String(e)}`,
-        );
+    const descargar = async (lista: Archivo[]) => {
+      const out: Descargado[] = [];
+      for (const a of lista) {
+        try {
+          const bytes = await provider.download(a.node);
+          out.push({ ...a, bytes, huella: await sha256Hex(bytes) });
+        } catch (e) {
+          // No se registra: se reintenta en la próxima revisión.
+          result.errores.push(`${a.ruta}/${a.node.name}: ${e instanceof Error ? e.message : String(e)}`);
+        }
       }
-    }
+      return out;
+    };
 
     const pagos: Array<Record<string, unknown> & { external_id: string }> = [];
 
     if (source.purpose === "compras") {
-      await comprasPdf(
-        admin,
-        source,
-        ownerId,
-        descargados.filter((d) => d.tipo === "factura_pdf"),
-        filas,
-        result,
-      );
-      for (const d of descargados.filter((x) => x.tipo === "recibidos_excel")) {
+      // 1) El Excel RECIBIDOS primero: es el token de la DIAN con valores exactos (sin IA).
+      const excels = aProcesar.filter((a) => a.tipo === "recibidos_excel").slice(0, limite);
+      for (const d of await descargar(excels)) {
         await comprasExcel(admin, source, ownerId, empresa.nit ?? "", d, filas, result);
       }
+      // 2) Conciliación: un PDF cuya factura ya está en el Excel RECIBIDOS o causada en la
+      //    app no se vuelve a cargar (no se descarga ni se lee con IA).
+      const conocidas = await facturasConocidas(admin, source.company_id);
+      const pdfs: Archivo[] = [];
+      for (const a of aProcesar.filter((x) => x.tipo === "factura_pdf")) {
+        const f = facturaEnNombre(a.node.name, conocidas);
+        if (!f) {
+          pdfs.push(a);
+          continue;
+        }
+        filas.set(a.node.id, {
+          ...filaArchivo(source, a),
+          status: "duplicate",
+          message: `Factura ${[f.prefijo, f.numero].filter(Boolean).join("-")} del NIT ${f.nit} ya está ${f.origen}.`,
+        });
+        result.conciliados += 1;
+      }
+      // 3) Los PDF restantes (no están en el token ni en la app) se leen con IA.
+      const cupo = Math.max(0, limite - excels.length);
+      result.pendientesProximaEjecucion =
+        Math.max(0, aProcesar.filter((a) => a.tipo === "recibidos_excel").length - excels.length) +
+        Math.max(0, pdfs.length - cupo);
+      await comprasPdf(admin, source, ownerId, await descargar(pdfs.slice(0, cupo)), filas, result);
     } else {
+      result.pendientesProximaEjecucion = Math.max(0, aProcesar.length - limite);
+      const descargados = await descargar(aProcesar.slice(0, limite));
       const previos = await huellasExistentes(
         admin,
         "payment_documents",
@@ -424,6 +458,52 @@ export async function syncSource(
     })
     .eq("id", source.id);
   return result;
+}
+
+/**
+ * Facturas ya conocidas de la empresa para conciliar los PDF por su nombre: los
+ * documentos del Excel RECIBIDOS cargados (tareas excel:…) y las facturas que ya
+ * existen en la app (de los últimos 18 meses).
+ */
+async function facturasConocidas(admin: SupabaseClient, companyId: string): Promise<FacturaConocida[]> {
+  const out: FacturaConocida[] = [];
+  const PAGINA = 1000;
+  for (let desde = 0; ; desde += PAGINA) {
+    const { data, error } = await admin
+      .from("bulk_upload_items")
+      .select("provider_nit, invoice_number")
+      .eq("company_id", companyId)
+      .like("fingerprint", "excel:%")
+      .range(desde, desde + PAGINA - 1);
+    if (error) throw new Error(error.message);
+    for (const r of (data ?? []) as Array<{ provider_nit: string | null; invoice_number: string | null }>) {
+      const numero = String(r.invoice_number ?? "");
+      const corte = numero.lastIndexOf("-");
+      if (!r.provider_nit || !numero) continue;
+      out.push({
+        nit: r.provider_nit,
+        prefijo: corte > 0 ? numero.slice(0, corte) : "",
+        numero: corte > 0 ? numero.slice(corte + 1) : numero,
+        origen: "en el Excel RECIBIDOS",
+      });
+    }
+    if ((data ?? []).length < PAGINA) break;
+  }
+  const desdeFecha = new Date(Date.now() - 548 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  for (let desde = 0; ; desde += PAGINA) {
+    const { data, error } = await admin
+      .from("invoices")
+      .select("provider_nit, prefix, number")
+      .eq("company_id", companyId)
+      .gte("issue_date", desdeFecha)
+      .range(desde, desde + PAGINA - 1);
+    if (error) throw new Error(error.message);
+    for (const r of (data ?? []) as Array<{ provider_nit: string | null; prefix: string | null; number: string | null }>) {
+      if (r.provider_nit && r.number) out.push({ nit: r.provider_nit, prefijo: r.prefix ?? "", numero: r.number, origen: "en la app" });
+    }
+    if ((data ?? []).length < PAGINA) break;
+  }
+  return out;
 }
 
 /** PDF de compras → una carga masiva con una tarea pendiente por PDF (igual que el ZIP). */
