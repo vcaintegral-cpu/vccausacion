@@ -227,12 +227,13 @@ async function huellasExistentes(
   huellas: string[],
 ) {
   const out = new Map<string, { id: string; status: string; upload_id?: string }>();
+  const liberar: string[] = [];
   for (let i = 0; i < huellas.length; i += 200) {
     const { data, error } = await admin
       .from(tabla)
       .select(
         tabla === "bulk_upload_items"
-          ? "id, status, upload_id, fingerprint"
+          ? "id, status, upload_id, fingerprint, invoice_id"
           : "id, status, fingerprint",
       )
       .eq("company_id", companyId)
@@ -243,11 +244,69 @@ async function huellasExistentes(
       status: string;
       upload_id?: string;
       fingerprint: string;
+      invoice_id?: string | null;
     }>) {
+      // Tarea cuyo borrador se eliminó (o cancelada): el documento vuelve a cargarse y su
+      // huella se libera para la nueva tarea.
+      if (tabla === "bulk_upload_items" && tareaMuerta(r)) {
+        liberar.push(r.id);
+        continue;
+      }
       out.set(r.fingerprint, r);
     }
   }
+  for (let i = 0; i < liberar.length; i += 200) {
+    const { error } = await admin
+      .from("bulk_upload_items")
+      .update({ fingerprint: null })
+      .in("id", liberar.slice(i, i + 200));
+    if (error) throw new Error(error.message);
+  }
   return out;
+}
+
+/** Tarea de carga masiva que ya no respalda ningún borrador: cancelada, o procesada con el borrador eliminado. */
+export function tareaMuerta(r: { status: string; invoice_id?: string | null }): boolean {
+  return r.status === "cancelled" || (r.status === "completed" && !r.invoice_id);
+}
+
+/** De las cargas y tareas indicadas, las que siguen respaldando algún documento. */
+async function cargasYTareasVivas(admin: SupabaseClient, uploadIds: string[], itemIds: string[]) {
+  const cargas = new Set<string>();
+  const tareas = new Set<string>();
+  const leer = async (col: "upload_id" | "id", ids: string[]) => {
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await admin
+        .from("bulk_upload_items")
+        .select("id, upload_id, status, invoice_id")
+        .in(col, ids.slice(i, i + 200));
+      if (error) throw new Error(error.message);
+      for (const r of (data ?? []) as Array<{ id: string; upload_id: string; status: string; invoice_id: string | null }>) {
+        if (tareaMuerta(r)) continue;
+        cargas.add(r.upload_id);
+        tareas.add(r.id);
+      }
+    }
+  };
+  await Promise.all([leer("upload_id", uploadIds), leer("id", itemIds)]);
+  return { cargas, tareas };
+}
+
+/**
+ * ¿Un archivo ya registrado debe enviarse otra vez? Sí cuando su carga masiva o su borrador
+ * se eliminaron (p. ej. la usuaria borró los borradores del mes para empezar de nuevo).
+ * La duplicidad real sigue protegida por CUFE / NIT + número al guardar el borrador.
+ */
+export function debeReenviarse(
+  previo: { status: string; upload_id: string | null; bulk_item_id: string | null; message: string | null; file_type: string | null },
+  vivas: { cargas: Set<string>; tareas: Set<string> },
+): boolean {
+  if (previo.status !== "queued" && previo.status !== "duplicate") return false;
+  // Dos copias del mismo archivo en la carpeta: la copia no se vuelve a descargar.
+  if (/^Archivo repetido/.test(previo.message ?? "")) return false;
+  if (previo.bulk_item_id) return !vivas.tareas.has(previo.bulk_item_id);
+  if (previo.upload_id) return previo.file_type === "recibidos_excel" ? !vivas.cargas.has(previo.upload_id) : false;
+  return true;
 }
 
 export async function syncSource(
@@ -300,12 +359,23 @@ export async function syncSource(
     result.encontrados = archivos.length;
 
     // Archivos ya vistos por ID de la fuente.
-    const vistos = new Map<string, { name: string; modified: string | null; status: string }>();
+    const vistos = new Map<
+      string,
+      {
+        name: string;
+        modified: string | null;
+        status: string;
+        upload_id: string | null;
+        bulk_item_id: string | null;
+        message: string | null;
+        file_type: string | null;
+      }
+    >();
     const ids = archivos.map((a) => a.node.id);
     for (let i = 0; i < ids.length; i += 300) {
       const { data, error } = await admin
         .from("document_source_files")
-        .select("external_id, name, external_modified_at, status")
+        .select("external_id, name, external_modified_at, status, upload_id, bulk_item_id, message, file_type")
         .eq("company_id", source.company_id)
         .eq("provider", source.provider)
         .in("external_id", ids.slice(i, i + 300));
@@ -315,14 +385,28 @@ export async function syncSource(
         name: string;
         external_modified_at: string | null;
         status: string;
+        upload_id: string | null;
+        bulk_item_id: string | null;
+        message: string | null;
+        file_type: string | null;
       }>) {
         vistos.set(r.external_id, {
           name: r.name,
           modified: r.external_modified_at,
           status: r.status,
+          upload_id: r.upload_id,
+          bulk_item_id: r.bulk_item_id,
+          message: r.message,
+          file_type: r.file_type,
         });
       }
     }
+    const previos = [...vistos.values()];
+    const vivas = await cargasYTareasVivas(
+      admin,
+      [...new Set(previos.map((v) => v.upload_id).filter((x): x is string => !!x))],
+      previos.map((v) => v.bulk_item_id).filter((x): x is string => !!x),
+    );
 
     const filas = new Map<string, Record<string, unknown>>();
     const aProcesar: Archivo[] = [];
@@ -330,7 +414,7 @@ export async function syncSource(
       const previo = vistos.get(a.node.id);
       const mismoMomento = (x: string | null, y: string | null) =>
         !!x && !!y && new Date(x).getTime() === new Date(y).getTime();
-      if (!previo) aProcesar.push(a);
+      if (!previo || debeReenviarse(previo, vivas)) aProcesar.push(a);
       // El Excel RECIBIDOS se reemplaza durante el mes: si cambió, se vuelve a leer
       // (solo entran los documentos nuevos; los ya cargados se reconocen por CUFE).
       // Un Excel que quedó en error (p. ej. por una regla de lectura ya corregida) se reintenta.
@@ -502,6 +586,9 @@ async function facturasConocidas(admin: SupabaseClient, companyId: string): Prom
       .select("provider_nit, invoice_number")
       .eq("company_id", companyId)
       .like("fingerprint", "excel:%")
+      // Solo tareas que siguen respaldando un documento (no canceladas ni con el borrador eliminado).
+      .neq("status", "cancelled")
+      .or("status.neq.completed,invoice_id.not.is.null")
       .range(desde, desde + PAGINA - 1);
     if (error) throw new Error(error.message);
     for (const r of (data ?? []) as Array<{ provider_nit: string | null; invoice_number: string | null }>) {
