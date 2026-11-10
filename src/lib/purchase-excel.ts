@@ -32,6 +32,12 @@ export function nitDV(nit: string) {
  return String(rem < 2 ? rem : 11-rem);
 }
 const cents = (n: number) => Math.round((n + Number.EPSILON)*100)/100;
+/** Mismo NIT aunque uno venga con el dígito de verificación pegado ("9004701664" = "900470166"). */
+export function mismoNitEmpresa(a: unknown, b: unknown): boolean {
+ const x=normalizeNit(a), y=normalizeNit(b);
+ if(!x||!y)return false;
+ return x===y || x===y+nitDV(y) || y===x+nitDV(x);
+}
 const abs = (v: unknown) => { if (typeof v === 'number') return Math.abs(v); const s=String(v ?? '').trim(); if (!s) return 0; const cleaned=s.includes(',')?s.replace(/\./g,'').replace(',','.'):s; const n=Number(cleaned.replace(/[^\d.\-]/g,'')); if (!Number.isFinite(n)) throw new Error(`Valor numérico inválido: ${s}`); return Math.abs(n); };
 const date = (v: unknown) => { if (typeof v==='number') {const d=XLSX.SSF.parse_date_code(v);return d?`${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`:'';} const s=String(v??'').trim(); if(/^\d{4}-\d{2}-\d{2}/.test(s))return s.slice(0,10); const m=s.match(/^(\d{2})[/-](\d{2})[/-](\d{4})/);return m?`${m[3]}-${m[2]}-${m[1]}`:''; };
 type Row = Record<string,string|number>;
@@ -54,11 +60,16 @@ export function parsePurchaseWorkbook(buffer: ArrayBuffer, companyNit: string): 
   const t=(key:string)=>String(r[key]??'').trim();const n=(key:string)=>abs(r[key]);const type=t('TIPO DOC EMITIDO');
   const kind=normalizeText(type)==='60'?'equivalent':normalizeText(type)==='nota de credito electronica'?'credit_note':normalizeText(type)==='factura electronica'?'purchase':null;
   if(!kind)throw new Error(`Fila ${rowNumber}: tipo de documento no soportado (${type}).`);
-  if(normalizeNit(t('NIT COMPRADOR'))!==normalizeNit(companyNit))throw new Error(`Fila ${rowNumber}: comprador diferente a la empresa activa. Use el reporte RECIBIDOS, no ENVIADOS.`);
+  // El Procesador a veces no lee el comprador del XML (celda vacía): el reporte RECIBIDOS
+  // es la lista de documentos recibidos por la empresa, así que se toma su NIT y se anota.
+  // Un comprador presente y distinto sigue rechazando el archivo (protege de cargar ENVIADOS).
+  const compradorFila=t('NIT COMPRADOR');
+  if(compradorFila&&!mismoNitEmpresa(compradorFila,companyNit))throw new Error(`Fila ${rowNumber}: comprador diferente a la empresa activa. Use el reporte RECIBIDOS, no ENVIADOS.`);
+  const notaComprador=compradorFila?'':'NIT del comprador vacío en el reporte RECIBIDOS: se tomó el de la empresa.';
   if(seen.has(join(r)))throw new Error(`Fila ${rowNumber}: documento duplicado dentro del Excel.`);seen.add(join(r));
   const rawLines=index.get(join(r))??[];
   const lines=rawLines.map(l=>{const quantity=abs(l['CANTIDAD'])||1;const subtotal=abs(l['SUBTOTAL DE LA FACTURA']);const discount=abs(l['DESCUENTO']);const iva=abs(l['IVA']);const impoconsumo=abs(l['INC']);const surcharge=abs(l['RECARGO']);return {description:String(l['DESCRIPCION']??''),code:String(l['CODIGO']??''),quantity,unit_value:subtotal/quantity,subtotal,discount,surcharge,iva,ivaBase:abs(l['BASE IVA']),ivaRate:abs(l['% IVA']),impoconsumo,total:cents(subtotal+surcharge+iva+impoconsumo)};});
-  return {rowNumber,kind,type,period,naturalPerson:normalizeText(t('TIPO CONTRIBUYENTE EMISOR')).includes('natural'),rawHeader:r,rawLines,lines,header:{prefix:t('PREFIJO'),number:t('NUMERO DE FACTURA'),issue_date:date(r['FECHA DE FACTURA']),due_date:date(r['FECHA DE VENCIMIENTO']),provider_nit:normalizeNit(t('NIT EMISOR')),provider_name:t('RAZON SOCIAL EMISOR'),provider_address:t('DIRECCION EMISOR'),provider_city:t('CIUDAD EMISOR'),provider_phone:t('TELEFONO EMISOR'),provider_email:t('CORREO EMISOR'),buyer_nit:normalizeNit(t('NIT COMPRADOR')),buyer_name:t('NOMBRE COMPRADOR'),cufe:t('CUFE'),payment_form:t('FORMA DE PAGO'),payment_method:t('MEDIO DE PAGO'),currency:t('MONEDA')||'COP',notes:[t('NOTA'),normalizeText(t('TIPO DE OPERACION'))==='mandatos'?'Mandato':''].filter(Boolean).join('\n'),subtotal:abs(r['SUBTOTAL FACTURA'] ?? r['SUBTOTAL DE LA FACTURA']),discount:n('DESCUENTO GLOBAL'),iva:n('IVA'),impoconsumo:n('INC'),total:n('TOTAL FACTURA'),advances:n('ANTICIPOS'),surcharge:n('RECARGO GLOBAL'),retefuente:n('RETE RENTA'),reteiva:n('RETE IVA'),reteica:n('RETE ICA')}};
+  return {rowNumber,kind,type,period,naturalPerson:normalizeText(t('TIPO CONTRIBUYENTE EMISOR')).includes('natural'),rawHeader:r,rawLines,lines,header:{prefix:t('PREFIJO'),number:t('NUMERO DE FACTURA'),issue_date:date(r['FECHA DE FACTURA']),due_date:date(r['FECHA DE VENCIMIENTO']),provider_nit:normalizeNit(t('NIT EMISOR')),provider_name:t('RAZON SOCIAL EMISOR'),provider_address:t('DIRECCION EMISOR'),provider_city:t('CIUDAD EMISOR'),provider_phone:t('TELEFONO EMISOR'),provider_email:t('CORREO EMISOR'),buyer_nit:compradorFila?normalizeNit(compradorFila):normalizeNit(companyNit),buyer_name:t('NOMBRE COMPRADOR'),cufe:t('CUFE'),payment_form:t('FORMA DE PAGO'),payment_method:t('MEDIO DE PAGO'),currency:t('MONEDA')||'COP',notes:[t('NOTA'),normalizeText(t('TIPO DE OPERACION'))==='mandatos'?'Mandato':'',notaComprador].filter(Boolean).join('\n'),subtotal:abs(r['SUBTOTAL FACTURA'] ?? r['SUBTOTAL DE LA FACTURA']),discount:n('DESCUENTO GLOBAL'),iva:n('IVA'),impoconsumo:n('INC'),total:n('TOTAL FACTURA'),advances:n('ANTICIPOS'),surcharge:n('RECARGO GLOBAL'),retefuente:n('RETE RENTA'),reteiva:n('RETE IVA'),reteica:n('RETE ICA')}};
  });
 }
 export function documentAlerts(doc: PurchaseDocument) {

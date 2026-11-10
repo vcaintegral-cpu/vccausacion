@@ -319,7 +319,11 @@ export async function syncSource(
       if (!previo) aProcesar.push(a);
       // El Excel RECIBIDOS se reemplaza durante el mes: si cambió, se vuelve a leer
       // (solo entran los documentos nuevos; los ya cargados se reconocen por CUFE).
-      else if (a.tipo === "recibidos_excel" && !mismoMomento(previo.modified, a.node.modifiedAt))
+      // Un Excel que quedó en error (p. ej. por una regla de lectura ya corregida) se reintenta.
+      else if (
+        a.tipo === "recibidos_excel" &&
+        (!mismoMomento(previo.modified, a.node.modifiedAt) || previo.status === "error")
+      )
         aProcesar.push(a);
       else if (previo.name !== a.node.name) {
         // La usuaria agrega "Corriente16 - ..." al pagar: se actualiza la pista de pago.
