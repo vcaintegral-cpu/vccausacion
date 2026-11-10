@@ -7,7 +7,7 @@ type Handler = () => void;
 
 /**
  * Escucha los cambios de facturas, renglones y asientos de la empresa activa.
- * El aviso se agrupa (300 ms) para no refrescar una vez por cada fila.
+ * El aviso se agrupa (700 ms) para no refrescar una vez por cada fila.
  */
 export function useDraftsRealtime(companyId: string | null | undefined, onChange: Handler) {
   const cb = useRef(onChange);
@@ -18,7 +18,7 @@ export function useDraftsRealtime(companyId: string | null | undefined, onChange
     let timer: ReturnType<typeof setTimeout> | null = null;
     const avisar = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => cb.current(), 300);
+      timer = setTimeout(() => cb.current(), 700);
     };
     const filtro = `company_id=eq.${companyId}`;
     const channel = supabase

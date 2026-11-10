@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
+import { enParalelo } from "@/lib/concurrencia";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -158,12 +159,13 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
     };
     void tick();
     if (!running) return;
-    const timer = window.setInterval(() => void tick(), 2500);
+    // Una sola consulta cada 3 s mientras corre (antes además se repetía con cada factura terminada).
+    const timer = window.setInterval(() => void tick(), 3000);
     return () => {
       cancel = true;
       window.clearInterval(timer);
     };
-  }, [upload, running, progress.done, progress.errors]);
+  }, [upload, running]);
 
   useEffect(() => {
     if (!running && upload) {
@@ -296,10 +298,10 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
 
       // 3) Control de duplicados por huella del archivo (dentro del ZIP y contra la empresa).
       setBusy(`Guardando ${pdfs.length} documentos…`);
-      const prepared: Array<{ file: File; hash: string }> = [];
-      for (const file of pdfs) {
-        prepared.push({ file, hash: await sha256(new Uint8Array(await file.arrayBuffer())) });
-      }
+      const prepared = await enParalelo(pdfs, 4, async (file) => ({
+        file,
+        hash: await sha256(new Uint8Array(await file.arrayBuffer())),
+      }));
       const previos = forzar
         ? new Set<string>()
         : await existingFingerprints(companyId, prepared.map((p) => p.hash));
@@ -307,23 +309,28 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
 
       const rows: Array<Partial<BulkItem>> = [];
       const files: File[] = [];
-      let position = 0;
-      for (const { file, hash } of prepared) {
-        const repetido = previos.has(hash) || vistos.has(hash);
+      const repetidos = prepared.map(({ hash }) => {
+        const r = previos.has(hash) || vistos.has(hash);
         vistos.add(hash);
-        let path: string | null = null;
-        let uploadError: string | null = null;
-        if (!repetido) {
-          const safe = file.name.replace(/[^\w.-]/g, "_");
-          const target = `${userId}/${companyId}/bulk/${row.id}/${position}-${safe}`;
-          // El PDF extraído se guarda siempre como application/pdf: el worker lo
-          // recupera después desde bucket + storage_path (nunca desde el File del navegador).
-          const res = await supabase.storage
-            .from("facturas")
-            .upload(target, file, { upsert: true, contentType: "application/pdf" });
-          if (res.error) uploadError = `ERROR_SUBIDA_PDF: ${res.error.message}`;
-          else path = target;
-        }
+        return r;
+      });
+      // Hasta 4 PDF se suben a la vez; cada uno conserva su posición.
+      const subidas = await enParalelo(prepared, 4, async ({ file }, position) => {
+        if (repetidos[position]) return { path: null as string | null, uploadError: null as string | null };
+        const safe = file.name.replace(/[^\w.-]/g, "_");
+        const target = `${userId}/${companyId}/bulk/${row.id}/${position}-${safe}`;
+        // El PDF extraído se guarda siempre como application/pdf: el worker lo
+        // recupera después desde bucket + storage_path (nunca desde el File del navegador).
+        const res = await supabase.storage
+          .from("facturas")
+          .upload(target, file, { upsert: true, contentType: "application/pdf" });
+        return res.error
+          ? { path: null, uploadError: `ERROR_SUBIDA_PDF: ${res.error.message}` }
+          : { path: target, uploadError: null };
+      });
+      for (const [position, { file, hash }] of prepared.entries()) {
+        const repetido = repetidos[position]!;
+        const { path, uploadError } = subidas[position]!;
         rows.push({
           upload_id: row.id,
           company_id: companyId,
@@ -344,7 +351,6 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
           position,
         });
         files.push(file);
-        position += 1;
       }
 
       const created = await insertItems(rows);

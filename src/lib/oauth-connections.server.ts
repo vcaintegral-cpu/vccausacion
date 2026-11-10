@@ -44,6 +44,8 @@ export async function canjearCodigo(p: ProveedorArchivos, code: string, redirect
   return { ...tok, email: emailFromIdToken(tok.id_token) };
 }
 
+const accesos = new Map<string, { token: string; vence: number }>();
+
 /** Access token vigente; si el proveedor rota el refresh token (Microsoft), se guarda el nuevo. */
 export async function tokenDeAcceso(
   admin: SupabaseClient,
@@ -63,7 +65,13 @@ export async function tokenDeAcceso(
       `La empresa no tiene ${p === "google" ? "Google Drive" : "OneDrive / SharePoint"} conectado.`,
     );
   }
+  // Access token reutilizado mientras siga vigente (cada tanda de "Revisar ahora" ya no
+  // pide uno nuevo). La clave incluye el refresh token: si la conexión cambia, se renueva.
+  const clave = `${p}|${companyId}|${refresh}`;
+  const enCache = accesos.get(clave);
+  if (enCache && enCache.vence > Date.now() + 60_000) return enCache.token;
   const tok = p === "google" ? await googleRefresh(refresh) : await microsoftRefresh(refresh);
+  accesos.set(clave, { token: tok.access_token, vence: Date.now() + (tok.expires_in ?? 0) * 1000 });
   if (tok.refresh_token && tok.refresh_token !== refresh) {
     await admin
       .from("document_connections")

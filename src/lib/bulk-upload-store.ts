@@ -134,6 +134,33 @@ export async function updateUpload(id: string, patch: Partial<BulkUpload>) {
   if (error) throw new Error(error.message);
 }
 
+/** Solo estado de cada tarea: para los contadores de avance (consulta liviana). */
+export async function listItemStatuses(uploadId: string): Promise<Array<Pick<BulkItem, "id" | "status" | "needs_review">>> {
+  const out: Array<Pick<BulkItem, "id" | "status" | "needs_review">> = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("bulk_upload_items")
+      .select("id, status, needs_review")
+      .eq("upload_id", uploadId)
+      .order("position")
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    const page = (data ?? []) as Array<Pick<BulkItem, "id" | "status" | "needs_review">>;
+    out.push(...page);
+    if (page.length < PAGE) break;
+  }
+  return out;
+}
+
+/** Misma actualización para varias tareas en una sola consulta. */
+export async function updateItems(ids: string[], patch: Partial<BulkItem>) {
+  for (let i = 0; i < ids.length; i += 200) {
+    const { error } = await supabase.from("bulk_upload_items").update(patch as never).in("id", ids.slice(i, i + 200));
+    if (error) throw new Error(error.message);
+  }
+}
+
 export async function updateItem(id: string, patch: Partial<BulkItem>) {
   const { error } = await supabase.from("bulk_upload_items").update(patch as never).eq("id", id);
   if (error) throw new Error(error.message);
@@ -153,13 +180,21 @@ export async function insertItems(rows: Array<Partial<BulkItem>>): Promise<BulkI
   return out.sort((a, b) => a.position - b.position);
 }
 
+/**
+ * Columnas de la lista de tareas. Se omite extracted_text (hasta 20.000 caracteres por
+ * factura, ya guardado en invoices.raw_extraction): leerlo en cada consulta de avance
+ * volvía lenta la carga masiva.
+ */
+const COLUMNAS_TAREA =
+  "id, upload_id, company_id, file_name, storage_path, size_bytes, fingerprint, status, attempts, stage, error_message, user_message, invoice_id, invoice_number, invoice_total, score, needs_review, position, provider_name, provider_nit, buyer_name, buyer_nit, issue_date, read_status, storage_bucket, download_status, stored_size_bytes, mime_type, content_status, company_validation";
+
 export async function listItems(uploadId: string): Promise<BulkItem[]> {
   const out: BulkItem[] = [];
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from("bulk_upload_items")
-      .select("*")
+      .select(COLUMNAS_TAREA)
       .eq("upload_id", uploadId)
       .order("position")
       .range(from, from + PAGE - 1);

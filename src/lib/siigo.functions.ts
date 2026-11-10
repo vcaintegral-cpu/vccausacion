@@ -131,6 +131,7 @@ export const siigoImportPuc = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }) => {
+    pucPorEmpresa.clear();
     const { siigoGet, siigoUseCompany } = await import("./siigo.server");
     await siigoUseCompany(data.companyId);
     // Verificado contra la API real de Siigo (agosto 2026):
@@ -296,6 +297,7 @@ export const pucRebuildHierarchy = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }) => {
+    pucPorEmpresa.clear();
     const { rebuildPucHierarchy } = await import("./puc-sync.server");
     return rebuildPucHierarchy(context.supabase, data.companyId);
   });
@@ -360,6 +362,7 @@ export const siigoImportCostCenters = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { siigoGet, siigoUseCompany } = await import("./siigo.server");
     await siigoUseCompany(data.companyId);
+    (await import("./siigo.server")).siigoOlvidarCatalogos();
     type CC = { id?: number | string; code?: string | number; name?: string; active?: boolean };
     const res = await siigoGet<CC[] | { results?: CC[] }>("/v1/cost-centers");
     const list = Array.isArray(res) ? res : (res.results ?? []);
@@ -403,6 +406,7 @@ export const siigoImportPaymentTypes = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { siigoGet, siigoUseCompany } = await import("./siigo.server");
     await siigoUseCompany(data.companyId);
+    (await import("./siigo.server")).siigoOlvidarCatalogos();
     type PayType = {
       id?: number | string;
       name?: string;
@@ -472,6 +476,7 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { siigoGet, siigoUseCompany } = await import("./siigo.server");
     await siigoUseCompany(data.companyId);
+    (await import("./siigo.server")).siigoOlvidarCatalogos();
     type Tax = {
       id?: number | string;
       name?: string;
@@ -700,6 +705,9 @@ export type SiigoSyncResult = {
 
 
 /** Envía a Siigo el comprobante contable ya aprobado de una factura. */
+/** PUC por empresa para el envío a Siigo (vigencia corta; se borra al importar el PUC). */
+const pucPorEmpresa = new Map<string, { vence: number; filas: unknown[] }>();
+
 export const siigoSyncInvoice = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { invoiceId: string }) => {
@@ -709,6 +717,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<SiigoSyncResult> => {
     const {
       siigoGet,
+      siigoGetCatalogo,
       siigoPost,
       siigoPurchaseDocumentInfo,
       siigoNextPurchaseNumber,
@@ -866,8 +875,12 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       siigo_seen_at: string | null;
       excel_active: boolean | null;
     };
-    const companyAccounts: PucRow[] = [];
-    for (let from = 0; ; from += 1000) {
+    // El PUC de la empresa se lee una vez por lote (60 s): antes se descargaba completo
+    // para cada factura enviada a Siigo.
+    const pucGuardado = pucPorEmpresa.get(inv.company_id);
+    const companyAccounts: PucRow[] =
+      pucGuardado && pucGuardado.vence > Date.now() ? (pucGuardado.filas as PucRow[]) : [];
+    for (let from = 0; !companyAccounts.length || from > 0; from += 1000) {
       const { data: page, error: accountsErr } = await supabase
         .from("puc_accounts")
         .select(
@@ -880,7 +893,10 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         throw new Error(`No fue posible validar el PUC de Siigo: ${accountsErr.message}`);
       const chunk = (page ?? []) as PucRow[];
       companyAccounts.push(...chunk);
-      if (chunk.length < 1000) break;
+      if (chunk.length < 1000) {
+        pucPorEmpresa.set(inv.company_id, { vence: Date.now() + 60_000, filas: companyAccounts });
+        break;
+      }
     }
 
     const accounts = companyAccounts ?? [];
@@ -1119,7 +1135,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       }
       // Resolve only source-declared rates; never use IVA / document total as a tariff.
       const source = effectiveSource(inv.raw_extraction, inv.source_override);
-      const taxResponse = await siigoGet<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
+      const taxResponse = await siigoGetCatalogo<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
       const purchaseTaxes = (Array.isArray(taxResponse) ? taxResponse : taxResponse.results ?? [])
         .filter(t => t.id != null && t.active !== false);
       for (const line of lineasImpuesto ?? []) {
@@ -1633,7 +1649,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         let taxesCargados = false;
         const cargarTaxes = async () => {
           if (taxesCargados) return allTaxes;
-          const response = await siigoGet<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
+          const response = await siigoGetCatalogo<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
           allTaxes = (Array.isArray(response) ? response : (response.results ?? [])).filter(
             (tax) => tax.active !== false && tax.id != null,
           );
@@ -1831,7 +1847,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       // recalcular la retención del documento y, por lo tanto, el conciliable de payments.
       const porcentajePorTaxId = new Map<string, number>();
       if (retencionesSiigo.length > 0) {
-        const respTaxes = await siigoGet<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
+        const respTaxes = await siigoGetCatalogo<SiigoTax[] | { results?: SiigoTax[] }>("/v1/taxes");
         const listaTaxes = (
           Array.isArray(respTaxes) ? respTaxes : (respTaxes.results ?? [])
         ).filter((t) => t.id != null);

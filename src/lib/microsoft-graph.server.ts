@@ -1,5 +1,6 @@
 // OneDrive / SharePoint (Microsoft identity platform + Microsoft Graph) para las
 // fuentes de documentos. Solo lectura: lista carpetas y descarga archivos.
+import { enParalelo } from "@/lib/concurrencia";
 import type { EnlaceCarpeta } from "@/lib/drive-sync";
 import type { FileNode, FileProvider } from "@/lib/file-providers";
 import { postToken } from "@/lib/google-drive.server";
@@ -186,10 +187,11 @@ export function microsoftProvider(token: string, driveId: string): FileProvider 
   return {
     listChildren: children,
     async listChildrenMany(folderIds) {
-      const out: FileNode[] = [];
-      // $batch: hasta 20 carpetas por llamada.
-      for (let i = 0; i < folderIds.length; i += 20) {
-        const grupo = folderIds.slice(i, i + 20);
+      // $batch: hasta 20 carpetas por llamada, y hasta 3 llamadas a la vez.
+      const grupos: string[][] = [];
+      for (let i = 0; i < folderIds.length; i += 20) grupos.push(folderIds.slice(i, i + 20));
+      const partes = await enParalelo(grupos, 3, async (grupo) => {
+        const out: FileNode[] = [];
         const res = await graph<{
           responses: Array<{
             id: string;
@@ -222,8 +224,9 @@ export function microsoftProvider(token: string, driveId: string): FileProvider 
             next = page["@odata.nextLink"];
           }
         }
-      }
-      return out;
+        return out;
+      });
+      return partes.flat();
     },
     async download(file) {
       // /content responde con redirección a una URL de descarga temporal; fetch la sigue.
