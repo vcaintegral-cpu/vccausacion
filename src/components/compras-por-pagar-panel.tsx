@@ -27,6 +27,7 @@ export function ComprasPorPagarPanel({
   const revisar = useServerFn(comprasPagadasRevisar);
   const corregir = useServerFn(compraPasarAPorPagar);
   const [pagadas, setPagadas] = useState<CompraPagada[] | null>(null);
+  const [erroresLectura, setErroresLectura] = useState<string[]>([]);
   const [progreso, setProgreso] = useState<string | null>(null);
   const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
   const [resultados, setResultados] = useState<Record<string, { ok: boolean; message: string }>>(
@@ -35,6 +36,8 @@ export function ComprasPorPagarPanel({
 
   const onRevisar = async () => {
     setPagadas(null);
+    setErroresLectura([]);
+    const errs: string[] = [];
     setResultados({});
     const todas: CompraPagada[] = [];
     let desde: number | null = 0;
@@ -42,7 +45,8 @@ export function ComprasPorPagarPanel({
       while (desde != null) {
         const r = await revisar({ data: { companyId, periodo, desde } });
         todas.push(...r.pagadas);
-        for (const e of r.errores) toast.warning(e);
+        errs.push(...r.errores);
+        setErroresLectura([...errs]);
         setProgreso(`Revisadas ${r.revisadas} de ${r.total} compras en Siigo…`);
         desde = r.siguiente;
       }
@@ -117,6 +121,20 @@ export function ComprasPorPagarPanel({
           ) : null}
         </div>
       </div>
+      {erroresLectura.length ? (
+        <div className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-amber-800">
+          <div className="font-medium">
+            Siigo no devolvió {erroresLectura.length} compra(s) al revisarlas; se clasificaron con
+            la forma de pago con que las envió la herramienta. Si alguna falta en la lista, vuelve a
+            revisar en unos minutos.
+          </div>
+          {erroresLectura.slice(0, 20).map((e) => (
+            <div key={e} className="truncate">
+              • {e}
+            </div>
+          ))}
+        </div>
+      ) : null}
       {progreso ? (
         <div className="mt-2 flex items-center gap-1 text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin" /> {progreso}

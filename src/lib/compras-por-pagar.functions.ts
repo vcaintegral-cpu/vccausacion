@@ -43,6 +43,51 @@ async function formasLocales(
   return (data ?? []) as FormaPagoLocal[];
 }
 
+type SiigoGet = <T>(path: string) => Promise<T>;
+
+/**
+ * Lee la compra en Siigo por su identificador; si Siigo no la devuelve, la busca por su
+ * número (FC-1-5705) entre las compras de esas fechas.
+ */
+async function leerCompra(
+  siigoGet: SiigoGet,
+  siigoId: string,
+  nombre: string | null,
+  fecha: string | null,
+): Promise<{ doc: DocCompra; id: string }> {
+  try {
+    return {
+      doc: await siigoGet<DocCompra>(`/v1/purchases/${encodeURIComponent(siigoId)}`),
+      id: siigoId,
+    };
+  } catch (e) {
+    if (!nombre || !fecha) throw e;
+    const desde = new Date(`${fecha.slice(0, 10)}T00:00:00Z`);
+    desde.setUTCDate(desde.getUTCDate() - 5);
+    const hasta = new Date(`${fecha.slice(0, 10)}T00:00:00Z`);
+    hasta.setUTCDate(hasta.getUTCDate() + 60);
+    for (let page = 1; page <= 3; page++) {
+      const r = await siigoGet<{ results?: DocCompra[] } | DocCompra[]>(
+        `/v1/purchases?date_start=${desde.toISOString().slice(0, 10)}&date_end=${hasta.toISOString().slice(0, 10)}&page=${page}&page_size=100`,
+      );
+      const lista = Array.isArray(r) ? r : (r.results ?? []);
+      const d = lista.find((x) => String(x.name ?? "").toUpperCase() === nombre.toUpperCase());
+      if (d?.id) {
+        try {
+          return {
+            doc: await siigoGet<DocCompra>(`/v1/purchases/${encodeURIComponent(d.id)}`),
+            id: d.id,
+          };
+        } catch {
+          return { doc: d, id: d.id };
+        }
+      }
+      if (lista.length < 100) break;
+    }
+    throw e;
+  }
+}
+
 /** Revisa en Siigo, por lotes, las compras del mes enviadas desde la herramienta y devuelve las que quedaron pagadas. */
 export const comprasPagadasRevisar = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -73,7 +118,7 @@ export const comprasPagadasRevisar = createServerFn({ method: "POST" })
       } = await db
         .from("invoices")
         .select(
-          "id, siigo_id, siigo_number, provider_name, provider_nit, prefix, number, issue_date, total",
+          "id, siigo_id, siigo_number, provider_name, provider_nit, prefix, number, issue_date, total, payment_type_id, payment_type_name, payment_method",
           { count: "exact" },
         )
         .eq("company_id", data.companyId)
@@ -91,34 +136,57 @@ export const comprasPagadasRevisar = createServerFn({ method: "POST" })
       const pagadas: CompraPagada[] = [];
       const errores: string[] = [];
       for (const inv of facturas ?? []) {
+        const fila = (
+          pagos: Array<{ name: string; value: number }>,
+          nota?: string,
+        ): CompraPagada => ({
+          invoiceId: inv.id,
+          siigoId: String(inv.siigo_id),
+          siigoNumero: inv.siigo_number ?? null,
+          proveedor: inv.provider_name,
+          nit: inv.provider_nit,
+          factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
+          fecha: inv.issue_date,
+          total: pagos.reduce((s, p) => s + p.value, 0) || Number(inv.total ?? 0),
+          pagos: nota ? [...pagos, { name: nota, value: 0 }] : pagos,
+        });
         try {
-          const doc = await siigoGet<DocCompra>(
-            `/v1/purchases/${encodeURIComponent(String(inv.siigo_id))}`,
+          const { doc } = await leerCompra(
+            siigoGet,
+            String(inv.siigo_id),
+            inv.siigo_number,
+            inv.issue_date,
           );
           const pagos = (doc.payments ?? []).map((p) => ({
             id: String(p.id ?? ""),
             name: String(p.name ?? porId.get(String(p.id))?.name ?? p.id ?? ""),
             value: Number(p.value ?? 0),
           }));
-          const porPagar = pagos.every((p) => {
-            const local = porId.get(p.id);
-            return esFormaPorPagar(
-              local ?? { name: p.name, method: null, due_date_required: null },
-            );
-          });
-          if (!porPagar)
-            pagadas.push({
-              invoiceId: inv.id,
-              siigoId: String(inv.siigo_id),
-              siigoNumero: inv.siigo_number ?? doc.name ?? null,
-              proveedor: inv.provider_name,
-              nit: inv.provider_nit,
-              factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
-              fecha: inv.issue_date,
-              total: pagos.reduce((s, p) => s + p.value, 0),
-              pagos: pagos.map(({ name, value }) => ({ name, value })),
+          // Sin formas de pago en la lectura no se puede afirmar que esté por pagar.
+          const porPagar =
+            pagos.length > 0 &&
+            pagos.every((p) => {
+              const local = porId.get(p.id);
+              return esFormaPorPagar(
+                local ?? { name: p.name, method: null, due_date_required: null },
+              );
             });
+          if (!porPagar) pagadas.push(fila(pagos.map(({ name, value }) => ({ name, value }))));
         } catch (e) {
+          // Siigo no devolvió la compra: se usa la forma de pago con que la envió la herramienta.
+          const local = inv.payment_type_id ? porId.get(String(inv.payment_type_id)) : undefined;
+          const nombre = String(inv.payment_type_name ?? local?.name ?? "");
+          const pagadaSegunApp =
+            inv.payment_method === "contado" ||
+            (nombre !== "" &&
+              !esFormaPorPagar(local ?? { name: nombre, method: null, due_date_required: null }));
+          if (pagadaSegunApp)
+            pagadas.push(
+              fila(
+                [{ name: nombre || "contado", value: Number(inv.total ?? 0) }],
+                "(según la herramienta; Siigo no devolvió la compra)",
+              ),
+            );
           errores.push(
             `${inv.siigo_number ?? inv.id}: ${e instanceof Error ? e.message : String(e)}`,
           );
@@ -162,17 +230,24 @@ export const compraPasarAPorPagar = createServerFn({ method: "POST" })
 
     const { siigoGet, siigoPut, siigoUseCompany } = await import("./siigo.server");
     await siigoUseCompany(data.companyId);
-    const doc = await siigoGet<DocCompra>(`/v1/purchases/${encodeURIComponent(inv.siigo_id)}`);
-    const porId = new Map(formas.map((f) => [String(f.siigo_id), f]));
-    const yaPorPagar = (doc.payments ?? []).every((p) =>
-      esFormaPorPagar(
-        porId.get(String(p.id)) ?? {
-          name: String(p.name ?? ""),
-          method: null,
-          due_date_required: null,
-        },
-      ),
+    const { doc, id: compraId } = await leerCompra(
+      siigoGet,
+      inv.siigo_id,
+      inv.siigo_number,
+      inv.issue_date,
     );
+    const porId = new Map(formas.map((f) => [String(f.siigo_id), f]));
+    const yaPorPagar =
+      (doc.payments ?? []).length > 0 &&
+      (doc.payments ?? []).every((p) =>
+        esFormaPorPagar(
+          porId.get(String(p.id)) ?? {
+            name: String(p.name ?? ""),
+            method: null,
+            due_date_required: null,
+          },
+        ),
+      );
     if (yaPorPagar) return { ok: true, message: `${inv.siigo_number} ya está por pagar en Siigo.` };
     const fecha = String(doc.date ?? inv.issue_date ?? "").slice(0, 10);
     const venceFactura = String(inv.due_date ?? "").slice(0, 10);
@@ -180,7 +255,7 @@ export const compraPasarAPorPagar = createServerFn({ method: "POST" })
     const { compraPorPagar } = await import("./egresos-diferencias");
     const cuerpo = compraPorPagar(doc, Number(forma.id), vencimiento);
     try {
-      await siigoPut(`/v1/purchases/${encodeURIComponent(inv.siigo_id)}`, cuerpo);
+      await siigoPut(`/v1/purchases/${encodeURIComponent(compraId)}`, cuerpo);
     } catch (e) {
       return {
         ok: false,
@@ -188,7 +263,7 @@ export const compraPasarAPorPagar = createServerFn({ method: "POST" })
       };
     }
     // Verificación: la compra quedó con la forma por pagar y con saldo.
-    const leido = await siigoGet<DocCompra>(`/v1/purchases/${encodeURIComponent(inv.siigo_id)}`);
+    const leido = await siigoGet<DocCompra>(`/v1/purchases/${encodeURIComponent(compraId)}`);
     const ok = (leido.payments ?? []).every((p) => String(p.id) === String(forma.id));
     await db
       .from("invoices")

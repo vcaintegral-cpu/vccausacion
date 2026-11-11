@@ -565,10 +565,30 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
     const encontradas: Array<{ ref: RefFactura; cxp: CuentaPorPagar }> = [];
     const sinSaldo: string[] = [];
     for (const r of refs) {
-      const candidatas = ctx.cxp.filter((c) => {
+      let candidatas = ctx.cxp.filter((c) => {
         const f = refDeFacturaProveedor(c.facturaProveedor);
         return f && mismaFactura(f, r) && delTercero(c) && c.balance > 0;
       });
+      // Respaldo: la compra causada en Siigo (FC-1-5712) se busca en las CxP por su número de
+      // comprobante, aunque el vencimiento no tenga guardada la factura del proveedor.
+      if (!candidatas.length) {
+        const nombres = new Set(
+          (ctx.causadas ?? [])
+            .filter((c) => {
+              const f = refDeFacturaProveedor(c.factura);
+              return (
+                f &&
+                mismaFactura(f, r) &&
+                (!terceroNit || nitSinDv(c.nit) === terceroNit) &&
+                c.siigo
+              );
+            })
+            .map((c) => String(c.siigo).trim().toUpperCase()),
+        );
+        candidatas = ctx.cxp.filter(
+          (c) => nombres.has(`${c.prefix}-${c.consecutive}`.toUpperCase()) && c.balance > 0,
+        );
+      }
       if (candidatas.length === 1) encontradas.push({ ref: r, cxp: candidatas[0]! });
       else if (candidatas.length > 1)
         motivos.push(
