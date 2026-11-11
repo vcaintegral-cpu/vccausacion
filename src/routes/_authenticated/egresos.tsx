@@ -36,6 +36,9 @@ import {
   egresosImportarReporte,
   egresosProponer,
   egresosReintentar,
+  egresosAnalizarDiferencia,
+  egresosCorregirCompra,
+  type DiferenciaItem,
   egresosSincronizarCxP,
 } from "@/lib/egresos.functions";
 import type { ItemPago, Propuesta, TipoEgreso } from "@/lib/egresos";
@@ -116,6 +119,42 @@ function Egresos() {
   const aprobar = useServerFn(egresosAprobar);
   const enviar = useServerFn(egresosEnviar);
   const reintentar = useServerFn(egresosReintentar);
+  const analizar = useServerFn(egresosAnalizarDiferencia);
+  const corregir = useServerFn(egresosCorregirCompra);
+  const [trabajando, setTrabajando] = useState<string | null>(null);
+  const onAnalizar = async (f: Fila) => {
+    setTrabajando(f.id);
+    try {
+      const r = await analizar({ data: { egresoId: f.id } });
+      if (!r.diferencias.length) toast.info("Lo pagado coincide con el saldo de cada factura.");
+      refrescar();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTrabajando(null);
+    }
+  };
+  const onCorregir = async (f: Fila, d: DiferenciaItem, i: number) => {
+    const c = d.causas[i]!;
+    const texto =
+      `Se editará la compra ${d.compraNombre} en Siigo:\n\n${c.descripcion}\n\n` +
+      `${c.accion!.tipo === "agregar" ? "Se AGREGARÁ" : "Se QUITARÁ"} ${c.accion!.impuestos.map((t) => t.name).join(" + ")} ` +
+      `y la cuenta por pagar cambiará en ${cop(c.valor)}. ¿Confirmas la corrección?`;
+    if (!window.confirm(texto)) return;
+    setTrabajando(f.id);
+    try {
+      const r = await corregir({
+        data: { egresoId: f.id, compraId: d.compraId!, causaIndex: i, confirmado: true },
+      });
+      if (r.ok) toast.success(r.message);
+      else toast.error(r.message);
+      refrescar();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTrabajando(null);
+    }
+  };
   const cargarConfig = useServerFn(siigoRecibosConfig);
 
   const filas = useQuery({
@@ -596,6 +635,61 @@ function Egresos() {
                       <div className="font-medium text-emerald-700">Siigo {f.siigo_nombre}</div>
                     ) : null}
                     {f.siigo_error ? <div className="text-red-700">{f.siigo_error}</div> : null}
+                    {!f.siigo_id &&
+                    f.motivos?.some((m) => m.startsWith("Diferencia con la CxP")) ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="mt-1"
+                        disabled={trabajando === f.id}
+                        onClick={() => onAnalizar(f)}
+                      >
+                        {trabajando === f.id ? (
+                          <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                        ) : null}
+                        Analizar diferencia
+                      </Button>
+                    ) : null}
+                    {(
+                      (f.propuesta as { diferencias?: DiferenciaItem[] } | null)?.diferencias ?? []
+                    ).map((d) => (
+                      <div
+                        key={`${d.prefix}-${d.consecutive}`}
+                        className="mt-1 rounded border border-amber-300 bg-amber-50 p-1"
+                      >
+                        <div className="font-medium">
+                          {d.factura ?? d.compraNombre} ({d.compraNombre}): saldo {cop(d.saldo)} ·
+                          pagado {cop(d.pagado)} ·{" "}
+                          {d.diferencia > 0
+                            ? `pagó ${cop(d.diferencia)} menos`
+                            : `pagó ${cop(-d.diferencia)} más`}
+                        </div>
+                        {d.error ? <div className="text-red-700">{d.error}</div> : null}
+                        {d.causas.length === 0 && !d.error ? (
+                          <div>
+                            No se encontró una causa que explique la diferencia; revísala con el
+                            proveedor.
+                          </div>
+                        ) : null}
+                        {d.causas.map((c, i) => (
+                          <div key={i} className="flex items-start gap-1">
+                            <span>{c.exacta ? "✔" : "≈"}</span>
+                            <span className="flex-1">{c.descripcion}</span>
+                            {c.accion && d.compraId ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 px-2"
+                                disabled={trabajando === f.id}
+                                onClick={() => onCorregir(f, d, i)}
+                              >
+                                Corregir en Siigo
+                              </Button>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
                   </td>
                   <td className="whitespace-nowrap p-2">
                     {!f.siigo_id && f.estado !== "enviando" ? (

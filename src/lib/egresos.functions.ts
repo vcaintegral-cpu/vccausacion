@@ -3,6 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { erroresAntesDeEnviar, nitSinDv, payloadRecibo, type Propuesta } from "@/lib/egresos";
+import { compraEditada, type DocCompra } from "@/lib/egresos-diferencias";
 
 type Resumen = { message: string };
 
@@ -342,4 +343,275 @@ export const egresosReintentar = createServerFn({ method: "POST" })
       .is("siigo_id", null);
     if (error) throw new Error(error.message);
     return { message: "Listo para reintentar." };
+  });
+
+// ---------------------------------------------------------------------------
+// Diferencias entre el pago y la CxP (retenciones) — todas las empresas
+// ---------------------------------------------------------------------------
+export type DiferenciaItem = {
+  prefix: string;
+  consecutive: number;
+  quote: number;
+  factura: string | null;
+  compraId: string | null;
+  compraNombre: string;
+  saldo: number;
+  pagado: number;
+  diferencia: number;
+  causas: import("./egresos-diferencias").CausaDiferencia[];
+  error?: string;
+};
+
+async function catalogoRetenciones(
+  db: Parameters<typeof import("./egresos.server").cargarContexto>[0],
+  companyId: string,
+) {
+  const { data } = await db
+    .from("tax_rates")
+    .select("siigo_id, kind, name, rate, active")
+    .eq("company_id", companyId)
+    .in("kind", ["retefuente", "reteiva", "reteica"]);
+  return (
+    (data ?? []) as Array<{
+      siigo_id: string | null;
+      kind: string;
+      name: string;
+      rate: number;
+      active: boolean;
+    }>
+  )
+    .filter((t) => t.siigo_id && t.active !== false && Number(t.rate) > 0)
+    .map((t) => ({
+      siigoId: String(t.siigo_id),
+      kind: t.kind as "retefuente" | "reteiva" | "reteica",
+      name: t.name,
+      rate: Number(t.rate),
+    }));
+}
+
+async function idCompraSiigo(
+  db: Parameters<typeof import("./egresos.server").cargarContexto>[0],
+  companyId: string,
+  item: { prefix: string; consecutive: number; quote: number },
+): Promise<string | null> {
+  const { data: cxp } = await db
+    .from("siigo_cuentas_por_pagar")
+    .select("siigo_purchase_id")
+    .eq("company_id", companyId)
+    .eq("prefix", item.prefix)
+    .eq("consecutive", item.consecutive)
+    .eq("quote", item.quote)
+    .maybeSingle();
+  if (cxp?.siigo_purchase_id) return cxp.siigo_purchase_id;
+  const { data: inv } = await db
+    .from("invoices")
+    .select("siigo_id")
+    .eq("company_id", companyId)
+    .eq("siigo_number", `${item.prefix}-${item.consecutive}`)
+    .not("siigo_id", "is", null)
+    .limit(1)
+    .maybeSingle();
+  return inv?.siigo_id ?? null;
+}
+
+/** Lee las compras en Siigo de las facturas cuyo pago no cuadra con la CxP y calcula a qué se debe. */
+export const egresosAnalizarDiferencia = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { egresoId: string }) => {
+    if (!input?.egresoId) throw new Error("egresoId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }): Promise<{ diferencias: DiferenciaItem[] }> => {
+    const db = context.supabase;
+    const { data: f, error } = await db
+      .from("egresos")
+      .select("*")
+      .eq("id", data.egresoId)
+      .single();
+    if (error || !f) throw new Error(error?.message ?? "Egreso no encontrado.");
+    if (f.siigo_id) throw new Error("Este egreso ya está en Siigo.");
+    const p = f.propuesta as unknown as Propuesta & { diferencias?: DiferenciaItem[] };
+    const items = (p.items ?? []).filter((i) => Math.abs(Number(i.valor) - Number(i.saldo)) > 1);
+    if (!items.length) return { diferencias: [] };
+
+    const { explicarDiferencia, compraDeSiigo } = await import("./egresos-diferencias");
+    const { conceptoDe } = await import("./egresos");
+    const catalogo = await catalogoRetenciones(db, f.company_id);
+    // Gastos bancarios del mismo día y origen, y anticipos ya enviados al proveedor.
+    const { data: mismoDia } = await db
+      .from("egresos")
+      .select("valor, relacion, descripcion, aplicacion")
+      .eq("company_id", f.company_id)
+      .eq("fecha", f.fecha)
+      .eq("cuenta_etiqueta", f.cuenta_etiqueta ?? "")
+      .neq("id", f.id);
+    const gastos = (
+      (mismoDia ?? []) as Array<{
+        valor: number;
+        relacion: string | null;
+        descripcion: string | null;
+        aplicacion: string | null;
+      }>
+    )
+      .filter((g) => ["gasto_bancario", "iva_bancario", "4x1000"].includes(conceptoDe(g)?.id ?? ""))
+      .map((g) => Number(g.valor));
+    const { data: ants } = p.terceroNit
+      ? await db
+          .from("egresos")
+          .select("valor")
+          .eq("company_id", f.company_id)
+          .eq("tipo", "anticipo")
+          .eq("tercero_nit", p.terceroNit)
+          .not("siigo_id", "is", null)
+      : { data: [] };
+    const anticipos = ((ants ?? []) as Array<{ valor: number }>).map((a) => Number(a.valor));
+
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(f.company_id);
+    const diferencias: DiferenciaItem[] = [];
+    for (const it of items) {
+      const compraNombre = `${it.prefix}-${it.consecutive}`;
+      const base: DiferenciaItem = {
+        prefix: it.prefix,
+        consecutive: it.consecutive,
+        quote: it.quote,
+        factura: it.factura,
+        compraId: null,
+        compraNombre,
+        saldo: Number(it.saldo),
+        pagado: Number(it.valor),
+        diferencia: 0,
+        causas: [],
+      };
+      try {
+        const compraId = await idCompraSiigo(db, f.company_id, it);
+        let compra = null;
+        if (compraId) {
+          const doc = await siigoGet<DocCompra>(`/v1/purchases/${encodeURIComponent(compraId)}`);
+          compra = compraDeSiigo(doc, catalogo);
+          if (!compra.nombre) compra.nombre = compraNombre;
+        }
+        const r = explicarDiferencia({
+          saldo: Number(it.saldo),
+          pagado: Number(it.valor),
+          compra,
+          catalogo,
+          gastosBancariosMismoDia: gastos,
+          anticipos,
+          instruccion: [f.aplicacion, f.observaciones].filter(Boolean).join(" "),
+        });
+        diferencias.push({
+          ...base,
+          compraId,
+          diferencia: r.diferencia,
+          causas: r.causas,
+          ...(compraId
+            ? {}
+            : {
+                error:
+                  "No se encontró la compra en Siigo: sincroniza las CxP para traer su identificador.",
+              }),
+        });
+      } catch (e) {
+        diferencias.push({
+          ...base,
+          diferencia: Number(it.saldo) - Number(it.valor),
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+    await db
+      .from("egresos")
+      .update({ propuesta: { ...p, diferencias } as never })
+      .eq("id", f.id)
+      .is("siigo_id", null);
+    return { diferencias };
+  });
+
+/**
+ * Corrige la retención de la compra en Siigo (con la confirmación de la usuaria), la vuelve
+ * a leer para verificarla, actualiza las CxP del proveedor y vuelve a proponer el pago.
+ */
+export const egresosCorregirCompra = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: { egresoId: string; compraId: string; causaIndex: number; confirmado: boolean }) => {
+      if (!input?.egresoId || !input.compraId || input.causaIndex == null)
+        throw new Error("Datos incompletos.");
+      if (input.confirmado !== true)
+        throw new Error("La corrección en Siigo requiere tu confirmación.");
+      return input;
+    },
+  )
+  .handler(async ({ data, context }): Promise<{ ok: boolean; message: string }> => {
+    const db = context.supabase;
+    const { data: f, error } = await db
+      .from("egresos")
+      .select("*")
+      .eq("id", data.egresoId)
+      .single();
+    if (error || !f) throw new Error(error?.message ?? "Egreso no encontrado.");
+    if (f.siigo_id) throw new Error("Este egreso ya está en Siigo.");
+    const p = f.propuesta as unknown as Propuesta & { diferencias?: DiferenciaItem[] };
+    const dif = (p.diferencias ?? []).find((d) => d.compraId === data.compraId);
+    const causa = dif?.causas[data.causaIndex];
+    if (!dif || !causa?.accion)
+      throw new Error(
+        "Primero analiza la diferencia; esta causa no tiene una corrección de retención.",
+      );
+
+    const { siigoGet, siigoPut, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(f.company_id);
+    const doc = await siigoGet<DocCompra>(`/v1/purchases/${encodeURIComponent(data.compraId)}`);
+    // La compra no debe haber cambiado desde el análisis (otro pago, otra edición).
+    const saldoActual = Number(doc.balance ?? dif.saldo);
+    if (Math.abs(saldoActual - dif.saldo) > 1)
+      throw new Error(
+        `El saldo de ${dif.compraNombre} cambió en Siigo (${saldoActual}); vuelve a sincronizar y analizar.`,
+      );
+    const cuerpo = compraEditada(doc, causa.accion);
+    try {
+      await siigoPut(`/v1/purchases/${encodeURIComponent(data.compraId)}`, cuerpo);
+    } catch (e) {
+      return {
+        ok: false,
+        message: `Siigo no aceptó la corrección (la compra quedó igual): ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+    // Lectura de verificación.
+    const { compraDeSiigo } = await import("./egresos-diferencias");
+    const catalogo = await catalogoRetenciones(db, f.company_id);
+    const leido = compraDeSiigo(
+      await siigoGet<DocCompra>(`/v1/purchases/${encodeURIComponent(data.compraId)}`),
+      catalogo,
+    );
+    const presentes = new Set(leido.retenciones.map((r) => r.siigoId));
+    const verificado = causa.accion.impuestos.every((t) =>
+      causa.accion!.tipo === "agregar" ? presentes.has(t.siigoId) : !presentes.has(t.siigoId),
+    );
+    const detalle = `${causa.accion.tipo === "agregar" ? "Agregada" : "Quitada"} ${causa.accion.impuestos.map((t) => `${t.name} (${t.valor.toLocaleString("es-CO")})`).join(" + ")} en ${dif.compraNombre}`;
+
+    const { sincronizarCxP, proponerPeriodo } = await import("./egresos.server");
+    const nit = p.terceroNit ?? null;
+    if (nit) await sincronizarCxP(db, f.company_id, { soloNit: nit });
+    await db
+      .from("egresos")
+      .update({
+        editado_por_usuaria: false,
+        estado: "por_revisar",
+        propuesta: {
+          ...p,
+          diferencias: [],
+          notas: [...(p.notas ?? []), `Corrección en Siigo: ${detalle}.`],
+        } as never,
+      })
+      .eq("id", f.id)
+      .is("siigo_id", null);
+    await proponerPeriodo(db, f.company_id, f.period);
+    return {
+      ok: verificado,
+      message: verificado
+        ? `${detalle}. CxP del proveedor actualizada y el pago vuelto a proponer.`
+        : `Siigo aceptó la edición pero la lectura no muestra el cambio esperado en ${dif.compraNombre}; revísala en Siigo.`,
+    };
   });

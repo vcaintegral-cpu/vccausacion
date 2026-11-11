@@ -190,6 +190,13 @@
       "when": 1794411576937,
       "tag": "0026_egresos_recibos_pago",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1794412576937,
+      "tag": "0027_cxp_compra_siigo",
+      "breakpoints": true
     }
   ]
 }

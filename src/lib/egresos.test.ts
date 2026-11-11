@@ -147,9 +147,22 @@ describe("propuesta del recibo de pago", () => {
     });
     expect(erroresAntesDeEnviar(m, p)).toEqual([]);
   });
-  it("pago menor que el saldo → abono a la factura", () => {
+  it("pago menor que el saldo sin decir «abono» → alerta de diferencia con la CxP", () => {
     const p = proponerEgreso(
-      mov({ valor: 200000, relacion: "TA-55", tercero: "TRANSPORTES ANDINOS SAS" }),
+      mov({ valor: 487500, relacion: "TA-55", tercero: "TRANSPORTES ANDINOS SAS" }),
+      ctx(),
+    );
+    expect(p.listo).toBe(false);
+    expect(p.motivos.join(" ")).toMatch(/Diferencia con la CxP.*Analizar diferencia/);
+  });
+  it("pago menor que el saldo con «abono» en la aplicación → abono a la factura", () => {
+    const p = proponerEgreso(
+      mov({
+        valor: 200000,
+        relacion: "TA-55",
+        aplicacion: "Abono",
+        tercero: "TRANSPORTES ANDINOS SAS",
+      }),
       ctx(),
     );
     expect(p.listo).toBe(true);
