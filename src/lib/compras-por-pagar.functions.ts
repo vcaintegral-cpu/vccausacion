@@ -181,7 +181,9 @@ export const comprasPagadasRevisar = createServerFn({ method: "POST" })
           siigoId: String(doc.id ?? ""),
           siigoNumero: doc.name ?? null,
           proveedor: inv?.provider_name ?? null,
-          nit: inv?.provider_nit ?? (doc.supplier?.identification ? String(doc.supplier.identification) : null),
+          nit:
+            inv?.provider_nit ??
+            (doc.supplier?.identification ? String(doc.supplier.identification) : null),
           factura:
             [doc.provider_invoice?.prefix, doc.provider_invoice?.number]
               .filter((x) => x != null && String(x).trim())
