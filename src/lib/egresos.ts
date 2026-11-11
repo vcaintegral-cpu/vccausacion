@@ -442,7 +442,44 @@ export type Contexto = {
   precedente: PrecedenteEgresos | null;
   /** Cuentas del PUC que existen (para validar las elegidas). */
   puc?: Set<string>;
+  /** Cuentas auxiliares de caja y bancos (1105/1110/1120) con su nombre. */
+  cuentasBanco?: Array<{ code: string; name: string }>;
 };
+
+/** Palabras con que se reconoce la cuenta de cada origen de pago («AHORROS» → AHORRO). */
+const palabrasOrigen = (etiqueta: string) => {
+  const n = normalizar(etiqueta);
+  if (/EFECTIVO|CAJA/.test(n)) return ["CAJA", "EFECTIVO"];
+  return n
+    .split(" ")
+    .filter((w) => w.length >= 4)
+    .map((w) => w.replace(/S$/, ""));
+};
+
+/**
+ * Cuenta de banco/caja de un origen de pago cuando la forma de pago de Siigo no la trae:
+ * la única cuenta auxiliar de caja/bancos cuyo nombre contiene el origen (CORRIENTE,
+ * AHORRO, DAVIVIENDA, CAJA). Si hay varias, se prefieren las usadas en egresos del auxiliar.
+ */
+export function cuentaBancoDeOrigen(
+  etiqueta: string | null | undefined,
+  cuentas: Array<{ code: string; name: string }>,
+  usadas?: Map<string, unknown>,
+): string | null {
+  if (!etiqueta) return null;
+  const palabras = palabrasOrigen(etiqueta);
+  if (!palabras.length) return null;
+  const codigos = new Set(cuentas.map((c) => c.code));
+  const hojas = cuentas.filter(
+    (c) =>
+      /^11(05|10|20)/.test(c.code) &&
+      ![...codigos].some((o) => o !== c.code && o.startsWith(c.code)),
+  );
+  const candidatas = hojas.filter((c) => palabras.some((w) => normalizar(c.name).includes(w)));
+  if (candidatas.length === 1) return candidatas[0]!.code;
+  const enUso = candidatas.filter((c) => usadas?.has(c.code));
+  return enUso.length === 1 ? enUso[0]!.code : null;
+}
 
 const TOLERANCIA = 1; // peso
 
@@ -479,7 +516,10 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
     items: [],
     cuentas: [],
     paymentTypeId: banco?.payment_type_id ?? null,
-    cuentaBanco: banco?.cuenta_banco ?? null,
+    cuentaBanco:
+      banco?.cuenta_banco ??
+      cuentaBancoDeOrigen(m.cuenta, ctx.cuentasBanco ?? [], ctx.precedente?.bancos) ??
+      null,
     listo: false,
     motivos,
     notas,
@@ -516,11 +556,18 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
           `La factura ${r.texto} coincide con ${candidatas.length} cuentas por pagar; elige la correcta.`,
         );
       else {
-        const causada = (ctx.causadas ?? []).find((c) => {
-          const f = refDeFacturaProveedor(c.factura);
-          return f && mismaFactura(f, r) && (!terceroNit || nitSinDv(c.nit) === terceroNit);
-        });
+        // Sin CxP leídas de Siigo no se puede afirmar que una factura no tiene saldo.
+        const causada = !ctx.cxp.length
+          ? null
+          : (ctx.causadas ?? []).find((c) => {
+              const f = refDeFacturaProveedor(c.factura);
+              return f && mismaFactura(f, r) && (!terceroNit || nitSinDv(c.nit) === terceroNit);
+            });
         if (causada) sinSaldo.push(`${r.texto}${causada.siigo ? ` (${causada.siigo})` : ""}`);
+        else if (!ctx.cxp.length)
+          motivos.push(
+            "Aún no se han leído las cuentas por pagar de Siigo: usa «Sincronizar CxP de Siigo».",
+          );
         else
           motivos.push(
             `La factura ${r.texto} no está en las cuentas por pagar de Siigo (¿no está causada o es de otro proveedor?).`,
@@ -740,4 +787,35 @@ export function erroresAntesDeEnviar(
   if (p.tipo === "omitir" || p.tipo === "por_definir")
     e.push("Este egreso no genera recibo de pago.");
   return e;
+}
+
+/**
+ * El reporte de CxP de Siigo puede traer el mismo vencimiento (prefijo, consecutivo, cuota)
+ * más de una vez: repetido entre páginas (se toma una vez) o partido por centro de costo
+ * (se suman los saldos). Así cada vencimiento queda en una sola fila.
+ */
+export function unirVencimientos<
+  T extends {
+    prefix: string;
+    consecutive: number;
+    quote: number;
+    balance: number;
+    cost_center: string | null;
+    provider_nit: string | null;
+  },
+>(filas: T[]): T[] {
+  const porClave = new Map<string, { fila: T; firmas: Set<string> }>();
+  for (const f of filas) {
+    const k = `${f.prefix.toUpperCase()}|${f.consecutive}|${f.quote}`;
+    const firma = `${f.balance}|${f.cost_center ?? ""}|${f.provider_nit ?? ""}`;
+    const previo = porClave.get(k);
+    if (!previo) {
+      porClave.set(k, { fila: { ...f }, firmas: new Set([firma]) });
+      continue;
+    }
+    if (previo.firmas.has(firma)) continue; // repetido
+    previo.firmas.add(firma);
+    previo.fila.balance = Math.round((previo.fila.balance + f.balance) * 100) / 100;
+  }
+  return [...porClave.values()].map((x) => x.fila);
 }

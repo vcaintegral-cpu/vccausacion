@@ -14,6 +14,7 @@ import {
   type Propuesta,
   type ReglaBanco,
   type ReglaConcepto,
+  unirVencimientos,
 } from "@/lib/egresos";
 import type { LecturaConsolidado } from "@/lib/lector-consolidado-pagos";
 
@@ -144,8 +145,8 @@ export async function cargarContexto(db: Db, companyId: string): Promise<Context
         .not("siigo_number", "is", null)
         .range(a, b),
     ),
-    todas<{ code: string }>((a, b) =>
-      db.from("puc_accounts").select("code").eq("company_id", companyId).range(a, b),
+    todas<{ code: string; name: string | null }>((a, b) =>
+      db.from("puc_accounts").select("code, name").eq("company_id", companyId).range(a, b),
     ),
   ]);
   return {
@@ -175,6 +176,9 @@ export async function cargarContexto(db: Db, companyId: string): Promise<Context
     conceptos: reglas.filter((r) => r.clase === "concepto") as ReglaConcepto[],
     precedente: hist.length ? aprenderEgresos(hist) : null,
     puc: new Set(puc.map((p) => p.code)),
+    cuentasBanco: puc
+      .filter((p) => /^11(05|10|20)/.test(p.code))
+      .map((p) => ({ code: p.code, name: p.name ?? "" })),
   };
 }
 
@@ -357,26 +361,33 @@ export async function sincronizarCxP(db: Db, companyId: string) {
       { results?: DueSiigo[]; pagination?: { total_results?: number } } | DueSiigo[]
     >(`/v1/accounts-payable?page=${page}&page_size=100`);
     const lista = Array.isArray(r) ? r : (r.results ?? []);
+    // Si Siigo repite una página completa (paginación ignorada), no se sigue pidiendo.
+    const firma = (v: DueSiigo) =>
+      `${v.due?.prefix}|${v.due?.consecutive}|${v.due?.quote ?? 1}|${v.due?.balance}|${v.cost_center?.code ?? ""}|${v.provider?.identification ?? ""}`;
+    const vistas = new Set(vencimientos.map(firma));
+    if (lista.length && lista.every((v) => vistas.has(firma(v)))) break;
     vencimientos.push(...lista);
     const total = Array.isArray(r) ? lista.length : Number(r.pagination?.total_results ?? 0);
     if (lista.length < 100 || (total && vencimientos.length >= total)) break;
   }
-  const filas = vencimientos
-    .filter((v) => v.due?.prefix && v.due?.consecutive != null)
-    .map((v) => ({
-      company_id: companyId,
-      prefix: String(v.due!.prefix).trim(),
-      consecutive: Number(v.due!.consecutive),
-      quote: Number(v.due!.quote ?? 1) || 1,
-      due_date: v.due!.date ? String(v.due!.date).slice(0, 10) : null,
-      balance: Number(v.due!.balance ?? 0),
-      provider_nit: v.provider?.identification != null ? String(v.provider.identification) : null,
-      provider_name: v.provider?.name ?? null,
-      cost_center: v.cost_center?.code ?? null,
-      factura_proveedor: null as string | null,
-      invoice_id: null as string | null,
-      synced_at: new Date().toISOString(),
-    }));
+  const filas = unirVencimientos(
+    vencimientos
+      .filter((v) => v.due?.prefix && v.due?.consecutive != null)
+      .map((v) => ({
+        company_id: companyId,
+        prefix: String(v.due!.prefix).trim(),
+        consecutive: Number(v.due!.consecutive),
+        quote: Number(v.due!.quote ?? 1) || 1,
+        due_date: v.due!.date ? String(v.due!.date).slice(0, 10) : null,
+        balance: Number(v.due!.balance ?? 0),
+        provider_nit: v.provider?.identification != null ? String(v.provider.identification) : null,
+        provider_name: v.provider?.name ?? null,
+        cost_center: v.cost_center?.code ?? null,
+        factura_proveedor: null as string | null,
+        invoice_id: null as string | null,
+        synced_at: new Date().toISOString(),
+      })),
+  );
 
   // Factura del proveedor de cada vencimiento: primero las compras causadas desde la
   // herramienta; las demás, de las compras de Siigo (provider_invoice).

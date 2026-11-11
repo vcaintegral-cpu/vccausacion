@@ -394,7 +394,7 @@ function Egresos() {
                             companyId,
                             etiqueta: et,
                             paymentTypeId: f ? String(f.id) : null,
-                            cuentaBanco: f?.accountCode ?? null,
+                            cuentaBanco: f?.accountCode ?? r?.cuenta_banco ?? null,
                             periodo,
                           },
                         });
@@ -413,9 +413,34 @@ function Egresos() {
                       </option>
                     ))}
                   </select>
-                  {r?.cuenta_banco ? (
-                    <span className="text-muted-foreground">cuenta {r.cuenta_banco}</span>
-                  ) : null}
+                  <label className="flex items-center gap-1 text-muted-foreground">
+                    Cuenta banco/caja
+                    <Input
+                      key={`${et}-${r?.cuenta_banco ?? ""}`}
+                      className="h-7 w-28"
+                      defaultValue={r?.cuenta_banco ?? ""}
+                      placeholder="p. ej. 11100501"
+                      onBlur={async (e) => {
+                        const v = e.target.value.replace(/\D/g, "");
+                        if (v === (r?.cuenta_banco ?? "")) return;
+                        try {
+                          await guardarBanco({
+                            data: {
+                              companyId,
+                              etiqueta: et,
+                              paymentTypeId: r?.payment_type_id ?? null,
+                              cuentaBanco: v || null,
+                              periodo,
+                            },
+                          });
+                          toast.success(`«${et}»: cuenta ${v || "vacía (se toma del PUC)"}`);
+                          refrescar();
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : String(err));
+                        }
+                      }}
+                    />
+                  </label>
                   {r?.notas ? <span className="text-amber-700">{r.notas}</span> : null}
                 </div>
               );

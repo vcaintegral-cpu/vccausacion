@@ -423,3 +423,60 @@ describe("reporte mensual de pagos (hoja Consolidado)", () => {
     ).toBeNull();
   });
 });
+
+describe("correcciones: CxP repetidas, cuenta del banco y CxP sin leer", () => {
+  it("un vencimiento repetido por Siigo se guarda una vez; partido por centro de costo se suma", async () => {
+    const { unirVencimientos } = await import("./egresos");
+    const v = (balance: number, cost_center: string | null) => ({
+      prefix: "FC-1",
+      consecutive: 10,
+      quote: 1,
+      balance,
+      cost_center,
+      provider_nit: "900111222",
+    });
+    expect(unirVencimientos([v(1000, null), v(1000, null)])).toEqual([v(1000, null)]);
+    expect(unirVencimientos([v(600, "1"), v(400, "2")])[0]!.balance).toBe(1000);
+    expect(unirVencimientos([v(1000, null), { ...v(5, null), consecutive: 11 }])).toHaveLength(2);
+  });
+  it("cuenta de banco/caja del origen desde el PUC cuando la forma de pago no la trae", async () => {
+    const { cuentaBancoDeOrigen } = await import("./egresos");
+    const puc = [
+      { code: "1105", name: "Caja" },
+      { code: "11050501", name: "Caja general" },
+      { code: "1110", name: "Bancos" },
+      { code: "11100501", name: "Bancolombia cuenta corriente" },
+      { code: "11200501", name: "Bancolombia cuenta de ahorros" },
+      { code: "11200502", name: "Davivienda ahorros" },
+    ];
+    expect(cuentaBancoDeOrigen("CORRIENTE", puc)).toBe("11100501");
+    expect(cuentaBancoDeOrigen("EFECTIVO", puc)).toBe("11050501");
+    expect(cuentaBancoDeOrigen("DAVIVIENDA", puc)).toBe("11200502");
+    // «AHORROS» coincide con dos cuentas: solo se elige si una es la usada en egresos.
+    expect(cuentaBancoDeOrigen("AHORROS", puc)).toBeNull();
+    expect(cuentaBancoDeOrigen("AHORROS", puc, new Map([["11200501", 1]]))).toBe("11200501");
+    const m = mov({
+      descripcion: "IMPTO GOBIERNO 4X1000",
+      relacion: "4X1000",
+      tercero: null,
+      cuenta: "CORRIENTE",
+      valor: 400,
+    });
+    const p = proponerEgreso(
+      m,
+      ctx({
+        bancos: [{ patron: "CORRIENTE", cuenta_banco: null, payment_type_id: "5638" }],
+        cuentasBanco: puc,
+      }),
+    );
+    expect(p.cuentaBanco).toBe("11100501");
+  });
+  it("sin CxP leídas de Siigo no se concluye que una factura causada no tenga saldo", () => {
+    const p = proponerEgreso(
+      mov({ relacion: "FE 54769", tercero: "FERRETERIA EL TORNILLO", cuenta: "EFECTIVO" }),
+      ctx({ cxp: [] }),
+    );
+    expect(p.tipo).toBe("pago_facturas");
+    expect(p.motivos.join(" ")).toMatch(/Sincronizar CxP de Siigo/);
+  });
+});
