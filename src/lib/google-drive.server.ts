@@ -201,6 +201,13 @@ export function googleProvider(token: string): FileProvider {
       return partes.flat();
     },
     async download(file) {
+      // Hojas de Google (p. ej. el reporte de pagos del mes): se exportan a .xlsx.
+      if (file.mimeType === "application/vnd.google-apps.spreadsheet") {
+        const res = await driveGet(token, `/files/${encodeURIComponent(file.id)}/export`, {
+          mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        });
+        return new Uint8Array(await res.arrayBuffer());
+      }
       const res = await driveGet(token, `/files/${encodeURIComponent(file.id)}`, {
         alt: "media",
         supportsAllDrives: "true",

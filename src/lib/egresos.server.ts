@@ -1,0 +1,529 @@
+// Egresos y RP — lado servidor compartido (pantalla y revisión automática de Drive).
+// Recibe el cliente de Supabase: el de la usuaria (RLS) o el de servicio (cron).
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import {
+  aprenderEgresos,
+  nitSinDv,
+  patronConcepto,
+  proponerEgreso,
+  type Contexto,
+  type CuentaPorPagar,
+  type MovAux,
+  type MovimientoPago,
+  type Propuesta,
+  type ReglaBanco,
+  type ReglaConcepto,
+} from "@/lib/egresos";
+import type { LecturaConsolidado } from "@/lib/lector-consolidado-pagos";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Db = SupabaseClient<any, any, any>;
+
+const PAGINA = 1000;
+async function todas<T>(
+  consulta: (
+    desde: number,
+    hasta: number,
+  ) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+  max = 50000,
+) {
+  const out: T[] = [];
+  for (let desde = 0; desde < max; desde += PAGINA) {
+    const { data, error } = await consulta(desde, desde + PAGINA - 1);
+    if (error) throw new Error(error.message);
+    const filas = (data ?? []) as T[];
+    out.push(...filas);
+    if (filas.length < PAGINA) break;
+  }
+  return out;
+}
+
+export type FilaEgreso = {
+  id: string;
+  company_id: string;
+  period: string;
+  clave: string;
+  fila: number | null;
+  fecha: string;
+  descripcion: string | null;
+  tercero_nombre: string | null;
+  tercero_nit: string | null;
+  valor: number;
+  cuenta_etiqueta: string | null;
+  relacion: string | null;
+  aplicacion: string | null;
+  observaciones: string | null;
+  tipo: string;
+  propuesta: Propuesta | Record<string, never>;
+  estado: string;
+  motivos: string[];
+  editado_por_usuaria: boolean;
+  siigo_id: string | null;
+  siigo_nombre: string | null;
+};
+
+export function movimientoDeFila(f: FilaEgreso): MovimientoPago {
+  return {
+    clave: f.clave,
+    fila: f.fila,
+    fecha: String(f.fecha).slice(0, 10),
+    descripcion: f.descripcion,
+    tercero: f.tercero_nombre,
+    terceroNit: f.tercero_nit,
+    valor: Number(f.valor),
+    cuenta: f.cuenta_etiqueta,
+    relacion: f.relacion,
+    aplicacion: f.aplicacion,
+    observaciones: f.observaciones,
+    referencia: null,
+  };
+}
+
+/** Contexto para proponer: CxP, terceros, reglas, precedente del auxiliar y facturas causadas. */
+export async function cargarContexto(db: Db, companyId: string): Promise<Contexto> {
+  const [cxp, provs, reglas, hist, causadas, puc] = await Promise.all([
+    todas<{
+      prefix: string;
+      consecutive: number;
+      quote: number;
+      due_date: string | null;
+      balance: number;
+      provider_nit: string | null;
+      provider_name: string | null;
+      factura_proveedor: string | null;
+    }>((a, b) =>
+      db
+        .from("siigo_cuentas_por_pagar")
+        .select(
+          "prefix, consecutive, quote, due_date, balance, provider_nit, provider_name, factura_proveedor",
+        )
+        .eq("company_id", companyId)
+        .range(a, b),
+    ),
+    todas<{ nit: string; name: string }>((a, b) =>
+      db.from("providers").select("nit, name").eq("company_id", companyId).range(a, b),
+    ),
+    todas<{
+      clase: string;
+      patron: string;
+      tipo: string | null;
+      cuenta_debito: string | null;
+      tercero_nit: string | null;
+      cuenta_banco: string | null;
+      payment_type_id: string | null;
+    }>((a, b) =>
+      db
+        .from("egreso_reglas")
+        .select("clase, patron, tipo, cuenta_debito, tercero_nit, cuenta_banco, payment_type_id")
+        .eq("company_id", companyId)
+        .range(a, b),
+    ),
+    todas<MovAux>(
+      (a, b) =>
+        db
+          .from("accounting_history")
+          .select(
+            "voucher, account_code, account_name, provider_nit, provider_name, description, detail, debit, credit",
+          )
+          .eq("company_id", companyId)
+          .or("voucher.ilike.CE-%,voucher.ilike.RP-%")
+          .range(a, b),
+      30000,
+    ).catch(() => [] as MovAux[]),
+    todas<{
+      prefix: string | null;
+      number: string | null;
+      provider_nit: string | null;
+      siigo_number: string | null;
+    }>((a, b) =>
+      db
+        .from("invoices")
+        .select("prefix, number, provider_nit, siigo_number")
+        .eq("company_id", companyId)
+        .not("siigo_number", "is", null)
+        .range(a, b),
+    ),
+    todas<{ code: string }>((a, b) =>
+      db.from("puc_accounts").select("code").eq("company_id", companyId).range(a, b),
+    ),
+  ]);
+  return {
+    cxp: cxp.map((c): CuentaPorPagar => ({
+      prefix: c.prefix,
+      consecutive: Number(c.consecutive),
+      quote: Number(c.quote ?? 1),
+      dueDate: c.due_date,
+      balance: Number(c.balance),
+      providerNit: c.provider_nit,
+      providerName: c.provider_name,
+      facturaProveedor: c.factura_proveedor,
+    })),
+    causadas: causadas.map((c) => ({
+      factura: [c.prefix, c.number].filter(Boolean).join("-"),
+      nit: c.provider_nit,
+      siigo: c.siigo_number,
+    })),
+    // Terceros: proveedores y los de los egresos ya registrados en Siigo (empleados, entidades).
+    terceros: [
+      ...provs.filter((p) => p.nit && p.name).map((p) => ({ nit: p.nit, nombre: p.name })),
+      ...hist
+        .filter((h) => h.provider_nit && h.provider_name)
+        .map((h) => ({ nit: String(h.provider_nit), nombre: String(h.provider_name) })),
+    ],
+    bancos: reglas.filter((r) => r.clase === "banco") as ReglaBanco[],
+    conceptos: reglas.filter((r) => r.clase === "concepto") as ReglaConcepto[],
+    precedente: hist.length ? aprenderEgresos(hist) : null,
+    puc: new Set(puc.map((p) => p.code)),
+  };
+}
+
+/** Guarda los pagos leídos del reporte: nuevos se insertan; los existentes actualizan sus datos de origen. */
+export async function guardarLectura(
+  db: Db,
+  companyId: string,
+  lectura: Pick<LecturaConsolidado, "periodo" | "egresos">,
+  archivo: string | null,
+): Promise<{ nuevos: number; actualizados: number; periodo: string | null }> {
+  if (!lectura.periodo) throw new Error("No se pudo determinar el mes del reporte de pagos.");
+  const existentes = await todas<{ clave: string; id: string; siigo_id: string | null }>((a, b) =>
+    db
+      .from("egresos")
+      .select("clave, id, siigo_id")
+      .eq("company_id", companyId)
+      .eq("period", lectura.periodo!)
+      .range(a, b),
+  );
+  const porClave = new Map(existentes.map((e) => [e.clave, e]));
+  const nuevos = lectura.egresos.filter((e) => !porClave.has(e.clave));
+  let actualizados = 0;
+  if (nuevos.length) {
+    for (let i = 0; i < nuevos.length; i += 500) {
+      const { error } = await db.from("egresos").insert(
+        nuevos.slice(i, i + 500).map((e) => ({
+          company_id: companyId,
+          period: lectura.periodo!,
+          origen: "excel",
+          origen_archivo: archivo,
+          clave: e.clave,
+          fila: e.fila,
+          fecha: e.fecha,
+          descripcion: e.descripcion,
+          tercero_nombre: e.tercero,
+          tercero_nit: e.terceroNit,
+          valor: e.valor,
+          cuenta_etiqueta: e.cuenta,
+          relacion: e.relacion,
+          aplicacion: e.aplicacion,
+          observaciones: e.observaciones,
+        })),
+      );
+      if (error) throw new Error(`No se guardaron los pagos: ${error.message}`);
+    }
+  }
+  // El equipo completa RELACIÓN / APLICACIÓN / OBSERVACIONES durante el mes: se actualizan
+  // (en lotes) los que cambiaron y aún no están en Siigo.
+  const completas = await todas<FilaEgreso>((a, b) =>
+    db
+      .from("egresos")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("period", lectura.periodo!)
+      .is("siigo_id", null)
+      .range(a, b),
+  );
+  const actual = new Map(completas.map((f) => [f.clave, f]));
+  const cambios: FilaEgreso[] = [];
+  for (const e of lectura.egresos) {
+    const f = actual.get(e.clave);
+    if (!f || !porClave.has(e.clave)) continue;
+    if (
+      f.tercero_nombre === e.tercero &&
+      f.relacion === e.relacion &&
+      f.aplicacion === e.aplicacion &&
+      f.observaciones === e.observaciones &&
+      f.fila === e.fila
+    )
+      continue;
+    cambios.push({
+      ...f,
+      tercero_nombre: e.tercero,
+      relacion: e.relacion,
+      aplicacion: e.aplicacion,
+      observaciones: e.observaciones,
+      fila: e.fila,
+    });
+  }
+  await guardarFilas(db, cambios);
+  actualizados = cambios.length;
+  return { nuevos: nuevos.length, actualizados, periodo: lectura.periodo };
+}
+
+/** Recalcula la propuesta de los egresos del mes que no están en Siigo ni editados a mano. */
+export async function proponerPeriodo(db: Db, companyId: string, periodo: string, ctx?: Contexto) {
+  const contexto = ctx ?? (await cargarContexto(db, companyId));
+  const filas = await todas<FilaEgreso>((a, b) =>
+    db
+      .from("egresos")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("period", periodo)
+      .is("siigo_id", null)
+      .range(a, b),
+  );
+  let listos = 0;
+  let porRevisar = 0;
+  const cambios: FilaEgreso[] = [];
+  for (const f of filas) {
+    if (f.editado_por_usuaria || ["enviando", "enviado", "aprobado"].includes(f.estado)) continue;
+    const p = proponerEgreso(movimientoDeFila(f), contexto);
+    const estado = p.tipo === "omitir" && p.listo ? "omitido" : p.listo ? "listo" : "por_revisar";
+    if (estado === "listo") listos += 1;
+    if (estado === "por_revisar") porRevisar += 1;
+    cambios.push({
+      ...f,
+      tipo: p.tipo,
+      propuesta: p,
+      estado,
+      motivos: p.motivos,
+      tercero_nit: p.terceroNit ?? f.tercero_nit,
+    });
+  }
+  await guardarFilas(db, cambios);
+  return { total: filas.length, listos, porRevisar };
+}
+
+/** Escribe filas completas en lotes (upsert por id): pocas llamadas aunque sean cientos de pagos. */
+async function guardarFilas(db: Db, filas: FilaEgreso[]) {
+  for (let i = 0; i < filas.length; i += 300) {
+    const lote = filas.slice(i, i + 300).filter((f) => !f.siigo_id);
+    if (!lote.length) continue;
+    const { error } = await db.from("egresos").upsert(lote, { onConflict: "id" });
+    if (error) throw new Error(`No se guardaron los egresos: ${error.message}`);
+  }
+}
+
+/** Aprende de una corrección de la usuaria: el concepto del pago queda con su tipo, cuenta y tercero. */
+export async function aprenderDeEdicion(db: Db, companyId: string, f: FilaEgreso, p: Propuesta) {
+  const patron = patronConcepto(movimientoDeFila(f));
+  if (p.tipo === "pago_facturas") return null; // las facturas son de cada pago, no un concepto
+  const cuentaDebito =
+    p.tipo === "detallado" ? (p.cuentas.find((c) => c.movimiento === "Debit")?.code ?? null) : null;
+  const { data: previa } = await db
+    .from("egreso_reglas")
+    .select("id, veces")
+    .eq("company_id", companyId)
+    .eq("clase", "concepto")
+    .eq("patron", patron)
+    .maybeSingle();
+  const fila = {
+    company_id: companyId,
+    clase: "concepto",
+    patron,
+    tipo: p.tipo,
+    cuenta_debito: cuentaDebito,
+    tercero_nit: p.terceroNit ? nitSinDv(p.terceroNit) : null,
+  };
+  if (previa)
+    await db
+      .from("egreso_reglas")
+      .update({ ...fila, veces: Number(previa.veces ?? 1) + 1 })
+      .eq("id", previa.id);
+  else await db.from("egreso_reglas").insert(fila);
+  return patron;
+}
+
+// ---------------------------------------------------------------------------
+// Siigo: cuentas por pagar
+// ---------------------------------------------------------------------------
+type DueSiigo = {
+  due?: {
+    prefix?: string;
+    consecutive?: number | string;
+    quote?: number | string;
+    date?: string;
+    balance?: number;
+  };
+  provider?: { identification?: number | string; name?: string };
+  cost_center?: { code?: string; name?: string };
+};
+
+export async function sincronizarCxP(db: Db, companyId: string) {
+  const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+  await siigoUseCompany(companyId);
+  const vencimientos: DueSiigo[] = [];
+  for (let page = 1; page <= 40; page++) {
+    const r = await siigoGet<
+      { results?: DueSiigo[]; pagination?: { total_results?: number } } | DueSiigo[]
+    >(`/v1/accounts-payable?page=${page}&page_size=100`);
+    const lista = Array.isArray(r) ? r : (r.results ?? []);
+    vencimientos.push(...lista);
+    const total = Array.isArray(r) ? lista.length : Number(r.pagination?.total_results ?? 0);
+    if (lista.length < 100 || (total && vencimientos.length >= total)) break;
+  }
+  const filas = vencimientos
+    .filter((v) => v.due?.prefix && v.due?.consecutive != null)
+    .map((v) => ({
+      company_id: companyId,
+      prefix: String(v.due!.prefix).trim(),
+      consecutive: Number(v.due!.consecutive),
+      quote: Number(v.due!.quote ?? 1) || 1,
+      due_date: v.due!.date ? String(v.due!.date).slice(0, 10) : null,
+      balance: Number(v.due!.balance ?? 0),
+      provider_nit: v.provider?.identification != null ? String(v.provider.identification) : null,
+      provider_name: v.provider?.name ?? null,
+      cost_center: v.cost_center?.code ?? null,
+      factura_proveedor: null as string | null,
+      invoice_id: null as string | null,
+      synced_at: new Date().toISOString(),
+    }));
+
+  // Factura del proveedor de cada vencimiento: primero las compras causadas desde la
+  // herramienta; las demás, de las compras de Siigo (provider_invoice).
+  const nombres = filas.map((f) => `${f.prefix}-${f.consecutive}`);
+  const propias = new Map<string, { id: string; factura: string }>();
+  for (let i = 0; i < nombres.length; i += 200) {
+    const { data } = await db
+      .from("invoices")
+      .select("id, prefix, number, siigo_number")
+      .eq("company_id", companyId)
+      .in("siigo_number", nombres.slice(i, i + 200));
+    for (const inv of (data ?? []) as Array<{
+      id: string;
+      prefix: string | null;
+      number: string | null;
+      siigo_number: string;
+    }>)
+      propias.set(inv.siigo_number.toUpperCase(), {
+        id: inv.id,
+        factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
+      });
+  }
+  for (const f of filas) {
+    const p = propias.get(`${f.prefix}-${f.consecutive}`.toUpperCase());
+    if (p) {
+      f.factura_proveedor = p.factura || null;
+      f.invoice_id = p.id;
+    }
+  }
+  const faltan = filas.filter((f) => !f.factura_proveedor);
+  let leidasSiigo = 0;
+  if (faltan.length) {
+    const fechas = faltan
+      .map((f) => f.due_date)
+      .filter((d): d is string => !!d)
+      .sort();
+    const desde = new Date(`${fechas[0] ?? new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+    desde.setUTCDate(desde.getUTCDate() - 120);
+    type Compra = {
+      name?: string;
+      provider_invoice?: { prefix?: string; number?: string | number };
+    };
+    const porNombre = new Map<string, string>();
+    for (let page = 1; page <= 15 && porNombre.size < faltan.length * 3; page++) {
+      let lista: Compra[] = [];
+      try {
+        const r = await siigoGet<{ results?: Compra[] } | Compra[]>(
+          `/v1/purchases?date_start=${desde.toISOString().slice(0, 10)}&page=${page}&page_size=100`,
+        );
+        lista = Array.isArray(r) ? r : (r.results ?? []);
+      } catch {
+        break;
+      }
+      for (const c of lista)
+        if (c.name && c.provider_invoice?.number != null)
+          porNombre.set(
+            c.name.toUpperCase(),
+            [c.provider_invoice.prefix, c.provider_invoice.number]
+              .filter((x) => x != null && String(x).trim())
+              .join("-"),
+          );
+      leidasSiigo += lista.length;
+      if (lista.length < 100) break;
+    }
+    for (const f of faltan)
+      f.factura_proveedor = porNombre.get(`${f.prefix}-${f.consecutive}`.toUpperCase()) ?? null;
+  }
+
+  const inicio = new Date().toISOString();
+  for (let i = 0; i < filas.length; i += 500) {
+    const { error } = await db
+      .from("siigo_cuentas_por_pagar")
+      .upsert(filas.slice(i, i + 500), { onConflict: "company_id,prefix,consecutive,quote" });
+    if (error) throw new Error(`No se guardaron las cuentas por pagar: ${error.message}`);
+  }
+  // Lo que ya no aparece en Siigo está pagado.
+  await db
+    .from("siigo_cuentas_por_pagar")
+    .delete()
+    .eq("company_id", companyId)
+    .lt("synced_at", inicio);
+  return {
+    vencimientos: filas.length,
+    saldo: Math.round(filas.reduce((s, f) => s + f.balance, 0) * 100) / 100,
+    sinFactura: filas.filter((f) => !f.factura_proveedor).length,
+    comprasLeidas: leidasSiigo,
+  };
+}
+
+/** Sugerencia de cuenta de banco/caja y forma de pago para cada origen de pago aún sin regla. */
+export async function sugerirBancos(db: Db, companyId: string, etiquetas: string[]) {
+  const { data: formas } = await db
+    .from("siigo_payment_types")
+    .select("siigo_id, name, account_code, account_name, active, due_date_required")
+    .eq("company_id", companyId);
+  const { data: reglas } = await db
+    .from("egreso_reglas")
+    .select("patron")
+    .eq("company_id", companyId)
+    .eq("clase", "banco");
+  const conRegla = new Set(
+    ((reglas ?? []) as Array<{ patron: string }>).map((r) => r.patron.toUpperCase()),
+  );
+  const activas = (
+    (formas ?? []) as Array<{
+      siigo_id: string;
+      name: string;
+      account_code: string | null;
+      account_name: string | null;
+      active: boolean;
+      due_date_required: boolean;
+    }>
+  ).filter(
+    (f) =>
+      f.active !== false &&
+      !f.due_date_required &&
+      f.account_code &&
+      /^11(05|10|20)/.test(f.account_code),
+  );
+  const creadas: string[] = [];
+  for (const etiqueta of [...new Set(etiquetas.filter(Boolean))]) {
+    const k = etiqueta.toUpperCase().trim();
+    if (conRegla.has(k)) continue;
+    const palabra =
+      k === "EFECTIVO" || k === "CAJA"
+        ? /EFECTIVO|CAJA/
+        : new RegExp(
+            k
+              .replace(/[^A-Z0-9 ]/g, "")
+              .split(" ")
+              .filter((w) => w.length > 3)
+              .join("|") || "^$",
+          );
+    const candidatas = activas.filter((f) =>
+      palabra.test(`${f.name} ${f.account_name ?? ""}`.toUpperCase()),
+    );
+    if (candidatas.length !== 1) continue;
+    const c = candidatas[0]!;
+    const { error } = await db.from("egreso_reglas").insert({
+      company_id: companyId,
+      clase: "banco",
+      patron: k,
+      cuenta_banco: c.account_code,
+      payment_type_id: c.siigo_id,
+      notas: `Sugerida: forma de pago «${c.name}» (${c.account_code}). Cámbiala si no corresponde.`,
+    });
+    if (!error) creadas.push(`${k} → ${c.name}`);
+  }
+  return creadas;
+}

@@ -25,6 +25,10 @@ export const LED_LIGHTS: PerfilEmpresa = {
     // Instrucción del 2026-11-11: el IVA de las compras va al descontable 2408; la cuenta
     // 621008 (IVA del costo) casi no se usa y no debe elegirse sola.
     iva_solo_descontable: true,
+    // Instrucción del 2026-11-11: los pagos del mes vienen en el Excel «<MES> <AÑO>» de la
+    // carpeta del mes en Drive (hojas por banco y efectivo, y «Consolidado» con la columna
+    // de observaciones que indica cómo hacer cada recibo de pago).
+    lector_consolidado_pagos: true,
   },
   notas: [
     "Software contable: Siigo (comprobantes CE-1, RC-1, FC-1).",
@@ -33,6 +37,7 @@ export const LED_LIGHTS: PerfilEmpresa = {
     "Impoconsumo (INC): no se causa aparte; se suma a la cuenta de gasto o costo de la compra.",
     "Compras de inventario: renglón tipo producto con el producto del catálogo y cuenta 14 (1435 / 1498); productos nuevos se crean en Siigo al causar.",
     "INC, recargo y descuento global del documento se reparten en el valor de los ítems (proporcional); subtotal = suma de los ítems.",
+    "Egresos: Excel mensual «<MES> <AÑO>» en la carpeta del mes (hoja Consolidado: CUENTA, RELACIÓN, APLICACIÓN, OBSERVACIONES); los recibos de pago (RP) se proponen desde ahí.",
     "IVA de compras: siempre descontable 2408 (compras, servicios, gastos, importación); 621008 solo si se elige a mano.",
   ],
 };

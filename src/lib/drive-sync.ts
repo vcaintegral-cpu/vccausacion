@@ -141,6 +141,16 @@ export function esHojaDeCalculo(nombre: string, mimeType: string | null | undefi
 
 export type Proposito = "compras" | "egresos";
 
+export const HOJA_GOOGLE = "application/vnd.google-apps.spreadsheet";
+
+/** Nombre de reporte mensual: mes completo y año («OCTUBRE 2026», «Octubre 2026.xlsx»), no un extracto. */
+export function esReporteDeMes(nombre: string): boolean {
+  const n = normalizar(nombre.replace(/\.(xlsx|xls|xlsm|csv)$/i, "")).replace(/[^A-Z0-9 ]/g, " ");
+  if (/EXTRACTO|CORRIENTE|AHORRO|NOMINA|FORMATO|VENTAS|RECIBIDOS/.test(n)) return false;
+  const palabras = n.split(/\s+/);
+  return palabras.some((p) => mesPorNombre(p) !== null) && palabras.some((p) => /^20\d{2}$/.test(p));
+}
+
 /**
  * Qué hace el importador con cada archivo según la carpeta:
  * - compras: PDF → carga masiva (lectura IA); Excel → RECIBIDOS (sin IA).
@@ -151,10 +161,13 @@ export function tipoDeArchivo(
   proposito: Proposito,
   nombre: string,
   mimeType: string | null | undefined,
-): "factura_pdf" | "recibidos_excel" | "soporte_pago" | "extracto" | null {
+): "factura_pdf" | "recibidos_excel" | "soporte_pago" | "extracto" | "relacion_pagos" | null {
   const pdf = esPdf(nombre, mimeType);
   const hoja = esHojaDeCalculo(nombre, mimeType);
   if (proposito === "compras") return pdf ? "factura_pdf" : hoja ? "recibidos_excel" : null;
+  // Reporte mensual de pagos («OCTUBRE 2026», Excel u hoja de Google): se lee como
+  // relación de pagos si la empresa tiene configurado su lector; si no, queda como extracto.
+  if ((hoja || mimeType === HOJA_GOOGLE) && esReporteDeMes(nombre)) return "relacion_pagos";
   if (hoja || (pdf && /extracto/i.test(sinTildes(nombre)))) return "extracto";
   return pdf ? "soporte_pago" : null;
 }
