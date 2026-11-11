@@ -9,7 +9,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toCents } from "@/lib/money";
-import type { SourceValues } from "@/lib/source-values";
+import { sourceErrors, type SourceValues } from "@/lib/source-values";
+import { recalcularCuentasBorrador } from "@/lib/bulk-invoices";
+import { invalidateBulkDeps, loadDeps } from "@/lib/bulk-runner";
 
 export function SourceValuesCorrection({ invoiceId, companyId, source }: { invoiceId: string; companyId: string; source: SourceValues }) {
   const [open, setOpen] = useState(false);
@@ -26,18 +28,34 @@ export function SourceValuesCorrection({ invoiceId, companyId, source }: { invoi
     try {
       const { error } = await supabase.rpc("correct_invoice_source_values", { _invoice_id: invoiceId, _values: values as never, _reason: reason.trim() });
       if (error) throw error;
+      // El asiento se recalcula de inmediato con los valores corregidos (antes quedaba el
+      // asiento anterior y la aprobación seguía bloqueada).
+      invalidateBulkDeps(companyId);
+      const { config } = await loadDeps(companyId);
+      const r = await recalcularCuentasBorrador(invoiceId, config);
+      if (!r.ok) toast.error(`Valores corregidos, pero el asiento no se pudo recalcular: ${r.message}`);
       window.location.reload();
     } catch (error) { toast.error(error instanceof Error ? error.message : "No se pudo corregir el valor."); }
     finally { setBusy(false); }
   }
+  // Verificación en vivo: lo que impediría aprobar con estos valores.
+  const pendientes = sourceErrors(values);
   if (!permission) return null;
   return <>
     <Button variant="outline" size="sm" onClick={() => { setValues(source); setOpen(true); }}><Pencil className="size-4" /> Corregir valores con motivo</Button>
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[85vh] overflow-y-auto"><DialogHeader><DialogTitle>Corrección autorizada de valores</DialogTitle></DialogHeader>
       <div className="grid grid-cols-2 gap-3">{(["subtotal", "iva", "impoconsumo", "discount", "surcharge", "total"] as const).map(field => <div key={field}><Label>{({ subtotal: "Subtotal", iva: "IVA", impoconsumo: "INC", discount: "Descuento global", surcharge: "Recargo global", total: "Total" })[field]}</Label><Input type="number" step="0.01" value={values[field] / 100} onChange={e => setValues({ ...values, [field]: toCents(e.target.value) })} /></div>)}</div>
       {values.lines.map((line, i) => <div key={i} className="grid grid-cols-3 gap-2"><div className="col-span-3 text-sm font-medium">Línea {i + 1}</div>{(["subtotal", "iva", "impoconsumo"] as const).map(field => <div key={field}><Label>{field === "impoconsumo" ? "INC" : field === "iva" ? "IVA" : "Subtotal"}</Label><Input type="number" step="0.01" value={line[field] / 100} onChange={e => setValues({ ...values, lines: values.lines.map((l, j) => j === i ? { ...l, [field]: toCents(e.target.value) } : l) })} /></div>)}</div>)}
+      {pendientes.length ? (
+        <ul className="list-disc space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-3 pl-6 text-xs text-destructive">
+          {pendientes.map((p) => <li key={p}>{p}</li>)}
+          <li>Subtotal + IVA + INC − descuento + recargo debe ser igual al total; el INC puede ir solo en el total (líneas en 0).</li>
+        </ul>
+      ) : (
+        <p className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-2 text-xs text-emerald-700">Los valores cuadran con el total del documento. Al guardar se recalcula el asiento.</p>
+      )}
       <div><Label>Motivo obligatorio</Label><Textarea value={reason} onChange={e => setReason(e.target.value)} /></div>
-      <Button disabled={busy || !reason.trim()} onClick={() => void save()}><Save className="size-4" /> Guardar corrección</Button>
+      <Button disabled={busy || !reason.trim() || pendientes.length > 0} onClick={() => void save()}><Save className="size-4" /> Guardar corrección</Button>
     </DialogContent></Dialog>
   </>;
 }

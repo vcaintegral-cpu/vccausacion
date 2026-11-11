@@ -33,7 +33,10 @@ export function sourceFromRaw(raw: unknown): SourceValues | null {
 export function sourceErrors(s: SourceValues): string[] {
   const errors: string[] = [];
   for (const field of ["subtotal", "iva", "impoconsumo"] as const) {
-    if (s.lines.reduce((sum, l) => sum + l[field], 0) !== s[field]) errors.push(`Diferencia con la fuente: suma de ${field === "impoconsumo" ? "INC" : field} de las líneas.`);
+    const lineas = s.lines.reduce((sum, l) => sum + l[field], 0);
+    // El INC puede venir solo en el total del documento (sin discriminar por renglón).
+    if (field === "impoconsumo" && lineas === 0) continue;
+    if (lineas !== s[field]) errors.push(`Diferencia con la fuente: suma de ${field === "impoconsumo" ? "INC" : field} de las líneas.`);
   }
   if (Math.abs(s.subtotal + s.iva + s.impoconsumo - s.discount + s.surcharge - s.total) > 100)
     errors.push("Diferencia con la fuente: subtotal + impuestos − descuento + recargo no coincide con el total.");
@@ -65,7 +68,11 @@ export function validateStoredJournal(inv: { source_override?: unknown; raw_extr
   }
   if (source) {
     const baseDebits = sumCents(journal.filter(l => l.account_code !== "42958101").map(l => l.debit));
-    if (baseDebits !== source.subtotal + source.iva + source.impoconsumo)
+    // El recargo global del documento también es un débito (se suma a la cuenta del ítem principal).
+    // (un recargo de $1 o menos puede ir, en cambio, al ajuste al peso 42958101).
+    const sinRecargo = source.subtotal + source.iva + source.impoconsumo;
+    const conRecargo = sinRecargo + (source.surcharge ?? 0);
+    if (baseDebits !== conRecargo && !(baseDebits === sinRecargo && Math.abs(source.surcharge ?? 0) <= 100))
       errors.push("Diferencia con la fuente: los débitos no conservan los importes de la factura.");
   }
   return errors;

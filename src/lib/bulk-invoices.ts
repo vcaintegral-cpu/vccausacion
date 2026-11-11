@@ -726,8 +726,13 @@ export async function computeDraftAccounting(params: {
     (ivaDecision && ivaDecision.treatment !== "descontable"
       ? applyIvaTreatment([{ account_code: "", account_name: "IVA", amount: ivaTotal }], ivaDecision)
       : ivaPorImpuesto);
+  // Recargo global del documento: mayor valor de lo facturado en la cuenta del ítem principal.
+  const recargo = roundCOP(Number((header as { surcharge?: number }).surcharge ?? 0));
+  if (recargo > 0)
+    alertas.push(`Recargo del documento de ${recargo.toLocaleString("es-CO")} pesos sumado a la cuenta del ítem de mayor valor.`);
   let journal = buildJournal({
     lines,
+    recargo,
     permitirInventario: inventario,
     iva: ivaTotal,
     impoconsumo: Number(header.impoconsumo || 0),

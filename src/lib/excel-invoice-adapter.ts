@@ -51,7 +51,13 @@ export function excelDocToExtracted(doc: PurchaseDocument): ExtractedInvoice {
     notes: h.notes || null,
     subtotal: h.subtotal,
     discount: h.discount,
-    surcharge: h.surcharge,
+    // Recargo: el global del encabezado; si el total del documento solo cuadra sumando los
+    // recargos de los renglones (no incluidos en el subtotal), también esos.
+    surcharge: (() => {
+      const recargoRenglones = doc.lines.reduce((s, l) => s + Number(l.surcharge || 0), 0);
+      const falta = h.total - (h.subtotal + h.iva + h.impoconsumo - h.discount + h.surcharge);
+      return recargoRenglones > 0 && Math.abs(falta - recargoRenglones) <= 1 ? h.surcharge + recargoRenglones : h.surcharge;
+    })(),
     iva: h.iva,
     impoconsumo: h.impoconsumo,
     retefuente: h.retefuente,
