@@ -714,7 +714,10 @@ function Causar() {
   }, [payableBase, config?.accounts, payableManual]);
   // El impoconsumo se registra en la cuenta auxiliar configurada, nunca en la mayor.
   // Perfil de la empresa: el INC se suma al gasto/costo (p. ej. LED LIGHTS).
-  const incAlGasto = usePerfilActivo().funcion("impoconsumo_al_gasto");
+  const perfilActivo = usePerfilActivo();
+  const incAlGasto = perfilActivo.funcion("impoconsumo_al_gasto");
+  // Compras de inventario (p. ej. LED LIGHTS): los renglones de producto conservan su cuenta 14.
+  const cuentasInventario = perfilActivo.funcion("productos_inventario");
   const impoconsumoCuenta = useMemo(
     () => resolveImpoconsumoAccount(impuestos as TaxRecord[], (config?.accounts ?? []) as PucAccount[]),
     [impuestos, config?.accounts],
@@ -731,8 +734,9 @@ function Causar() {
         payableAccount: payable,
         impoconsumoAccount: impoconsumoCuenta,
         impoconsumoAlGasto: incAlGasto,
+        permitirInventario: cuentasInventario,
       })),
-    [source, lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaDetalle, costPolicy, payable, impoconsumoCuenta, incAlGasto],
+    [source, lines, ivaTotal, header.impoconsumo, header.cost_center, retenciones, ivaDetalle, costPolicy, payable, impoconsumoCuenta, cuentasInventario, incAlGasto],
   );
   const operationalJournal = useMemo(() => {
     const puc = (config?.accounts ?? []) as PucAccount[];
