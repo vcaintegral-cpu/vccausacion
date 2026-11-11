@@ -779,6 +779,12 @@ function Egresos() {
                         ) : null}
                       </div>
                     ))}
+                    {f.propuesta?.anticipo ? (
+                      <div>
+                        Anticipo (excedente) débito {f.propuesta.anticipo.cuenta}:{" "}
+                        {cop(f.propuesta.anticipo.valor)}
+                      </div>
+                    ) : null}
                     {f.propuesta?.ajuste ? (
                       <div>
                         Ajuste al peso {f.propuesta.ajuste.valor > 0 ? "débito" : "crédito"}{" "}
@@ -981,9 +987,23 @@ function EditarEgreso({
   const [aprender, setAprender] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const valor = Number(fila.valor);
-  const delTercero = cxp.filter(
-    (c) => !nit || String(c.provider_nit ?? "") === nit.replace(/\D/g, ""),
-  );
+  const [buscarFactura, setBuscarFactura] = useState("");
+  // Con texto en el buscador se busca en todas las CxP (NIT, nombre, factura o FC); sin texto,
+  // las del NIT del tercero. Las facturas ya elegidas siempre se muestran.
+  const q = buscarFactura.trim().toUpperCase().replace(/\s+/g, "");
+  const elegidas = new Set(items.map((i) => `${i.prefix}-${i.consecutive}-${i.quote}`));
+  const delTercero = cxp.filter((c) => {
+    if (elegidas.has(`${c.prefix}-${c.consecutive}-${c.quote}`)) return true;
+    if (q.length >= 2)
+      return [c.provider_nit, c.provider_name, c.factura_proveedor, `${c.prefix}-${c.consecutive}`]
+        .map((x) =>
+          String(x ?? "")
+            .toUpperCase()
+            .replace(/\s+/g, ""),
+        )
+        .some((x) => x.includes(q));
+    return !nit || String(c.provider_nit ?? "") === nit.replace(/\D/g, "");
+  });
   const suma = items.reduce((s, i) => s + Number(i.valor || 0), 0);
 
   const onGuardar = async () => {
@@ -1168,8 +1188,15 @@ function EditarEgreso({
           {tipo === "pago_facturas" ? (
             <div className="space-y-1">
               <div className="font-medium">
-                Facturas a pagar (cuentas por pagar de Siigo{nit ? ` del NIT ${nit}` : ""})
+                Facturas a pagar (cuentas por pagar de Siigo
+                {nit && q.length < 2 ? ` del NIT ${nit}` : ""})
               </div>
+              <Input
+                className="h-7"
+                placeholder="Buscar factura por NIT, nombre del proveedor, número de factura o FC"
+                value={buscarFactura}
+                onChange={(e) => setBuscarFactura(e.target.value)}
+              />
               <div className="max-h-64 overflow-auto rounded border">
                 {delTercero.slice(0, 200).map((c) => {
                   const k = `${c.prefix}-${c.consecutive}-${c.quote}`;
@@ -1178,7 +1205,9 @@ function EditarEgreso({
                     <div key={k} className="flex items-center gap-2 border-b px-2 py-1">
                       <Checkbox
                         checked={!!it}
-                        onCheckedChange={(v) =>
+                        onCheckedChange={(v) => {
+                          // Sin NIT del tercero, se toma el del proveedor de la factura elegida.
+                          if (v && !nit && c.provider_nit) setNit(String(c.provider_nit));
                           setItems((xs) =>
                             v
                               ? [
@@ -1193,8 +1222,8 @@ function EditarEgreso({
                                   },
                                 ]
                               : xs.filter((x) => `${x.prefix}-${x.consecutive}-${x.quote}` !== k),
-                          )
-                        }
+                          );
+                        }}
                       />
                       <span className="w-40">
                         {c.factura_proveedor ?? "—"} ({c.prefix}-{c.consecutive})
@@ -1232,6 +1261,12 @@ function EditarEgreso({
               >
                 Aplicado {cop(suma)} de {cop(valor)}
               </div>
+              {valor - suma > 1000 && items.length ? (
+                <div className="text-blue-700">
+                  Al guardar, el excedente de {cop(valor - suma)} (pago mayor que las facturas) se
+                  lleva a anticipos del proveedor, en la cuenta de anticipos de la empresa.
+                </div>
+              ) : null}
               {Math.abs(valor - suma) >= 0.01 && Math.abs(valor - suma) <= 1000 ? (
                 <div className="text-blue-700">
                   Al guardar se agrega un ajuste al peso{" "}
@@ -1301,11 +1336,17 @@ function CuentasAjuste({
     queryKey: ["egreso-ajustes", companyId],
     queryFn: () => leer({ data: { companyId } }),
   });
-  const [form, setForm] = useState<{ debito: string; credito: string; cxp: string } | null>(null);
+  const [form, setForm] = useState<{
+    debito: string;
+    credito: string;
+    cxp: string;
+    anticipo: string;
+  } | null>(null);
   const v = form ?? {
     debito: cuentas.data?.debito ?? "",
     credito: cuentas.data?.credito ?? "",
     cxp: cuentas.data?.cxp ?? "",
+    anticipo: cuentas.data?.anticipo ?? "",
   };
   const onGuardar = async () => {
     try {
@@ -1315,6 +1356,7 @@ function CuentasAjuste({
           debito: v.debito || null,
           credito: v.credito || null,
           cxp: v.cxp || null,
+          anticipo: v.anticipo || null,
           periodo,
         },
       });
@@ -1326,7 +1368,7 @@ function CuentasAjuste({
       toast.error(e instanceof Error ? e.message : String(e));
     }
   };
-  const campo = (k: "debito" | "credito" | "cxp", etiqueta: string) => (
+  const campo = (k: "debito" | "credito" | "cxp" | "anticipo", etiqueta: string) => (
     <label className="flex items-center gap-1">
       {etiqueta}
       <Input
@@ -1348,6 +1390,7 @@ function CuentasAjuste({
         {campo("debito", "Débito (pagó de más)")}
         {campo("credito", "Crédito (pagó de menos)")}
         {campo("cxp", "CxP cruzada")}
+        {campo("anticipo", "Anticipos (excedente)")}
         <Button size="sm" variant="outline" className="h-7" onClick={onGuardar} disabled={!form}>
           Guardar
         </Button>

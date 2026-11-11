@@ -85,6 +85,8 @@ export type Propuesta = {
    * de menos). Pago = suma de las facturas + ajuste. Con ajuste, el RP va detallado.
    */
   ajuste?: { valor: number; cuenta: string } | null;
+  /** Parte del pago que excede las facturas: anticipo al proveedor (débito, cuenta 1330…). */
+  anticipo?: { valor: number; cuenta: string } | null;
   /** Cuenta por pagar que se cruza en el RP detallado (p. ej. 22050501). */
   cuentaCxp?: string | null;
 };
@@ -525,7 +527,40 @@ export type AjustesRecibo = {
   credito: string | null;
   cxp: string | null;
   tope: number;
+  /** Cuenta de anticipos a proveedores (1330…) para el excedente del pago. */
+  anticipo?: string | null;
 };
+
+/**
+ * Diferencia entre el pago y las facturas elegidas: hasta el tope es ajuste al peso; si se
+ * pagó MÁS por encima del tope, el excedente es un anticipo al proveedor.
+ */
+export function diferenciaDelPago(
+  pago: number,
+  sumaFacturas: number,
+  cuentas: AjustesRecibo | undefined,
+): {
+  ajuste: { valor: number; cuenta: string } | null;
+  anticipo: { valor: number; cuenta: string } | null;
+  error: string | null;
+} {
+  const dif = roundCOP(roundCOP(pago) - roundCOP(sumaFacturas));
+  const tope = cuentas?.tope ?? 1000;
+  if (dif > tope) {
+    if (!cuentas?.anticipo)
+      return {
+        ajuste: null,
+        anticipo: null,
+        error: "Falta la cuenta de anticipos a proveedores para el excedente del pago.",
+      };
+    return { ajuste: null, anticipo: { valor: dif, cuenta: cuentas.anticipo }, error: null };
+  }
+  const aj = ajusteAlPesoRecibo(pago, sumaFacturas, cuentas);
+  if (!aj) return { ajuste: null, anticipo: null, error: null };
+  return "valor" in aj
+    ? { ajuste: aj, anticipo: null, error: null }
+    : { ajuste: null, anticipo: null, error: aj.error };
+}
 
 /**
  * Ajuste al peso para que el recibo cuadre con el banco: pago − suma de facturas, dentro
@@ -853,7 +888,10 @@ export function payloadRecibo(
     .replace(/\s+/g, " ")
     .slice(0, 250);
   const supplier = { identification: String(p.terceroNit ?? ""), branch_office: 0 };
-  if (p.tipo === "pago_facturas" && p.ajuste && Math.abs(p.ajuste.valor) >= 0.01) {
+  if (
+    p.tipo === "pago_facturas" &&
+    ((p.ajuste && Math.abs(p.ajuste.valor) >= 0.01) || (p.anticipo && p.anticipo.valor >= 0.01))
+  ) {
     // Con ajuste al peso: RP detallado. Débito a la CxP cruzando cada vencimiento (crédito si
     // es un saldo a favor), el ajuste y el crédito al banco por lo pagado.
     const items: Array<Record<string, unknown>> = p.items.map((i) => ({
@@ -862,11 +900,18 @@ export function payloadRecibo(
       description: `Pago ${i.factura ?? `${i.prefix}-${i.consecutive}`}`.slice(0, 100),
       value: roundCOP(Math.abs(i.valor)),
     }));
-    items.push({
-      account: { code: p.ajuste.cuenta, movement: p.ajuste.valor > 0 ? "Debit" : "Credit" },
-      description: "Ajuste al peso",
-      value: roundCOP(Math.abs(p.ajuste.valor)),
-    });
+    if (p.ajuste && Math.abs(p.ajuste.valor) >= 0.01)
+      items.push({
+        account: { code: p.ajuste.cuenta, movement: p.ajuste.valor > 0 ? "Debit" : "Credit" },
+        description: "Ajuste al peso",
+        value: roundCOP(Math.abs(p.ajuste.valor)),
+      });
+    if (p.anticipo && p.anticipo.valor >= 0.01)
+      items.push({
+        account: { code: p.anticipo.cuenta, movement: "Debit" },
+        description: "Anticipo (excedente del pago)",
+        value: roundCOP(p.anticipo.valor),
+      });
     items.push({
       account: { code: String(p.cuentaBanco ?? ""), movement: "Credit" },
       description: observaciones.slice(0, 100) || "Pago",
@@ -932,15 +977,16 @@ export function erroresAntesDeEnviar(
     if (!p.items.length) e.push("No hay facturas a las que aplicar el pago.");
     const suma = roundCOP(p.items.reduce((s, i) => s + i.valor, 0));
     const ajuste = roundCOP(p.ajuste?.valor ?? 0);
-    if (Math.abs(suma + ajuste - valor) > 0.009)
+    const anticipo = roundCOP(p.anticipo?.valor ?? 0);
+    if (Math.abs(suma + ajuste + anticipo - valor) > 0.009)
       e.push(
-        `Las facturas suman ${suma.toLocaleString("es-CO")}${ajuste ? ` más el ajuste al peso de ${ajuste.toLocaleString("es-CO")}` : ""} y el pago es ${valor.toLocaleString("es-CO")}.`,
+        `Las facturas suman ${suma.toLocaleString("es-CO")}${ajuste ? ` más el ajuste al peso de ${ajuste.toLocaleString("es-CO")}` : ""}${anticipo ? ` más el anticipo de ${anticipo.toLocaleString("es-CO")}` : ""} y el pago es ${valor.toLocaleString("es-CO")}.`,
       );
-    if (ajuste) {
-      if (!p.ajuste?.cuenta) e.push("Falta la cuenta del ajuste al peso.");
-      if (!p.cuentaCxp)
-        e.push("Falta la cuenta por pagar que se cruza en el recibo con ajuste al peso.");
-      if (!p.cuentaBanco) e.push("Falta la cuenta de banco/caja del recibo con ajuste al peso.");
+    if (ajuste && !p.ajuste?.cuenta) e.push("Falta la cuenta del ajuste al peso.");
+    if (anticipo && !p.anticipo?.cuenta) e.push("Falta la cuenta de anticipos a proveedores.");
+    if (ajuste || anticipo) {
+      if (!p.cuentaCxp) e.push("Falta la cuenta por pagar que se cruza en el recibo detallado.");
+      if (!p.cuentaBanco) e.push("Falta la cuenta de banco/caja del recibo detallado.");
     }
     for (const i of p.items)
       if (i.valor > i.saldo + 0.009)
@@ -949,7 +995,8 @@ export function erroresAntesDeEnviar(
         );
   }
   if (
-    (p.tipo === "anticipo" || (p.tipo === "pago_facturas" && !p.ajuste?.valor)) &&
+    (p.tipo === "anticipo" ||
+      (p.tipo === "pago_facturas" && !p.ajuste?.valor && !p.anticipo?.valor)) &&
     !p.paymentTypeId
   )
     e.push("Falta la forma de pago de Siigo.");

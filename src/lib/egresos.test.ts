@@ -746,3 +746,72 @@ describe("ajuste al peso del recibo de pago", () => {
     expect(p.listo).toBe(true);
   });
 });
+
+describe("excedente del pago como anticipo al proveedor", () => {
+  const cuentas = {
+    debito: "53958101",
+    credito: "42958101",
+    cxp: "22050501",
+    anticipo: "13300501",
+    tope: 1000,
+  };
+  it("hasta el tope es ajuste al peso; por encima, si se pagó de más, es anticipo", async () => {
+    const { diferenciaDelPago } = await import("./egresos");
+    expect(diferenciaDelPago(100500, 100000, cuentas)).toEqual({
+      ajuste: { valor: 500, cuenta: "53958101" },
+      anticipo: null,
+      error: null,
+    });
+    expect(diferenciaDelPago(2500000, 600000, cuentas)).toEqual({
+      ajuste: null,
+      anticipo: { valor: 1900000, cuenta: "13300501" },
+      error: null,
+    });
+    expect(diferenciaDelPago(2500000, 600000, { ...cuentas, anticipo: null }).error).toMatch(
+      /anticipos/,
+    );
+    // Pagó de menos por encima del tope: no es anticipo, queda por revisar.
+    expect(diferenciaDelPago(500000, 600000, cuentas).error).toMatch(/tope/);
+  });
+  it("RP detallado: CxP de la factura, anticipo por el excedente y crédito al banco", async () => {
+    const { cuentaAnticipoProveedores } = await import("./egresos.server");
+    expect(
+      cuentaAnticipoProveedores([
+        { code: "1330", name: "Anticipos y avances" },
+        { code: "13300501", name: "A proveedores" },
+        { code: "13301001", name: "A contratistas" },
+      ]),
+    ).toBe("13300501");
+    const m = mov({ valor: 2500000, relacion: "DS-417" });
+    const p = {
+      ...proponerEgreso(m, ctx()),
+      tipo: "pago_facturas" as const,
+      terceroNit: "900111222",
+      items: [
+        {
+          prefix: "DS",
+          consecutive: 417,
+          quote: 1,
+          valor: 600000,
+          factura: "DS-417",
+          saldo: 600000,
+        },
+      ],
+      ajuste: null,
+      anticipo: { valor: 1900000, cuenta: "13300501" },
+      cuentaCxp: "22050501",
+      cuentaBanco: "11100501",
+    };
+    expect(erroresAntesDeEnviar(m, p)).toEqual([]);
+    const payload = payloadRecibo(m, p, 77) as {
+      type: string;
+      items: Array<{ account: { code: string; movement: string }; value: number }>;
+    };
+    expect(payload.type).toBe("Detailed");
+    expect(payload.items.map((i) => [i.account.code, i.account.movement, i.value])).toEqual([
+      ["22050501", "Debit", 600000],
+      ["13300501", "Debit", 1900000],
+      ["11100501", "Credit", 2500000],
+    ]);
+  });
+});

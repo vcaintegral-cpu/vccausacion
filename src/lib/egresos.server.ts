@@ -119,7 +119,7 @@ export async function cargarAjustes(db: Db, companyId: string) {
         .from("puc_accounts")
         .select("code, name")
         .eq("company_id", companyId)
-        .or("code.like.5395%,code.like.4295%")
+        .or("code.like.5395%,code.like.4295%,code.like.1330%")
         .range(a, b),
     ),
     db
@@ -141,8 +141,29 @@ export async function cargarAjustes(db: Db, companyId: string) {
     debito: regla("cuenta:ajuste_debito") ?? cuentaAjustePeso(puc, "5395"),
     credito: regla("cuenta:ajuste_credito") ?? cuentaAjustePeso(puc, "4295"),
     cxp: regla("cuenta:cxp") ?? [...usos].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null,
+    anticipo: regla("cuenta:anticipo") ?? cuentaAnticipoProveedores(puc),
     tope: 1000,
   };
+}
+
+/** Cuenta auxiliar de anticipos a proveedores (1330…) del PUC: la que dice «proveedor», o la única. */
+export function cuentaAnticipoProveedores(
+  puc: Array<{ code: string; name: string | null }>,
+): string | null {
+  const codigos = new Set(puc.map((p) => p.code));
+  const hojas = puc.filter(
+    (p) =>
+      p.code.startsWith("1330") && ![...codigos].some((c) => c !== p.code && c.startsWith(p.code)),
+  );
+  const nombre = (p: { name: string | null }) =>
+    String(p.name ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase();
+  const proveedores = hojas.filter((p) => /PROVEEDOR/.test(nombre(p)));
+  if (proveedores.length >= 1)
+    return proveedores.sort((a, b) => a.code.localeCompare(b.code))[0]!.code;
+  return hojas.length === 1 ? hojas[0]!.code : null;
 }
 
 /** Contexto para proponer: CxP, terceros, reglas, precedente del auxiliar y facturas causadas. */
