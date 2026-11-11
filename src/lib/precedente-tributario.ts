@@ -326,6 +326,9 @@ export function construirPrecedentes(input: {
   return out;
 }
 
+/** Cuenta de IVA descontable (2408…): compras, servicios, gastos, importación. */
+export const esIvaDescontable = (cuenta: string | null | undefined) => /^2408/.test(String(cuenta ?? "").trim());
+
 export function precedenteDe(
   precedentes: PrecedentesEmpresa | null | undefined,
   nit: string | null | undefined,
@@ -349,10 +352,14 @@ export function elegirIva(params: {
   taxes: ImpuestoConfigurado[];
   linea: { iva: number; iva_rate: number | null; base: number };
   precedente: PrecedenteProveedor | null;
+  /** Solo IVA descontable (cuentas 2408) cuando hay alguno configurado (función por empresa). */
+  soloDescontable?: boolean;
 }): EleccionIva {
   const { linea, precedente } = params;
   if (!(linea.iva > 0)) return { tax: null, motivo: "" };
-  const activos = params.taxes.filter((t) => t.kind === "iva" && t.active !== false);
+  const todosIva = params.taxes.filter((t) => t.kind === "iva" && t.active !== false);
+  const descontables = todosIva.filter((t) => esIvaDescontable(t.account_code));
+  const activos = params.soloDescontable && descontables.length ? descontables : todosIva;
   const usos = precedente?.iva ?? [];
   const puntaje = (t: ImpuestoConfigurado) =>
     usos

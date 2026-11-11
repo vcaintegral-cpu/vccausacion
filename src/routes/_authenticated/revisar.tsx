@@ -401,8 +401,22 @@ function Revisar() {
       taxAccount: ivaGroups.groups[0]?.account_code ?? null,
     });
   }, [ivaConfig, ivaEvidence, header?.provider_nit, lines, puc, ivaGroups.groups]);
+  // Perfil de la empresa: el IVA va siempre a una cuenta descontable 2408 (p. ej. LED LIGHTS).
+  const ivaSoloDescontable = usePerfilActivo().funcion("iva_solo_descontable");
   const ivaFinal = useMemo<IvaTreatmentDecision | null>(() => {
     if (!ivaDecision) return null;
+    if (!ivaOverride && ivaSoloDescontable) {
+      const cuenta2408 = ivaGroups.groups.find((g) => /^2408/.test(g.account_code))?.account_code ?? null;
+      if (ivaDecision.treatment !== "descontable" || (ivaDecision.account && !/^2408/.test(ivaDecision.account)))
+        return {
+          ...ivaDecision,
+          treatment: "descontable",
+          account: cuenta2408 ?? ivaDecision.account,
+          accountName: puc.find((p) => p.code === cuenta2408)?.name ?? ivaDecision.accountName,
+          reason: "IVA descontable (2408): la empresa no usa el IVA como mayor valor del costo.",
+          warning: null,
+        };
+    }
     if (!ivaOverride) return ivaDecision;
     return {
       ...ivaDecision,
@@ -414,7 +428,7 @@ function Revisar() {
       confidence: 1,
       warning: null,
     };
-  }, [ivaDecision, ivaOverride, puc]);
+  }, [ivaDecision, ivaOverride, puc, ivaSoloDescontable, ivaGroups.groups]);
   const ivaDetalle = useMemo(
     () => applyIvaTreatment(ivaGroups.groups, ivaFinal),
     [ivaGroups.groups, ivaFinal],

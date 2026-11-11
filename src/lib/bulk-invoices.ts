@@ -28,6 +28,7 @@ import {
   decidirRetenciones,
   elegirIva,
   precedenteDe,
+  esIvaDescontable,
   type ImpuestoConfigurado,
   type PrecedentesEmpresa,
   type PrecedenteProveedor,
@@ -683,10 +684,14 @@ export async function computeDraftAccounting(params: {
     }
   }
 
+  // Función por empresa "iva_solo_descontable": el IVA va siempre a una cuenta 2408.
+  const soloDescontable = funcionActiva(await nitDeEmpresa(companyId, config), "iva_solo_descontable");
   const ivaPorLinea: DraftAccounting["ivaPorLinea"] = lines.map((l, i) => {
     const fijado = params.ivaFijado?.[i];
     const elegido = fijado ? impuestos.find((t) => String(t.id) === String(fijado)) : undefined;
-    if (elegido) return { tax: elegido, motivo: "IVA seleccionado en el borrador." };
+    // Un IVA ya elegido que no es descontable (p. ej. 621008 IVA del costo) se reemplaza.
+    if (elegido && (!soloDescontable || esIvaDescontable(elegido.account_code)))
+      return { tax: elegido, motivo: "IVA seleccionado en el borrador." };
     const e = elegirIva({
       taxes: impuestos,
       linea: {
@@ -695,6 +700,7 @@ export async function computeDraftAccounting(params: {
         base: roundCOP(l.subtotal ?? Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
       },
       precedente,
+      soloDescontable,
     });
     if (e.tax) return { tax: e.tax, motivo: e.motivo };
     // Sin precedente del proveedor: el IVA que más usa la empresa con esa tarifa (o que
@@ -707,6 +713,7 @@ export async function computeDraftAccounting(params: {
         base: roundCOP(l.subtotal ?? Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
       },
       precedente: precedenteIvaEmpresa,
+      soloDescontable,
     });
     return empresa.tax
       ? { tax: empresa.tax, motivo: `${empresa.tax.name}: el IVA que más usa la empresa con esa tarifa (el proveedor no tiene precedente propio).` }
@@ -774,9 +781,20 @@ export async function computeDraftAccounting(params: {
       : payableHistorico;
   // Tratamiento contable del IVA: primero la regla del proveedor (descontable /
   // asumido / capitalizado / N-A); sin regla, la decisión por histórico de siempre.
-  const ivaDetalleRegla = reglaProveedor ? ivaDetalleDesdeRegla(reglaProveedor, lines, ivaTotal) : null;
+  // Con "iva_solo_descontable": una regla del proveedor solo manda en el IVA si es una
+  // decisión explícita (regla guardada) y, siendo descontable, con cuenta 2408; el
+  // tratamiento por historial (asumido, costo) no se aplica: el IVA va al 2408.
+  const reglaIva =
+    soloDescontable && reglaProveedor
+      ? !reglaProveedor.id
+        ? null
+        : reglaProveedor.iva_treatment === "descontable" && reglaProveedor.iva_account && !esIvaDescontable(reglaProveedor.iva_account)
+          ? { ...reglaProveedor, iva_account: null }
+          : reglaProveedor
+      : reglaProveedor;
+  const ivaDetalleRegla = reglaIva ? ivaDetalleDesdeRegla(reglaIva, lines, ivaTotal) : null;
   const ivaDecision =
-    !ivaDetalleRegla && ivaTotal > 0
+    !ivaDetalleRegla && ivaTotal > 0 && !soloDescontable
       ? resolveIvaTreatment({
           config: await fetchIvaConfig(companyId),
           evidence: await evidenciaIvaDe(companyId, header.provider_nit),

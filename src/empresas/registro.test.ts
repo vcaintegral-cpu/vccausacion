@@ -60,6 +60,7 @@ describe("alcance global vs. empresa", () => {
               ["función", "impoconsumo_al_gasto", true],
               ["función", "productos_inventario", true],
               ["función", "cargos_en_items", true],
+              ["función", "iva_solo_descontable", true],
             ]
           : [],
       );

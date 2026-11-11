@@ -47,6 +47,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-11",
   },
+  iva_solo_descontable: {
+    descripcion:
+      "El IVA de las compras va siempre a una cuenta descontable 2408 (compras, servicios, gastos, importación); nunca al IVA del costo (621008) de forma automática",
+    porDefecto: false,
+    agregada: "2026-11-11",
+  },
   cargos_en_items: {
     descripcion:
       "INC, recargo global y descuento global se reparten en los ítems en proporción a su valor (subtotal = suma de los ítems), al crear y al recalcular el borrador",
