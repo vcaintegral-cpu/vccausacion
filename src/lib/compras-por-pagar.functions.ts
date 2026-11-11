@@ -65,11 +65,10 @@ async function leerCompra(
     if (!nombre || !fecha) throw e;
     const desde = new Date(`${fecha.slice(0, 10)}T00:00:00Z`);
     desde.setUTCDate(desde.getUTCDate() - 5);
-    const hasta = new Date(`${fecha.slice(0, 10)}T00:00:00Z`);
-    hasta.setUTCDate(hasta.getUTCDate() + 60);
-    for (let page = 1; page <= 3; page++) {
+    for (let page = 1; page <= 5; page++) {
       const r = await siigoGet<{ results?: DocCompra[] } | DocCompra[]>(
-        `/v1/purchases?date_start=${desde.toISOString().slice(0, 10)}&date_end=${hasta.toISOString().slice(0, 10)}&page=${page}&page_size=100`,
+        // El listado de compras de Siigo filtra por fecha de CREACIÓN (created_start).
+        `/v1/purchases?created_start=${desde.toISOString().slice(0, 10)}&page=${page}&page_size=100`,
       );
       const lista = Array.isArray(r) ? r : (r.results ?? []);
       const d = lista.find((x) => String(x.name ?? "").toUpperCase() === nombre.toUpperCase());
@@ -124,7 +123,9 @@ export const comprasPagadasRevisar = createServerFn({ method: "POST" })
       const errores: string[] = [];
       type Lista = { results?: DocCompra[]; pagination?: { total_results?: number } } | DocCompra[];
       const r = await siigoGet<Lista>(
-        `/v1/purchases?date_start=${data.periodo}-01&date_end=${fin}&page=${pagina}&page_size=100`,
+        // Siigo filtra el listado por fecha de CREACIÓN: se piden las creadas desde el inicio
+        // del mes y aquí se dejan solo las elaboradas (fecha de la compra) en el mes.
+        `/v1/purchases?created_start=${data.periodo}-01&page=${pagina}&page_size=100`,
       );
       const lista = Array.isArray(r) ? r : (r.results ?? []);
       const total = Array.isArray(r)
@@ -154,6 +155,8 @@ export const comprasPagadasRevisar = createServerFn({ method: "POST" })
       );
       const pagadas: CompraPagada[] = [];
       for (const d of lista) {
+        const fechaCompra = String(d.date ?? "").slice(0, 10);
+        if (fechaCompra && (fechaCompra < `${data.periodo}-01` || fechaCompra > fin)) continue;
         let doc = d;
         try {
           if (!(doc.payments ?? []).length && doc.id)
@@ -167,13 +170,18 @@ export const comprasPagadasRevisar = createServerFn({ method: "POST" })
           name: String(p.name ?? porId.get(String(p.id))?.name ?? p.id ?? ""),
           value: Number(p.value ?? 0),
         }));
-        const porPagar =
-          pagos.length > 0 &&
-          pagos.every((p) =>
-            esFormaPorPagar(
-              porId.get(p.id) ?? { name: p.name, method: null, due_date_required: null },
-            ),
+        // Sin formas de pago en la lectura no se sabe cómo quedó: se informa, no se corrige.
+        if (!pagos.length) {
+          errores.push(
+            `${doc.name ?? doc.id}: Siigo no devolvió sus formas de pago; revísala en Siigo.`,
           );
+          continue;
+        }
+        const porPagar = pagos.every((p) =>
+          esFormaPorPagar(
+            porId.get(p.id) ?? { name: p.name, method: null, due_date_required: null },
+          ),
+        );
         if (porPagar) continue;
         const inv = porNombre.get(String(doc.name ?? "").toUpperCase());
         pagadas.push({

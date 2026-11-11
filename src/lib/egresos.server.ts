@@ -437,7 +437,8 @@ export async function sincronizarCxP(
       let lista: Compra[] = [];
       try {
         const r = await siigoGet<{ results?: Compra[] } | Compra[]>(
-          `/v1/purchases?date_start=${desde.toISOString().slice(0, 10)}&page=${page}&page_size=100`,
+          // El listado de compras de Siigo filtra por fecha de CREACIÓN (created_start).
+          `/v1/purchases?created_start=${desde.toISOString().slice(0, 10)}&page=${page}&page_size=100`,
         );
         lista = Array.isArray(r) ? r : (r.results ?? []);
       } catch {
