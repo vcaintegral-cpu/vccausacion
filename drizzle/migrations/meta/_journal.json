@@ -197,6 +197,13 @@
       "when": 1794412576937,
       "tag": "0027_cxp_compra_siigo",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794414169285,
+      "tag": "0028_cxp_compra_siigo",
+      "breakpoints": true
     }
   ]
 }

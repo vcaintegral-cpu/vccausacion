@@ -2901,7 +2901,6 @@ export type Database = {
           provider_name: string | null
           provider_nit: string | null
           quote: number
-          siigo_purchase_id: string | null
           synced_at: string
         }
         Insert: {
@@ -2917,7 +2916,6 @@ export type Database = {
           provider_name?: string | null
           provider_nit?: string | null
           quote?: number
-          siigo_purchase_id?: string | null
           synced_at?: string
         }
         Update: {
@@ -2933,7 +2931,6 @@ export type Database = {
           provider_name?: string | null
           provider_nit?: string | null
           quote?: number
-          siigo_purchase_id?: string | null
           synced_at?: string
         }
         Relationships: [
