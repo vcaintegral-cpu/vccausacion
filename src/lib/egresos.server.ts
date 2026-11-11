@@ -413,14 +413,87 @@ export async function sincronizarCxP(
   // (Al leer un solo proveedor se aplica la misma convención, aunque solo tenga anticipos.)
   normalizarSignoSaldos(filas, !!opts.soloNit);
 
+  // El reporte de CxP de Siigo puede no traer compras recientes que sí están por pagar.
+  // Fuente complementaria: el listado de compras de Siigo de los últimos meses, que trae el
+  // saldo pendiente («balance») de cada compra. Las que tienen saldo y no vinieron en el
+  // reporte se agregan como CxP; de todas se toma la factura del proveedor y su id.
+  type Compra = {
+    id?: string;
+    name?: string;
+    date?: string;
+    balance?: number;
+    supplier?: { identification?: string | number };
+    provider_invoice?: { prefix?: string; number?: string | number };
+    payments?: Array<{ due_date?: string }>;
+  };
+  const porNombre = new Map<string, { factura: string | null; id: string | null }>();
+  let leidasSiigo = 0;
+  let agregadasDeCompras = 0;
+  if (!opts.soloNit) {
+    const desde = new Date();
+    desde.setUTCDate(desde.getUTCDate() - 150);
+    const enReporte = new Set(filas.map((f) => `${f.prefix}-${f.consecutive}`.toUpperCase()));
+    for (let page = 1; page <= 20; page++) {
+      let lista: Compra[] = [];
+      try {
+        const r = await siigoGet<{ results?: Compra[] } | Compra[]>(
+          `/v1/purchases?date_start=${desde.toISOString().slice(0, 10)}&page=${page}&page_size=100`,
+        );
+        lista = Array.isArray(r) ? r : (r.results ?? []);
+      } catch {
+        break;
+      }
+      for (const c of lista) {
+        if (!c.name) continue;
+        const nombre = c.name.toUpperCase();
+        const factura =
+          c.provider_invoice?.number != null
+            ? [c.provider_invoice.prefix, c.provider_invoice.number]
+                .filter((x) => x != null && String(x).trim())
+                .join("-")
+            : null;
+        porNombre.set(nombre, { id: c.id ?? null, factura });
+        const saldo = Math.round(Math.abs(Number(c.balance ?? 0)) * 100) / 100;
+        const m = /^(.*)-(\d+)$/.exec(c.name.trim());
+        if (saldo > 0.009 && m && !enReporte.has(nombre)) {
+          filas.push({
+            company_id: companyId,
+            prefix: m[1]!,
+            consecutive: Number(m[2]),
+            quote: 1,
+            due_date:
+              String(c.payments?.find((p) => p.due_date)?.due_date ?? c.date ?? "").slice(0, 10) ||
+              null,
+            balance: saldo,
+            provider_nit:
+              c.supplier?.identification != null ? String(c.supplier.identification) : null,
+            provider_name: null,
+            cost_center: null,
+            factura_proveedor: factura,
+            invoice_id: null,
+            siigo_purchase_id: c.id ?? null,
+            synced_at: inicio,
+          });
+          enReporte.add(nombre);
+          agregadasDeCompras += 1;
+        }
+      }
+      leidasSiigo += lista.length;
+      if (lista.length < 100) break;
+    }
+  }
+
   // Factura del proveedor de cada vencimiento: primero las compras causadas desde la
   // herramienta; las demás, de las compras de Siigo (provider_invoice).
   const nombres = filas.map((f) => `${f.prefix}-${f.consecutive}`);
-  const propias = new Map<string, { id: string; factura: string; siigoId: string | null }>();
+  const propias = new Map<
+    string,
+    { id: string; factura: string; siigoId: string | null; proveedor: string | null }
+  >();
   for (let i = 0; i < nombres.length; i += 200) {
     const { data } = await db
       .from("invoices")
-      .select("id, prefix, number, siigo_number, siigo_id")
+      .select("id, prefix, number, siigo_number, siigo_id, provider_name")
       .eq("company_id", companyId)
       .in("siigo_number", nombres.slice(i, i + 200));
     for (const inv of (data ?? []) as Array<{
@@ -429,11 +502,13 @@ export async function sincronizarCxP(
       number: string | null;
       siigo_number: string;
       siigo_id: string | null;
+      provider_name: string | null;
     }>)
       propias.set(inv.siigo_number.toUpperCase(), {
         id: inv.id,
         factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
         siigoId: inv.siigo_id,
+        proveedor: inv.provider_name,
       });
   }
   for (const f of filas) {
@@ -442,6 +517,7 @@ export async function sincronizarCxP(
       f.factura_proveedor = p.factura || null;
       f.invoice_id = p.id;
       f.siigo_purchase_id = p.siigoId;
+      f.provider_name = f.provider_name ?? p.proveedor;
     }
   }
   // Lo ya conocido de cada vencimiento (factura del proveedor, compra de Siigo) se conserva.
@@ -473,52 +549,10 @@ export async function sincronizarCxP(
     f.factura_proveedor = f.factura_proveedor ?? c?.factura_proveedor ?? null;
     f.siigo_purchase_id = f.siigo_purchase_id ?? c?.siigo_purchase_id ?? null;
   }
-  const faltan = opts.soloNit
-    ? []
-    : filas.filter((f) => !f.factura_proveedor || !f.siigo_purchase_id);
-  let leidasSiigo = 0;
-  if (faltan.length) {
-    const fechas = faltan
-      .map((f) => f.due_date)
-      .filter((d): d is string => !!d)
-      .sort();
-    const desde = new Date(`${fechas[0] ?? new Date().toISOString().slice(0, 10)}T00:00:00Z`);
-    desde.setUTCDate(desde.getUTCDate() - 120);
-    type Compra = {
-      id?: string;
-      name?: string;
-      provider_invoice?: { prefix?: string; number?: string | number };
-    };
-    const porNombre = new Map<string, { factura: string | null; id: string | null }>();
-    for (let page = 1; page <= 15 && porNombre.size < faltan.length * 3; page++) {
-      let lista: Compra[] = [];
-      try {
-        const r = await siigoGet<{ results?: Compra[] } | Compra[]>(
-          `/v1/purchases?date_start=${desde.toISOString().slice(0, 10)}&page=${page}&page_size=100`,
-        );
-        lista = Array.isArray(r) ? r : (r.results ?? []);
-      } catch {
-        break;
-      }
-      for (const c of lista)
-        if (c.name)
-          porNombre.set(c.name.toUpperCase(), {
-            id: c.id ?? null,
-            factura:
-              c.provider_invoice?.number != null
-                ? [c.provider_invoice.prefix, c.provider_invoice.number]
-                    .filter((x) => x != null && String(x).trim())
-                    .join("-")
-                : null,
-          });
-      leidasSiigo += lista.length;
-      if (lista.length < 100) break;
-    }
-    for (const f of faltan) {
-      const c = porNombre.get(`${f.prefix}-${f.consecutive}`.toUpperCase());
-      f.factura_proveedor = f.factura_proveedor ?? c?.factura ?? null;
-      f.siigo_purchase_id = f.siigo_purchase_id ?? c?.id ?? null;
-    }
+  for (const f of filas) {
+    const c = porNombre.get(`${f.prefix}-${f.consecutive}`.toUpperCase());
+    f.factura_proveedor = f.factura_proveedor ?? c?.factura ?? null;
+    f.siigo_purchase_id = f.siigo_purchase_id ?? c?.id ?? null;
   }
 
   for (let i = 0; i < filas.length; i += 500) {
@@ -527,19 +561,20 @@ export async function sincronizarCxP(
       .upsert(filas.slice(i, i + 500), { onConflict: "company_id,prefix,consecutive,quote" });
     if (error) throw new Error(`No se guardaron las cuentas por pagar: ${error.message}`);
   }
-  // Lo que ya no aparece en Siigo está pagado.
-  let borrar = db
-    .from("siigo_cuentas_por_pagar")
-    .delete()
-    .eq("company_id", companyId)
-    .lt("synced_at", inicio);
-  if (opts.soloNit) borrar = borrar.eq("provider_nit", opts.soloNit);
-  await borrar;
+  // Lo que ya no aparece en Siigo está pagado. Al leer un solo proveedor no se borra nada:
+  // las CxP tomadas del listado de compras solo se renuevan en la sincronización completa.
+  if (!opts.soloNit)
+    await db
+      .from("siigo_cuentas_por_pagar")
+      .delete()
+      .eq("company_id", companyId)
+      .lt("synced_at", inicio);
   return {
     vencimientos: filas.length,
     saldo: Math.round(filas.reduce((s, f) => s + f.balance, 0) * 100) / 100,
     sinFactura: filas.filter((f) => !f.factura_proveedor).length,
     comprasLeidas: leidasSiigo,
+    agregadasDeCompras,
   };
 }
 

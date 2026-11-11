@@ -612,7 +612,7 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
             ? ""
             : enCxp.length
               ? `; en el reporte de CxP de Siigo aparece con saldo ${enCxp.map((c) => c.balance.toLocaleString("es-CO")).join(" / ")} y NIT ${enCxp[0]!.providerNit ?? "—"}`
-              : "; no aparece en el reporte de CxP de Siigo";
+              : "; Siigo no la reporta con saldo por pagar (ni en el reporte de CxP ni en el saldo de la compra)";
           sinSaldo.push(`${r.texto}${causada.siigo ? ` (${causada.siigo}${detalle})` : ""}`);
         } else if (!ctx.cxp.length)
           motivos.push(
