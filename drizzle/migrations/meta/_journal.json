@@ -169,6 +169,13 @@
       "when": 1794354771041,
       "tag": "0023_inventario_cuentas_14",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794398751122,
+      "tag": "0024_inc_recargo_documento",
+      "breakpoints": true
     }
   ]
 }

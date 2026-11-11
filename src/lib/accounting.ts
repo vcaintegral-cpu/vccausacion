@@ -139,6 +139,11 @@ export function buildJournal(params: {
   impoconsumoAlGasto?: boolean;
   /** Función por empresa "productos_inventario": los renglones pueden ir a cuentas 14. */
   permitirInventario?: boolean;
+  /**
+   * Recargo global del documento (no está en los renglones): se suma a la cuenta de
+   * gasto/costo de mayor valor, como un mayor valor de lo facturado.
+   */
+  recargo?: number;
 }): JournalLine[] {
   const { lines, iva, retenciones, provider, costCenter, ivaDetalle } = params;
   const impoconsumo = params.impoconsumo ?? 0;
@@ -170,6 +175,13 @@ export function buildJournal(params: {
       mayor.value = sumCOP(mayor.value, resto);
       incAlGasto = sumCOP(incAlGasto, resto);
     }
+  }
+  const recargo = round(Number(params.recargo ?? 0));
+  if (recargo > 0) {
+    if (grouped.size > 0) {
+      const mayor = [...grouped.values()].reduce((a, b) => (b.value > a.value ? b : a));
+      mayor.value = sumCOP(mayor.value, recargo);
+    } else grouped.set("", { name: "Recargo del documento", value: recargo });
   }
   for (const [code, g] of grouped)
     out.push({ account_code: code, account_name: g.name, debit: round(g.value), credit: 0, cost_center: costCenter ?? null });

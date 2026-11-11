@@ -8,7 +8,7 @@ Estructura exacta:
 "provider_phone":string|null,"provider_email":string|null,"cufe":string|null,"payment_form":string|null,
 "buyer_nit":string|null,"buyer_name":string|null,
 "payment_method":string|null,"currency":string|null,"cost_center":string|null,"notes":string|null,
-"subtotal":number,"discount":number,"iva":number,"impoconsumo":number,
+"subtotal":number,"discount":number,"surcharge":number,"iva":number,"impoconsumo":number,
 "retefuente":number,"reteiva":number,"reteica":number,"total":number,
 "lines":[{"code":string|null,"description":string,"quantity":number,"unit_value":number,"discount":number,"iva":number,"retention":number,"impoconsumo":number,"total":number}]}
 Reglas: los importes son números sin separadores ni símbolos. El NIT va sin dígito de verificación separado por guion (usa solo el número base).
@@ -21,6 +21,7 @@ PRECIO UNITARIO (regla crítica): en las facturas colombianas la columna "Precio
 - "unit_value" = ese valor de venta DIVIDIDO por la cantidad (ej.: cantidad 8 y precio unitario de venta 40.336,13 -> unit_value = 5.042,02).
 - Nunca uses la columna "Precio unitario" cuando exista la de venta.
 Coherencia obligatoria: cantidad x unit_value - descuento debe ser igual al total de la línea, y la suma de los totales de las líneas debe ser igual al "subtotal" impreso en la factura. El "subtotal", el "iva" y el "total" del encabezado se transcriben EXACTAMENTE como están impresos en el PDF: nunca los recalcules ni los ajustes.
+RECARGOS: "surcharge" es la suma de recargos o cargos globales del documento que NO están en los renglones (p. ej. "Recargo", "Cargos", "Otros cargos", "Flete" o "Servicio" en el resumen de totales, que suman al total a pagar). Si no hay, 0. "impoconsumo" es el impuesto al consumo / INC total del documento, aunque no esté discriminado por renglón.
 TIPO DE DOCUMENTO: "document_type" es "nota_credito" si el título del documento es "Nota crédito" / "Nota de crédito electrónica" (o el XML es CreditNote), "nota_debito" si es nota débito, "documento_soporte" si es documento soporte, y "factura" si es factura de venta electrónica. "referenced_invoice" es el número de la factura afectada que cite una nota crédito o débito (ej. "CFA 109836"), o null.
 Si un dato no aparece, usa null o 0. Nunca inventes valores.`;
 

@@ -1420,24 +1420,61 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       items.splice(0, items.length, ...adaptacion.items);
       // INC que solo viene en el encabezado: con "impoconsumo_al_gasto" se suma como mayor
       // costo en la cuenta del primer renglón (igual que el asiento de la herramienta).
-      if (incAlGasto) {
-        const restoInc = roundCOP(Number(inv.impoconsumo ?? 0) - adaptacion.incAsCost);
-        if (restoInc > 0 && items.length) {
-          const ref = items.reduce((a, b) =>
-            Number(b.quantity || 1) * Number(b.price || 0) > Number(a.quantity || 1) * Number(a.price || 0) ? b : a,
-          );
-          items.push({
-            ...ref,
-            type: "Account",
-            code: ref.account_code,
-            quantity: 1,
-            price: restoInc,
-            discount: 0,
-            tax_ids: [],
-            description: `Impoconsumo al gasto · ${ref.description}`,
-          });
-          adaptacion.incAsCost = roundCOP(adaptacion.incAsCost + restoInc);
-        }
+      // INC que solo viene en el total del documento (sin discriminar por renglón): se envía
+      // como mayor costo, en la cuenta del renglón de mayor valor (empresas con
+      // "impoconsumo_al_gasto") o en la cuenta del INC del asiento (las demás).
+      const renglonMayor = () =>
+        items.reduce((a, b) =>
+          Number(b.quantity || 1) * Number(b.price || 0) > Number(a.quantity || 1) * Number(a.price || 0) ? b : a,
+        );
+      const restoInc = roundCOP(Number(inv.impoconsumo ?? 0) - adaptacion.incAsCost);
+      // Solo con renglones de la factura: si los ítems salen del asiento, ya incluyen INC y recargo.
+      const conRenglones = (invoiceLines ?? []).length > 0;
+      if (restoInc > 0 && items.length && conRenglones) {
+        const ref = renglonMayor();
+        const lineaInc = incAlGasto
+          ? null
+          : resolvedJournal.find(
+              (l) =>
+                Number(l.debit ?? 0) > 0 &&
+                Math.abs(Number(l.debit ?? 0) - restoInc) <= 1 &&
+                !esCuentaFiscal(l.account_code) &&
+                !items.some((it) => it.account_code === l.account_code),
+            );
+        const cuentaInc = lineaInc ? cuentaDelRenglon(lineaInc.account_code) : ref.account_code;
+        items.push({
+          ...ref,
+          type: "Account",
+          code: cuentaInc,
+          account_code: cuentaInc,
+          quantity: 1,
+          price: restoInc,
+          discount: 0,
+          tax_ids: [],
+          description: incAlGasto ? `Impoconsumo al gasto · ${ref.description}` : "Impuesto al consumo del documento",
+        });
+        adaptacion.incAsCost = roundCOP(adaptacion.incAsCost + restoInc);
+        adaptacion.notes.push(`INC del documento ${restoInc} enviado como mayor costo en ${cuentaInc}.`);
+      }
+      // Recargo global del documento: mayor valor de lo facturado en la cuenta del renglón de
+      // mayor valor (igual que el asiento de la herramienta). Si es de $1 o menos, ya lo cubre
+      // el ajuste al peso.
+      const recargoDocumento = roundCOP(Number(source?.surcharge ?? 0) / 100);
+      let recargoEnviado = 0;
+      if (recargoDocumento > 1 && items.length && conRenglones) {
+        const ref = renglonMayor();
+        items.push({
+          ...ref,
+          type: "Account",
+          code: ref.account_code,
+          quantity: 1,
+          price: recargoDocumento,
+          discount: 0,
+          tax_ids: [],
+          description: `Recargo del documento · ${ref.description}`,
+        });
+        recargoEnviado = recargoDocumento;
+        adaptacion.notes.push(`Recargo del documento ${recargoDocumento} enviado en ${ref.account_code}.`);
       }
       if (ivaCapitalizado) {
         const ref = items.find((it) => /^1[5-7]/.test(it.account_code)) ?? items[0]!;
@@ -1573,7 +1610,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       const ivaLineas = (invoiceLines ?? []).reduce((acc, l) => acc + Number(l.iva ?? 0), 0);
       // Subtotal en Siigo = subtotal de la fuente + INC enviado como costo + ajuste al peso.
       const subtotal = Number(inv.subtotal ?? 0) > 0
-        ? r2(Number(inv.subtotal) + adaptacion.incAsCost + adaptacion.adjustment + ivaCapitalizado)
+        ? r2(Number(inv.subtotal) + adaptacion.incAsCost + adaptacion.adjustment + ivaCapitalizado + recargoEnviado)
         : r2(subtotalItems);
       const iva = r2(Number(inv.iva) - ivaCapitalizado);
       // El total de la compra permanece bruto. Siigo exige que payments concilie
