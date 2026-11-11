@@ -4,6 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   aprenderEgresos,
+  conceptoDe,
+  grupoBancario,
   nitSinDv,
   patronConcepto,
   proponerEgreso,
@@ -279,7 +281,14 @@ export async function proponerPeriodo(db: Db, companyId: string, periodo: string
   let porRevisar = 0;
   const cambios: FilaEgreso[] = [];
   for (const f of filas) {
-    if (f.editado_por_usuaria || ["enviando", "enviado", "aprobado"].includes(f.estado)) continue;
+    if (f.editado_por_usuaria || ["enviando", "enviado", "aprobado"].includes(f.estado)) {
+      // Lo revisado a mano se conserva; solo se le asigna su RP mensual de gastos bancarios.
+      const prev = f.propuesta as Propuesta;
+      if (f.estado === "enviando" || f.estado === "enviado" || prev?.tipo !== "detallado") continue;
+      const grupo = grupoBancario(conceptoDe(movimientoDeFila(f))?.id ?? null, f.cuenta_etiqueta);
+      if ((prev.grupo ?? null) !== grupo) cambios.push({ ...f, propuesta: { ...prev, grupo } });
+      continue;
+    }
     const p = proponerEgreso(movimientoDeFila(f), contexto);
     const estado = p.tipo === "omitir" && p.listo ? "omitido" : p.listo ? "listo" : "por_revisar";
     if (estado === "listo") listos += 1;

@@ -74,6 +74,8 @@ export function ComprasPorPagarPanel({
     let ok = 0;
     for (const [i, c] of lista.entries()) {
       setProgreso(`Corrigiendo ${i + 1} de ${lista.length}: ${c.siigoNumero ?? c.factura}`);
+      // Pausa entre compras: Siigo limita las peticiones por segundo.
+      if (i > 0) await new Promise((r) => setTimeout(r, 1200));
       try {
         const r = await corregir({ data: { companyId, invoiceId: c.invoiceId, confirmado: true } });
         setResultados((x) => ({ ...x, [c.invoiceId]: r }));

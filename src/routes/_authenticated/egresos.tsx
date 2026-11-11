@@ -41,6 +41,7 @@ import {
   egresosCorregirCompra,
   type DiferenciaItem,
   egresosSincronizarCxP,
+  egresosEnviarGrupoBancario,
 } from "@/lib/egresos.functions";
 import type { ItemPago, Propuesta, TipoEgreso } from "@/lib/egresos";
 
@@ -122,6 +123,7 @@ function Egresos() {
   const reintentar = useServerFn(egresosReintentar);
   const analizar = useServerFn(egresosAnalizarDiferencia);
   const corregir = useServerFn(egresosCorregirCompra);
+  const enviarGrupoBancario = useServerFn(egresosEnviarGrupoBancario);
   const [trabajando, setTrabajando] = useState<string | null>(null);
   const onAnalizar = async (f: Fila) => {
     setTrabajando(f.id);
@@ -282,11 +284,50 @@ function Egresos() {
     [lista],
   );
 
+  // RP únicos del mes de gastos bancarios, uno por cuenta bancaria.
+  const gruposBancarios = (() => {
+    const m = new Map<string, { grupo: string; banco: string; filas: Fila[] }>();
+    for (const f of lista) {
+      const g = f.propuesta?.grupo;
+      if (!g) continue;
+      const x = m.get(g) ?? { grupo: g, banco: g.slice("bancario|".length), filas: [] };
+      x.filas.push(f);
+      m.set(g, x);
+    }
+    return [...m.values()].sort((a, b) => a.banco.localeCompare(b.banco));
+  })();
+
   if (!companyId) return <EmptyCompany />;
+
+  const enviarGrupo = async (g: { grupo: string; banco: string; filas: Fila[] }) => {
+    const total = g.filas.reduce((s, f) => s + Number(f.valor), 0);
+    if (
+      !window.confirm(
+        `Se creará en Siigo UN recibo de pago con los ${g.filas.length} gastos bancarios de ${g.banco} de ${periodo} por ${cop(total)}. ¿Continuar?`,
+      )
+    )
+      return;
+    setTrabajando(g.grupo);
+    try {
+      const r = await enviarGrupoBancario({ data: { companyId, periodo, grupo: g.grupo } });
+      if (r.ok) toast.success(r.message);
+      else toast.error(`Siigo rechazó el RP de ${g.banco}: ${r.message}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTrabajando(null);
+      refrescar();
+    }
+  };
 
   const enviarAprobados = async () => {
     const ids = lista
-      .filter((f) => f.estado === "aprobado" && (seleccion.size === 0 || seleccion.has(f.id)))
+      .filter(
+        (f) =>
+          f.estado === "aprobado" &&
+          !f.propuesta?.grupo &&
+          (seleccion.size === 0 || seleccion.has(f.id)),
+      )
       .map((f) => f.id);
     if (!ids.length) {
       toast.info("No hay egresos aprobados para enviar.");
@@ -488,6 +529,56 @@ function Egresos() {
           </div>
         </div>
       </div>
+
+      {gruposBancarios.length ? (
+        <div className="rounded-lg border bg-card p-3 text-xs">
+          <div className="font-semibold">
+            RP de gastos bancarios del mes (uno por cuenta bancaria)
+          </div>
+          <div className="text-muted-foreground">
+            Comisiones, cuota de manejo, IVA bancario y 4x1000 de cada banco van juntos en un solo
+            recibo de pago, fechado el último día del mes.
+          </div>
+          <div className="mt-2 space-y-1">
+            {gruposBancarios.map((g) => {
+              const total = g.filas.reduce((s, f) => s + Number(f.valor), 0);
+              const enviado = g.filas.find((f) => f.siigo_nombre)?.siigo_nombre;
+              const pendientes = g.filas.filter(
+                (f) => !["listo", "aprobado", "enviado", "enviando"].includes(f.estado),
+              ).length;
+              return (
+                <div key={g.grupo} className="flex flex-wrap items-center gap-2">
+                  <span className="w-28 font-medium">{g.banco}</span>
+                  <span className="w-40">
+                    {g.filas.length} movimientos · {cop(total)}
+                  </span>
+                  {enviado ? (
+                    <span className="font-medium text-emerald-700">En Siigo: {enviado}</span>
+                  ) : pendientes ? (
+                    <span className="text-amber-700">
+                      {pendientes} por revisar (cuenta débito o tercero) en «Por revisar»
+                    </span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      className="h-7"
+                      disabled={trabajando === g.grupo}
+                      onClick={() => enviarGrupo(g)}
+                    >
+                      {trabajando === g.grupo ? (
+                        <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                      ) : (
+                        <Send className="mr-1 h-3 w-3" />
+                      )}
+                      Enviar RP de {g.banco}
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       {funcion("compras_por_pagar") ? (
         <ComprasPorPagarPanel

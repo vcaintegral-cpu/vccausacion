@@ -136,6 +136,8 @@ export const egresosGuardarEdicion = createServerFn({ method: "POST" })
     const p: Propuesta = {
       ...data.propuesta,
       terceroNit: data.propuesta.terceroNit ? nitSinDv(data.propuesta.terceroNit) : null,
+      // Solo los RP detallados de gastos bancarios van agrupados por banco.
+      grupo: data.propuesta.tipo === "detallado" ? (data.propuesta.grupo ?? null) : null,
     };
     if (p.tipo === "detallado" && p.cuentas.length === 0) {
       // La usuaria eligió la cuenta débito: se arma el par débito/banco.
@@ -214,6 +216,10 @@ export const egresosEnviar = createServerFn({ method: "POST" })
         message: `Ya está en Siigo (${f.siigo_nombre ?? f.siigo_id}); no se reenvía.`,
       };
     if (f.estado !== "aprobado") throw new Error("Solo se envían egresos aprobados.");
+    if ((f.propuesta as { grupo?: string | null } | null)?.grupo)
+      throw new Error(
+        "Este gasto bancario va en el RP único del banco del mes: envíalo desde «RP de gastos bancarios».",
+      );
     const p = f.propuesta as unknown as Propuesta;
     const movimiento = {
       fecha: String(f.fecha).slice(0, 10),
@@ -615,3 +621,166 @@ export const egresosCorregirCompra = createServerFn({ method: "POST" })
         : `Siigo aceptó la edición pero la lectura no muestra el cambio esperado en ${dif.compraNombre}; revísala en Siigo.`,
     };
   });
+
+/** Tipo de recibo de pago (RP) activo de la empresa en Siigo (debe ser uno solo). */
+async function tipoReciboPago(): Promise<number> {
+  const { siigoGet } = await import("./siigo.server");
+  type Doc = { id?: number; active?: boolean };
+  const docs = await siigoGet<Doc[] | { results?: Doc[] }>("/v1/document-types?type=RP");
+  const activos = (Array.isArray(docs) ? docs : (docs.results ?? [])).filter(
+    (d) => d.id && d.active !== false,
+  );
+  if (activos.length !== 1)
+    throw new Error(
+      activos.length
+        ? "La empresa tiene varios tipos de recibo de pago en Siigo: elige cuál usar."
+        : "La empresa no tiene un tipo de recibo de pago (RP) activo en Siigo.",
+    );
+  return Number(activos[0]!.id);
+}
+
+/**
+ * RP único del mes con los gastos bancarios (comisiones, IVA bancario, 4x1000) de una
+ * cuenta bancaria. Todos los movimientos del grupo deben estar listos o aprobados; quedan
+ * con la misma identidad de Siigo y no se reenvían.
+ */
+export const egresosEnviarGrupoBancario = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string; periodo: string; grupo: string }) => {
+    if (
+      !input?.companyId ||
+      !/^\d{4}-\d{2}$/.test(input.periodo ?? "") ||
+      !input.grupo?.startsWith("bancario|")
+    )
+      throw new Error("Empresa, mes y banco requeridos.");
+    return input;
+  })
+  .handler(
+    async ({
+      data,
+      context,
+    }): Promise<{ ok: boolean; siigoNombre: string | null; message: string }> => {
+      const db = context.supabase;
+      const { data: filas, error } = await db
+        .from("egresos")
+        .select("id, fecha, descripcion, valor, estado, propuesta, siigo_id")
+        .eq("company_id", data.companyId)
+        .eq("period", data.periodo)
+        .eq("propuesta->>grupo", data.grupo)
+        .order("fecha");
+      if (error) throw new Error(error.message);
+      const lista = (filas ?? []) as Array<{
+        id: string;
+        fecha: string;
+        descripcion: string | null;
+        valor: number;
+        estado: string;
+        propuesta: unknown;
+        siigo_id: string | null;
+      }>;
+      const etiqueta = data.grupo.slice("bancario|".length);
+      if (!lista.length)
+        throw new Error(`No hay gastos bancarios de ${etiqueta} en ${data.periodo}.`);
+      if (lista.some((f) => f.siigo_id))
+        return {
+          ok: true,
+          siigoNombre: null,
+          message: `Los gastos bancarios de ${etiqueta} de ${data.periodo} ya están en Siigo; no se reenvían.`,
+        };
+      const pendientes = lista.filter((f) => !["listo", "aprobado"].includes(f.estado));
+      if (pendientes.length)
+        throw new Error(
+          `Faltan ${pendientes.length} gastos bancarios de ${etiqueta} por revisar (cuenta o tercero) antes de enviar el RP del mes.`,
+        );
+
+      const { payloadReciboAgrupado } = await import("./egresos");
+      const [anio, mes] = data.periodo.split("-").map(Number) as [number, number];
+      const finMes = new Date(Date.UTC(anio, mes, 0)).toISOString().slice(0, 10);
+      const hoy = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
+      const fecha = finMes < hoy ? finMes : hoy;
+      const { siigoGet, siigoPost, siigoUseCompany } = await import("./siigo.server");
+      await siigoUseCompany(data.companyId);
+      const documentId = await tipoReciboPago();
+      const { payload, total, errores } = payloadReciboAgrupado(
+        lista.map((f) => ({
+          fecha: String(f.fecha).slice(0, 10),
+          descripcion: f.descripcion,
+          valor: Number(f.valor),
+          propuesta: f.propuesta as Propuesta,
+        })),
+        documentId,
+        fecha,
+        etiqueta,
+      );
+      if (errores.length) throw new Error(errores.join(" "));
+
+      // Bloqueo contra doble envío: todos los movimientos del grupo a la vez.
+      const ids = lista.map((f) => f.id);
+      const { data: bloqueados } = await db
+        .from("egresos")
+        .update({ estado: "enviando", siigo_error: null, siigo_payload: payload as never })
+        .in("id", ids)
+        .in("estado", ["listo", "aprobado"])
+        .is("siigo_id", null)
+        .select("id");
+      if ((bloqueados ?? []).length !== ids.length) {
+        await db
+          .from("egresos")
+          .update({ estado: "aprobado" })
+          .in(
+            "id",
+            (bloqueados ?? []).map((b) => b.id),
+          )
+          .eq("estado", "enviando")
+          .is("siigo_id", null);
+        throw new Error("Otro envío está en curso para estos gastos bancarios.");
+      }
+      try {
+        const res = await siigoPost<{ id?: string; name?: string }>(
+          "/v1/payment-receipts",
+          payload,
+        );
+        if (!res?.id) throw new Error("Siigo no devolvió el identificador del recibo.");
+        let nombre = res.name ?? null;
+        try {
+          nombre =
+            (
+              await siigoGet<{ name?: string }>(
+                `/v1/payment-receipts/${encodeURIComponent(res.id)}`,
+              )
+            )?.name ?? nombre;
+        } catch {
+          /* lectura de verificación opcional */
+        }
+        await db
+          .from("egresos")
+          .update({
+            estado: "enviado",
+            siigo_id: String(res.id),
+            siigo_nombre: nombre,
+            enviado_at: new Date().toISOString(),
+          })
+          .in("id", ids);
+        return {
+          ok: true,
+          siigoNombre: nombre,
+          message: `RP ${nombre ?? res.id}: ${lista.length} gastos bancarios de ${etiqueta} por ${total.toLocaleString("es-CO")}.`,
+        };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const incierto = !/\b(400|401|403|404|409|422)\b/.test(msg);
+        await db
+          .from("egresos")
+          .update({
+            estado: "error",
+            siigo_error:
+              (incierto
+                ? "Respuesta de Siigo incierta: verifica en Siigo si el recibo se creó antes de reintentar. "
+                : "") + msg.slice(0, 1800),
+          })
+          .in("id", ids)
+          .is("siigo_id", null);
+        return { ok: false, siigoNombre: null, message: msg };
+      }
+    },
+  );
