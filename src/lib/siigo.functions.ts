@@ -3,6 +3,7 @@ import { adaptPurchaseItems, ajusteAlPesoSiigo, cuentaAjustePesoCompra, ajustarP
 import { toCents } from "@/lib/money";
 import { esCeroCOP, roundCOP } from "@/lib/money";
 import { funcionActiva } from "@/empresas/registro";
+import { cuentaParaImpuesto, prefijosDeImpuesto, usoHistoricoDeImpuestos } from "@/lib/cuentas-impuestos";
 import { nombreProductoSiigo } from "@/lib/producto-coincidencia";
 import { estadoFacturaAfectada, facturaReferidaEnTexto, mensajeNotaCredito, notaCreditoGuardada } from "@/lib/nota-credito";
 import { createServerFn } from "@tanstack/react-start";
@@ -520,6 +521,22 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
       .select("code, name")
       .eq("company_id", data.companyId);
     const pucCodes = new Set((puc ?? []).map((a) => a.code));
+    // Movimientos de impuestos del auxiliar histórico (descripción = nombre del impuesto en Siigo).
+    const historicoImpuestos = usoHistoricoDeImpuestos(await (async () => {
+      const filas: Array<{ account_code: string | null; description: string | null; detail: string | null }> = [];
+      for (let from = 0; ; from += 1000) {
+        const { data: page, error: errHist } = await context.supabase
+          .from("accounting_history")
+          .select("account_code, description, detail")
+          .eq("company_id", data.companyId)
+          .or("account_code.like.2408%,account_code.like.2365%,account_code.like.2367%,account_code.like.2368%,account_code.like.2369%")
+          .range(from, from + 999);
+        if (errHist) break;
+        filas.push(...((page ?? []) as typeof filas));
+        if ((page ?? []).length < 1000) break;
+      }
+      return filas;
+    })());
 
     const readAccount = (v: Tax["account"]): { code: string | null; name: string | null } => {
       if (v == null) return { code: null, name: null };
@@ -548,38 +565,11 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
           if (parsed.code) return parsed;
         }
       }
-      // Búsqueda en el PUC por nombre del impuesto.
-      const nombre = String(t.name ?? "")
-        .toLowerCase()
-        .trim();
-      if (nombre) {
-        const match = (puc ?? []).find((a) => a.name.toLowerCase().includes(nombre));
-        if (match) return { code: match.code, name: match.name };
-      }
-      // Asignación automática desde el PUC según el tipo de impuesto (prefijos PUC estándar).
-      const kind = `${t.type ?? ""} ${t.name ?? ""}`.toLowerCase();
-      const grupos: { test: RegExp; prefijos: string[]; palabras: string[] }[] = [
-        { test: /reteiva|rete iva|retencion.*iva/, prefijos: ["2367"], palabras: ["iva"] },
-        { test: /reteica|rete ica|\bica\b/, prefijos: ["2368"], palabras: ["ica", "industria"] },
-        {
-          test: /retefuente|rete fuente|retencion|withholding|\brte\b/,
-          prefijos: ["2365"],
-          palabras: ["fuente", "renta"],
-        },
-        { test: /iva|impuesto al valor/, prefijos: ["621008", "6210", "2408"], palabras: ["iva"] },
-        { test: /consumo|impoconsumo/, prefijos: ["2412"], palabras: ["consumo"] },
-      ];
-      const grupo = grupos.find((g) => g.test.test(kind));
-      if (grupo) {
-        const candidatas = (puc ?? []).filter((a) =>
-          grupo.prefijos.some((p) => a.code.startsWith(p)),
-        );
-        const conPalabra = candidatas.find((a) =>
-          grupo.palabras.some((w) => a.name.toLowerCase().includes(w)),
-        );
-        const elegida = conPalabra ?? candidatas.sort((a, b) => a.code.localeCompare(b.code))[0];
-        if (elegida) return { code: elegida.code, name: elegida.name };
-      }
+      // La API de Siigo no trae la cuenta del impuesto: historial de la empresa en Siigo
+      // (auxiliar) y, si no, la cuenta del PUC con la misma tarifa y concepto. Nunca una
+      // cuenta de otra tarifa ni la 621008 por defecto (cuentas-impuestos.ts).
+      const elegida = cuentaParaImpuesto(t, (puc ?? []) as Array<{ code: string; name: string }>, historicoImpuestos);
+      if (elegida.code) return { code: elegida.code, name: elegida.name };
       return { code: null, name: null };
     };
 
@@ -612,8 +602,17 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
 
     const { data: existing } = await context.supabase
       .from("tax_rates")
-      .select("kind, name, source")
+      .select("kind, name, source, account_code")
       .eq("company_id", data.companyId);
+    // Sin coincidencia clara se conserva la cuenta ya guardada solo si es del grupo del
+    // impuesto (2408 IVA, 2365/2367/2368 retenciones); una de otro grupo (p. ej. 621008) se quita.
+    for (const r of rows) {
+      if (r.account_code) continue;
+      const previa = (existing ?? []).find((e) => e.kind === r.kind && e.name === r.name)?.account_code;
+      const prefijos = prefijosDeImpuesto(r.kind);
+      if (previa && prefijos.some((p) => String(previa).startsWith(p)) && pucCodes.has(String(previa)))
+        r.account_code = String(previa);
+    }
     const protectedKeys = new Set(
       (existing ?? []).filter((e) => e.source !== "siigo").map((e) => `${e.kind}|${e.name}`),
     );
