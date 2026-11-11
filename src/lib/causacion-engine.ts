@@ -89,7 +89,12 @@ export async function fetchCompanyKnowledge(companyId: string): Promise<CompanyK
     ),
     supabase.rpc("purchase_company_knowledge", { _company_id: companyId }),
   ]);
-  if (purchases.error) throw new Error(`No fue posible leer el historial de compras: ${purchases.error.message}`);
+  if (purchases.error) {
+    // No bloquear el lote: el histórico resumido por proveedor (fetchProviderHistory)
+    // sigue disponible como respaldo.
+    console.warn(`Historial de compras no disponible: ${purchases.error.message}`);
+    return { learning, history: [], profiles: [], complete: false };
+  }
   const data = purchases.data as unknown as { history?: HistoryEvent[]; profiles?: PurchaseProfile[] } | null;
   return { learning, history: data?.history ?? [], profiles: data?.profiles ?? [], complete: true };
 }
