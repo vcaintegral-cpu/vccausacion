@@ -47,6 +47,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-11",
   },
+  cargos_en_items: {
+    descripcion:
+      "INC, recargo global y descuento global se reparten en los ítems en proporción a su valor (subtotal = suma de los ítems), al crear y al recalcular el borrador",
+    porDefecto: false,
+    agregada: "2026-11-11",
+  },
 } satisfies Record<string, DefinicionFuncion>;
 
 export type FuncionId = keyof typeof FUNCIONES;

@@ -36,6 +36,7 @@ import {
 import { cargarHistorialCompras, cargarPrecedentes, cargarTablasBases } from "@/lib/precedente-tributario.data";
 import { cuentaGastoHistorica, perfilDe, type PerfilHistorico } from "@/lib/auxiliar-historico";
 import { buscarProducto, codigoProductoNuevo, type ProductoCatalogo } from "@/lib/producto-coincidencia";
+import { aplicarRepartoExtraido, motivoReparto, repartirCargos, repartoDeFuente } from "@/lib/cargos-en-items";
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
@@ -954,8 +955,27 @@ export async function recalcularCuentasBorrador(
   if (!data || !Array.isArray(data.lines))
     return { ok: false, message: "Esta factura no conserva la extracción original; no se puede recalcular." };
 
-  const source = (inv.source_override as ReturnType<typeof sourceFromRaw>) ?? sourceFromRaw(raw);
-  if (source) data = { ...data, subtotal: source.subtotal / 100, iva: source.iva / 100, impoconsumo: source.impoconsumo / 100, total: source.total / 100, discount: source.discount / 100, surcharge: source.surcharge / 100, lines: data.lines.map((l, i) => ({ ...l, subtotal: (source.lines[i]?.subtotal ?? 0) / 100, total: (source.lines[i]?.subtotal ?? 0) / 100, discount: source.source === "excel" ? 0 : l.discount })) };
+  let source = (inv.source_override as ReturnType<typeof sourceFromRaw>) ?? sourceFromRaw(raw);
+  // Función por empresa "cargos_en_items": un borrador que aún tiene INC, recargo o descuento
+  // global se normaliza con la corrección autorizada (queda en el historial de cambios con
+  // su motivo), igual que la corrección manual.
+  let normalizado: string | null = null;
+  if (source && funcionActiva(await nitDeEmpresa(inv.company_id as string, config), "cargos_en_items")) {
+    const n = repartoDeFuente(source);
+    if (n) {
+      const motivo = motivoReparto(n.reparto);
+      const { error: corrErr } = await supabase.rpc("correct_invoice_source_values", {
+        _invoice_id: invoiceId,
+        _values: n.valores as never,
+        _reason: motivo,
+      });
+      if (corrErr) return { ok: false, message: `No se pudo repartir INC/recargo/descuento en los ítems: ${corrErr.message}` };
+      source = n.valores;
+      normalizado = motivo;
+    }
+  }
+  const fuente = source;
+  if (fuente) data = { ...data, subtotal: fuente.subtotal / 100, iva: fuente.iva / 100, impoconsumo: fuente.impoconsumo / 100, total: fuente.total / 100, discount: fuente.discount / 100, surcharge: fuente.surcharge / 100, lines: data.lines.map((l, i) => ({ ...l, subtotal: (fuente.lines[i]?.subtotal ?? 0) / 100, total: (fuente.lines[i]?.subtotal ?? 0) / 100, impoconsumo: (fuente.lines[i]?.impoconsumo ?? Math.round(Number(l.impoconsumo || 0) * 100)) / 100, discount: fuente.source === "excel" ? 0 : l.discount })) };
   const { lines, ...header } = data;
   // Las cuentas elegidas manualmente por el usuario nunca se recalculan.
   const manuales = Object.entries(((raw as Record<string, unknown> | null)?.["account_decisions"] ?? {}) as Record<string, { code?: string; origin?: string }>)
@@ -1072,7 +1092,7 @@ export async function recalcularCuentasBorrador(
       .eq("id", l.id);
   }
 
-  const motivo = [acc.reason, ...acc.unresolvedAccounts, ...acc.alertas].filter(Boolean).join(" ");
+  const motivo = [normalizado, acc.reason, ...acc.unresolvedAccounts, ...acc.alertas].filter(Boolean).join(" ");
   return { ok: true, message: motivo || "Cuentas recalculadas." };
 }
 
@@ -1091,6 +1111,21 @@ export async function saveExtractedInvoice(params: {
   rawExtraction?: Record<string, unknown>;
   onStage?: StageCallback | undefined;
 }): Promise<ProcessedInvoice> {
+  // Función por empresa "cargos_en_items": INC, recargo y descuento global del documento se
+  // reparten en los ítems antes de guardar (la nota crédito se revisa igual, más abajo).
+  if (funcionActiva(await nitDeEmpresa(params.companyId, params.config), "cargos_en_items")) {
+    const d = params.data;
+    const reparto = repartirCargos(
+      { subtotal: d.subtotal, iva: d.iva, impoconsumo: d.impoconsumo, discount: d.discount, surcharge: d.surcharge ?? 0, total: d.total },
+      d.lines.map((l) => ({ subtotal: l.subtotal ?? l.total, iva: l.iva, impoconsumo: l.impoconsumo })),
+    );
+    if (reparto)
+      params = {
+        ...params,
+        data: aplicarRepartoExtraido(d as ExtractedInvoice & { surcharge: number }, reparto),
+        rawExtraction: { ...(params.rawExtraction ?? {}), cargos_en_items: { ...reparto.detalle, ajustes: reparto.ajustes, motivo: motivoReparto(reparto) } },
+      };
+  }
   const { companyId, config } = params;
   const fileName = params.fileName;
   const { lines: extracted, ...header } = params.data;
