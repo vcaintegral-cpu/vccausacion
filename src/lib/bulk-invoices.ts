@@ -818,11 +818,34 @@ export async function computeDraftAccounting(params: {
     if (errors.length || Math.abs(roundCOP(groups.reduce((s, g) => s + g.amount, 0)) - ivaTotal) > 0.01) return undefined;
     return groups.map((g) => ({ account_code: g.account_code, account_name: g.account_name, amount: g.amount }));
   })();
-  const ivaDetalle =
+  let ivaDetalle =
     ivaDetalleRegla ??
     (ivaDecision && ivaDecision.treatment !== "descontable"
       ? applyIvaTreatment([{ account_code: "", account_name: "IVA", amount: ivaTotal }], ivaDecision)
       : ivaPorImpuesto);
+  // "iva_solo_descontable": si el IVA quedó en una cuenta que no es 2408 (p. ej. porque el
+  // único IVA configurado de esa tarifa es el «IVA general 19 %» → 621008), el asiento usa
+  // la cuenta 2408 que el proveedor usa en Siigo, la más usada por la empresa o la del PUC.
+  if (soloDescontable && ivaDetalle?.some((d) => d.amount && !esIvaDescontable(d.account_code))) {
+    const operativa = (c: string | null | undefined) => {
+      if (!c || !esIvaDescontable(c)) return null;
+      const r = config.accounts.length ? resolveOperationalAccount(config.accounts, c) : null;
+      return r ? (r.valid && r.operationalAccount ? { code: r.operationalAccount, name: r.operational?.name ?? null } : null) : { code: c, name: null };
+    };
+    const usoEmpresa = new Map<string, number>();
+    for (const p of perfilesHistoricos.values()) for (const u of p.iva) if (esIvaDescontable(u.cuenta)) usoEmpresa.set(u.cuenta, (usoEmpresa.get(u.cuenta) ?? 0) + u.veces);
+    const delPuc = config.accounts.find(
+      (a) => esIvaDescontable(a.code) && /iva/i.test(String(a.name ?? "")) && /compra/i.test(String(a.name ?? "")) && resolveOperationalAccount(config.accounts, a.code).valid,
+    )?.code;
+    const cuenta2408 =
+      operativa(perfilHistorico?.iva.find((u) => esIvaDescontable(u.cuenta))?.cuenta) ??
+      operativa([...usoEmpresa].sort((a, b) => b[1] - a[1])[0]?.[0]) ??
+      operativa(delPuc);
+    if (cuenta2408) {
+      ivaDetalle = ivaDetalle.map((d) => (d.amount && !esIvaDescontable(d.account_code) ? { ...d, account_code: cuenta2408.code, account_name: cuenta2408.name ?? "IVA descontable" } : d));
+      alertas.push(`IVA descontable en ${cuenta2408.code}: el IVA configurado para esta tarifa no es 2408; revisa en Administración → Retenciones que exista un IVA con cuenta 2408.`);
+    }
+  }
   // Recargo global del documento: mayor valor de lo facturado en la cuenta del ítem principal.
   const recargo = roundCOP(Number((header as { surcharge?: number }).surcharge ?? 0));
   if (recargo > 0)

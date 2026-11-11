@@ -309,3 +309,27 @@ describe("retención informada por la factura sin tarifa configurada que coincid
     expect(acc.journal.find((j) => j.account_code === "22050501")?.credit).toBe(1190000);
   });
 });
+
+describe("LED LIGHTS: IVA solo descontable aunque el único IVA configurado sea el 621008", () => {
+  it("el asiento lleva el IVA a la 2408 del historial del proveedor", async () => {
+    const soloCosto = [
+      { id: "ivaCosto", kind: "iva", name: "IVA general 19%", rate: 19, account_code: "621008", active: true, min_base: 0 },
+      TAXES[2]!,
+    ];
+    const perfiles = new Map([
+      ["900047217", { nit: "900047217", nombre: "MEGA LUCES", compras: 3, ultima: null, gastos: [], centros: [], iva: [{ cuenta: "24081001", nombre: "IVA compras", veces: 3, valor: 0, ultima: null, tarifa: 19 }], retenciones: { retefuente: [], reteiva: [], reteica: [] }, sinRetencion: { retefuente: { veces: 0, baseMax: 0 }, reteiva: { veces: 0, baseMax: 0 }, reteica: { veces: 0, baseMax: 0 } }, cuentasPorPagar: [], descuentos: [], impoconsumo: [] }],
+    ]);
+    const base = config(TABLA_2026);
+    const cfg = {
+      ...base,
+      taxes: soloCosto as never,
+      accounts: [...PUC, cuenta("621008", "IVA del costo")],
+      perfilesHistoricos: perfiles,
+      batch: { ...base.batch, company: { ...base.batch.company, nit: "900470166" } },
+    };
+    const acc = await computeDraftAccounting({ companyId: "c1", config: cfg as never, header: { ...header, buyer_nit: "900470166" } as never, extracted: lineas as never });
+    const ivaLinea = acc.journal.find((j) => j.debit === 190000);
+    expect(ivaLinea?.account_code).toBe("24081001");
+    expect(acc.journal.some((j) => j.account_code === "621008")).toBe(false);
+  });
+});
