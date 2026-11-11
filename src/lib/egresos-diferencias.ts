@@ -311,7 +311,7 @@ export type DocCompra = {
     warehouse?: { id?: number } | number | null;
   }>;
   retentions?: Array<{ id?: number | string; type?: string; name?: string; value?: number }>;
-  payments?: Array<{ id?: number; value?: number; due_date?: string }>;
+  payments?: Array<{ id?: number; name?: string; value?: number; due_date?: string }>;
   balance?: number;
 };
 
@@ -357,6 +357,16 @@ export function compraEditada(doc: DocCompra, accion: AccionCorreccion): Record<
     Math.round((mayor.value + (accion.tipo === "agregar" ? -delta : delta)) * 100) / 100;
   if (mayor.value < 0)
     throw new Error("La forma de pago de la compra no alcanza para descontar la retención.");
+  return cuerpoCompra(doc, items, retenciones, pagos);
+}
+
+/** Cuerpo completo de la compra para PUT /v1/purchases/{id} (lo que no cambia se conserva). */
+export function cuerpoCompra(
+  doc: DocCompra,
+  items: Array<Record<string, unknown>>,
+  retenciones: string[],
+  pagos: Array<{ id?: number | undefined; value: number; due_date?: string }>,
+): Record<string, unknown> {
   return {
     document: { id: doc.document?.id },
     ...(doc.number != null ? { number: doc.number } : {}),
@@ -376,4 +386,39 @@ export function compraEditada(doc: DocCompra, accion: AccionCorreccion): Record<
     ...(retenciones.length ? { retentions: retenciones.map((id) => ({ id: Number(id) })) } : {}),
     payments: pagos,
   };
+}
+
+/** Renglones de la compra tal como están (para editar solo otra parte del documento). */
+export function itemsDeCompra(doc: DocCompra): Array<Record<string, unknown>> {
+  return (doc.items ?? []).map((i) => {
+    const descuento = typeof i.discount === "number" ? i.discount : Number(i.discount?.value ?? 0);
+    const bodega = typeof i.warehouse === "number" ? i.warehouse : i.warehouse?.id;
+    return {
+      type: i.type,
+      code: i.code,
+      description: i.description,
+      quantity: i.quantity,
+      price: i.price,
+      ...(descuento ? { discount: descuento } : {}),
+      ...(bodega ? { warehouse: bodega } : {}),
+      taxes: (i.taxes ?? []).map((t) => ({ id: Number(t.id) })),
+    };
+  });
+}
+
+/** La misma compra con una sola forma de pago por pagar (crédito) por el total de las formas actuales. */
+export function compraPorPagar(
+  doc: DocCompra,
+  formaId: number,
+  vencimiento: string,
+): Record<string, unknown> {
+  const total =
+    Math.round((doc.payments ?? []).reduce((s, p) => s + Number(p.value ?? 0), 0) * 100) / 100;
+  if (!(total > 0)) throw new Error("La compra no tiene valor en sus formas de pago.");
+  return cuerpoCompra(
+    doc,
+    itemsDeCompra(doc),
+    (doc.retentions ?? []).map((r) => String(r.id)),
+    [{ id: formaId, value: total, due_date: vencimiento }],
+  );
 }

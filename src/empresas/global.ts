@@ -54,6 +54,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-11",
   },
+  compras_por_pagar: {
+    descripcion:
+      "Toda compra se envía a Siigo POR PAGAR (forma de pago a crédito, cuenta por pagar al proveedor); nunca pagada con tarjeta, efectivo, banco o contado. Los pagos se registran con los recibos de pago de «Egresos y pagos»",
+    porDefecto: false,
+    agregada: "2026-11-11",
+  },
   lector_consolidado_pagos: {
     descripcion:
       "Lee el reporte mensual de pagos con hoja «Consolidado» (FECHA, TERCERO, VALOR, CUENTA, RELACIÓN, APLICACIÓN, OBSERVACIONES) desde la carpeta de egresos o cargado a mano, para proponer los recibos de pago",
