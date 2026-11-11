@@ -448,3 +448,21 @@ export function ajusteAlPesoSiigo<T extends AdaptableItem>(
     nota: `Ajuste al peso ${total / 100} en Siigo: el proveedor redondeó distinto (subtotal ${dSub / 100}, IVA ${dIva / 100}).`,
   };
 }
+
+/**
+ * Cuenta del "Ajuste al peso" para un renglón de FACTURA DE COMPRA en Siigo: debe ser de
+ * gasto (5395… "Ajuste al peso"). Una cuenta de ingreso (4295…) en un renglón de compra
+ * hace que Siigo rechace el documento con "documents_service".
+ */
+export function cuentaAjustePesoCompra(
+  puc: Array<{ code: string; name?: string | null; active?: boolean | null; is_movement?: boolean | null; has_children?: boolean | null }>,
+): string | null {
+  const mov = puc.filter((a) => a.active !== false && a.is_movement !== false && a.has_children !== true && /^\d+$/.test(a.code));
+  const ajuste = (a: { name?: string | null }) => /ajuste\s+al\s+peso|redondeo/i.test(String(a.name ?? ""));
+  return (
+    mov.find((a) => a.code.startsWith("5395") && ajuste(a))?.code ??
+    mov.find((a) => /^5/.test(a.code) && ajuste(a))?.code ??
+    mov.find((a) => a.code.startsWith("539581"))?.code ??
+    null
+  );
+}

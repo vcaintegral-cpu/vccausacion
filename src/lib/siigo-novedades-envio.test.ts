@@ -62,3 +62,34 @@ describe("nombres de producto para Siigo (invalid_name)", () => {
     expect(nombreProductoSiigo("  ")).toBe("PRODUCTO");
   });
 });
+
+describe("ajuste al peso de una compra (documents_service con 42958101)", () => {
+  it("usa la cuenta de gasto 5395 «Ajuste al peso» del PUC, nunca la de ingreso 4295", async () => {
+    const { cuentaAjustePesoCompra } = await import("./siigo-purchase-validation");
+    const puc = [
+      { code: "42958101", name: "Ajuste al peso", active: true, is_movement: true, has_children: false },
+      { code: "539581", name: "Ajuste al peso", active: true, is_movement: false, has_children: true },
+      { code: "53958101", name: "Ajuste al peso", active: true, is_movement: true, has_children: false },
+    ];
+    expect(cuentaAjustePesoCompra(puc)).toBe("53958101");
+    expect(cuentaAjustePesoCompra([puc[0]!])).toBeNull();
+  });
+});
+
+describe("IVA solo descontable (LED LIGHTS)", () => {
+  it("entre IVA del 19 % elige el 2408, no el 621008 (IVA del costo)", async () => {
+    const { elegirIva } = await import("./precedente-tributario");
+    const { funcionActiva } = await import("@/empresas/registro");
+    const taxes = [
+      { id: "costo", kind: "iva", name: "IVA general 19%", rate: 19, account_code: "621008", active: true },
+      { id: "compras", kind: "iva", name: "IVA compras 19%", rate: 19, account_code: "24081001", active: true },
+    ];
+    const linea = { iva: 19000, iva_rate: 19, base: 100000 };
+    // Precedente de la empresa con más usos del 621008.
+    const precedente = { iva: [{ taxId: "costo", cuenta: "621008", tarifa: 19, veces: 5, ultima: null }] } as never;
+    expect(elegirIva({ taxes, linea, precedente }).tax?.id).toBe("costo");
+    expect(elegirIva({ taxes, linea, precedente, soloDescontable: true }).tax?.id).toBe("compras");
+    expect(funcionActiva("900470166", "iva_solo_descontable")).toBe(true);
+    expect(funcionActiva("800212838", "iva_solo_descontable")).toBe(false);
+  });
+});
