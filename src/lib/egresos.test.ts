@@ -593,3 +593,29 @@ describe("signo de los saldos del reporte de CxP de Siigo", () => {
     expect(p.listo).toBe(true);
   });
 });
+
+describe("cruce del pago con la CxP por el número de la compra en Siigo", () => {
+  it("si el vencimiento no tiene la factura del proveedor, se cruza por FC-1-… de la compra causada", () => {
+    const c = ctx({
+      cxp: [
+        {
+          prefix: "FC-1",
+          consecutive: 900,
+          quote: 1,
+          dueDate: "2026-10-30",
+          balance: 150000,
+          providerNit: "900333444",
+          providerName: "TRANSPORTES ANDINOS SAS",
+          facturaProveedor: null,
+        },
+      ],
+      causadas: [{ factura: "IT-417", nit: "900333444", siigo: "FC-1-900" }],
+    });
+    const p = proponerEgreso(
+      mov({ valor: 150000, relacion: "IT417", tercero: "TRANSPORTES ANDINOS SAS" }),
+      c,
+    );
+    expect(p).toMatchObject({ tipo: "pago_facturas", listo: true });
+    expect(p.items).toMatchObject([{ prefix: "FC-1", consecutive: 900, valor: 150000 }]);
+  });
+});
