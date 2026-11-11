@@ -13,9 +13,14 @@
 
 const sinTildes = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "");
 export const normalizarNombreImpuesto = (s: string | null | undefined) =>
-  sinTildes(String(s ?? "")).toLowerCase().replace(/(\d),(\d)/g, "$1.$2").replace(/\s+/g, " ").trim();
+  sinTildes(String(s ?? ""))
+    .toLowerCase()
+    .replace(/(\d),(\d)/g, "$1.$2")
+    .replace(/\s+/g, " ")
+    .trim();
 
-export type TipoImpuesto = "iva" | "retefuente" | "reteiva" | "reteica" | "autorretencion" | "impoconsumo" | string;
+export type TipoImpuesto =
+  "iva" | "retefuente" | "reteiva" | "reteica" | "autorretencion" | "impoconsumo" | string;
 
 /** Prefijos PUC donde puede estar la cuenta de cada tipo de impuesto de compras. */
 export function prefijosDeImpuesto(tipo: TipoImpuesto): string[] {
@@ -35,7 +40,28 @@ function tarifaEnNombre(nombre: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
-const GENERICAS = new Set(["iva", "retencion", "retenciones", "rete", "retefuente", "reteiva", "reteica", "por", "de", "del", "la", "el", "en", "y", "descontable", "impuesto", "sobre", "las", "los", "a"]);
+const GENERICAS = new Set([
+  "iva",
+  "retencion",
+  "retenciones",
+  "rete",
+  "retefuente",
+  "reteiva",
+  "reteica",
+  "por",
+  "de",
+  "del",
+  "la",
+  "el",
+  "en",
+  "y",
+  "descontable",
+  "impuesto",
+  "sobre",
+  "las",
+  "los",
+  "a",
+]);
 const conceptos = (nombre: string) =>
   normalizarNombreImpuesto(nombre)
     .replace(/\d+(?:\.\d+)?\s*%?/g, " ")
@@ -47,7 +73,11 @@ export type UsoHistorico = Map<string, Map<string, number>>;
 
 /** Uso histórico: nombre del impuesto (descripción del movimiento) → cuenta → veces. */
 export function usoHistoricoDeImpuestos(
-  movimientos: Array<{ account_code: string | null; description: string | null; detail?: string | null }>,
+  movimientos: Array<{
+    account_code: string | null;
+    description: string | null;
+    detail?: string | null;
+  }>,
 ): UsoHistorico {
   const out: UsoHistorico = new Map();
   for (const m of movimientos) {
@@ -75,15 +105,28 @@ export function cuentaParaImpuesto(
   // 1. Historial de la empresa en Siigo.
   const usos = historico.get(normalizarNombreImpuesto(tax.name));
   if (usos) {
-    const mejor = [...usos].filter(([c]) => !prefijos.length || enGrupo(c)).sort((a, b) => b[1] - a[1])[0];
-    if (mejor) return { code: mejor[0], name: puc.find((a) => a.code === mejor[0])?.name ?? null, origen: "historial" };
+    const mejor = [...usos]
+      .filter(([c]) => !prefijos.length || enGrupo(c))
+      .sort((a, b) => b[1] - a[1])[0];
+    if (mejor)
+      return {
+        code: mejor[0],
+        name: puc.find((a) => a.code === mejor[0])?.name ?? null,
+        origen: "historial",
+      };
   }
   // 2. PUC: misma tarifa y concepto en común (solo cuentas auxiliares del grupo).
   if (!prefijos.length) return { code: null, name: null, origen: null };
-  const tarifa = tax.percentage != null ? Number(tax.percentage) : tarifaEnNombre(String(tax.name ?? ""));
+  const tarifa =
+    tax.percentage != null ? Number(tax.percentage) : tarifaEnNombre(String(tax.name ?? ""));
   const conceptosTax = conceptos(String(tax.name ?? ""));
   const codigos = new Set(puc.map((a) => a.code));
-  const hojas = puc.filter((a) => enGrupo(a.code) && a.code.length >= 8 && ![...codigos].some((c) => c !== a.code && c.startsWith(a.code)));
+  const hojas = puc.filter(
+    (a) =>
+      enGrupo(a.code) &&
+      a.code.length >= 8 &&
+      ![...codigos].some((c) => c !== a.code && c.startsWith(a.code)),
+  );
   let mejor: { a: { code: string; name: string }; p: number } | null = null;
   for (const a of hojas) {
     const t = tarifaEnNombre(a.name);
@@ -94,7 +137,10 @@ export function cuentaParaImpuesto(
     if (p > 0 && (!mejor || p > mejor.p)) mejor = { a, p };
   }
   // Coincidencia clara: concepto en común, o la tarifa cuando es la única cuenta con ella.
-  if (mejor && (mejor.p >= 2 || hojas.filter((a) => tarifaEnNombre(a.name) === tarifa).length === 1))
+  if (
+    mejor &&
+    (mejor.p >= 2 || hojas.filter((a) => tarifaEnNombre(a.name) === tarifa).length === 1)
+  )
     return { code: mejor.a.code, name: mejor.a.name, origen: "puc" };
   return { code: null, name: null, origen: null };
 }
