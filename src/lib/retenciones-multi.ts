@@ -6,7 +6,7 @@
 // de las retenciones de UNA factura en las pantallas de causación y revisión.
 
 import type { Retenciones } from "@/lib/accounting";
-import { roundCOP, sumCOP } from "@/lib/money";
+import { roundCOP, sumCOP, tarifaPorcentaje } from "@/lib/money";
 import { resolveTaxAccount, type TaxRecord } from "@/lib/tax-selection";
 import type { PucAccount } from "@/lib/puc-hierarchy";
 import { RETENCION_KINDS, tarifaDeRetencion, type RetencionKind } from "@/lib/retenciones";
@@ -136,7 +136,8 @@ export function seedRetBlocks(params: {
 }
 
 /** Recalcula el valor de una retención con su base y su tarifa. */
-export const valorDeBloque = (block: RetBlock) => roundCOP((Number(block.base || 0) * Number(block.rate || 0)) / 100);
+export const valorDeBloque = (block: RetBlock, kind?: string) =>
+  roundCOP((Number(block.base || 0) * tarifaPorcentaje(kind, block.rate || 0)) / 100);
 
 /** Aplica un impuesto configurado a un bloque, sin tocar los demás bloques. */
 export function aplicarImpuesto(
@@ -156,7 +157,7 @@ export function aplicarImpuesto(
     account_code: cuenta.code,
     account_name: cuenta.name,
   };
-  return { ...next, amount: valorDeBloque(next) };
+  return { ...next, amount: valorDeBloque(next, tax.kind) };
 }
 
 /** Retenciones reales del asiento: solo las aplicadas y con valor > 0. */

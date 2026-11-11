@@ -7,7 +7,7 @@
 // proveedor, centro de costo ni CxP). Solo se construye y valida el objeto de
 // pago que viaja a Siigo y su fecha de vencimiento.
 
-import { roundCOP, EPS_COP } from "@/lib/money";
+import { roundCOP, EPS_COP, tarifaPorcentaje } from "@/lib/money";
 import { cop } from "@/lib/format";
 
 /** Días de crédito según la condición de pago registrada en la factura. */
@@ -168,7 +168,8 @@ export function retencionCalculadaPorSiigo(params: {
   iva: number;
 }): number {
   const { retencion } = params;
-  const pct = Number(retencion.porcentaje ?? 0);
+  // ReteICA: Siigo también la expresa por mil.
+  const pct = tarifaPorcentaje(retencion.kind, retencion.porcentaje ?? 0);
   if (!(pct > 0)) return roundCOP(retencion.value);
   if (retencion.enRenglon) {
     return roundCOP(

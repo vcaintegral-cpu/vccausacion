@@ -1,7 +1,8 @@
 // Teléfono para la API de terceros de Siigo: `phones[].number` y
-// `contacts[].phone.number` son NUMÉRICOS de hasta 10 dígitos. Enviar texto
-// ("(604) 444 5566", "+57 300…") hace que Siigo rechace la creación del tercero
-// con "Invalid data type: number".
+// `contacts[].phone.number` son texto de SOLO DÍGITOS, hasta 10 (documentación de la
+// API: string numérico, sin espacios ni caracteres especiales). Se envía como texto:
+// un número JSON produce "Invalid data type: phones[0].number", y un texto con
+// espacios o signos ("(604) 444 5566", "+57 300…") también se rechaza.
 
 /** Solo los dígitos del teléfono como número (últimos 10); null si no es un teléfono usable. */
 export function telefonoSiigo(valor: unknown): number | null {

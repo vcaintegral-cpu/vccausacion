@@ -171,12 +171,14 @@ export async function siigoEnsureCustomer(p: ProviderInput): Promise<EnsureCusto
         first_name: (esEmpresa ? nombre : partes[0] || nombre).slice(0, 50),
         last_name: (esEmpresa ? "Contacto" : partes.slice(1).join(" ") || "Contacto").slice(0, 50),
         email: String(p.email ?? "").trim() || undefined,
-        phone: telefono != null ? { number: telefono } : undefined,
+        phone: telefono != null ? { number: String(telefono) } : undefined,
       },
     ],
   };
   if (esEmpresa || p.idType === "31") payload["check_digit"] = checkDigit(nit);
-  if (telefono != null) payload["phones"] = [{ number: telefono }];
+  // Siigo: phones[].number es TEXTO de solo dígitos (máx. 10), no un número JSON
+  // ("Invalid data type: phones[0].number").
+  if (telefono != null) payload["phones"] = [{ number: String(telefono) }];
 
   try {
     const creado = await siigoPost<SiigoCustomer>("/v1/customers", payload);

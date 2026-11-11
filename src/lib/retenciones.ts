@@ -15,7 +15,7 @@
 //    entre facturas del mismo lote.
 
 import type { Retenciones, TaxRate } from "@/lib/accounting";
-import { roundCOP } from "@/lib/money";
+import { roundCOP, tarifaPorcentaje } from "@/lib/money";
 import { resolveTaxAccount, type TaxRecord } from "@/lib/tax-selection";
 import type { PucAccount } from "@/lib/puc-hierarchy";
 
@@ -52,7 +52,7 @@ const asRecord = (t: TaxLike): TaxRecord => ({
 /** Valor teórico de una tarifa sobre la base que le corresponde. */
 export function valorTarifa(tax: TaxLike, baseGravable: number, ivaTotal: number): number {
   const base = String(tax.kind) === "reteiva" ? ivaTotal : baseGravable;
-  return roundCOP((base * Number(tax.rate ?? 0)) / 100);
+  return roundCOP((base * tarifaPorcentaje(String(tax.kind), tax.rate ?? 0)) / 100);
 }
 
 /** Impuesto configurado que corresponde a un valor retenido concreto. */

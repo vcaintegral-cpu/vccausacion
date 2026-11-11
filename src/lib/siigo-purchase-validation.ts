@@ -14,7 +14,7 @@ export function purchasePayloadErrors(items: Array<{ quantity: number; price: nu
   let subtotal = 0, iva = 0, inc = 0;
   const errors: string[] = [];
   for (const [index, item] of items.entries()) {
-    const base = roundCOP(roundCOP(item.quantity) * roundCOP(item.price) - roundCOP(item.discount));
+    const base = baseOf(item);
     subtotal += toCents(base);
     for (const id of item.tax_ids ?? []) {
       const tax = taxes.find(t => String(t.id) === String(id) && t.active !== false);
@@ -123,8 +123,9 @@ export type AdaptableItem = {
 const kindOf = (t: PurchaseTax) => `${t.type ?? ""} ${t.name ?? ""}`;
 const isIva = (t: PurchaseTax) => /iva/i.test(kindOf(t)) && !/rete|withhold|consum/i.test(kindOf(t));
 const isInc = (t: PurchaseTax) => /consum/i.test(kindOf(t));
+// Igual que Siigo: cantidad (2 decimales) × precio (hasta 6 decimales) − descuento, a 2 decimales.
 const baseOf = (it: { quantity: number; price: number; discount?: number }) =>
-  roundCOP(roundCOP(it.quantity) * roundCOP(it.price) - roundCOP(it.discount));
+  roundCOP(roundCOP(it.quantity) * (Math.round(Number(it.price) * 1e6) / 1e6) - roundCOP(it.discount));
 
 export type AdaptResult<T> = { items: T[]; incAsCost: number; adjustment: number; providerRounding: number; notes: string[] };
 
@@ -405,4 +406,45 @@ export function motivoSinAjuste(
   if (conIva.length && conIva.every((it) => it.type !== "Account" && !(Number.isInteger(Number(it.quantity)) && Number(it.quantity) >= 2)))
     return "El IVA está en productos de inventario de 1 unidad: no se pueden dividir sin cambiar el inventario. Cambie el renglón a cuenta de gasto/costo o ajuste el centavo en Siigo.";
   return null;
+}
+
+/**
+ * Diferencia de redondeo del proveedor de hasta $1 entre los valores de la factura y lo
+ * que Siigo calcula renglón por renglón (subtotal con 2 decimales por precio, IVA por
+ * renglón): se reproduce como la firma lo hace en Siigo, con un renglón de "Ajuste al
+ * peso" sin impuestos por la diferencia del total (o restándola de un renglón sin IVA).
+ * El total de la compra y el pago quedan iguales a la factura; el IVA queda el que Siigo
+ * calcula (diferencia de centavos, informada en la nota). Más de $1 no se ajusta.
+ */
+export function ajusteAlPesoSiigo<T extends AdaptableItem>(
+  items: T[],
+  taxes: PurchaseTax[],
+  expected: { subtotal: number; iva: number; impoconsumo: number },
+  cuentaAjuste: string | null,
+): { items: T[]; subtotalSiigo: number; ivaSiigo: number; nota: string } | null {
+  if (!items.length) return null;
+  const sub = items.reduce((a, it) => a + toCents(baseOf(it)), 0);
+  const ivaS = ivaSiigoCentavos(items, taxes);
+  const dSub = toCents(expected.subtotal) - sub;
+  const dIva = toCents(expected.iva) - ivaS;
+  const total = dSub + dIva;
+  if ((dSub === 0 && dIva === 0) || Math.abs(dSub) > 100 || Math.abs(dIva) > 100 || Math.abs(total) > 100) return null;
+  let out = [...items];
+  if (total > 0) {
+    if (!cuentaAjuste) return null;
+    const ref = items[0]!;
+    out.push({ ...ref, type: "Account", code: cuentaAjuste, account_code: cuentaAjuste, quantity: 1, price: total / 100, discount: 0, tax_ids: [], description: "Ajuste al peso del documento" });
+  } else if (total < 0) {
+    const idx = out.findIndex((it) => it.tax_ids.length === 0 && toCents(baseOf(it)) > -total);
+    if (idx < 0) return null;
+    const t = out[idx]!;
+    out = out.map((it, i) => (i === idx ? { ...t, quantity: 1, discount: 0, price: roundCOP(baseOf(t) + total / 100), description: `${t.description} (incluye ajuste al peso ${total / 100})` } : it));
+  }
+  const subtotalSiigo = out.reduce((a, it) => a + toCents(baseOf(it)), 0) / 100;
+  return {
+    items: out,
+    subtotalSiigo,
+    ivaSiigo: ivaS / 100,
+    nota: `Ajuste al peso ${total / 100} en Siigo: el proveedor redondeó distinto (subtotal ${dSub / 100}, IVA ${dIva / 100}).`,
+  };
 }
