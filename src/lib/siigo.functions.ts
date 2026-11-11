@@ -822,6 +822,8 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     const incAlGasto = funcionActiva(empresa?.nit ?? null, "impoconsumo_al_gasto");
     // Compras de inventario: renglones de producto con cuentas 14 y productos nuevos creados en Siigo.
     const inventario = funcionActiva(empresa?.nit ?? null, "productos_inventario");
+    // Compras siempre por pagar: nunca se envían pagadas; el pago se hace con el RP.
+    const siemprePorPagar = funcionActiva(empresa?.nit ?? null, "compras_por_pagar");
     const mensaje = motivoBloqueoEmpresa(chequeoEmpresa);
     if (mensaje) {
       await supabase
@@ -1720,17 +1722,45 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
 
       // FORMA DE PAGO: la elegida por el usuario en el borrador. Es un concepto
       // independiente de la cuenta por pagar (CxP) y nunca la modifica.
-      const metodoFactura =
-        String((inv as { payment_method?: string | null }).payment_method ?? "").toLowerCase() ===
-        "contado"
+      const metodoFactura = siemprePorPagar
+        ? "credito"
+        : String((inv as { payment_method?: string | null }).payment_method ?? "").toLowerCase() ===
+            "contado"
           ? "contado"
           : "credito";
-      const formaSeleccionadaId = String(
+      let formaSeleccionadaId = String(
         (inv as { payment_type_id?: string | null }).payment_type_id ?? "",
       ).trim();
-      const formaSeleccionadaNombre =
+      let formaSeleccionadaNombre =
         String((inv as { payment_type_name?: string | null }).payment_type_name ?? "").trim() ||
         null;
+      if (siemprePorPagar) {
+        // La forma elegida en el borrador solo se respeta si deja la compra por pagar; si
+        // no (tarjeta, efectivo, banco, contado), se usa la forma a crédito de la empresa.
+        const { esFormaPorPagar, formaPagoPorPagar } = await import("./compras-por-pagar");
+        const { data: formasLocales } = await supabase
+          .from("siigo_payment_types")
+          .select("siigo_id, name, method, account_code, active, due_date_required")
+          .eq("company_id", inv.company_id);
+        const formas = (formasLocales ?? []) as Array<{
+          siigo_id: string;
+          name: string;
+          method: string | null;
+          account_code: string | null;
+          active: boolean | null;
+          due_date_required: boolean | null;
+        }>;
+        const elegida = formas.find((f) => f.siigo_id === formaSeleccionadaId);
+        if (!elegida || !esFormaPorPagar(elegida)) {
+          const r = formaPagoPorPagar(
+            formas,
+            String((inv as { payable_account?: string | null }).payable_account ?? ""),
+          );
+          if ("error" in r) throw new Error(`Compra por pagar: ${r.error}`);
+          formaSeleccionadaId = r.id;
+          formaSeleccionadaNombre = r.name;
+        }
+      }
 
       // Validación bloqueante: la forma de pago debe existir y estar activa en Siigo.
       let paymentId: number | null = null;
@@ -1749,7 +1779,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           );
         if (formaLocal.active === false)
           throw new Error(`La forma de pago "${formaLocal.name}" está inactiva en Siigo.`);
-        if ((formaLocal.method === "contado" ? "contado" : "credito") !== metodoFactura)
+        if (!siemprePorPagar && (formaLocal.method === "contado" ? "contado" : "credito") !== metodoFactura)
           throw new Error(
             `El método de pago seleccionado no corresponde con la forma de pago "${formaLocal.name}".`,
           );
@@ -1781,6 +1811,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         );
       if (
         metodoFactura === "credito" &&
+        !siemprePorPagar &&
         !String(inv.due_date ?? "").trim() &&
         !String(inv.payment_form ?? "").trim()
       )
