@@ -913,6 +913,50 @@ export type Database = {
           },
         ]
       }
+      ds_resolutions: {
+        Row: {
+          active: boolean
+          approval_date: string
+          company_id: string
+          created_at: string
+          from_number: number
+          id: string
+          prefix: string
+          to_number: number
+          validity_months: number
+        }
+        Insert: {
+          active?: boolean
+          approval_date: string
+          company_id: string
+          created_at?: string
+          from_number: number
+          id?: string
+          prefix: string
+          to_number: number
+          validity_months?: number
+        }
+        Update: {
+          active?: boolean
+          approval_date?: string
+          company_id?: string
+          created_at?: string
+          from_number?: number
+          id?: string
+          prefix?: string
+          to_number?: number
+          validity_months?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ds_resolutions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       egreso_reglas: {
         Row: {
           clase: string
@@ -1063,50 +1107,6 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "egresos_company_id_fkey"
-            columns: ["company_id"]
-            isOneToOne: false
-            referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      ds_resolutions: {
-        Row: {
-          active: boolean
-          approval_date: string
-          company_id: string
-          created_at: string
-          from_number: number
-          id: string
-          prefix: string
-          to_number: number
-          validity_months: number
-        }
-        Insert: {
-          active?: boolean
-          approval_date: string
-          company_id: string
-          created_at?: string
-          from_number: number
-          id?: string
-          prefix: string
-          to_number: number
-          validity_months?: number
-        }
-        Update: {
-          active?: boolean
-          approval_date?: string
-          company_id?: string
-          created_at?: string
-          from_number?: number
-          id?: string
-          prefix?: string
-          to_number?: number
-          validity_months?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "ds_resolutions_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
