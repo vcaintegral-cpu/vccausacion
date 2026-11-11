@@ -125,6 +125,7 @@ function Egresos() {
   const corregir = useServerFn(egresosCorregirCompra);
   const enviarGrupoBancario = useServerFn(egresosEnviarGrupoBancario);
   const [trabajando, setTrabajando] = useState<string | null>(null);
+  const [buscarCxp, setBuscarCxp] = useState("");
   const onAnalizar = async (f: Fila) => {
     setTrabajando(f.id);
     try {
@@ -441,6 +442,59 @@ function Egresos() {
               ? `${cxp.data.length} vencimientos · saldo ${cop(cxp.data.reduce((s, c) => s + Number(c.balance), 0))} · leídas ${fecha(sincronizadoEl)}`
               : "Aún no se han leído. Usa «Sincronizar CxP de Siigo»."}
           </div>
+          {cxp.data?.length ? (
+            <div className="mt-2">
+              <Input
+                className="h-7"
+                placeholder="Buscar en las CxP de Siigo: FC-1-…, factura del proveedor, NIT o nombre"
+                value={buscarCxp}
+                onChange={(e) => setBuscarCxp(e.target.value)}
+              />
+              {buscarCxp.trim().length >= 2 ? (
+                <div className="mt-1 max-h-48 overflow-auto rounded border">
+                  {(() => {
+                    const q = buscarCxp.trim().toUpperCase().replace(/\s+/g, "");
+                    const hallados = cxp.data.filter((c) =>
+                      [
+                        `${c.prefix}-${c.consecutive}`,
+                        c.factura_proveedor,
+                        c.provider_nit,
+                        c.provider_name,
+                      ]
+                        .map((x) =>
+                          String(x ?? "")
+                            .toUpperCase()
+                            .replace(/\s+/g, ""),
+                        )
+                        .some((x) => x.includes(q)),
+                    );
+                    if (!hallados.length)
+                      return (
+                        <div className="p-1 text-amber-700">
+                          No está en el reporte de CxP de Siigo.
+                        </div>
+                      );
+                    return hallados.slice(0, 40).map((c) => (
+                      <div
+                        key={`${c.prefix}-${c.consecutive}-${c.quote}`}
+                        className="flex gap-2 border-b px-1 py-0.5"
+                      >
+                        <span className="w-24">
+                          {c.prefix}-{c.consecutive}
+                        </span>
+                        <span className="w-28">{c.factura_proveedor ?? "sin factura"}</span>
+                        <span className="w-24">{c.provider_nit}</span>
+                        <span className="flex-1 truncate">{c.provider_name}</span>
+                        <span className={Number(c.balance) > 0 ? "" : "text-red-700"}>
+                          {cop(Number(c.balance))}
+                        </span>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {funcion("lector_consolidado_pagos") ? (
             <div className="mt-2 text-muted-foreground">
               El reporte de pagos del mes («{"<MES> <AÑO>"}», hoja Consolidado) se lee solo desde la
