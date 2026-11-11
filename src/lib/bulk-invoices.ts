@@ -30,6 +30,7 @@ import {
   precedenteDe,
   type ImpuestoConfigurado,
   type PrecedentesEmpresa,
+  type PrecedenteProveedor,
   type TablaBases,
 } from "@/lib/precedente-tributario";
 import { cargarHistorialCompras, cargarPrecedentes, cargarTablasBases } from "@/lib/precedente-tributario.data";
@@ -618,6 +619,69 @@ export async function computeDraftAccounting(params: {
   // lo retenido en el documento mandan sobre el precedente.
   const impuestos = impuestosPrevios;
   const precedente = precedenteDe(precedentesPrevios, header.provider_nit);
+  // Precedente de IVA de toda la empresa (todos sus proveedores): se usa solo cuando el
+  // proveedor no tiene precedente propio que decida el IVA del renglón.
+  const precedenteIvaEmpresa = (() => {
+    const usos = new Map<string, PrecedenteProveedor["iva"][number]>();
+    for (const p of precedentesPrevios.values())
+      for (const u of p.iva) {
+        const k = u.taxId ?? `cuenta:${u.cuenta}`;
+        const previo = usos.get(k);
+        if (previo) previo.veces += u.veces;
+        else usos.set(k, { ...u });
+      }
+    return {
+      ...(precedente ?? { nit: "", documentosSiigo: 0, movimientosHistoricos: 0, comprasHistoricas: 0, retenciones: { retefuente: [], reteiva: [], reteica: [] }, sinRetencion: { retefuente: 0, reteiva: 0, reteica: 0 }, sinRetencionBaseMax: { retefuente: 0, reteiva: 0, reteica: 0 } }),
+      iva: [...usos.values()].sort((a, b) => b.veces - a.veces),
+    } as PrecedenteProveedor;
+  })();
+
+  // Retención que informa el documento sin tarifa configurada que coincida: se usa el
+  // impuesto (o la cuenta) que el historial le aplica a este proveedor. Si el historial
+  // muestra que NO se le retiene (bases iguales o mayores sin retención), el valor del
+  // documento es informativo (p. ej. autorretenedor) y no se registra.
+  for (const kind of RETENCIONES) {
+    const det = (retenciones.detalle ?? []).find((d) => d.kind === kind && !d.account_code && Number(d.amount) > 0);
+    if (!det) continue;
+    const quitarError = () => {
+      for (let i = erroresRetencion.length - 1; i >= 0; i--)
+        if (erroresRetencion[i]!.includes("ninguna tarifa configurada coincide") || erroresRetencion[i]!.includes("revisar tarifa"))
+          erroresRetencion.splice(i, 1);
+    };
+    const uso = precedente?.retenciones[kind].find((u) => u.taxId);
+    const tax = uso ? impuestos.find((t) => String(t.id) === String(uso.taxId) && t.active !== false) : undefined;
+    const cuentaHist = perfilHistorico?.retenciones[kind][0]?.cuenta ?? precedente?.retenciones[kind].find((u) => u.cuenta)?.cuenta ?? null;
+    if (tax || cuentaHist) {
+      const resolucion = tax
+        ? resolveTaxAccount(tax as TaxRecord, config.accounts)
+        : (() => {
+            const r = config.accounts.length ? resolveOperationalAccount(config.accounts, cuentaHist!) : null;
+            return { code: r?.valid && r.operationalAccount ? r.operationalAccount : cuentaHist!, name: r?.operational?.name ?? null, error: null as string | null };
+          })();
+      if (!resolucion.error && resolucion.code) {
+        det.account_code = resolucion.code;
+        det.name = resolucion.name ?? tax?.name ?? det.name;
+        if (tax) det.rate = Number(tax.rate);
+        quitarError();
+        alertas.push(`${tax?.name ?? "Retención"}: valor del documento (${Number(det.amount).toLocaleString("es-CO")}) registrado en ${resolucion.code}, la cuenta que el historial le aplica al proveedor.`);
+        continue;
+      }
+    }
+    const baseSin = kind === "reteiva" ? ivaTotal : baseGravable;
+    const sinHistorialDeRetencion = (precedente?.retenciones[kind].length ?? 0) === 0 && !(perfilHistorico?.retenciones[kind].length);
+    const vecesSin = Math.max(precedente?.sinRetencion[kind] ?? 0, perfilHistorico?.sinRetencion[kind].veces ?? 0);
+    const baseMaxSin = Math.max(precedente?.sinRetencionBaseMax[kind] ?? 0, perfilHistorico?.sinRetencion[kind].baseMax ?? 0);
+    if (sinHistorialDeRetencion && vecesSin >= 1 && baseMaxSin >= baseSin) {
+      retenciones = {
+        ...retenciones,
+        [kind]: roundCOP(Number(retenciones[kind] ?? 0) - Number(det.amount)),
+        detalle: (retenciones.detalle ?? []).filter((d) => d !== det),
+      };
+      quitarError();
+      alertas.push(`La factura informa ${kind} de ${Number(det.amount).toLocaleString("es-CO")}, que no coincide con ninguna tarifa; en Siigo nunca se le ha retenido a este proveedor (${vecesSin} compra(s) con bases de hasta ${baseMaxSin.toLocaleString("es-CO")}), así que no se registra.`);
+    }
+  }
+
   const ivaPorLinea: DraftAccounting["ivaPorLinea"] = lines.map((l, i) => {
     const fijado = params.ivaFijado?.[i];
     const elegido = fijado ? impuestos.find((t) => String(t.id) === String(fijado)) : undefined;
@@ -631,7 +695,21 @@ export async function computeDraftAccounting(params: {
       },
       precedente,
     });
-    return e.tax ? { tax: e.tax, motivo: e.motivo } : null;
+    if (e.tax) return { tax: e.tax, motivo: e.motivo };
+    // Sin precedente del proveedor: el IVA que más usa la empresa con esa tarifa (o que
+    // cuadra al peso con el renglón cuando el documento no trae tarifa).
+    const empresa = elegirIva({
+      taxes: impuestos,
+      linea: {
+        iva: roundCOP(Number(l.iva || 0)),
+        iva_rate: extracted[i]?.iva_rate ?? null,
+        base: roundCOP(l.subtotal ?? Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0)),
+      },
+      precedente: precedenteIvaEmpresa,
+    });
+    return empresa.tax
+      ? { tax: empresa.tax, motivo: `${empresa.tax.name}: el IVA que más usa la empresa con esa tarifa (el proveedor no tiene precedente propio).` }
+      : null;
   });
   let confirmarCondicion: string | null = null;
   {

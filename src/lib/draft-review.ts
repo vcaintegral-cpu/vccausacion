@@ -89,6 +89,8 @@ export type DraftAccounts = {
   reteiva: Cuenta[];
   reteica: Cuenta[];
   otrasRetenciones: Cuenta[];
+  /** Créditos del asiento sin cuenta (p. ej. una retención cuyo impuesto no se identificó). */
+  creditoSinCuenta?: number;
   costCenter: string | null;
   debit: number;
   credit: number;
@@ -125,6 +127,7 @@ export function classifyJournal(rows: JournalRow[]): DraftAccounts {
     const credit = Number(r.credit || 0);
     out.debit += debit;
     out.credit += credit;
+    if (credit > 0 && !code) out.creditoSinCuenta = (out.creditoSinCuenta ?? 0) + credit;
     if (!out.costCenter && r.cost_center) out.costCenter = r.cost_center;
     // Document adjustments remain in journal totals, but are not purchase expenses.
     // Do not exempt arbitrary class-4 debits or adjustments over the one-peso limit.
@@ -169,14 +172,14 @@ export function alertasBorrador(inv: DraftInvoice, acc: DraftAccounts | undefine
   if (!inv.number) a.push({ level: "error", message: "Sin número de factura." });
   if (!inv.issue_date) a.push({ level: "error", message: "Sin fecha de factura." });
   if (Number(inv.total || 0) <= 0) a.push({ level: "error", message: "Valor total inválido." });
-  if (!acc.gasto) a.push({ level: "error", message: "Cuenta de gasto/costo faltante." });
+  if (!acc.gasto || !acc.gasto.code) a.push({ level: "error", message: "Pendiente de cuenta de gasto/costo: asígnala en la revisión (lápiz)." });
   else if (pucCodes.size && !pucCodes.has(acc.gasto.code)) a.push({ level: "error", message: `Cuenta ${acc.gasto.code} no existe en el PUC.` });
   for (const g of acc.gastos) {
     if (!isValidPurchaseAccount(g.code, inventario)) a.push({ level: "error", message: `Pendiente de cuenta: ${g.code || "sin cuenta"} no es gasto válido (5, 6, 7, 15, 16, 17${inventario ? " o inventario 14" : ""}).` });
-    else if (pucCodes.size && !pucCodes.has(g.code)) a.push({ level: "error", message: `Cuenta ${g.code} no existe en el PUC.` });
+    else if (g.code && pucCodes.size && !pucCodes.has(g.code)) a.push({ level: "error", message: `Cuenta ${g.code} no existe en el PUC.` });
   }
   if (Number(inv.iva || 0) > 0) {
-    if (!acc.iva) a.push({ level: "error", message: "IVA sin cuenta." });
+    if (!acc.iva || !acc.iva.code) a.push({ level: "error", message: "IVA sin impuesto elegido: selecciona el IVA de cada renglón en la revisión (lápiz)." });
     else if (pucCodes.size && !pucCodes.has(acc.iva.code)) a.push({ level: "error", message: `Cuenta de IVA ${acc.iva.code} no existe en el PUC.` });
   }
   // La cuenta por pagar puede venir del comprobante o de la asignación automática
@@ -185,8 +188,20 @@ export function alertasBorrador(inv: DraftInvoice, acc: DraftAccounts | undefine
   if (!payableCode) a.push({ level: "error", message: "Proveedor sin cuenta por pagar." });
   else if (pucCodes.size && !pucCodes.has(payableCode)) a.push({ level: "error", message: `Cuenta por pagar ${payableCode} no existe en el PUC.` });
   else if (!isPayableCode(payableCode)) a.push({ level: "error", message: `La cuenta ${payableCode} no es una cuenta por pagar válida (grupos 22 o 23).` });
-  if (Math.abs(acc.debit - acc.credit) >= EPS_COP)
-    a.push({ level: "error", message: "El asiento no está cuadrado. Revise los valores tributarios y contables." });
+  if ((acc.creditoSinCuenta ?? 0) > 0)
+    a.push({ level: "error", message: `Retención sin impuesto: la factura retuvo ${Math.round(acc.creditoSinCuenta ?? 0).toLocaleString("es-CO")} y no se identificó el impuesto; selecciónalo en la revisión (lápiz).` });
+  if (Math.abs(acc.debit - acc.credit) >= EPS_COP) {
+    // Pista: a qué valor del documento corresponde la diferencia.
+    const dif = Math.round((acc.debit - acc.credit) * 100) / 100;
+    const abs = Math.abs(dif);
+    const cerca = (v: unknown) => Number(v || 0) > 0 && Math.abs(abs - Number(v)) <= 1;
+    const pista = cerca(inv.iva) ? " Coincide con el IVA del documento: revisa el tratamiento del IVA."
+      : cerca((inv as { discount?: unknown }).discount) ? " Coincide con el descuento global del documento."
+      : cerca((inv as { impoconsumo?: unknown }).impoconsumo) ? " Coincide con el INC del documento."
+      : cerca(inv.retefuente) || cerca(inv.reteiva) || cerca(inv.reteica) ? " Coincide con una retención del documento."
+      : "";
+    a.push({ level: "error", message: `El asiento no está cuadrado: ${dif > 0 ? "sobran débitos" : "faltan débitos"} por ${abs.toLocaleString("es-CO")}.${pista}` });
+  }
   // Bloqueante: la suma de las líneas de gasto/costo debe igualar el subtotal del documento.
   const subtotal = Number(inv.subtotal || 0);
   if (!source && subtotal > 0 && acc.gastoDebit > 0 && Math.abs(acc.gastoDebit - subtotal) >= EPS_COP)

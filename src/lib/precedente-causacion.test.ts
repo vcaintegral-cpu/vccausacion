@@ -235,7 +235,7 @@ describe("causación con precedente tributario", () => {
     expect(acc.alertas.some((a) => a.includes("no alcanza la base mínima $1.350.000"))).toBe(true);
   });
 
-  it("proveedor sin precedente: no inventa IVA ni retención y pide confirmar", async () => {
+  it("proveedor sin precedente: IVA más usado por la empresa con esa tarifa; no inventa retención y pide confirmar", async () => {
     const otro = { ...header, provider_nit: "811000001", provider_name: "NUEVO S.A.S." };
     const acc = await computeDraftAccounting({
       companyId: "c1",
@@ -243,13 +243,12 @@ describe("causación con precedente tributario", () => {
       header: otro as never,
       extracted: lineas as never,
     });
-    expect(acc.ivaPorLinea[0]).toBeNull();
+    // Precedente de la empresa (no del proveedor): el IVA del 19 % que más usa la empresa.
+    expect(acc.ivaPorLinea[0]?.tax.id).toBe("iva19b");
+    expect(acc.ivaPorLinea[0]?.motivo).toContain("más usa la empresa");
+    expect(acc.journal.find((j) => j.account_name === "IVA sin impuesto seleccionado")).toBeUndefined();
     expect(acc.retenciones.retefuente).toBe(0);
     expect(acc.confirmarCondicion).toContain("Proveedor sin precedente en Siigo");
-    // Comportamiento anterior intacto: IVA pendiente de seleccionar en la revisión.
-    expect(acc.journal.find((j) => j.account_name === "IVA sin impuesto seleccionado")?.debit).toBe(
-      190000,
-    );
   });
 
   it("la retención que trae el documento sigue mandando", async () => {
@@ -264,5 +263,49 @@ describe("causación con precedente tributario", () => {
     expect(
       acc.retenciones.detalle.filter((d) => (d as { kind: string }).kind === "retefuente"),
     ).toHaveLength(1);
+  });
+});
+
+describe("retención informada por la factura sin tarifa configurada que coincida", () => {
+  const TAXES2 = [
+    ...TAXES,
+    { id: "rfServ", kind: "retefuente", name: "Retención servicios 4%", rate: 4, account_code: "23652501", active: true, min_base: 0 },
+  ];
+  const precedentes2 = construirPrecedentes({
+    taxes: TAXES2,
+    facturas: [
+      { id: "a1", provider_nit: "900047217", issue_date: "2026-09-12", subtotal: 2000000, iva: 380000, retefuente: 50000, reteiva: 0, reteica: 0 },
+      // Proveedor al que nunca se le retiene (p. ej. autorretenedor), con bases grandes.
+      { id: "b1", provider_nit: "811000002", issue_date: "2026-09-01", subtotal: 5000000, iva: 950000, retefuente: 0, reteiva: 0, reteica: 0 },
+    ],
+    lineas: [],
+    asientos: [{ invoice_id: "a1", account_code: "23654001", debit: 0, credit: 50000 }],
+    historico: [],
+  });
+  const config2 = () => ({ ...config(TABLA_2026), taxes: TAXES2 as never, precedentes: precedentes2 });
+
+  it("usa el impuesto que el historial le aplica al proveedor (la retención queda con cuenta)", async () => {
+    const acc = await computeDraftAccounting({
+      companyId: "c1",
+      config: config2() as never,
+      header: { ...header, retefuente: 42702.91 } as never,
+      extracted: lineas as never,
+    });
+    const det = acc.retenciones.detalle.find((d) => (d as { kind: string }).kind === "retefuente") as { account_code: string; amount: number };
+    expect(det).toMatchObject({ account_code: "23654001", amount: 42702.91 });
+    expect(acc.unresolvedAccounts.some((u) => u.includes("ninguna tarifa configurada coincide"))).toBe(false);
+  });
+
+  it("si nunca se le ha retenido (bases iguales o mayores), el valor del documento es informativo y no se registra", async () => {
+    const acc = await computeDraftAccounting({
+      companyId: "c1",
+      config: config2() as never,
+      header: { ...header, provider_nit: "811000002", provider_name: "AUTORRETENEDOR S.A.S.", retefuente: 42702.91 } as never,
+      extracted: lineas as never,
+    });
+    expect(acc.retenciones.retefuente).toBe(0);
+    expect(acc.alertas.some((a) => a.includes("nunca se le ha retenido"))).toBe(true);
+    // Sin retención, la cuenta por pagar es el total del documento.
+    expect(acc.journal.find((j) => j.account_code === "22050501")?.credit).toBe(1190000);
   });
 });
