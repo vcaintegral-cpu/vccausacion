@@ -369,7 +369,7 @@ export function cuerpoCompra(
 ): Record<string, unknown> {
   return {
     document: { id: doc.document?.id },
-    ...(doc.number != null ? { number: doc.number } : {}),
+    // El número no se envía: Siigo lo rechaza en la edición («The number cannot be used»).
     date: doc.date,
     supplier: {
       identification: doc.supplier?.identification,

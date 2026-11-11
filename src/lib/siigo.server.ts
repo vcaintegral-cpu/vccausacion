@@ -255,6 +255,15 @@ async function siigoRequest<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: 
       console.log("===================================");
     }
     res = await fetch(url, init);
+    // Límite de peticiones de Siigo (429): la petición no se procesó; se espera lo que
+    // indica Siigo («Try again in N seconds», 3 s por defecto) y se reintenta hasta 4 veces.
+    for (let intento = 1; res.status === 429 && intento <= 4; intento++) {
+      const cuerpo = await res.text().catch(() => "");
+      const segundos = Number(res.headers.get("retry-after")) || Number(/again in (\d+)/i.exec(cuerpo)?.[1]) || 3;
+      console.warn(`[siigo] límite de peticiones (429) en ${url}; reintento ${intento} en ${segundos} s`);
+      await new Promise((r) => setTimeout(r, Math.min(segundos, 10) * 1000 + 250 * intento));
+      res = await fetch(url, init);
+    }
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     console.error("[siigo] fallo de red en", url, detail);

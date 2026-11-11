@@ -493,3 +493,81 @@ describe("correcciones: CxP repetidas, cuenta del banco y CxP sin leer", () => {
     expect(p.motivos.join(" ")).toMatch(/Sincronizar CxP de Siigo/);
   });
 });
+
+describe("RP único del mes de gastos bancarios por cuenta bancaria", () => {
+  it("comisiones, IVA bancario y 4x1000 de un banco llevan el mismo grupo; efectivo y proveedores no", async () => {
+    const { grupoBancario } = await import("./egresos");
+    expect(grupoBancario("4x1000", "CORRIENTE")).toBe("bancario|CORRIENTE");
+    expect(grupoBancario("iva_bancario", "Ahorros")).toBe("bancario|AHORROS");
+    expect(grupoBancario("gasto_bancario", "EFECTIVO")).toBeNull();
+    expect(grupoBancario("nomina", "CORRIENTE")).toBeNull();
+    const regla = {
+      patron: "concepto:4x1000",
+      tipo: "detallado",
+      cuenta_debito: "53051501",
+      tercero_nit: "890903938",
+    };
+    const p = proponerEgreso(
+      mov({ relacion: "4X1000", descripcion: "IMPTO GOBIERNO 4X1000", tercero: null, valor: 400 }),
+      ctx({ conceptos: [regla] }),
+    );
+    expect(p.grupo).toBe("bancario|CORRIENTE");
+  });
+  it("un solo RP detallado: un débito por movimiento y un crédito al banco por el total", async () => {
+    const { payloadReciboAgrupado } = await import("./egresos");
+    const prop = (cuenta: string) => ({
+      tipo: "detallado" as const,
+      terceroNit: "900470166",
+      terceroNombre: null,
+      items: [],
+      cuentas: [{ code: cuenta, movimiento: "Debit" as const, valor: 0, descripcion: "" }],
+      paymentTypeId: null,
+      cuentaBanco: "11100501",
+      listo: true,
+      motivos: [],
+      notas: [],
+      grupo: "bancario|CORRIENTE",
+    });
+    const r = payloadReciboAgrupado(
+      [
+        {
+          fecha: "2026-10-01",
+          descripcion: "CUOTA PLAN CANAL NEGOCIOS",
+          valor: 78000,
+          propuesta: prop("53050501"),
+        },
+        {
+          fecha: "2026-10-01",
+          descripcion: "IVA CUOTA PLAN CANAL NEGOCIOS",
+          valor: 14820,
+          propuesta: prop("24081002"),
+        },
+        {
+          fecha: "2026-10-30",
+          descripcion: "IMPTO GOBIERNO 4X1000",
+          valor: 35841.18,
+          propuesta: prop("53051501"),
+        },
+      ],
+      77,
+      "2026-10-31",
+      "CORRIENTE",
+    );
+    expect(r.errores).toEqual([]);
+    expect(r.total).toBe(128661.18);
+    expect(r.payload).toMatchObject({
+      type: "Detailed",
+      date: "2026-10-31",
+      supplier: { identification: "900470166" },
+    });
+    const items = (
+      r.payload as { items: Array<{ account: { code: string; movement: string }; value: number }> }
+    ).items;
+    expect(items.map((i) => [i.account.code, i.account.movement, i.value])).toEqual([
+      ["53050501", "Debit", 78000],
+      ["24081002", "Debit", 14820],
+      ["53051501", "Debit", 35841.18],
+      ["11100501", "Credit", 128661.18],
+    ]);
+  });
+});

@@ -88,6 +88,6 @@ describe("compras siempre por pagar", () => {
       },
     ]);
     expect(cuerpo.retentions).toEqual([{ id: 301 }]);
-    expect(cuerpo.number).toBe(5667);
+    expect(cuerpo.number).toBeUndefined(); // Siigo no acepta el número en la edición
   });
 });

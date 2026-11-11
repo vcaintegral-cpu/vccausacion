@@ -177,7 +177,7 @@ describe("edición de la compra en Siigo", () => {
     expect(cuerpo.retentions).toEqual([{ id: 301 }]);
     expect(cuerpo.payments).toEqual([{ id: 7, value: 1157000, due_date: "2026-11-05" }]);
     expect(cuerpo.document).toEqual({ id: 25 });
-    expect(cuerpo.number).toBe(500);
+    expect(cuerpo.number).toBeUndefined(); // Siigo no acepta el número en la edición
   });
   it("quitar una Retefuente causada sube la CxP en su valor", () => {
     const conRet = {

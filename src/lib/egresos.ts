@@ -73,6 +73,11 @@ export type Propuesta = {
   listo: boolean;
   motivos: string[];
   notas: string[];
+  /**
+   * Grupo de envío: los gastos bancarios (comisiones, IVA bancario, 4x1000) de cada cuenta
+   * bancaria se envían juntos en un solo RP por mes ("bancario|CORRIENTE").
+   */
+  grupo?: string | null;
 };
 
 export type ReglaBanco = {
@@ -303,6 +308,20 @@ export const CONCEPTOS: Concepto[] = [
   { id: "cuenta_cobro", etiqueta: "Cuenta de cobro", prueba: /CTA\.? COBRO|CUENTA DE COBRO/ },
   { id: "prestamo", etiqueta: "Préstamo", prueba: /PRESTAMO|CREDITO/ },
 ];
+
+/** Conceptos que se agrupan en un solo RP mensual por cuenta bancaria. */
+export const CONCEPTOS_BANCARIOS = new Set(["gasto_bancario", "iva_bancario", "4x1000"]);
+
+/** Grupo del RP mensual de gastos bancarios de una cuenta («bancario|CORRIENTE»). */
+export function grupoBancario(
+  conceptoId: string | null,
+  cuenta: string | null | undefined,
+): string | null {
+  const c = normalizar(cuenta);
+  return conceptoId && CONCEPTOS_BANCARIOS.has(conceptoId) && c && !/EFECTIVO|CAJA/.test(c)
+    ? `bancario|${c}`
+    : null;
+}
 
 export function conceptoDe(
   m: Pick<MovimientoPago, "relacion" | "descripcion" | "aplicacion">,
@@ -699,6 +718,11 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
     ];
   }
   if (concepto) notas.push(`Concepto: ${concepto.etiqueta}.`);
+  const grupo = grupoBancario(concepto?.id ?? null, m.cuenta);
+  if (grupo) {
+    p.grupo = grupo;
+    notas.push(`Va en el RP único de gastos bancarios de ${normalizar(m.cuenta)} del mes.`);
+  }
   p.listo = motivos.length === 0 && p.cuentas.length === 2;
   return p;
 }
@@ -825,4 +849,67 @@ export function unirVencimientos<
     previo.fila.balance = Math.round((previo.fila.balance + f.balance) * 100) / 100;
   }
   return [...porClave.values()].map((x) => x.fila);
+}
+
+/**
+ * RP detallado único con los gastos bancarios del mes de una cuenta bancaria: un débito
+ * por movimiento (cuenta del concepto, con su fecha y descripción) y un solo crédito al
+ * banco por el total. Un solo tercero (el más usado en los movimientos).
+ */
+export function payloadReciboAgrupado(
+  movimientos: Array<{
+    fecha: string;
+    descripcion: string | null;
+    valor: number;
+    propuesta: Propuesta;
+  }>,
+  documentId: number,
+  fecha: string,
+  etiqueta: string,
+): { payload: Record<string, unknown>; total: number; errores: string[] } {
+  const errores: string[] = [];
+  const bancos = [...new Set(movimientos.map((m) => m.propuesta.cuentaBanco).filter(Boolean))];
+  if (bancos.length !== 1)
+    errores.push(
+      bancos.length
+        ? `Los movimientos tienen distintas cuentas de banco (${bancos.join(", ")}).`
+        : `Falta la cuenta de banco de «${etiqueta}».`,
+    );
+  const conteo = new Map<string, number>();
+  for (const m of movimientos)
+    if (m.propuesta.terceroNit)
+      conteo.set(m.propuesta.terceroNit, (conteo.get(m.propuesta.terceroNit) ?? 0) + 1);
+  const tercero = [...conteo].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  if (!tercero) errores.push("Falta el tercero (el banco o la empresa) de los gastos bancarios.");
+  const items: Array<Record<string, unknown>> = [];
+  for (const m of movimientos) {
+    const debito = m.propuesta.cuentas.find((c) => c.movimiento === "Debit");
+    if (!debito) {
+      errores.push(`${m.fecha} ${m.descripcion ?? ""}: falta la cuenta débito.`);
+      continue;
+    }
+    items.push({
+      account: { code: debito.code, movement: "Debit" },
+      description: `${m.fecha} ${m.descripcion ?? ""}`.trim().slice(0, 100),
+      value: roundCOP(m.valor),
+    });
+  }
+  const total = roundCOP(movimientos.reduce((s, m) => s + roundCOP(m.valor), 0));
+  items.push({
+    account: { code: bancos[0] ?? "", movement: "Credit" },
+    description: `Gastos bancarios ${etiqueta} ${fecha.slice(0, 7)}`,
+    value: total,
+  });
+  return {
+    payload: {
+      document: { id: documentId },
+      date: fecha,
+      type: "Detailed",
+      supplier: { identification: String(tercero ?? ""), branch_office: 0 },
+      items,
+      observations: `Gastos bancarios ${etiqueta} ${fecha.slice(0, 7)}: ${movimientos.length} movimientos (comisiones, IVA bancario, 4x1000).`,
+    },
+    total,
+    errores,
+  };
 }
