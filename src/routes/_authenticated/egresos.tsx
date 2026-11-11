@@ -229,7 +229,7 @@ function Egresos() {
     mutationFn: () => sincronizar({ data: { companyId: companyId!, periodo } }),
     onSuccess: (r) => {
       toast.success(
-        `Cuentas por pagar de Siigo: ${r.vencimientos} vencimientos por ${cop(r.saldo)}${r.sinFactura ? ` (${r.sinFactura} sin número de factura del proveedor)` : ""}.`,
+        `Cuentas por pagar de Siigo: ${r.vencimientos} vencimientos por ${cop(r.saldo)}${r.agregadasDeCompras ? `; ${r.agregadasDeCompras} tomadas del saldo de las compras porque el reporte de CxP de Siigo no las traía` : ""}${r.sinFactura ? ` (${r.sinFactura} sin número de factura del proveedor)` : ""}.`,
       );
       refrescar();
     },

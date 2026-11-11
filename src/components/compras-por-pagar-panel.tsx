@@ -51,7 +51,12 @@ export function ComprasPorPagarPanel({
         desde = r.siguiente;
       }
       setPagadas(todas);
-      setMarcadas(new Set(todas.map((c) => c.siigoId)));
+      // Por defecto solo las del mes revisado.
+      setMarcadas(
+        new Set(
+          todas.filter((c) => String(c.fecha ?? "").startsWith(periodo)).map((c) => c.siigoId),
+        ),
+      );
       toast.info(
         todas.length
           ? `${todas.length} compras quedaron pagadas en Siigo.`
@@ -140,6 +145,43 @@ export function ComprasPorPagarPanel({
       {progreso ? (
         <div className="mt-2 flex items-center gap-1 text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin" /> {progreso}
+        </div>
+      ) : null}
+      {pagadas?.length ? (
+        <div className="mt-2 flex flex-wrap items-center gap-1">
+          <span className="text-muted-foreground">Marcar:</span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 px-2"
+            onClick={() => setMarcadas(new Set(pagadas.map((c) => c.siigoId)))}
+          >
+            Todas ({pagadas.length})
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 px-2"
+            onClick={() => setMarcadas(new Set())}
+          >
+            Ninguna
+          </Button>
+          {[...new Set(pagadas.map((c) => String(c.fecha ?? "").slice(0, 7)).filter(Boolean))]
+            .sort()
+            .map((mes) => {
+              const delMes = pagadas.filter((c) => String(c.fecha ?? "").startsWith(mes));
+              return (
+                <Button
+                  key={mes}
+                  size="sm"
+                  variant="outline"
+                  className="h-6 px-2"
+                  onClick={() => setMarcadas(new Set(delMes.map((c) => c.siigoId)))}
+                >
+                  Solo {mes} ({delMes.length})
+                </Button>
+              );
+            })}
         </div>
       ) : null}
       {pagadas?.length ? (
