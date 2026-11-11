@@ -21,6 +21,7 @@ import { Route as AuthenticatedBorradoresRouteImport } from './routes/_authentic
 import { Route as AuthenticatedCausarRouteImport } from './routes/_authenticated/causar'
 import { Route as AuthenticatedDocumentosRouteImport } from './routes/_authenticated/documentos'
 import { Route as AuthenticatedDocumentosSoporteRouteImport } from './routes/_authenticated/documentos-soporte'
+import { Route as AuthenticatedEgresosRouteImport } from './routes/_authenticated/egresos'
 import { Route as AuthenticatedEmpresasRouteImport } from './routes/_authenticated/empresas'
 import { Route as AuthenticatedFacturasRouteImport } from './routes/_authenticated/facturas'
 import { Route as AuthenticatedFuentesRouteImport } from './routes/_authenticated/fuentes'
@@ -92,6 +93,11 @@ const AuthenticatedDocumentosSoporteRoute =
     path: '/documentos-soporte',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedEgresosRoute = AuthenticatedEgresosRouteImport.update({
+  id: '/egresos',
+  path: '/egresos',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedEmpresasRoute = AuthenticatedEmpresasRouteImport.update({
   id: '/empresas',
   path: '/empresas',
@@ -152,6 +158,7 @@ export interface FileRoutesByFullPath {
   '/causar': typeof AuthenticatedCausarRoute
   '/documentos': typeof AuthenticatedDocumentosRoute
   '/documentos-soporte': typeof AuthenticatedDocumentosSoporteRoute
+  '/egresos': typeof AuthenticatedEgresosRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
   '/fuentes': typeof AuthenticatedFuentesRoute
@@ -174,6 +181,7 @@ export interface FileRoutesByTo {
   '/causar': typeof AuthenticatedCausarRoute
   '/documentos': typeof AuthenticatedDocumentosRoute
   '/documentos-soporte': typeof AuthenticatedDocumentosSoporteRoute
+  '/egresos': typeof AuthenticatedEgresosRoute
   '/empresas': typeof AuthenticatedEmpresasRoute
   '/facturas': typeof AuthenticatedFacturasRoute
   '/fuentes': typeof AuthenticatedFuentesRoute
@@ -198,6 +206,7 @@ export interface FileRoutesById {
   '/_authenticated/causar': typeof AuthenticatedCausarRoute
   '/_authenticated/documentos': typeof AuthenticatedDocumentosRoute
   '/_authenticated/documentos-soporte': typeof AuthenticatedDocumentosSoporteRoute
+  '/_authenticated/egresos': typeof AuthenticatedEgresosRoute
   '/_authenticated/empresas': typeof AuthenticatedEmpresasRoute
   '/_authenticated/facturas': typeof AuthenticatedFacturasRoute
   '/_authenticated/fuentes': typeof AuthenticatedFuentesRoute
@@ -222,6 +231,7 @@ export interface FileRouteTypes {
     | '/causar'
     | '/documentos'
     | '/documentos-soporte'
+    | '/egresos'
     | '/empresas'
     | '/facturas'
     | '/fuentes'
@@ -244,6 +254,7 @@ export interface FileRouteTypes {
     | '/causar'
     | '/documentos'
     | '/documentos-soporte'
+    | '/egresos'
     | '/empresas'
     | '/facturas'
     | '/fuentes'
@@ -267,6 +278,7 @@ export interface FileRouteTypes {
     | '/_authenticated/causar'
     | '/_authenticated/documentos'
     | '/_authenticated/documentos-soporte'
+    | '/_authenticated/egresos'
     | '/_authenticated/empresas'
     | '/_authenticated/facturas'
     | '/_authenticated/fuentes'
@@ -375,6 +387,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDocumentosSoporteRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/egresos': {
+      id: '/_authenticated/egresos'
+      path: '/egresos'
+      fullPath: '/egresos'
+      preLoaderRoute: typeof AuthenticatedEgresosRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/empresas': {
       id: '/_authenticated/empresas'
       path: '/empresas'
@@ -448,6 +467,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedCausarRoute: typeof AuthenticatedCausarRoute
   AuthenticatedDocumentosRoute: typeof AuthenticatedDocumentosRoute
   AuthenticatedDocumentosSoporteRoute: typeof AuthenticatedDocumentosSoporteRoute
+  AuthenticatedEgresosRoute: typeof AuthenticatedEgresosRoute
   AuthenticatedEmpresasRoute: typeof AuthenticatedEmpresasRoute
   AuthenticatedFacturasRoute: typeof AuthenticatedFacturasRoute
   AuthenticatedFuentesRoute: typeof AuthenticatedFuentesRoute
@@ -464,6 +484,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCausarRoute: AuthenticatedCausarRoute,
   AuthenticatedDocumentosRoute: AuthenticatedDocumentosRoute,
   AuthenticatedDocumentosSoporteRoute: AuthenticatedDocumentosSoporteRoute,
+  AuthenticatedEgresosRoute: AuthenticatedEgresosRoute,
   AuthenticatedEmpresasRoute: AuthenticatedEmpresasRoute,
   AuthenticatedFacturasRoute: AuthenticatedFacturasRoute,
   AuthenticatedFuentesRoute: AuthenticatedFuentesRoute,

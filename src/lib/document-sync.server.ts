@@ -12,6 +12,7 @@
 //   bandeja payment_documents para cruzarlos con las facturas.
 // Nunca se causa ni se envía nada a Siigo desde aquí, y nada se modifica en la
 // carpeta de origen.
+import { funcionActiva } from "@/empresas/registro";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
@@ -419,7 +420,7 @@ export async function syncSource(
       // (solo entran los documentos nuevos; los ya cargados se reconocen por CUFE).
       // Un Excel que quedó en error (p. ej. por una regla de lectura ya corregida) se reintenta.
       else if (
-        a.tipo === "recibidos_excel" &&
+        (a.tipo === "recibidos_excel" || (a.tipo === "relacion_pagos" && funcionActiva(empresa.nit, "lector_consolidado_pagos"))) &&
         (!mismoMomento(previo.modified, a.node.modifiedAt) || previo.status === "error")
       )
         aProcesar.push(a);
@@ -477,8 +478,36 @@ export async function syncSource(
         Math.max(0, pdfs.length - cupo);
       await comprasPdf(admin, source, ownerId, await descargar(pdfs.slice(0, cupo)), filas, result);
     } else {
-      result.pendientesProximaEjecucion = Math.max(0, aProcesar.length - limite);
-      const descargados = await descargar(aProcesar.slice(0, limite));
+      // Reporte de pagos del mes («OCTUBRE 2026»): con el lector de la empresa se convierte
+      // en los egresos del mes con su propuesta de recibo de pago; se vuelve a leer cuando
+      // el equipo lo modifica. Sin lector configurado se guarda como extracto (igual que antes).
+      const conLector = funcionActiva(empresa.nit, "lector_consolidado_pagos");
+      const relaciones = conLector ? aProcesar.filter((a) => a.tipo === "relacion_pagos") : [];
+      for (const d of await descargar(relaciones)) {
+        try {
+          const { leerConsolidadoPagos } = await import("./lector-consolidado-pagos");
+          const { guardarLectura, proponerPeriodo, sugerirBancos } = await import("./egresos.server");
+          const lectura = leerConsolidadoPagos(d.bytes, d.node.name);
+          if (!lectura.hoja) throw new Error(lectura.advertencias.join(" ") || "No es un reporte de pagos.");
+          const g = await guardarLectura(admin, source.company_id, lectura, d.node.name);
+          await sugerirBancos(admin, source.company_id, lectura.egresos.map((e) => e.cuenta ?? ""));
+          const p = await proponerPeriodo(admin, source.company_id, g.periodo!);
+          filas.set(d.node.id, {
+            ...filaArchivo(source, d),
+            fingerprint: d.huella,
+            status: "imported",
+            message: `Reporte de pagos ${g.periodo}: ${g.nuevos} pagos nuevos, ${g.actualizados} actualizados; ${p.listos} listos y ${p.porRevisar} por revisar en Egresos y pagos.`,
+          });
+          result.egresosRecibidos += g.nuevos;
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          filas.set(d.node.id, { ...filaArchivo(source, d), fingerprint: d.huella, status: "error", message });
+          result.errores.push(`${d.ruta}/${d.node.name}: ${message}`);
+        }
+      }
+      const restantes = aProcesar.filter((a) => !relaciones.includes(a));
+      result.pendientesProximaEjecucion = Math.max(0, restantes.length - limite);
+      const descargados = await descargar(restantes.slice(0, limite));
       const previos = await huellasExistentes(
         admin,
         "payment_documents",
@@ -524,7 +553,7 @@ export async function syncSource(
         pagos.push({
           external_id: d.node.id,
           company_id: source.company_id,
-          kind: d.tipo === "extracto" ? "extracto" : "soporte_pago",
+          kind: d.tipo === "soporte_pago" ? "soporte_pago" : "extracto",
           file_name: d.node.name,
           folder_path: d.ruta,
           period: d.periodo,

@@ -18,6 +18,7 @@ export const MODULOS_POR_DEFECTO: Record<ModuloId, boolean> = {
   documentos: true,
   aprendizaje: true,
   fuentes: true,
+  egresos: true,
   integraciones: true,
   administracion: true,
   empresas: true,
@@ -50,6 +51,12 @@ export const FUNCIONES = {
   iva_solo_descontable: {
     descripcion:
       "El IVA de las compras va siempre a una cuenta descontable 2408 (compras, servicios, gastos, importación); nunca al IVA del costo (621008) de forma automática",
+    porDefecto: false,
+    agregada: "2026-11-11",
+  },
+  lector_consolidado_pagos: {
+    descripcion:
+      "Lee el reporte mensual de pagos con hoja «Consolidado» (FECHA, TERCERO, VALOR, CUENTA, RELACIÓN, APLICACIÓN, OBSERVACIONES) desde la carpeta de egresos o cargado a mano, para proponer los recibos de pago",
     porDefecto: false,
     agregada: "2026-11-11",
   },

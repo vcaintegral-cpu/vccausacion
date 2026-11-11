@@ -108,7 +108,7 @@ Perfiles específicos en el código:
 
 | Empresa | NIT | Carpeta | Diferencias con el núcleo |
 |---|---|---|---|
-| LED LIGHTS S.A.S. | 900.470.166-4 | `src/empresas/led-lights` | Función `impoconsumo_al_gasto` (2026-11-10): el impoconsumo no se causa aparte; se suma a la cuenta de gasto o costo de la compra, en el borrador y en Siigo. Función `productos_inventario` (2026-11-11): renglones de inventario emparejados con el producto del catálogo (o creado en Siigo al causar) y cuenta 14 (1435 / 1498). Función `cargos_en_items` (2026-11-11): INC, recargo y descuento global repartidos en el valor de los ítems. Función `iva_solo_descontable` (2026-11-11): el IVA de compras siempre a una cuenta 2408 |
+| LED LIGHTS S.A.S. | 900.470.166-4 | `src/empresas/led-lights` | Función `impoconsumo_al_gasto` (2026-11-10): el impoconsumo no se causa aparte; se suma a la cuenta de gasto o costo de la compra, en el borrador y en Siigo. Función `productos_inventario` (2026-11-11): renglones de inventario emparejados con el producto del catálogo (o creado en Siigo al causar) y cuenta 14 (1435 / 1498). Función `cargos_en_items` (2026-11-11): INC, recargo y descuento global repartidos en el valor de los ítems. Función `iva_solo_descontable` (2026-11-11): el IVA de compras siempre a una cuenta 2408. Función `lector_consolidado_pagos` (2026-11-11): el reporte mensual de pagos «<MES> <AÑO>» (hoja Consolidado) se lee desde la carpeta de egresos para proponer los recibos de pago (RP) |
 | CORPORACIÓN BALLET FOLCLÓRICO DE ANTIOQUIA | 800.212.838-7 | `src/empresas/ballet` | Ninguna todavía |
 
 ## 6. Cómo llega un cambio a la app publicada

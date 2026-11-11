@@ -176,6 +176,13 @@
       "when": 1794398751122,
       "tag": "0024_inc_recargo_documento",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794399751122,
+      "tag": "0025_egresos_recibos_pago",
+      "breakpoints": true
     }
   ]
 }
