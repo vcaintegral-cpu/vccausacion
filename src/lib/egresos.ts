@@ -913,3 +913,18 @@ export function payloadReciboAgrupado(
     errores,
   };
 }
+
+/**
+ * Signo de los saldos del reporte de CxP de Siigo: lo que se debe al proveedor viene
+ * negativo (saldo crédito). Si el total del reporte es negativo, se invierten todos los
+ * signos para que «por pagar» quede positivo; un saldo a favor queda negativo.
+ */
+export function normalizarSignoSaldos<T extends { balance: number }>(
+  filas: T[],
+  siempre = false,
+): T[] {
+  const total = filas.reduce((s, f) => s + Number(f.balance || 0), 0);
+  if (total < 0 || siempre)
+    for (const f of filas) f.balance = Math.round(-Number(f.balance || 0) * 100) / 100;
+  return filas;
+}

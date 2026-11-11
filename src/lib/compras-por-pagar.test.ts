@@ -20,7 +20,7 @@ const f = (
   ...extra,
 });
 const formas = [
-  f("1", "Pago tarjeta de crédito 7711 DOLARES"),
+  f("1", "Pago tarjeta de crédito 0000"),
   f("2", "Efectivo"),
   f("3", "Cuenta Cte"),
   f("4", "Crédito", { method: "credito", due_date_required: true }),
@@ -52,23 +52,23 @@ describe("compras siempre por pagar", () => {
   it("la compra pagada con tarjeta pasa a una sola forma por pagar por el mismo valor, sin tocar renglones ni retenciones", () => {
     const doc = {
       document: { id: 25 },
-      number: 5667,
+      number: 1234,
       date: "2026-10-01",
       supplier: { identification: "900111222", branch_office: 0 },
-      provider_invoice: { prefix: "FECT", number: "271600" },
+      provider_invoice: { prefix: "FE", number: "1001" },
       observations: "Factura",
       items: [
         {
           type: "Product",
-          code: "REF-1",
-          description: "Reflector",
-          quantity: 50,
-          price: 18907.56,
+          code: "PRD-1",
+          description: "Producto de prueba",
+          quantity: 2,
+          price: 493827.16,
           taxes: [{ id: 13156 }],
         },
       ],
       retentions: [{ id: 301 }],
-      payments: [{ id: 1, name: "Pago tarjeta de crédito 7711 DOLARES", value: 1124999.82 }],
+      payments: [{ id: 1, name: "Pago tarjeta de crédito 0000", value: 987654.32 }],
     };
     const cuerpo = compraPorPagar(doc, 4, "2026-10-31") as {
       items: Array<{ code: string; quantity: number; price: number; taxes: Array<{ id: number }> }>;
@@ -76,14 +76,14 @@ describe("compras siempre por pagar", () => {
       payments: unknown;
       number: number;
     };
-    expect(cuerpo.payments).toEqual([{ id: 4, value: 1124999.82, due_date: "2026-10-31" }]);
+    expect(cuerpo.payments).toEqual([{ id: 4, value: 987654.32, due_date: "2026-10-31" }]);
     expect(cuerpo.items).toEqual([
       {
         type: "Product",
-        code: "REF-1",
-        description: "Reflector",
-        quantity: 50,
-        price: 18907.56,
+        code: "PRD-1",
+        description: "Producto de prueba",
+        quantity: 2,
+        price: 493827.16,
         taxes: [{ id: 13156 }],
       },
     ]);
