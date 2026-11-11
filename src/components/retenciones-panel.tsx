@@ -107,7 +107,7 @@ export function RetencionesPanel({
                       value={b.base}
                       onChange={(e) => {
                         const base = Number(e.target.value);
-                        set(kind, { base, amount: valorDeBloque({ ...b, base }) });
+                        set(kind, { base, amount: valorDeBloque({ ...b, base }, kind) });
                       }}
                     />
                   </div>
@@ -119,7 +119,7 @@ export function RetencionesPanel({
                       value={b.rate}
                       onChange={(e) => {
                         const rate = Number(e.target.value);
-                        set(kind, { rate, amount: valorDeBloque({ ...b, rate }) });
+                        set(kind, { rate, amount: valorDeBloque({ ...b, rate }, kind) });
                       }}
                     />
                   </div>

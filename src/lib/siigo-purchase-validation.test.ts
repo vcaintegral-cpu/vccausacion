@@ -36,9 +36,9 @@ describe("shared PDF and RECIBIDOS purchase gates", () => {
     expect(purchasePayloadErrors([{ quantity: 1, price: 73148.15, tax_ids: [2860] }], taxes, { subtotal: 73148.15, iva: 0, impoconsumo: 5851.85 })).toEqual([]);
     expect(purchasePayloadErrors([{ quantity: 1, price: 73148.15 }], taxes, { subtotal: 73148.15, iva: 0, impoconsumo: 5851.85 })).toHaveLength(1);
   });
-  it("blocks FE-150 fractional unit price before creating a different subtotal or IVA", () => {
+  it("FE-150: fractional unit price travels with up to 6 decimals, so subtotal and IVA match the source", () => {
     const errors = purchasePayloadErrors([{ quantity: 12, price: 7563.025, tax_ids: [2845] }], [{ id: 2845, type: "IVA", percentage: 19 }], { subtotal: 90756.3, iva: 17243.7, impoconsumo: 0 });
-    expect(errors).toHaveLength(2);
+    expect(errors).toEqual([]);
   });
   it("does not invent a tax for E-6103023639 INC 249.36", () => {
     expect(resolvePurchaseInc([{ id: 2860, type: "Impoconsumo", percentage: 8 }], 124679.92, 249.36)).toBeNull();

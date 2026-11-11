@@ -165,3 +165,20 @@ export function codigoProductoNuevo(descripcion: string, existentes: Set<string>
   for (let i = 2; existentes.has(code.toLowerCase()); i++) code = `${base.slice(0, 26 - String(i).length - 1)}-${i}`;
   return code;
 }
+
+/**
+ * Nombre válido para crear el producto en Siigo: las comillas de pulgadas (1/2" → 1/2 PULG)
+ * y los caracteres especiales hacen que Siigo responda "invalid_name". Máximo 100 caracteres.
+ */
+export function nombreProductoSiigo(nombre: string): string {
+  return (
+    String(nombre ?? "")
+      .replace(/["”“″]/g, " PULG ")
+      .replace(/['’‘′]/g, " ")
+      .replace(/[<>{}[\]\\|^~`´¨°ºª#$%&*=+;?!¡¿@]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 100)
+      .trim() || "PRODUCTO"
+  );
+}

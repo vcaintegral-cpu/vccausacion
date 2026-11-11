@@ -52,3 +52,14 @@ export const totalRetencionesCOP = (r: {
  */
 export const netoAPagarCOP = (totalFactura: unknown, retenciones: unknown) =>
   (toCents(totalFactura) - toCents(retenciones)) / 100;
+
+/**
+ * Tarifa de un impuesto en porcentaje. La ReteICA se expresa POR MIL en Colombia y así
+ * la guardan la herramienta y Siigo ("8" = 8 x 1.000 = 0,8 %; "13,8" = 1,38 %): una
+ * tarifa de ReteICA de 2 o más se interpreta por mil (ninguna ReteICA llega al 2 %).
+ * Una ReteICA ya escrita en porcentaje (p. ej. 0,966) y los demás impuestos no cambian.
+ */
+export function tarifaPorcentaje(kind: string | null | undefined, rate: number | string | null | undefined): number {
+  const r = Number(rate ?? 0);
+  return String(kind) === "reteica" && r >= 2 ? r / 10 : r;
+}

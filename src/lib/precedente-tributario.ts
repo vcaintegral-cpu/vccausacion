@@ -14,7 +14,7 @@
 // entre los impuestos configurados de la tarifa del documento (o, sin tarifa,
 // solo si el precedente del proveedor cuadra al peso con el valor del renglón).
 import type { CompraHistorica } from "@/lib/auxiliar-historico";
-import { roundCOP } from "@/lib/money";
+import { roundCOP, tarifaPorcentaje } from "@/lib/money";
 import type { RetencionKind } from "@/lib/retenciones";
 
 export const RETENCIONES: RetencionKind[] = ["retefuente", "reteiva", "reteica"];
@@ -159,7 +159,7 @@ export function impuestoDeCuenta(
   const grupo = exactos.length ? exactos : candidatos;
   if (grupo.length === 1) return grupo[0]!;
   if (tarifaObservada == null) return null;
-  const conTarifa = grupo.filter((t) => Math.abs(Number(t.rate) - tarifaObservada) <= 0.05);
+  const conTarifa = grupo.filter((t) => Math.abs(tarifaPorcentaje(kind, t.rate) - tarifaObservada) <= 0.05);
   return conTarifa.length === 1 ? conTarifa[0]! : null;
 }
 
@@ -653,7 +653,7 @@ export function decidirRetenciones(params: {
         `${ETIQUETA[kind]} (${tax.name}): sin base mínima configurada; se practicó sin verificarla (Administración → Bases mínimas).`,
       );
     }
-    const amount = roundCOP((base * Number(tax.rate)) / 100);
+    const amount = roundCOP((base * tarifaPorcentaje(kind, tax.rate)) / 100);
     if (!(amount > 0)) continue;
     out.aplicar.push({ kind, tax, base, amount, origen });
   }

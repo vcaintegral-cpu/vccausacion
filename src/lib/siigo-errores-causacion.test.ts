@@ -47,20 +47,15 @@ const item = (p: Partial<AdaptableItem>): AdaptableItem => ({
 });
 
 describe("ajustarPrecisionRenglones (centavos de Siigo)", () => {
-  it("SODIMAC: cantidad 3 con precio de más de 2 decimales → cantidad 1 por el valor exacto", () => {
-    // 3 × 63.781,5133 = 191.344,54 (fuente); con precio a 2 decimales Siigo daría 191.344,53.
+  it("SODIMAC: cantidad 3 con precio de más de 2 decimales → el precio viaja con 6 decimales y el subtotal es exacto", () => {
+    // 3 × 63.781,51333 = 191.344,54 (fuente). Con el precio a 2 decimales Siigo daba
+    // 191.344,53; Siigo acepta hasta 6 decimales en el precio de compra.
     const items = [item({ quantity: 3, price: 63781.51333 })];
     const esperado = { subtotal: 191344.54, iva: 36355.46, impoconsumo: 0 };
-    expect(purchasePayloadErrors(items, [IVA19], esperado)[0]).toContain(
-      "Subtotal, origen 191344.54, Siigo calcularía 191344.53",
-    );
+    expect(purchasePayloadErrors(items, [IVA19], esperado)).toEqual([]);
+    // Sin ajuste de precisión: la cantidad (inventario) no cambia.
     const r = ajustarPrecisionRenglones(items, [IVA19], esperado, { permitirFusion: true });
-    expect(purchasePayloadErrors(r.items, [IVA19], esperado)).toEqual([]);
-    expect(r.items[0]).toMatchObject({
-      quantity: 1,
-      price: 191344.54,
-      description: "Elementos de aseo (cant. 3)",
-    });
+    expect(r.items[0]).toMatchObject({ quantity: 3, price: 63781.51333 });
   });
 
   it("D1: IVA redondeado renglón por renglón difiere 1 centavo → se agrupan renglones de la misma cuenta", () => {

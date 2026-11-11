@@ -704,7 +704,9 @@ export function buildSiigoPurchasePayload(params: {
         code: item.code,
         description: (item.description || `${item.type} ${item.code}`).slice(0, 500),
         quantity: item.quantity > 0 ? roundCOP(item.quantity) : 1,
-        price: roundCOP(item.price),
+        // Siigo acepta hasta 6 decimales en el precio de compra: con 2 decimales, cantidad ×
+        // precio se alejaba centavos del subtotal de la factura (p. ej. 7 unidades).
+        price: Math.round(Number(item.price) * 1e6) / 1e6,
       };
       if (item.discount && item.discount > 0) line["discount"] = roundCOP(item.discount);
       if (item.tax_ids && item.tax_ids.length > 0) {
