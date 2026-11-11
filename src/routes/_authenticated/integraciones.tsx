@@ -20,6 +20,7 @@ import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useActiveCompany } from "@/lib/active-company";
+import { RecibosPagoSiigoPanel } from "@/components/recibos-pago-siigo-panel";
 import { cop, fechaHora } from "@/lib/format";
 import {
   pucAccountsOverview,
@@ -364,6 +365,8 @@ function Integraciones() {
         </Table>
       </div>
 
+
+      {companyId ? <RecibosPagoSiigoPanel companyId={companyId} /> : null}
 
       <div className="rounded-lg border border-border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
