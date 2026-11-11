@@ -8,7 +8,8 @@ import { esFormaPorPagar, formaPagoPorPagar, type FormaPagoLocal } from "@/lib/c
 import type { DocCompra } from "@/lib/egresos-diferencias";
 
 export type CompraPagada = {
-  invoiceId: string;
+  /** Factura en la herramienta (null si la compra se registró directamente en Siigo). */
+  invoiceId: string | null;
   siigoId: string;
   siigoNumero: string | null;
   proveedor: string | null;
@@ -88,7 +89,11 @@ async function leerCompra(
   }
 }
 
-/** Revisa en Siigo, por lotes, las compras del mes enviadas desde la herramienta y devuelve las que quedaron pagadas. */
+/**
+ * Revisa las compras del mes directamente en Siigo (listado por fechas, 100 por página) y
+ * devuelve las que quedaron pagadas (tarjeta, efectivo, banco, contado). La fuente es Siigo:
+ * no depende de las fechas ni de los identificadores guardados en la herramienta.
+ */
 export const comprasPagadasRevisar = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { companyId: string; periodo: string; desde?: number }) => {
@@ -111,92 +116,88 @@ export const comprasPagadasRevisar = createServerFn({ method: "POST" })
       await verificarFuncion(db, data.companyId);
       const [anio, mes] = data.periodo.split("-").map(Number) as [number, number];
       const fin = new Date(Date.UTC(anio, mes, 0)).toISOString().slice(0, 10);
-      const {
-        data: facturas,
-        error,
-        count,
-      } = await db
-        .from("invoices")
-        .select(
-          "id, siigo_id, siigo_number, provider_name, provider_nit, prefix, number, issue_date, total, payment_type_id, payment_type_name, payment_method",
-          { count: "exact" },
-        )
-        .eq("company_id", data.companyId)
-        .eq("doc_kind", "compra")
-        .not("siigo_id", "is", null)
-        .gte("issue_date", `${data.periodo}-01`)
-        .lte("issue_date", fin)
-        .order("issue_date")
-        .range(data.desde ?? 0, (data.desde ?? 0) + LOTE - 1);
-      if (error) throw new Error(error.message);
+      const pagina = (data.desde ?? 0) + 1; // «desde» = páginas ya leídas
       const formas = await formasLocales(db, data.companyId);
       const porId = new Map(formas.map((f) => [String(f.siigo_id), f]));
       const { siigoGet, siigoUseCompany } = await import("./siigo.server");
       await siigoUseCompany(data.companyId);
-      const pagadas: CompraPagada[] = [];
       const errores: string[] = [];
-      for (const inv of facturas ?? []) {
-        const fila = (
-          pagos: Array<{ name: string; value: number }>,
-          nota?: string,
-        ): CompraPagada => ({
-          invoiceId: inv.id,
-          siigoId: String(inv.siigo_id),
-          siigoNumero: inv.siigo_number ?? null,
-          proveedor: inv.provider_name,
-          nit: inv.provider_nit,
-          factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
-          fecha: inv.issue_date,
-          total: pagos.reduce((s, p) => s + p.value, 0) || Number(inv.total ?? 0),
-          pagos: nota ? [...pagos, { name: nota, value: 0 }] : pagos,
-        });
+      type Lista = { results?: DocCompra[]; pagination?: { total_results?: number } } | DocCompra[];
+      const r = await siigoGet<Lista>(
+        `/v1/purchases?date_start=${data.periodo}-01&date_end=${fin}&page=${pagina}&page_size=100`,
+      );
+      const lista = Array.isArray(r) ? r : (r.results ?? []);
+      const total = Array.isArray(r)
+        ? lista.length
+        : Number(r.pagination?.total_results ?? lista.length);
+      // Compras de la herramienta (para ligar la corrección con su factura).
+      const nombres = lista.map((d) => String(d.name ?? "")).filter(Boolean);
+      const { data: propias } = nombres.length
+        ? await db
+            .from("invoices")
+            .select("id, siigo_number, provider_name, provider_nit, prefix, number, issue_date")
+            .eq("company_id", data.companyId)
+            .in("siigo_number", nombres)
+        : { data: [] };
+      const porNombre = new Map(
+        (
+          (propias ?? []) as Array<{
+            id: string;
+            siigo_number: string;
+            provider_name: string | null;
+            provider_nit: string | null;
+            prefix: string | null;
+            number: string | null;
+            issue_date: string | null;
+          }>
+        ).map((i) => [i.siigo_number.toUpperCase(), i]),
+      );
+      const pagadas: CompraPagada[] = [];
+      for (const d of lista) {
+        let doc = d;
         try {
-          const { doc } = await leerCompra(
-            siigoGet,
-            String(inv.siigo_id),
-            inv.siigo_number,
-            inv.issue_date,
-          );
-          const pagos = (doc.payments ?? []).map((p) => ({
-            id: String(p.id ?? ""),
-            name: String(p.name ?? porId.get(String(p.id))?.name ?? p.id ?? ""),
-            value: Number(p.value ?? 0),
-          }));
-          // Sin formas de pago en la lectura no se puede afirmar que esté por pagar.
-          const porPagar =
-            pagos.length > 0 &&
-            pagos.every((p) => {
-              const local = porId.get(p.id);
-              return esFormaPorPagar(
-                local ?? { name: p.name, method: null, due_date_required: null },
-              );
-            });
-          if (!porPagar) pagadas.push(fila(pagos.map(({ name, value }) => ({ name, value }))));
+          if (!(doc.payments ?? []).length && doc.id)
+            doc = await siigoGet<DocCompra>(`/v1/purchases/${encodeURIComponent(doc.id)}`);
         } catch (e) {
-          // Siigo no devolvió la compra: se usa la forma de pago con que la envió la herramienta.
-          const local = inv.payment_type_id ? porId.get(String(inv.payment_type_id)) : undefined;
-          const nombre = String(inv.payment_type_name ?? local?.name ?? "");
-          const pagadaSegunApp =
-            inv.payment_method === "contado" ||
-            (nombre !== "" &&
-              !esFormaPorPagar(local ?? { name: nombre, method: null, due_date_required: null }));
-          if (pagadaSegunApp)
-            pagadas.push(
-              fila(
-                [{ name: nombre || "contado", value: Number(inv.total ?? 0) }],
-                "(según la herramienta; Siigo no devolvió la compra)",
-              ),
-            );
-          errores.push(
-            `${inv.siigo_number ?? inv.id}: ${e instanceof Error ? e.message : String(e)}`,
-          );
+          errores.push(`${d.name ?? d.id}: ${e instanceof Error ? e.message : String(e)}`);
+          continue;
         }
+        const pagos = (doc.payments ?? []).map((p) => ({
+          id: String(p.id ?? ""),
+          name: String(p.name ?? porId.get(String(p.id))?.name ?? p.id ?? ""),
+          value: Number(p.value ?? 0),
+        }));
+        const porPagar =
+          pagos.length > 0 &&
+          pagos.every((p) =>
+            esFormaPorPagar(
+              porId.get(p.id) ?? { name: p.name, method: null, due_date_required: null },
+            ),
+          );
+        if (porPagar) continue;
+        const inv = porNombre.get(String(doc.name ?? "").toUpperCase());
+        pagadas.push({
+          invoiceId: inv?.id ?? null,
+          siigoId: String(doc.id ?? ""),
+          siigoNumero: doc.name ?? null,
+          proveedor: inv?.provider_name ?? null,
+          nit: inv?.provider_nit ?? (doc.supplier?.identification ? String(doc.supplier.identification) : null),
+          factura:
+            [doc.provider_invoice?.prefix, doc.provider_invoice?.number]
+              .filter((x) => x != null && String(x).trim())
+              .join("-") || [inv?.prefix, inv?.number].filter(Boolean).join("-"),
+          fecha: String(doc.date ?? inv?.issue_date ?? "").slice(0, 10) || null,
+          total: pagos.reduce((s, p) => s + p.value, 0),
+          pagos: pagos.length
+            ? pagos.map(({ name, value }) => ({ name, value }))
+            : [{ name: "sin forma de pago en Siigo", value: 0 }],
+        });
       }
-      const revisadas = (data.desde ?? 0) + (facturas ?? []).length;
+      const revisadas = Math.min(total, (pagina - 1) * 100 + lista.length);
       return {
-        total: count ?? revisadas,
+        total,
         revisadas,
-        siguiente: revisadas < (count ?? 0) ? revisadas : null,
+        siguiente: lista.length === 100 && revisadas < total ? pagina : null,
         pagadas,
         errores,
       };
@@ -206,24 +207,40 @@ export const comprasPagadasRevisar = createServerFn({ method: "POST" })
 /** Cambia en Siigo la forma de pago de una compra pagada a la forma por pagar (crédito) de la empresa. */
 export const compraPasarAPorPagar = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { companyId: string; invoiceId: string; confirmado: boolean }) => {
-    if (!input?.companyId || !input.invoiceId) throw new Error("Datos incompletos.");
-    if (input.confirmado !== true)
-      throw new Error("La corrección en Siigo requiere tu confirmación.");
-    return input;
-  })
+  .inputValidator(
+    (input: {
+      companyId: string;
+      siigoId: string;
+      invoiceId?: string | null;
+      confirmado: boolean;
+    }) => {
+      if (!input?.companyId || !input.siigoId) throw new Error("Datos incompletos.");
+      if (input.confirmado !== true)
+        throw new Error("La corrección en Siigo requiere tu confirmación.");
+      return input;
+    },
+  )
   .handler(async ({ data, context }): Promise<{ ok: boolean; message: string }> => {
     const db = context.supabase;
     await verificarFuncion(db, data.companyId);
-    const { data: inv, error } = await db
-      .from("invoices")
-      .select(
-        "id, company_id, siigo_id, siigo_number, provider_nit, issue_date, due_date, payable_account",
-      )
-      .eq("id", data.invoiceId)
-      .eq("company_id", data.companyId)
-      .single();
-    if (error || !inv?.siigo_id) throw new Error(error?.message ?? "La compra no está en Siigo.");
+    // La compra de la herramienta (si la hay) aporta la cuenta CxP y el vencimiento.
+    const { data: invRow } = data.invoiceId
+      ? await db
+          .from("invoices")
+          .select("id, siigo_number, provider_nit, issue_date, due_date, payable_account")
+          .eq("id", data.invoiceId)
+          .eq("company_id", data.companyId)
+          .maybeSingle()
+      : { data: null };
+    const inv = {
+      id: invRow?.id ?? null,
+      siigo_id: data.siigoId,
+      siigo_number: invRow?.siigo_number ?? null,
+      provider_nit: invRow?.provider_nit ?? null,
+      issue_date: invRow?.issue_date ?? null,
+      due_date: invRow?.due_date ?? null,
+      payable_account: invRow?.payable_account ?? null,
+    };
     const formas = await formasLocales(db, data.companyId);
     const forma = formaPagoPorPagar(formas, inv.payable_account);
     if ("error" in forma) return { ok: false, message: forma.error };
@@ -265,14 +282,15 @@ export const compraPasarAPorPagar = createServerFn({ method: "POST" })
     // Verificación: la compra quedó con la forma por pagar y con saldo.
     const leido = await siigoGet<DocCompra>(`/v1/purchases/${encodeURIComponent(compraId)}`);
     const ok = (leido.payments ?? []).every((p) => String(p.id) === String(forma.id));
-    await db
-      .from("invoices")
-      .update({
-        payment_method: "credito",
-        payment_type_id: String(forma.id),
-        payment_type_name: forma.name,
-      })
-      .eq("id", inv.id);
+    if (inv.id)
+      await db
+        .from("invoices")
+        .update({
+          payment_method: "credito",
+          payment_type_id: String(forma.id),
+          payment_type_name: forma.name,
+        })
+        .eq("id", inv.id);
     if (inv.provider_nit) {
       const { sincronizarCxP } = await import("./egresos.server");
       const nit = String(inv.provider_nit)

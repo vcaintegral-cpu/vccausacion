@@ -602,8 +602,19 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
               const f = refDeFacturaProveedor(c.factura);
               return f && mismaFactura(f, r) && (!terceroNit || nitSinDv(c.nit) === terceroNit);
             });
-        if (causada) sinSaldo.push(`${r.texto}${causada.siigo ? ` (${causada.siigo})` : ""}`);
-        else if (!ctx.cxp.length)
+        if (causada) {
+          // Qué trae el reporte de CxP de Siigo para esa compra (diagnóstico para la usuaria).
+          const nombre = String(causada.siigo ?? "").toUpperCase();
+          const enCxp = nombre
+            ? ctx.cxp.filter((c) => `${c.prefix}-${c.consecutive}`.toUpperCase() === nombre)
+            : [];
+          const detalle = !nombre
+            ? ""
+            : enCxp.length
+              ? `; en el reporte de CxP de Siigo aparece con saldo ${enCxp.map((c) => c.balance.toLocaleString("es-CO")).join(" / ")} y NIT ${enCxp[0]!.providerNit ?? "—"}`
+              : "; no aparece en el reporte de CxP de Siigo";
+          sinSaldo.push(`${r.texto}${causada.siigo ? ` (${causada.siigo}${detalle})` : ""}`);
+        } else if (!ctx.cxp.length)
           motivos.push(
             "Aún no se han leído las cuentas por pagar de Siigo: usa «Sincronizar CxP de Siigo».",
           );

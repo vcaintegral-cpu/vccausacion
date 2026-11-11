@@ -51,7 +51,7 @@ export function ComprasPorPagarPanel({
         desde = r.siguiente;
       }
       setPagadas(todas);
-      setMarcadas(new Set(todas.map((c) => c.invoiceId)));
+      setMarcadas(new Set(todas.map((c) => c.siigoId)));
       toast.info(
         todas.length
           ? `${todas.length} compras quedaron pagadas en Siigo.`
@@ -66,7 +66,7 @@ export function ComprasPorPagarPanel({
 
   const onCorregir = async () => {
     const lista = (pagadas ?? []).filter(
-      (c) => marcadas.has(c.invoiceId) && !resultados[c.invoiceId]?.ok,
+      (c) => marcadas.has(c.siigoId) && !resultados[c.siigoId]?.ok,
     );
     if (!lista.length) return;
     if (
@@ -81,8 +81,10 @@ export function ComprasPorPagarPanel({
       // Pausa entre compras: Siigo limita las peticiones por segundo.
       if (i > 0) await new Promise((r) => setTimeout(r, 1200));
       try {
-        const r = await corregir({ data: { companyId, invoiceId: c.invoiceId, confirmado: true } });
-        setResultados((x) => ({ ...x, [c.invoiceId]: r }));
+        const r = await corregir({
+          data: { companyId, invoiceId: c.invoiceId, siigoId: c.siigoId, confirmado: true },
+        });
+        setResultados((x) => ({ ...x, [c.siigoId]: r }));
         if (r.ok) ok += 1;
         else {
           toast.error(r.message);
@@ -90,7 +92,7 @@ export function ComprasPorPagarPanel({
         }
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        setResultados((x) => ({ ...x, [c.invoiceId]: { ok: false, message } }));
+        setResultados((x) => ({ ...x, [c.siigoId]: { ok: false, message } }));
         toast.error(message);
         break;
       }
@@ -143,14 +145,14 @@ export function ComprasPorPagarPanel({
       {pagadas?.length ? (
         <div className="mt-2 max-h-80 overflow-auto rounded border">
           {pagadas.map((c) => (
-            <div key={c.invoiceId} className="flex items-start gap-2 border-b px-2 py-1">
+            <div key={c.siigoId} className="flex items-start gap-2 border-b px-2 py-1">
               <Checkbox
-                checked={marcadas.has(c.invoiceId)}
+                checked={marcadas.has(c.siigoId)}
                 onCheckedChange={(v) =>
                   setMarcadas((s) => {
                     const n = new Set(s);
-                    if (v) n.add(c.invoiceId);
-                    else n.delete(c.invoiceId);
+                    if (v) n.add(c.siigoId);
+                    else n.delete(c.siigoId);
                     return n;
                   })
                 }
@@ -163,9 +165,9 @@ export function ComprasPorPagarPanel({
               <span className="flex-1 text-muted-foreground">
                 {c.pagos.map((p) => p.name).join(", ")}
               </span>
-              {resultados[c.invoiceId] ? (
-                <span className={resultados[c.invoiceId]!.ok ? "text-emerald-700" : "text-red-700"}>
-                  {resultados[c.invoiceId]!.message}
+              {resultados[c.siigoId] ? (
+                <span className={resultados[c.siigoId]!.ok ? "text-emerald-700" : "text-red-700"}>
+                  {resultados[c.siigoId]!.message}
                 </span>
               ) : null}
             </div>
