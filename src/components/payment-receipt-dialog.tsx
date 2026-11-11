@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -8,6 +10,8 @@ import { AccountCombobox } from "@/components/account-combobox";
 import { cop } from "@/lib/format";
 import { roundCOP } from "@/lib/money";
 import type { PucAccount } from "@/lib/puc-hierarchy";
+import { supabase } from "@/integrations/supabase/client";
+import { siigoEnviarRecibo, siigoRecibosConfig } from "@/lib/siigo-pagos.functions";
 import {
   MEDIOS,
   MEDIO_LABEL,
@@ -59,6 +63,20 @@ export function PaymentReceiptDialog({
   });
   const [filas, setFilas] = useState<Record<string, ConfigPago>>({});
   const [procesando, setProcesando] = useState(false);
+  // Envío del recibo a Siigo (RP · abono a deuda sobre la FC ya causada).
+  const [enviarSiigo, setEnviarSiigo] = useState(true);
+  const [formaSiigo, setFormaSiigo] = useState<number | "">("");
+  const [tipoRP, setTipoRP] = useState<number | "">("");
+  const enviar = useServerFn(siigoEnviarRecibo);
+  const cargarConfig = useServerFn(siigoRecibosConfig);
+  const configSiigo = useQuery({
+    queryKey: ["siigo-rp-config", companyId],
+    enabled: open && enviarSiigo && !!companyId,
+    staleTime: 10 * 60 * 1000,
+    queryFn: () => cargarConfig({ data: { companyId: companyId! } }),
+  });
+  const formasSiigo = (configSiigo.data?.formas ?? []).filter((f) => f.active && !f.dueDate);
+  const tiposRP = (configSiigo.data?.tipos ?? []).filter((t) => t.active);
   const [avance, setAvance] = useState<{ hechas: number; total: number } | null>(null);
 
   // Al abrir: valor por defecto = saldo pendiente, y sugerencia aprendida por proveedor.
@@ -122,7 +140,31 @@ export function PaymentReceiptDialog({
       // Cada factura genera su propio recibo; un error no detiene las demás.
       for (const f of facturas) {
         try {
-          out.push(await generarRecibo({ invoiceId: f.id, etiqueta: f.etiqueta, config: filas[f.id]! }));
+          const r = await generarRecibo({ invoiceId: f.id, etiqueta: f.etiqueta, config: filas[f.id]! });
+          if (r.ok && enviarSiigo) {
+            // El recibo interno recién creado de esta factura se envía a Siigo.
+            const { data: rec } = await supabase
+              .from("payment_receipts")
+              .select("id")
+              .eq("invoice_id", f.id)
+              .is("siigo_id", null)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (rec?.id) {
+              try {
+                const s = await enviar({
+                  data: { receiptId: rec.id, paymentTypeId: formaSiigo ? Number(formaSiigo) : null, documentId: tipoRP ? Number(tipoRP) : null },
+                });
+                r.ok = s.ok;
+                r.message = `${r.message} · Siigo: ${s.message}`;
+              } catch (e) {
+                r.ok = false;
+                r.message = `${r.message} · Siigo: ${e instanceof Error ? e.message : "no se pudo enviar"} (el recibo interno quedó creado).`;
+              }
+            }
+          }
+          out.push(r);
         } catch (err) {
           out.push({ id: f.id, etiqueta: f.etiqueta, ok: false, message: err instanceof Error ? err.message : "Error inesperado." });
         } finally {
@@ -149,6 +191,41 @@ export function PaymentReceiptDialog({
         <p className="text-xs text-muted-foreground">
           El recibo de pago no modifica la causación. Registra el débito a la cuenta por pagar y el crédito a la cuenta de caja o banco elegida.
         </p>
+
+        <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border p-3 text-xs">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={enviarSiigo} onChange={(e) => setEnviarSiigo(e.target.checked)} />
+            Enviar a Siigo como recibo de pago (RP · abono a la factura ya causada en Siigo)
+          </label>
+          {enviarSiigo ? (
+            configSiigo.isLoading ? (
+              <span className="text-muted-foreground">Consultando Siigo…</span>
+            ) : configSiigo.error ? (
+              <span className="text-destructive">{configSiigo.error instanceof Error ? configSiigo.error.message : "No se pudo consultar Siigo."}</span>
+            ) : (
+              <>
+                <label className="space-y-1">
+                  <span className="text-muted-foreground">Forma de pago en Siigo</span>
+                  <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={formaSiigo} onChange={(e) => setFormaSiigo(e.target.value ? Number(e.target.value) : "")}>
+                    <option value="">Automática (la de la cuenta del pago)</option>
+                    {formasSiigo.map((f) => (
+                      <option key={f.id} value={f.id}>{f.name}{f.accountCode ? ` · ${f.accountCode}` : ""}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span className="text-muted-foreground">Tipo de recibo</span>
+                  <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" value={tipoRP} onChange={(e) => setTipoRP(e.target.value ? Number(e.target.value) : "")}>
+                    <option value="">Automático</option>
+                    {tiposRP.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}{t.code ? ` (${t.code})` : ""}</option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )
+          ) : null}
+        </div>
 
         <div className="grid gap-3 rounded-lg border border-border bg-muted/30 p-3 md:grid-cols-5">
           <label className="space-y-1 text-xs">
