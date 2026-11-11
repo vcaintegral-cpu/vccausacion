@@ -146,13 +146,16 @@ export const egresosGuardarEdicion = createServerFn({ method: "POST" })
     // Ajuste al peso del pago de facturas: se recalcula aquí con las cuentas de la empresa.
     if (p.tipo === "pago_facturas") {
       const { cargarAjustes } = await import("./egresos.server");
-      const { ajusteAlPesoRecibo } = await import("./egresos");
+      const { diferenciaDelPago } = await import("./egresos");
       const ajustes = await cargarAjustes(db, f.company_id);
       const suma = p.items.reduce((s, i) => s + Number(i.valor || 0), 0);
-      const aj = ajusteAlPesoRecibo(Number(f.valor), suma, ajustes);
-      p.ajuste = aj && "valor" in aj ? aj : null;
-      p.cuentaCxp = p.ajuste ? ajustes.cxp : null;
-      if (p.ajuste && !p.cuentaBanco) {
+      // Diferencia con el banco: ajuste al peso hasta el tope; si se pagó de más por encima
+      // del tope, el excedente queda como anticipo al proveedor (cuenta 1330…).
+      const dif = diferenciaDelPago(Number(f.valor), suma, ajustes);
+      p.ajuste = dif.ajuste;
+      p.anticipo = p.items.length ? dif.anticipo : null;
+      p.cuentaCxp = p.ajuste || p.anticipo ? ajustes.cxp : null;
+      if ((p.ajuste || p.anticipo) && !p.cuentaBanco) {
         const { data: regla } = await db
           .from("egreso_reglas")
           .select("cuenta_banco")
@@ -169,6 +172,7 @@ export const egresosGuardarEdicion = createServerFn({ method: "POST" })
       }
     } else {
       p.ajuste = null;
+      p.anticipo = null;
     }
     const errores =
       p.tipo === "omitir"
@@ -833,6 +837,7 @@ export const egresosGuardarCuentasAjuste = createServerFn({ method: "POST" })
       debito: string | null;
       credito: string | null;
       cxp: string | null;
+      anticipo?: string | null;
       periodo?: string | null;
     }) => {
       if (!input?.companyId) throw new Error("companyId requerido");
@@ -846,6 +851,7 @@ export const egresosGuardarCuentasAjuste = createServerFn({ method: "POST" })
         ["cuenta:ajuste_debito", data.debito],
         ["cuenta:ajuste_credito", data.credito],
         ["cuenta:cxp", data.cxp],
+        ["cuenta:anticipo", data.anticipo ?? null],
       ] as const
     ).map(([patron, cuenta]) => ({
       company_id: data.companyId,
@@ -920,7 +926,7 @@ export const egresosReplicar = createServerFn({ method: "POST" })
               .trim(),
         );
       const {
-        ajusteAlPesoRecibo,
+        diferenciaDelPago,
         conceptoDe,
         grupoBancario,
         erroresAntesDeEnviar: errores,
@@ -989,6 +995,7 @@ export const egresosReplicar = createServerFn({ method: "POST" })
           paymentTypeId: b?.payment_type_id ?? null,
           cuentaBanco: b?.cuenta_banco ?? null,
           ajuste: null,
+          anticipo: null,
           cuentaCxp: null,
           grupo: null,
           listo: false,
@@ -1030,10 +1037,12 @@ export const egresosReplicar = createServerFn({ method: "POST" })
             restante = Math.round((restante - v) * 100) / 100;
           }
           abiertas = abiertas.filter((c) => c.disponible > 0.009);
-          const aj = ajusteAlPesoRecibo(valor, valor - restante, ajustes ?? undefined);
-          if (restante > 0.009 && aj && "valor" in aj) {
-            p.ajuste = aj;
-            p.cuentaCxp = ajustes?.cxp ?? null;
+          // Lo que no cubren las facturas: ajuste al peso (hasta el tope) o anticipo al proveedor.
+          if (restante > 0.009 && p.items.length) {
+            const dif = diferenciaDelPago(valor, valor - restante, ajustes ?? undefined);
+            p.ajuste = dif.ajuste;
+            p.anticipo = dif.anticipo;
+            if (p.ajuste || p.anticipo) p.cuentaCxp = ajustes?.cxp ?? null;
           }
         }
         const e =
