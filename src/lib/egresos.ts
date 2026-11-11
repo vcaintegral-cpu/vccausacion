@@ -607,9 +607,16 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
           factura: e.ref.texto,
           saldo: e.cxp.balance,
         });
+        const declaradoAbono = /ABONO|PARCIAL/.test(
+          normalizar([m.aplicacion, m.observaciones].join(" ")),
+        );
         if (v > e.cxp.balance + TOLERANCIA)
           motivos.push(
-            `A ${e.ref.texto} se le aplicarían $${v.toLocaleString("es-CO")} y su saldo en Siigo es $${e.cxp.balance.toLocaleString("es-CO")}.`,
+            `Diferencia con la CxP: a ${e.ref.texto} se le pagaron $${v.toLocaleString("es-CO")} y su saldo en Siigo es $${e.cxp.balance.toLocaleString("es-CO")} (¿retención causada que el pago no descontó?). Usa «Analizar diferencia».`,
+          );
+        else if (v < e.cxp.balance - TOLERANCIA && !declaradoAbono)
+          motivos.push(
+            `Diferencia con la CxP: a ${e.ref.texto} se le pagaron $${v.toLocaleString("es-CO")} y su saldo en Siigo es $${e.cxp.balance.toLocaleString("es-CO")} (¿retención no causada, descuento o abono?). Usa «Analizar diferencia» o escribe «abono» en la aplicación.`,
           );
         else if (v < e.cxp.balance - TOLERANCIA)
           notas.push(
