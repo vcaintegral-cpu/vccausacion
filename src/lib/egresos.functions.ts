@@ -143,6 +143,33 @@ export const egresosGuardarEdicion = createServerFn({ method: "POST" })
       // La usuaria eligió la cuenta débito: se arma el par débito/banco.
       throw new Error("Elige la cuenta débito del recibo detallado.");
     }
+    // Ajuste al peso del pago de facturas: se recalcula aquí con las cuentas de la empresa.
+    if (p.tipo === "pago_facturas") {
+      const { cargarAjustes } = await import("./egresos.server");
+      const { ajusteAlPesoRecibo } = await import("./egresos");
+      const ajustes = await cargarAjustes(db, f.company_id);
+      const suma = p.items.reduce((s, i) => s + Number(i.valor || 0), 0);
+      const aj = ajusteAlPesoRecibo(Number(f.valor), suma, ajustes);
+      p.ajuste = aj && "valor" in aj ? aj : null;
+      p.cuentaCxp = p.ajuste ? ajustes.cxp : null;
+      if (p.ajuste && !p.cuentaBanco) {
+        const { data: regla } = await db
+          .from("egreso_reglas")
+          .select("cuenta_banco")
+          .eq("company_id", f.company_id)
+          .eq("clase", "banco")
+          .eq(
+            "patron",
+            String(f.cuenta_etiqueta ?? "")
+              .toUpperCase()
+              .trim(),
+          )
+          .maybeSingle();
+        p.cuentaBanco = regla?.cuenta_banco ?? null;
+      }
+    } else {
+      p.ajuste = null;
+    }
     const errores =
       p.tipo === "omitir"
         ? []
@@ -784,3 +811,56 @@ export const egresosEnviarGrupoBancario = createServerFn({ method: "POST" })
       }
     },
   );
+
+/** Cuentas del ajuste al peso de los recibos y CxP cruzada de la empresa (detectadas o elegidas). */
+export const egresosCuentasAjuste = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string }) => {
+    if (!input?.companyId) throw new Error("companyId requerido");
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    const { cargarAjustes } = await import("./egresos.server");
+    return cargarAjustes(context.supabase, data.companyId);
+  });
+
+/** Guarda las cuentas del ajuste al peso y la CxP cruzada, y vuelve a proponer el mes. */
+export const egresosGuardarCuentasAjuste = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: {
+      companyId: string;
+      debito: string | null;
+      credito: string | null;
+      cxp: string | null;
+      periodo?: string | null;
+    }) => {
+      if (!input?.companyId) throw new Error("companyId requerido");
+      return input;
+    },
+  )
+  .handler(async ({ data, context }) => {
+    const db = context.supabase;
+    const filas = (
+      [
+        ["cuenta:ajuste_debito", data.debito],
+        ["cuenta:ajuste_credito", data.credito],
+        ["cuenta:cxp", data.cxp],
+      ] as const
+    ).map(([patron, cuenta]) => ({
+      company_id: data.companyId,
+      clase: "concepto",
+      patron,
+      tipo: "cuenta",
+      cuenta_debito: String(cuenta ?? "").replace(/\D/g, "") || null,
+    }));
+    const { error } = await db
+      .from("egreso_reglas")
+      .upsert(filas, { onConflict: "company_id,clase,patron" });
+    if (error) throw new Error(error.message);
+    if (data.periodo) {
+      const { proponerPeriodo } = await import("./egresos.server");
+      return proponerPeriodo(db, data.companyId, data.periodo);
+    }
+    return null;
+  });

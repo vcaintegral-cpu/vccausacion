@@ -80,6 +80,13 @@ export type Propuesta = {
    * bancaria se envían juntos en un solo RP por mes ("bancario|CORRIENTE").
    */
   grupo?: string | null;
+  /**
+   * Ajuste al peso del recibo: valor > 0 = débito (se pagó de más), < 0 = crédito (se pagó
+   * de menos). Pago = suma de las facturas + ajuste. Con ajuste, el RP va detallado.
+   */
+  ajuste?: { valor: number; cuenta: string } | null;
+  /** Cuenta por pagar que se cruza en el RP detallado (p. ej. 22050501). */
+  cuentaCxp?: string | null;
 };
 
 export type ReglaBanco = {
@@ -470,6 +477,8 @@ export type Contexto = {
   precedente: PrecedenteEgresos | null;
   /** Cuentas del PUC que existen (para validar las elegidas). */
   puc?: Set<string>;
+  /** Cuentas del ajuste al peso del recibo y CxP cruzada; tope del ajuste automático. */
+  ajustes?: AjustesRecibo;
   /** Cuentas auxiliares de caja y bancos (1105/1110/1120) con su nombre. */
   cuentasBanco?: Array<{ code: string; name: string }>;
 };
@@ -510,6 +519,37 @@ export function cuentaBancoDeOrigen(
 }
 
 const TOLERANCIA = 1; // peso
+
+export type AjustesRecibo = {
+  debito: string | null;
+  credito: string | null;
+  cxp: string | null;
+  tope: number;
+};
+
+/**
+ * Ajuste al peso para que el recibo cuadre con el banco: pago − suma de facturas, dentro
+ * del tope. Positivo = débito (se pagó de más, gasto); negativo = crédito (de menos, ingreso).
+ */
+export function ajusteAlPesoRecibo(
+  pago: number,
+  sumaFacturas: number,
+  cuentas: AjustesRecibo | undefined,
+): { valor: number; cuenta: string } | { error: string } | null {
+  const dif = roundCOP(roundCOP(pago) - roundCOP(sumaFacturas));
+  if (Math.abs(dif) < 0.01) return null;
+  const tope = cuentas?.tope ?? 1000;
+  if (Math.abs(dif) > tope)
+    return {
+      error: `La diferencia de ${Math.abs(dif).toLocaleString("es-CO")} supera el tope del ajuste al peso (${tope.toLocaleString("es-CO")}).`,
+    };
+  const cuenta = dif > 0 ? cuentas?.debito : cuentas?.credito;
+  if (!cuenta)
+    return {
+      error: `Falta la cuenta de ajuste al peso ${dif > 0 ? "débito (gasto)" : "crédito (ingreso)"}.`,
+    };
+  return { valor: dif, cuenta };
+}
 
 export function reglaBanco(
   cuenta: string | null | undefined,
@@ -703,10 +743,21 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
           );
       }
       let suma = roundCOP(p.items.reduce((s, x) => s + x.valor, 0));
-      // Centavos escritos en las observaciones (p. ej. 208.757,60 + 41.669 = 250.426,60 y el
-      // banco pagó 250.427): la diferencia de hasta $1 se lleva a la factura de mayor valor.
-      const dif = roundCOP(valor - suma);
-      if (dif !== 0 && Math.abs(dif) <= TOLERANCIA && p.items.length) {
+      // Diferencia con el banco (centavos de las observaciones, redondeos): ajuste al peso
+      // dentro del tope, débito si se pagó de más y crédito si se pagó de menos.
+      const aj = ajusteAlPesoRecibo(valor, suma, ctx.ajustes);
+      if (aj && "valor" in aj && !(aj.valor < 0 && !p.items.length)) {
+        if (!ctx.ajustes?.cxp)
+          motivos.push("Falta la cuenta por pagar que se cruza en el recibo con ajuste al peso.");
+        p.ajuste = aj;
+        p.cuentaCxp = ctx.ajustes?.cxp ?? null;
+        suma = valor;
+        notas.push(
+          `Ajuste al peso ${aj.valor > 0 ? "débito" : "crédito"} ${aj.cuenta}: ${Math.abs(aj.valor).toLocaleString("es-CO")} (el recibo va detallado).`,
+        );
+      } else if (aj && "error" in aj && Math.abs(valor - suma) <= TOLERANCIA && p.items.length) {
+        // Sin cuentas de ajuste: los centavos (hasta $1) se llevan a la factura de mayor valor.
+        const dif = roundCOP(valor - suma);
         const mayor = p.items.reduce((a, b) => (b.valor > a.valor ? b : a));
         if (mayor.valor + dif <= mayor.saldo + 0.009) {
           mayor.valor = roundCOP(mayor.valor + dif);
@@ -715,7 +766,7 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
             `Ajuste de ${dif.toLocaleString("es-CO")} pesos por centavos en ${mayor.factura ?? "la factura"}.`,
           );
         }
-      }
+      } else if (aj && "error" in aj) motivos.push(aj.error);
       if (Math.abs(suma - valor) > 0.009)
         motivos.push(
           `Las facturas suman $${suma.toLocaleString("es-CO")} y el pago es $${valor.toLocaleString("es-CO")}${m.aplicacion ? ` (${m.aplicacion})` : ""}.`,
@@ -802,6 +853,34 @@ export function payloadRecibo(
     .replace(/\s+/g, " ")
     .slice(0, 250);
   const supplier = { identification: String(p.terceroNit ?? ""), branch_office: 0 };
+  if (p.tipo === "pago_facturas" && p.ajuste && Math.abs(p.ajuste.valor) >= 0.01) {
+    // Con ajuste al peso: RP detallado. Débito a la CxP cruzando cada vencimiento (crédito si
+    // es un saldo a favor), el ajuste y el crédito al banco por lo pagado.
+    const items: Array<Record<string, unknown>> = p.items.map((i) => ({
+      account: { code: String(p.cuentaCxp ?? ""), movement: i.valor >= 0 ? "Debit" : "Credit" },
+      due: { prefix: i.prefix, consecutive: i.consecutive, quote: i.quote },
+      description: `Pago ${i.factura ?? `${i.prefix}-${i.consecutive}`}`.slice(0, 100),
+      value: roundCOP(Math.abs(i.valor)),
+    }));
+    items.push({
+      account: { code: p.ajuste.cuenta, movement: p.ajuste.valor > 0 ? "Debit" : "Credit" },
+      description: "Ajuste al peso",
+      value: roundCOP(Math.abs(p.ajuste.valor)),
+    });
+    items.push({
+      account: { code: String(p.cuentaBanco ?? ""), movement: "Credit" },
+      description: observaciones.slice(0, 100) || "Pago",
+      value: valor,
+    });
+    return {
+      document: { id: documentId },
+      date: m.fecha,
+      type: "Detailed",
+      supplier,
+      items,
+      observations: observaciones,
+    };
+  }
   if (p.tipo === "pago_facturas")
     return {
       document: { id: documentId },
@@ -852,17 +931,27 @@ export function erroresAntesDeEnviar(
   if (p.tipo === "pago_facturas") {
     if (!p.items.length) e.push("No hay facturas a las que aplicar el pago.");
     const suma = roundCOP(p.items.reduce((s, i) => s + i.valor, 0));
-    if (Math.abs(suma - valor) > 0.009)
+    const ajuste = roundCOP(p.ajuste?.valor ?? 0);
+    if (Math.abs(suma + ajuste - valor) > 0.009)
       e.push(
-        `Las facturas suman $${suma.toLocaleString("es-CO")} y el pago es $${valor.toLocaleString("es-CO")}.`,
+        `Las facturas suman ${suma.toLocaleString("es-CO")}${ajuste ? ` más el ajuste al peso de ${ajuste.toLocaleString("es-CO")}` : ""} y el pago es ${valor.toLocaleString("es-CO")}.`,
       );
+    if (ajuste) {
+      if (!p.ajuste?.cuenta) e.push("Falta la cuenta del ajuste al peso.");
+      if (!p.cuentaCxp)
+        e.push("Falta la cuenta por pagar que se cruza en el recibo con ajuste al peso.");
+      if (!p.cuentaBanco) e.push("Falta la cuenta de banco/caja del recibo con ajuste al peso.");
+    }
     for (const i of p.items)
       if (i.valor > i.saldo + 0.009)
         e.push(
           `${i.factura ?? `${i.prefix}-${i.consecutive}`}: el valor supera el saldo en Siigo.`,
         );
   }
-  if ((p.tipo === "pago_facturas" || p.tipo === "anticipo") && !p.paymentTypeId)
+  if (
+    (p.tipo === "anticipo" || (p.tipo === "pago_facturas" && !p.ajuste?.valor)) &&
+    !p.paymentTypeId
+  )
     e.push("Falta la forma de pago de Siigo.");
   if (p.tipo === "detallado") {
     const d = roundCOP(
