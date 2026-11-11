@@ -572,28 +572,6 @@ describe("RP único del mes de gastos bancarios por cuenta bancaria", () => {
   });
 });
 
-describe("signo de los saldos del reporte de CxP de Siigo", () => {
-  it("lo que se debe viene negativo: se guarda positivo; el saldo a favor queda negativo", async () => {
-    const { normalizarSignoSaldos } = await import("./egresos");
-    expect(
-      normalizarSignoSaldos([
-        { balance: -987654.32 },
-        { balance: -500000 },
-        { balance: 30000 },
-      ]).map((f) => f.balance),
-    ).toEqual([987654.32, 500000, -30000]);
-    // Si Siigo ya los reporta en positivo, no se tocan.
-    expect(
-      normalizarSignoSaldos([{ balance: 1000 }, { balance: 200 }]).map((f) => f.balance),
-    ).toEqual([1000, 200]);
-  });
-  it("con saldos invertidos, el pago encuentra su factura en las CxP", () => {
-    const c = ctx();
-    const p = proponerEgreso(mov({ valor: 392725, relacion: "FE 7003" }), c);
-    expect(p.listo).toBe(true);
-  });
-});
-
 describe("cruce del pago con la CxP por el número de la compra en Siigo", () => {
   it("si el vencimiento no tiene la factura del proveedor, se cruza por FC-1-… de la compra causada", () => {
     const c = ctx({
@@ -617,5 +595,51 @@ describe("cruce del pago con la CxP por el número de la compra en Siigo", () =>
     );
     expect(p).toMatchObject({ tipo: "pago_facturas", listo: true });
     expect(p.items).toMatchObject([{ prefix: "FC-1", consecutive: 900, valor: 150000 }]);
+  });
+});
+
+describe("vencimientos identificados por la factura del proveedor", () => {
+  it("«A520-1365004» y «A-5201365004» son la misma factura", async () => {
+    const { mismaFactura, refFactura } = await import("./egresos");
+    expect(mismaFactura(refFactura("A520-1365004")!, refFactura("A-5201365004")!)).toBe(true);
+    expect(mismaFactura(refFactura("A520-1365004")!, refFactura("A-5201365005")!)).toBe(false);
+  });
+  it("el pago se cruza con el vencimiento del reporte (por factura del proveedor) o por el id de la compra", () => {
+    const venc = {
+      prefix: "A",
+      consecutive: 5201365004,
+      quote: 1,
+      dueDate: "2026-10-02",
+      balance: 100000,
+      providerNit: "830111222",
+      providerName: "COMBUSTIBLES EJEMPLO SA",
+      facturaProveedor: "A-5201365004",
+      siigoPurchaseId: "abc",
+    };
+    const p = proponerEgreso(
+      mov({
+        valor: 100000,
+        relacion: "A520-1365004",
+        tercero: "COMBUSTIBLES EJEMPLO SA",
+        terceroNit: "830111222",
+      }),
+      ctx({ cxp: [venc] }),
+    );
+    expect(p).toMatchObject({ tipo: "pago_facturas", listo: true });
+    expect(p.items).toMatchObject([{ prefix: "A", consecutive: 5201365004, valor: 100000 }]);
+    // Sin la factura del proveedor en el vencimiento: se cruza por el id de la compra causada.
+    const p2 = proponerEgreso(
+      mov({
+        valor: 100000,
+        relacion: "ZX 77",
+        tercero: "COMBUSTIBLES EJEMPLO SA",
+        terceroNit: "830111222",
+      }),
+      ctx({
+        cxp: [{ ...venc, facturaProveedor: null }],
+        causadas: [{ factura: "ZX-77", nit: "830111222", siigo: "FC-1-10", siigoId: "abc" }],
+      }),
+    );
+    expect(p2).toMatchObject({ tipo: "pago_facturas", listo: true });
   });
 });

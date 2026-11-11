@@ -6,7 +6,6 @@ import {
   aprenderEgresos,
   conceptoDe,
   grupoBancario,
-  normalizarSignoSaldos,
   nitSinDv,
   patronConcepto,
   proponerEgreso,
@@ -96,11 +95,12 @@ export async function cargarContexto(db: Db, companyId: string): Promise<Context
       provider_nit: string | null;
       provider_name: string | null;
       factura_proveedor: string | null;
+      siigo_purchase_id: string | null;
     }>((a, b) =>
       db
         .from("siigo_cuentas_por_pagar")
         .select(
-          "prefix, consecutive, quote, due_date, balance, provider_nit, provider_name, factura_proveedor",
+          "prefix, consecutive, quote, due_date, balance, provider_nit, provider_name, factura_proveedor, siigo_purchase_id",
         )
         .eq("company_id", companyId)
         .range(a, b),
@@ -140,10 +140,11 @@ export async function cargarContexto(db: Db, companyId: string): Promise<Context
       number: string | null;
       provider_nit: string | null;
       siigo_number: string | null;
+      siigo_id: string | null;
     }>((a, b) =>
       db
         .from("invoices")
-        .select("prefix, number, provider_nit, siigo_number")
+        .select("prefix, number, provider_nit, siigo_number, siigo_id")
         .eq("company_id", companyId)
         .not("siigo_number", "is", null)
         .range(a, b),
@@ -162,11 +163,13 @@ export async function cargarContexto(db: Db, companyId: string): Promise<Context
       providerNit: c.provider_nit,
       providerName: c.provider_name,
       facturaProveedor: c.factura_proveedor,
+      siigoPurchaseId: c.siigo_purchase_id,
     })),
     causadas: causadas.map((c) => ({
       factura: [c.prefix, c.number].filter(Boolean).join("-"),
       nit: c.provider_nit,
       siigo: c.siigo_number,
+      siigoId: c.siigo_id,
     })),
     // Terceros: proveedores y los de los egresos ya registrados en Siigo (empleados, entidades).
     terceros: [
@@ -408,15 +411,18 @@ export async function sincronizarCxP(
         synced_at: inicio,
       })),
   );
-  // Siigo reporta lo que se debe al proveedor con signo negativo (saldo crédito). Se guarda
-  // en positivo = valor por pagar; un saldo a favor (anticipo) queda negativo y no se paga.
-  // (Al leer un solo proveedor se aplica la misma convención, aunque solo tenga anticipos.)
-  normalizarSignoSaldos(filas, !!opts.soloNit);
+  // Lo que se debe al proveedor viene en POSITIVO; un saldo a favor (anticipo) viene negativo
+  // y no se paga. Cada vencimiento del reporte se identifica por la FACTURA DEL PROVEEDOR
+  // (prefijo y número, p. ej. A-5201365004): es el documento cruce de la CxP en Siigo.
+  const compacto = (x: unknown) =>
+    String(x ?? "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
+  const nitDe = (x: unknown) => nitSinDv(String(x ?? ""));
 
-  // El reporte de CxP de Siigo puede no traer compras recientes que sí están por pagar.
-  // Fuente complementaria: el listado de compras de Siigo de los últimos meses, que trae el
-  // saldo pendiente («balance») de cada compra. Las que tienen saldo y no vinieron en el
-  // reporte se agregan como CxP; de todas se toma la factura del proveedor y su id.
+  // Listado de compras de Siigo (creadas en los últimos 150 días): factura del proveedor,
+  // identificador y saldo pendiente de cada compra. Sirve para ligar cada vencimiento con
+  // su compra y para agregar las compras con saldo que el reporte de CxP no trae.
   type Compra = {
     id?: string;
     name?: string;
@@ -426,13 +432,11 @@ export async function sincronizarCxP(
     provider_invoice?: { prefix?: string; number?: string | number };
     payments?: Array<{ due_date?: string }>;
   };
-  const porNombre = new Map<string, { factura: string | null; id: string | null }>();
+  const compras: Compra[] = [];
   let leidasSiigo = 0;
-  let agregadasDeCompras = 0;
   if (!opts.soloNit) {
     const desde = new Date();
     desde.setUTCDate(desde.getUTCDate() - 150);
-    const enReporte = new Set(filas.map((f) => `${f.prefix}-${f.consecutive}`.toUpperCase()));
     for (let page = 1; page <= 20; page++) {
       let lista: Compra[] = [];
       try {
@@ -444,88 +448,84 @@ export async function sincronizarCxP(
       } catch {
         break;
       }
-      for (const c of lista) {
-        if (!c.name) continue;
-        const nombre = c.name.toUpperCase();
-        const factura =
-          c.provider_invoice?.number != null
-            ? [c.provider_invoice.prefix, c.provider_invoice.number]
-                .filter((x) => x != null && String(x).trim())
-                .join("-")
-            : null;
-        porNombre.set(nombre, { id: c.id ?? null, factura });
-        const saldo = Math.round(Math.abs(Number(c.balance ?? 0)) * 100) / 100;
-        const m = /^(.*)-(\d+)$/.exec(c.name.trim());
-        if (saldo > 0.009 && m && !enReporte.has(nombre)) {
-          filas.push({
-            company_id: companyId,
-            prefix: m[1]!,
-            consecutive: Number(m[2]),
-            quote: 1,
-            due_date:
-              String(c.payments?.find((p) => p.due_date)?.due_date ?? c.date ?? "").slice(0, 10) ||
-              null,
-            balance: saldo,
-            provider_nit:
-              c.supplier?.identification != null ? String(c.supplier.identification) : null,
-            provider_name: null,
-            cost_center: null,
-            factura_proveedor: factura,
-            invoice_id: null,
-            siigo_purchase_id: c.id ?? null,
-            synced_at: inicio,
-          });
-          enReporte.add(nombre);
-          agregadasDeCompras += 1;
-        }
-      }
+      compras.push(...lista);
       leidasSiigo += lista.length;
       if (lista.length < 100) break;
     }
   }
-
-  // Factura del proveedor de cada vencimiento: primero las compras causadas desde la
-  // herramienta; las demás, de las compras de Siigo (provider_invoice).
-  const nombres = filas.map((f) => `${f.prefix}-${f.consecutive}`);
-  const propias = new Map<
-    string,
-    { id: string; factura: string; siigoId: string | null; proveedor: string | null }
-  >();
-  for (let i = 0; i < nombres.length; i += 200) {
-    const { data } = await db
-      .from("invoices")
-      .select("id, prefix, number, siigo_number, siigo_id, provider_name")
-      .eq("company_id", companyId)
-      .in("siigo_number", nombres.slice(i, i + 200));
-    for (const inv of (data ?? []) as Array<{
-      id: string;
-      prefix: string | null;
-      number: string | null;
-      siigo_number: string;
-      siigo_id: string | null;
-      provider_name: string | null;
-    }>)
-      propias.set(inv.siigo_number.toUpperCase(), {
-        id: inv.id,
-        factura: [inv.prefix, inv.number].filter(Boolean).join("-"),
-        siigoId: inv.siigo_id,
-        proveedor: inv.provider_name,
-      });
+  const facturaDe = (c: Compra) =>
+    c.provider_invoice?.number != null && String(c.provider_invoice.number).trim()
+      ? [c.provider_invoice.prefix, c.provider_invoice.number]
+          .filter((x) => x != null && String(x).trim())
+          .join("-")
+      : null;
+  const compraPorNombre = new Map(
+    compras.filter((c) => c.name).map((c) => [String(c.name).toUpperCase(), c]),
+  );
+  const compraPorFactura = new Map<string, Compra>();
+  for (const c of compras) {
+    const f = facturaDe(c);
+    if (f) compraPorFactura.set(`${nitDe(c.supplier?.identification)}|${compacto(f)}`, c);
   }
+
+  // Ligar cada vencimiento del reporte con su compra.
+  const ligadas = new Set<string>();
   for (const f of filas) {
-    const p = propias.get(`${f.prefix}-${f.consecutive}`.toUpperCase());
-    if (p) {
-      f.factura_proveedor = p.factura || null;
-      f.invoice_id = p.id;
-      f.siigo_purchase_id = p.siigoId;
-      f.provider_name = f.provider_name ?? p.proveedor;
+    const porFc = compraPorNombre.get(`${f.prefix}-${f.consecutive}`.toUpperCase());
+    if (porFc) {
+      // Vencimiento identificado por el comprobante (FC-1-…).
+      f.factura_proveedor = facturaDe(porFc);
+      f.siigo_purchase_id = porFc.id ?? null;
+      ligadas.add(String(porFc.id));
+      continue;
+    }
+    f.factura_proveedor = [f.prefix, f.consecutive].filter((x) => String(x ?? "").trim()).join("-");
+    const c = compraPorFactura.get(`${nitDe(f.provider_nit)}|${compacto(f.factura_proveedor)}`);
+    if (c) {
+      f.siigo_purchase_id = c.id ?? null;
+      ligadas.add(String(c.id));
     }
   }
-  // Lo ya conocido de cada vencimiento (factura del proveedor, compra de Siigo) se conserva.
-  const conocidos = new Map<
-    string,
-    { factura_proveedor: string | null; siigo_purchase_id: string | null }
-  >();
+
+  // Compras con saldo que el reporte no trae: se agregan identificadas por la factura del
+  // proveedor (como el reporte) o, si no tiene número, por su comprobante.
+  let agregadasDeCompras = 0;
+  const claves = new Set(filas.map((f) => `${f.prefix}|${f.consecutive}|${f.quote}`.toUpperCase()));
+  for (const c of compras) {
+    const saldo = Math.round(Number(c.balance ?? 0) * 100) / 100;
+    if (!(saldo > 0.009) || ligadas.has(String(c.id))) continue;
+    const pi = c.provider_invoice;
+    const numero = String(pi?.number ?? "").trim();
+    const fc = /^(.*)-(\d+)$/.exec(String(c.name ?? "").trim());
+    const clave = /^\d+$/.test(numero)
+      ? { prefix: String(pi?.prefix ?? "").trim(), consecutive: Number(numero) }
+      : fc
+        ? { prefix: fc[1]!, consecutive: Number(fc[2]) }
+        : null;
+    if (!clave) continue;
+    const k = `${clave.prefix}|${clave.consecutive}|1`.toUpperCase();
+    if (claves.has(k)) continue;
+    claves.add(k);
+    filas.push({
+      company_id: companyId,
+      prefix: clave.prefix,
+      consecutive: clave.consecutive,
+      quote: 1,
+      due_date:
+        String(c.payments?.find((p) => p.due_date)?.due_date ?? c.date ?? "").slice(0, 10) || null,
+      balance: saldo,
+      provider_nit: c.supplier?.identification != null ? String(c.supplier.identification) : null,
+      provider_name: null,
+      cost_center: null,
+      factura_proveedor: facturaDe(c),
+      invoice_id: null,
+      siigo_purchase_id: c.id ?? null,
+      synced_at: inicio,
+    });
+    agregadasDeCompras += 1;
+  }
+
+  // Lo ya conocido de cada vencimiento (compra de Siigo) se conserva.
   for (let i = 0; i < filas.length; i += 200) {
     const lote = filas.slice(i, i + 200);
     const { data } = await db
@@ -536,24 +536,44 @@ export async function sincronizarCxP(
         "consecutive",
         lote.map((f) => f.consecutive),
       );
-    for (const c of (data ?? []) as Array<{
-      prefix: string;
-      consecutive: number;
-      quote: number;
-      factura_proveedor: string | null;
-      siigo_purchase_id: string | null;
-    }>)
-      conocidos.set(`${c.prefix}|${c.consecutive}|${c.quote}`, c);
+    const conocidos = new Map(
+      (
+        (data ?? []) as Array<{
+          prefix: string;
+          consecutive: number;
+          quote: number;
+          factura_proveedor: string | null;
+          siigo_purchase_id: string | null;
+        }>
+      ).map((c) => [`${c.prefix}|${c.consecutive}|${c.quote}`, c]),
+    );
+    for (const f of lote) {
+      const c = conocidos.get(`${f.prefix}|${f.consecutive}|${f.quote}`);
+      f.factura_proveedor = f.factura_proveedor ?? c?.factura_proveedor ?? null;
+      f.siigo_purchase_id = f.siigo_purchase_id ?? c?.siigo_purchase_id ?? null;
+    }
   }
-  for (const f of filas) {
-    const c = conocidos.get(`${f.prefix}|${f.consecutive}|${f.quote}`);
-    f.factura_proveedor = f.factura_proveedor ?? c?.factura_proveedor ?? null;
-    f.siigo_purchase_id = f.siigo_purchase_id ?? c?.siigo_purchase_id ?? null;
-  }
-  for (const f of filas) {
-    const c = porNombre.get(`${f.prefix}-${f.consecutive}`.toUpperCase());
-    f.factura_proveedor = f.factura_proveedor ?? c?.factura ?? null;
-    f.siigo_purchase_id = f.siigo_purchase_id ?? c?.id ?? null;
+
+  // Compras causadas desde la herramienta: se ligan por el identificador de Siigo.
+  const ids = [...new Set(filas.map((f) => f.siigo_purchase_id).filter((x): x is string => !!x))];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await db
+      .from("invoices")
+      .select("id, siigo_id, provider_name")
+      .eq("company_id", companyId)
+      .in("siigo_id", ids.slice(i, i + 200));
+    const porId = new Map(
+      ((data ?? []) as Array<{ id: string; siigo_id: string; provider_name: string | null }>).map(
+        (x) => [x.siigo_id, x],
+      ),
+    );
+    for (const f of filas) {
+      const inv = f.siigo_purchase_id ? porId.get(f.siigo_purchase_id) : undefined;
+      if (inv) {
+        f.invoice_id = inv.id;
+        f.provider_name = f.provider_name ?? inv.provider_name;
+      }
+    }
   }
 
   for (let i = 0; i < filas.length; i += 500) {

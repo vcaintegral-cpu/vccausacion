@@ -44,6 +44,8 @@ export type CuentaPorPagar = {
   providerName: string | null;
   /** Factura del proveedor ("FE-7003"), si se conoce. */
   facturaProveedor: string | null;
+  /** Identificador de la compra en Siigo a la que corresponde el vencimiento. */
+  siigoPurchaseId?: string | null;
 };
 
 export type ItemPago = {
@@ -190,6 +192,8 @@ export function refDeFacturaProveedor(f: string | null | undefined): RefFactura 
 }
 
 export function mismaFactura(a: RefFactura, b: RefFactura): boolean {
+  // La misma factura escrita con el guion en otra posición («A520-1365004» = «A-5201365004»).
+  if (a.prefijo + a.numero === b.prefijo + b.numero) return true;
   if (a.numero !== b.numero) return false;
   if (!a.prefijo || !b.prefijo) return true;
   return (
@@ -454,7 +458,12 @@ const masUsada = (m: Map<string, number> | undefined): string | null => {
 export type Contexto = {
   cxp: CuentaPorPagar[];
   /** Facturas ya causadas en Siigo (para reconocer las pagadas de contado, sin saldo). */
-  causadas?: Array<{ factura: string; nit: string | null; siigo: string | null }>;
+  causadas?: Array<{
+    factura: string;
+    nit: string | null;
+    siigo: string | null;
+    siigoId?: string | null;
+  }>;
   terceros: Tercero[];
   bancos: ReglaBanco[];
   conceptos: ReglaConcepto[];
@@ -585,8 +594,24 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
             })
             .map((c) => String(c.siigo).trim().toUpperCase()),
         );
+        const idsCompra = new Set(
+          (ctx.causadas ?? [])
+            .filter((c) => {
+              const f = refDeFacturaProveedor(c.factura);
+              return (
+                f &&
+                mismaFactura(f, r) &&
+                (!terceroNit || nitSinDv(c.nit) === terceroNit) &&
+                c.siigoId
+              );
+            })
+            .map((c) => String(c.siigoId)),
+        );
         candidatas = ctx.cxp.filter(
-          (c) => nombres.has(`${c.prefix}-${c.consecutive}`.toUpperCase()) && c.balance > 0,
+          (c) =>
+            (nombres.has(`${c.prefix}-${c.consecutive}`.toUpperCase()) ||
+              (!!c.siigoPurchaseId && idsCompra.has(c.siigoPurchaseId))) &&
+            c.balance > 0,
         );
       }
       if (candidatas.length === 1) encontradas.push({ ref: r, cxp: candidatas[0]! });
@@ -606,7 +631,11 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
           // Qué trae el reporte de CxP de Siigo para esa compra (diagnóstico para la usuaria).
           const nombre = String(causada.siigo ?? "").toUpperCase();
           const enCxp = nombre
-            ? ctx.cxp.filter((c) => `${c.prefix}-${c.consecutive}`.toUpperCase() === nombre)
+            ? ctx.cxp.filter(
+                (c) =>
+                  `${c.prefix}-${c.consecutive}`.toUpperCase() === nombre ||
+                  (!!causada.siigoId && c.siigoPurchaseId === causada.siigoId),
+              )
             : [];
           const detalle = !nombre
             ? ""
@@ -943,19 +972,4 @@ export function payloadReciboAgrupado(
     total,
     errores,
   };
-}
-
-/**
- * Signo de los saldos del reporte de CxP de Siigo: lo que se debe al proveedor viene
- * negativo (saldo crédito). Si el total del reporte es negativo, se invierten todos los
- * signos para que «por pagar» quede positivo; un saldo a favor queda negativo.
- */
-export function normalizarSignoSaldos<T extends { balance: number }>(
-  filas: T[],
-  siempre = false,
-): T[] {
-  const total = filas.reduce((s, f) => s + Number(f.balance || 0), 0);
-  if (total < 0 || siempre)
-    for (const f of filas) f.balance = Math.round(-Number(f.balance || 0) * 100) / 100;
-  return filas;
 }
