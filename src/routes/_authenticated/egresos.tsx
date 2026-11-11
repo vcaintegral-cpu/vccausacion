@@ -42,6 +42,8 @@ import {
   type DiferenciaItem,
   egresosSincronizarCxP,
   egresosEnviarGrupoBancario,
+  egresosCuentasAjuste,
+  egresosGuardarCuentasAjuste,
 } from "@/lib/egresos.functions";
 import type { ItemPago, Propuesta, TipoEgreso } from "@/lib/egresos";
 
@@ -584,6 +586,8 @@ function Egresos() {
         </div>
       </div>
 
+      <CuentasAjuste companyId={companyId} periodo={periodo} onCambio={refrescar} />
+
       {gruposBancarios.length ? (
         <div className="rounded-lg border bg-card p-3 text-xs">
           <div className="font-semibold">
@@ -773,6 +777,12 @@ function Egresos() {
                         ) : null}
                       </div>
                     ))}
+                    {f.propuesta?.ajuste ? (
+                      <div>
+                        Ajuste al peso {f.propuesta.ajuste.valor > 0 ? "débito" : "crédito"}{" "}
+                        {f.propuesta.ajuste.cuenta}: {cop(Math.abs(f.propuesta.ajuste.valor))}
+                      </div>
+                    ) : null}
                     {f.propuesta?.cuentas?.map((c) => (
                       <div key={`${c.code}-${c.movimiento}`}>
                         {c.movimiento === "Debit" ? "Débito" : "Crédito"} {c.code}: {cop(c.valor)}
@@ -1089,6 +1099,13 @@ function EditarEgreso({
               >
                 Aplicado {cop(suma)} de {cop(valor)}
               </div>
+              {Math.abs(valor - suma) >= 0.01 && Math.abs(valor - suma) <= 1000 ? (
+                <div className="text-blue-700">
+                  Al guardar se agrega un ajuste al peso{" "}
+                  {valor > suma ? "débito (se pagó de más)" : "crédito (se pagó de menos)"} de{" "}
+                  {cop(Math.abs(valor - suma))} para que el recibo cuadre con el banco.
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -1132,5 +1149,76 @@ function EditarEgreso({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Cuentas del ajuste al peso de los recibos (débito si se pagó de más, crédito si de menos) y CxP cruzada. */
+function CuentasAjuste({
+  companyId,
+  periodo,
+  onCambio,
+}: {
+  companyId: string;
+  periodo: string;
+  onCambio: () => void;
+}) {
+  const leer = useServerFn(egresosCuentasAjuste);
+  const guardar = useServerFn(egresosGuardarCuentasAjuste);
+  const cuentas = useQuery({
+    queryKey: ["egreso-ajustes", companyId],
+    queryFn: () => leer({ data: { companyId } }),
+  });
+  const [form, setForm] = useState<{ debito: string; credito: string; cxp: string } | null>(null);
+  const v = form ?? {
+    debito: cuentas.data?.debito ?? "",
+    credito: cuentas.data?.credito ?? "",
+    cxp: cuentas.data?.cxp ?? "",
+  };
+  const onGuardar = async () => {
+    try {
+      await guardar({
+        data: {
+          companyId,
+          debito: v.debito || null,
+          credito: v.credito || null,
+          cxp: v.cxp || null,
+          periodo,
+        },
+      });
+      toast.success("Cuentas del ajuste al peso guardadas; pagos del mes vueltos a proponer.");
+      setForm(null);
+      cuentas.refetch();
+      onCambio();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const campo = (k: "debito" | "credito" | "cxp", etiqueta: string) => (
+    <label className="flex items-center gap-1">
+      {etiqueta}
+      <Input
+        className="h-7 w-28"
+        value={v[k]}
+        onChange={(e) => setForm({ ...v, [k]: e.target.value.replace(/\D/g, "") })}
+      />
+    </label>
+  );
+  return (
+    <div className="rounded-lg border bg-card p-3 text-xs">
+      <div className="font-semibold">Ajuste al peso de los recibos de pago</div>
+      <div className="text-muted-foreground">
+        Si lo pagado no coincide con las facturas por hasta {cop(cuentas.data?.tope ?? 1000)}, el
+        recibo lleva un ajuste al peso: débito si se pagó de más y crédito si se pagó de menos,
+        cruzando la CxP de cada factura (recibo detallado).
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        {campo("debito", "Débito (pagó de más)")}
+        {campo("credito", "Crédito (pagó de menos)")}
+        {campo("cxp", "CxP cruzada")}
+        <Button size="sm" variant="outline" className="h-7" onClick={onGuardar} disabled={!form}>
+          Guardar
+        </Button>
+      </div>
+    </div>
   );
 }

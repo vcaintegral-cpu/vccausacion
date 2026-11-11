@@ -83,6 +83,68 @@ export function movimientoDeFila(f: FilaEgreso): MovimientoPago {
   };
 }
 
+/** Cuenta auxiliar «ajuste al peso» del grupo (5395 gasto / 4295 ingreso) del PUC, si es única. */
+export function cuentaAjustePeso(
+  puc: Array<{ code: string; name: string | null }>,
+  grupo: string,
+): string | null {
+  const codigos = new Set(puc.map((p) => p.code));
+  const hojas = puc.filter(
+    (p) =>
+      p.code.startsWith(grupo) &&
+      /AJUSTE AL PESO/.test(
+        String(p.name ?? "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toUpperCase(),
+      ) &&
+      ![...codigos].some((c) => c !== p.code && c.startsWith(p.code)),
+  );
+  return hojas.length === 1
+    ? hojas[0]!.code
+    : (hojas.sort((a, b) => b.code.length - a.code.length)[0]?.code ?? null);
+}
+
+/** Cuentas del ajuste al peso del recibo y CxP cruzada de la empresa (reglas o PUC). */
+export async function cargarAjustes(db: Db, companyId: string) {
+  const [reglas, puc, inv] = await Promise.all([
+    db
+      .from("egreso_reglas")
+      .select("patron, cuenta_debito")
+      .eq("company_id", companyId)
+      .eq("clase", "concepto")
+      .like("patron", "cuenta:%"),
+    todas<{ code: string; name: string | null }>((a, b) =>
+      db
+        .from("puc_accounts")
+        .select("code, name")
+        .eq("company_id", companyId)
+        .or("code.like.5395%,code.like.4295%")
+        .range(a, b),
+    ),
+    db
+      .from("invoices")
+      .select("payable_account")
+      .eq("company_id", companyId)
+      .not("siigo_id", "is", null)
+      .not("payable_account", "is", null)
+      .limit(1000),
+  ]);
+  const regla = (patron: string) =>
+    ((reglas.data ?? []) as Array<{ patron: string; cuenta_debito: string | null }>).find(
+      (r) => r.patron === patron,
+    )?.cuenta_debito ?? null;
+  const usos = new Map<string, number>();
+  for (const r of (inv.data ?? []) as Array<{ payable_account: string | null }>)
+    if (r.payable_account) usos.set(r.payable_account, (usos.get(r.payable_account) ?? 0) + 1);
+  return {
+    debito: regla("cuenta:ajuste_debito") ?? cuentaAjustePeso(puc, "5395"),
+    credito: regla("cuenta:ajuste_credito") ?? cuentaAjustePeso(puc, "4295"),
+    cxp: regla("cuenta:cxp") ?? [...usos].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null,
+    tope: 1000,
+  };
+}
+
 /** Contexto para proponer: CxP, terceros, reglas, precedente del auxiliar y facturas causadas. */
 export async function cargarContexto(db: Db, companyId: string): Promise<Contexto> {
   const [cxp, provs, reglas, hist, causadas, puc] = await Promise.all([
@@ -141,10 +203,11 @@ export async function cargarContexto(db: Db, companyId: string): Promise<Context
       provider_nit: string | null;
       siigo_number: string | null;
       siigo_id: string | null;
+      payable_account: string | null;
     }>((a, b) =>
       db
         .from("invoices")
-        .select("prefix, number, provider_nit, siigo_number, siigo_id")
+        .select("prefix, number, provider_nit, siigo_number, siigo_id, payable_account")
         .eq("company_id", companyId)
         .not("siigo_number", "is", null)
         .range(a, b),
@@ -153,7 +216,9 @@ export async function cargarContexto(db: Db, companyId: string): Promise<Context
       db.from("puc_accounts").select("code, name").eq("company_id", companyId).range(a, b),
     ),
   ]);
+  const ajustes = await cargarAjustes(db, companyId);
   return {
+    ajustes,
     cxp: cxp.map((c): CuentaPorPagar => ({
       prefix: c.prefix,
       consecutive: Number(c.consecutive),

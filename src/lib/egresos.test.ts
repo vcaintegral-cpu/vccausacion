@@ -643,3 +643,106 @@ describe("vencimientos identificados por la factura del proveedor", () => {
     expect(p2).toMatchObject({ tipo: "pago_facturas", listo: true });
   });
 });
+
+describe("ajuste al peso del recibo de pago", () => {
+  const ajustes = { debito: "53958101", credito: "42958101", cxp: "22050501", tope: 1000 };
+  it("crédito si se pagó de menos, débito si se pagó de más; sobre el tope no se ajusta", async () => {
+    const { ajusteAlPesoRecibo } = await import("./egresos");
+    expect(ajusteAlPesoRecibo(93400, 93400.35, ajustes)).toEqual({
+      valor: -0.35,
+      cuenta: "42958101",
+    });
+    expect(ajusteAlPesoRecibo(100500, 100000, ajustes)).toEqual({ valor: 500, cuenta: "53958101" });
+    expect(ajusteAlPesoRecibo(100000, 100000, ajustes)).toBeNull();
+    expect(ajusteAlPesoRecibo(102000, 100000, ajustes)).toHaveProperty("error");
+  });
+  it("pago con saldo a favor y centavos: RP detallado que cruza cada vencimiento, el ajuste y el banco", () => {
+    const c = ctx({
+      ajustes,
+      cxp: [
+        {
+          prefix: "FE",
+          consecutive: 501,
+          quote: 1,
+          dueDate: "2026-10-02",
+          balance: 133000.35,
+          providerNit: "900111222",
+          providerName: "PINTURAS DEL VALLE S.A.S.",
+          facturaProveedor: "FE-501",
+        },
+        {
+          prefix: "RP-4",
+          consecutive: 77,
+          quote: 1,
+          dueDate: "2026-09-01",
+          balance: -39600,
+          providerNit: "900111222",
+          providerName: "PINTURAS DEL VALLE S.A.S.",
+          facturaProveedor: "RP-4-77",
+        },
+      ],
+    });
+    const m = mov({ valor: 93400, relacion: "FE 501" });
+    const p = proponerEgreso(m, c);
+    // El saldo a favor lo elige la usuaria en pantalla: se simula su edición.
+    const editada = {
+      ...p,
+      items: [
+        {
+          prefix: "RP-4",
+          consecutive: 77,
+          quote: 1,
+          valor: -39600,
+          factura: "RP-4-77",
+          saldo: -39600,
+        },
+        {
+          prefix: "FE",
+          consecutive: 501,
+          quote: 1,
+          valor: 133000.35,
+          factura: "FE-501",
+          saldo: 133000.35,
+        },
+      ],
+      ajuste: { valor: -0.35, cuenta: "42958101" },
+      cuentaCxp: "22050501",
+    };
+    expect(erroresAntesDeEnviar(m, editada)).toEqual([]);
+    const payload = payloadRecibo(m, editada, 77) as {
+      type: string;
+      items: Array<{ account: { code: string; movement: string }; due?: unknown; value: number }>;
+    };
+    expect(payload.type).toBe("Detailed");
+    expect(
+      payload.items.map((i) => [i.account.code, i.account.movement, i.value, !!i.due]),
+    ).toEqual([
+      ["22050501", "Credit", 39600, true],
+      ["22050501", "Debit", 133000.35, true],
+      ["42958101", "Credit", 0.35, false],
+      ["11100501", "Credit", 93400, false],
+    ]);
+    // Débitos = créditos.
+    const d = payload.items
+      .filter((i) => i.account.movement === "Debit")
+      .reduce((s, i) => s + i.value, 0);
+    const cr = payload.items
+      .filter((i) => i.account.movement === "Credit")
+      .reduce((s, i) => s + i.value, 0);
+    expect(Math.round((d - cr) * 100)).toBe(0);
+  });
+  it("con cuentas de ajuste, los centavos van al ajuste (la factura queda pagada completa)", () => {
+    const c = ctx({ ajustes });
+    c.cxp[1]!.balance = 2488026;
+    const p = proponerEgreso(
+      mov({
+        valor: 2880751,
+        relacion: "FE 7003\nFE 7009",
+        observaciones: "FE 7003 $ 392,725.00\nFE 7009 $ 2,488,025.40",
+      }),
+      c,
+    );
+    expect(p.ajuste).toEqual({ valor: 0.6, cuenta: "53958101" });
+    expect(p.listo).toBe(true);
+  });
+});
