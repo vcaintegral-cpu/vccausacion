@@ -6,6 +6,7 @@ import {
   aprenderEgresos,
   conceptoDe,
   grupoBancario,
+  normalizarSignoSaldos,
   nitSinDv,
   patronConcepto,
   proponerEgreso,
@@ -407,6 +408,10 @@ export async function sincronizarCxP(
         synced_at: inicio,
       })),
   );
+  // Siigo reporta lo que se debe al proveedor con signo negativo (saldo crédito). Se guarda
+  // en positivo = valor por pagar; un saldo a favor (anticipo) queda negativo y no se paga.
+  // (Al leer un solo proveedor se aplica la misma convención, aunque solo tenga anticipos.)
+  normalizarSignoSaldos(filas, !!opts.soloNit);
 
   // Factura del proveedor de cada vencimiento: primero las compras causadas desde la
   // herramienta; las demás, de las compras de Siigo (provider_invoice).

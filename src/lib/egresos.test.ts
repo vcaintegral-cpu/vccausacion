@@ -571,3 +571,25 @@ describe("RP único del mes de gastos bancarios por cuenta bancaria", () => {
     ]);
   });
 });
+
+describe("signo de los saldos del reporte de CxP de Siigo", () => {
+  it("lo que se debe viene negativo: se guarda positivo; el saldo a favor queda negativo", async () => {
+    const { normalizarSignoSaldos } = await import("./egresos");
+    expect(
+      normalizarSignoSaldos([
+        { balance: -987654.32 },
+        { balance: -500000 },
+        { balance: 30000 },
+      ]).map((f) => f.balance),
+    ).toEqual([987654.32, 500000, -30000]);
+    // Si Siigo ya los reporta en positivo, no se tocan.
+    expect(
+      normalizarSignoSaldos([{ balance: 1000 }, { balance: 200 }]).map((f) => f.balance),
+    ).toEqual([1000, 200]);
+  });
+  it("con saldos invertidos, el pago encuentra su factura en las CxP", () => {
+    const c = ctx();
+    const p = proponerEgreso(mov({ valor: 392725, relacion: "FE 7003" }), c);
+    expect(p.listo).toBe(true);
+  });
+});
