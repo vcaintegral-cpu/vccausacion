@@ -42,10 +42,12 @@ import {
   type DiferenciaItem,
   egresosSincronizarCxP,
   egresosEnviarGrupoBancario,
+  egresosReplicar,
   egresosCuentasAjuste,
   egresosGuardarCuentasAjuste,
 } from "@/lib/egresos.functions";
 import type { ItemPago, Propuesta, TipoEgreso } from "@/lib/egresos";
+import { normalizar, patronConcepto } from "@/lib/egresos";
 
 export const Route = createFileRoute("/_authenticated/egresos")({
   head: () => ({
@@ -888,6 +890,7 @@ function Egresos() {
         <EditarEgreso
           fila={editando}
           cxp={(cxp.data ?? []) as Cxp[]}
+          pendientes={lista}
           onClose={() => setEditando(null)}
           onSaved={() => {
             setEditando(null);
@@ -910,18 +913,53 @@ type Cxp = {
   factura_proveedor: string | null;
 };
 
+/** Pagos pendientes parecidos al de origen: mismo concepto, tercero o descripción. */
+function pagosParecidos(origen: Fila, pendientes: Fila[]): Fila[] {
+  const patron = patronConcepto({ relacion: origen.relacion, descripcion: origen.descripcion });
+  const tercero = normalizar(origen.tercero_nombre);
+  const nit = String(origen.tercero_nit ?? "");
+  const desc = normalizar(origen.descripcion)
+    .replace(/\d+/g, "")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(" ");
+  return pendientes.filter(
+    (f) =>
+      f.id !== origen.id &&
+      !f.siigo_id &&
+      ["por_revisar", "listo"].includes(f.estado) &&
+      (patronConcepto({ relacion: f.relacion, descripcion: f.descripcion }) === patron ||
+        (!!tercero && normalizar(f.tercero_nombre) === tercero) ||
+        (!!nit && f.tercero_nit === nit) ||
+        (!!desc &&
+          normalizar(f.descripcion)
+            .replace(/\d+/g, "")
+            .split(" ")
+            .filter(Boolean)
+            .slice(0, 3)
+            .join(" ") === desc)),
+  );
+}
+
 function EditarEgreso({
   fila,
   cxp,
+  pendientes,
   onClose,
   onSaved,
 }: {
   fila: Fila;
   cxp: Cxp[];
+  pendientes: Fila[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const guardar = useServerFn(egresosGuardarEdicion);
+  const replicar = useServerFn(egresosReplicar);
+  const [parecidos, setParecidos] = useState<Fila[] | null>(null);
+  const [marcados, setMarcados] = useState<Set<string>>(new Set());
+  const [replicando, setReplicando] = useState(false);
   const base =
     fila.propuesta ??
     ({
@@ -977,6 +1015,15 @@ function EditarEgreso({
       else toast.success(tipo === "omitir" ? "Marcado sin recibo de pago." : "Aprobado.");
       if (r.repropuestos)
         toast.info(`Aprendido: ${r.repropuestos.listos} pagos del mes quedaron listos.`);
+      // Otros pagos pendientes parecidos: se ofrece replicar este tratamiento.
+      const similares = r.errores.length
+        ? []
+        : pagosParecidos({ ...fila, tercero_nit: nit || fila.tercero_nit }, pendientes);
+      if (similares.length) {
+        setParecidos(similares);
+        setMarcados(new Set(similares.map((f) => f.id)));
+        return;
+      }
       onSaved();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -984,6 +1031,92 @@ function EditarEgreso({
       setGuardando(false);
     }
   };
+
+  const onReplicar = async () => {
+    setReplicando(true);
+    try {
+      const r = await replicar({ data: { origenId: fila.id, destinoIds: [...marcados] } });
+      toast.success(
+        `Tratamiento replicado: ${r.aprobados} aprobados${r.porRevisar ? `, ${r.porRevisar} quedan por revisar` : ""}.`,
+      );
+      for (const m of r.mensajes.slice(0, 5)) toast.warning(m);
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReplicando(false);
+    }
+  };
+
+  if (parecidos)
+    return (
+      <Dialog open onOpenChange={(o) => !o && onSaved()}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>¿Replicar este tratamiento en otros pagos?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 text-xs">
+            <div className="text-muted-foreground">
+              {TIPO_LABEL[tipo]} · tercero {nit || "—"}
+              {tipo === "detallado" && cuentaDebito ? ` · débito ${cuentaDebito}` : ""}
+              {tipo === "pago_facturas"
+                ? " · cada pago se aplica a las facturas con saldo de este tercero (de la más antigua a la más nueva)"
+                : ""}
+              .
+            </div>
+            <div className="flex gap-1">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2"
+                onClick={() => setMarcados(new Set(parecidos.map((f) => f.id)))}
+              >
+                Todos ({parecidos.length})
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2"
+                onClick={() => setMarcados(new Set())}
+              >
+                Ninguno
+              </Button>
+            </div>
+            <div className="max-h-80 overflow-auto rounded border">
+              {parecidos.map((f) => (
+                <label key={f.id} className="flex items-center gap-2 border-b px-2 py-1">
+                  <Checkbox
+                    checked={marcados.has(f.id)}
+                    onCheckedChange={(v) =>
+                      setMarcados((x) => {
+                        const n = new Set(x);
+                        if (v) n.add(f.id);
+                        else n.delete(f.id);
+                        return n;
+                      })
+                    }
+                  />
+                  <span className="w-20">{fecha(f.fecha)}</span>
+                  <span className="flex-1 truncate">{f.tercero_nombre ?? f.descripcion}</span>
+                  <span className="w-28 truncate text-muted-foreground">{f.relacion}</span>
+                  <span className="w-20">{f.cuenta_etiqueta}</span>
+                  <span className="w-28 text-right">{cop(Number(f.valor))}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={onSaved}>
+              No replicar
+            </Button>
+            <Button onClick={onReplicar} disabled={replicando || marcados.size === 0}>
+              {replicando ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+              Aplicar a {marcados.size} pagos
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

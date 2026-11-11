@@ -864,3 +864,204 @@ export const egresosGuardarCuentasAjuste = createServerFn({ method: "POST" })
     }
     return null;
   });
+
+/**
+ * Replica el tratamiento de un egreso revisado en otros pagos del mes elegidos por la
+ * usuaria: mismo tipo, tercero y cuentas. En pago de facturas, cada pago se aplica a las
+ * facturas con saldo del mismo tercero (la del pago de origen primero, luego de la más
+ * antigua a la más nueva) por su propio valor. Lo que no cuadre queda por revisar.
+ */
+export const egresosReplicar = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { origenId: string; destinoIds: string[] }) => {
+    if (!input?.origenId || !input.destinoIds?.length)
+      throw new Error("Elige los pagos a los que se replica.");
+    return input;
+  })
+  .handler(
+    async ({
+      data,
+      context,
+    }): Promise<{ aprobados: number; porRevisar: number; mensajes: string[] }> => {
+      const db = context.supabase;
+      const { data: origen, error } = await db
+        .from("egresos")
+        .select("*")
+        .eq("id", data.origenId)
+        .single();
+      if (error || !origen) throw new Error(error?.message ?? "Pago de origen no encontrado.");
+      const po = origen.propuesta as unknown as Propuesta;
+      if (!po?.tipo || po.tipo === "por_definir")
+        throw new Error("Primero guarda el tratamiento del pago de origen.");
+      const { data: destinos } = await db
+        .from("egresos")
+        .select("*")
+        .in("id", data.destinoIds)
+        .eq("company_id", origen.company_id)
+        .is("siigo_id", null)
+        .order("fecha");
+      const { data: reglasBanco } = await db
+        .from("egreso_reglas")
+        .select("patron, cuenta_banco, payment_type_id")
+        .eq("company_id", origen.company_id)
+        .eq("clase", "banco");
+      const banco = (etiqueta: string | null) =>
+        (
+          (reglasBanco ?? []) as Array<{
+            patron: string;
+            cuenta_banco: string | null;
+            payment_type_id: string | null;
+          }>
+        ).find(
+          (r) =>
+            r.patron ===
+            String(etiqueta ?? "")
+              .toUpperCase()
+              .trim(),
+        );
+      const {
+        ajusteAlPesoRecibo,
+        conceptoDe,
+        grupoBancario,
+        erroresAntesDeEnviar: errores,
+      } = await import("./egresos");
+      const { cargarAjustes } = await import("./egresos.server");
+      const ajustes =
+        po.tipo === "pago_facturas" ? await cargarAjustes(db, origen.company_id) : null;
+
+      // Facturas abiertas del tercero (saldo disponible, descontando lo ya aplicado por el origen).
+      type Venc = {
+        prefix: string;
+        consecutive: number;
+        quote: number;
+        due_date: string | null;
+        balance: number;
+        factura_proveedor: string | null;
+      };
+      let abiertas: Array<Venc & { disponible: number }> = [];
+      if (po.tipo === "pago_facturas" && po.terceroNit) {
+        const { data: cxp } = await db
+          .from("siigo_cuentas_por_pagar")
+          .select("prefix, consecutive, quote, due_date, balance, factura_proveedor")
+          .eq("company_id", origen.company_id)
+          .eq("provider_nit", po.terceroNit)
+          .gt("balance", 0);
+        const clave = (x: { prefix: string; consecutive: number; quote: number }) =>
+          `${x.prefix}|${x.consecutive}|${x.quote}`;
+        const usadas = new Map(po.items.map((i) => [clave(i), Number(i.valor)]));
+        const primero = new Set(po.items.map(clave));
+        abiertas = ((cxp ?? []) as Venc[])
+          .map((c) => ({
+            ...c,
+            balance: Number(c.balance),
+            disponible: Math.round((Number(c.balance) - (usadas.get(clave(c)) ?? 0)) * 100) / 100,
+          }))
+          .filter((c) => c.disponible > 0.009)
+          .sort(
+            (a, b) =>
+              Number(primero.has(clave(b))) - Number(primero.has(clave(a))) ||
+              String(a.due_date ?? "").localeCompare(String(b.due_date ?? "")),
+          );
+      }
+
+      const filas: Array<Record<string, unknown>> = [];
+      const mensajes: string[] = [];
+      let aprobados = 0;
+      let porRevisar = 0;
+      for (const d of (destinos ?? []) as Array<
+        Record<string, unknown> & {
+          id: string;
+          valor: number;
+          fecha: string;
+          cuenta_etiqueta: string | null;
+          descripcion: string | null;
+          relacion: string | null;
+          estado: string;
+        }
+      >) {
+        if (["enviando", "enviado"].includes(d.estado)) continue;
+        const valor = Number(d.valor);
+        const b = banco(d.cuenta_etiqueta);
+        const p: Propuesta = {
+          ...po,
+          items: [],
+          cuentas: [],
+          paymentTypeId: b?.payment_type_id ?? null,
+          cuentaBanco: b?.cuenta_banco ?? null,
+          ajuste: null,
+          cuentaCxp: null,
+          grupo: null,
+          listo: false,
+          motivos: [],
+          notas: [
+            `Tratamiento replicado de ${String(origen.fecha).slice(0, 10)} ${origen.descripcion ?? ""}.`,
+          ],
+        };
+        if (po.tipo === "detallado") {
+          const debito = po.cuentas.find((c) => c.movimiento === "Debit")?.code;
+          if (debito && p.cuentaBanco) {
+            const desc = String(d.descripcion ?? "Egreso").slice(0, 100);
+            p.cuentas = [
+              { code: debito, movimiento: "Debit", valor, descripcion: desc },
+              { code: p.cuentaBanco, movimiento: "Credit", valor, descripcion: desc },
+            ];
+          }
+          p.grupo = grupoBancario(
+            conceptoDe({ relacion: d.relacion, descripcion: d.descripcion, aplicacion: null })
+              ?.id ?? null,
+            d.cuenta_etiqueta,
+          );
+        }
+        if (po.tipo === "pago_facturas") {
+          let restante = valor;
+          for (const c of abiertas) {
+            if (restante <= 0.009) break;
+            const v = Math.round(Math.min(c.disponible, restante) * 100) / 100;
+            if (v <= 0) continue;
+            p.items.push({
+              prefix: c.prefix,
+              consecutive: c.consecutive,
+              quote: c.quote,
+              valor: v,
+              factura: c.factura_proveedor,
+              saldo: c.balance,
+            });
+            c.disponible = Math.round((c.disponible - v) * 100) / 100;
+            restante = Math.round((restante - v) * 100) / 100;
+          }
+          abiertas = abiertas.filter((c) => c.disponible > 0.009);
+          const aj = ajusteAlPesoRecibo(valor, valor - restante, ajustes ?? undefined);
+          if (restante > 0.009 && aj && "valor" in aj) {
+            p.ajuste = aj;
+            p.cuentaCxp = ajustes?.cxp ?? null;
+          }
+        }
+        const e =
+          p.tipo === "omitir" ? [] : errores({ valor, fecha: String(d.fecha).slice(0, 10) }, p);
+        if (po.tipo === "pago_facturas" && e.some((x) => x.startsWith("Las facturas suman")))
+          e.push("No hay más facturas con saldo de este tercero para cubrir el pago.");
+        const estado = p.tipo === "omitir" ? "omitido" : e.length ? "por_revisar" : "aprobado";
+        if (estado === "aprobado" || estado === "omitido") aprobados += 1;
+        else {
+          porRevisar += 1;
+          mensajes.push(`${String(d.fecha).slice(0, 10)} ${d.descripcion ?? ""}: ${e.join(" ")}`);
+        }
+        filas.push({
+          ...d,
+          tipo: p.tipo,
+          propuesta: { ...p, listo: e.length === 0, motivos: e },
+          estado,
+          motivos: e,
+          tercero_nit: p.terceroNit,
+          editado_por_usuaria: true,
+        });
+      }
+      for (let i = 0; i < filas.length; i += 300) {
+        const { error: e2 } = await db
+          .from("egresos")
+          .upsert(filas.slice(i, i + 300) as never, { onConflict: "id" });
+        if (e2) throw new Error(e2.message);
+      }
+      return { aprobados, porRevisar, mensajes: mensajes.slice(0, 20) };
+    },
+  );
