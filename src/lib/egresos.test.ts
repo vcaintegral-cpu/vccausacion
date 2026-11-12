@@ -815,3 +815,19 @@ describe("excedente del pago como anticipo al proveedor", () => {
     ]);
   });
 });
+
+describe("tope del ajuste al peso configurable por empresa", () => {
+  it("con tope de 5.000, una diferencia de 3.000 es ajuste; con tope de 100, el excedente es anticipo", async () => {
+    const { diferenciaDelPago } = await import("./egresos");
+    const base = { debito: "53958101", credito: "42958101", cxp: "22050501", anticipo: "13300501" };
+    expect(diferenciaDelPago(103000, 100000, { ...base, tope: 5000 }).ajuste).toEqual({
+      valor: 3000,
+      cuenta: "53958101",
+    });
+    expect(diferenciaDelPago(100500, 100000, { ...base, tope: 100 }).anticipo).toEqual({
+      valor: 500,
+      cuenta: "13300501",
+    });
+    expect(diferenciaDelPago(99500, 100000, { ...base, tope: 100 }).error).toMatch(/tope/);
+  });
+});

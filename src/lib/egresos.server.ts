@@ -142,7 +142,11 @@ export async function cargarAjustes(db: Db, companyId: string) {
     credito: regla("cuenta:ajuste_credito") ?? cuentaAjustePeso(puc, "4295"),
     cxp: regla("cuenta:cxp") ?? [...usos].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null,
     anticipo: regla("cuenta:anticipo") ?? cuentaAnticipoProveedores(puc),
-    tope: 1000,
+    // Tope del ajuste al peso de la empresa (guardado en pantalla); por defecto $1.000.
+    tope: (() => {
+      const t = regla("cuenta:tope");
+      return t != null && /^\d+$/.test(t) ? Number(t) : 1000;
+    })(),
   };
 }
 

@@ -838,9 +838,13 @@ export const egresosGuardarCuentasAjuste = createServerFn({ method: "POST" })
       credito: string | null;
       cxp: string | null;
       anticipo?: string | null;
+      /** Tope del ajuste al peso automático, en pesos. */
+      tope?: number | null;
       periodo?: string | null;
     }) => {
       if (!input?.companyId) throw new Error("companyId requerido");
+      if (input.tope != null && !(Number(input.tope) >= 0 && Number(input.tope) <= 10000000))
+        throw new Error("El tope del ajuste al peso debe estar entre 0 y 10.000.000.");
       return input;
     },
   )
@@ -852,6 +856,8 @@ export const egresosGuardarCuentasAjuste = createServerFn({ method: "POST" })
         ["cuenta:ajuste_credito", data.credito],
         ["cuenta:cxp", data.cxp],
         ["cuenta:anticipo", data.anticipo ?? null],
+        // El tope se guarda en pesos enteros (mismo campo de las reglas de cuentas).
+        ["cuenta:tope", data.tope != null ? String(Math.round(Number(data.tope))) : null],
       ] as const
     ).map(([patron, cuenta]) => ({
       company_id: data.companyId,
