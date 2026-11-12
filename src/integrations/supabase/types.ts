@@ -621,7 +621,6 @@ export type Database = {
           cuenta_destino_etiqueta: string | null
           cuenta_etiqueta: string
           descripcion: string | null
-          detalle: Json | null
           estado: string
           fecha: string
           id: string
@@ -645,7 +644,6 @@ export type Database = {
           cuenta_destino_etiqueta?: string | null
           cuenta_etiqueta: string
           descripcion?: string | null
-          detalle?: Json | null
           estado?: string
           fecha: string
           id?: string
@@ -669,7 +667,6 @@ export type Database = {
           cuenta_destino_etiqueta?: string | null
           cuenta_etiqueta?: string
           descripcion?: string | null
-          detalle?: Json | null
           estado?: string
           fecha?: string
           id?: string
