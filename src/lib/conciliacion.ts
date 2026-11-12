@@ -31,6 +31,8 @@ export type MovLibro = {
   fecha: string;
   comprobante: string;
   tercero: string | null;
+  /** NIT del tercero (auxiliar o API), para ajustes en Siigo. */
+  terceroNit?: string | null;
   descripcion: string | null;
   valor: number; // + débito (entra al banco), − crédito (sale)
   /** Origen: auxiliar subido, API de Siigo (RC) o RP enviado desde la herramienta. */
@@ -43,6 +45,8 @@ export type Cruce = {
   libros: MovLibro[];
   criterio: string;
   diferencia: number; // banco − libros
+  /** Abono de una pasarela de pagos (neto de comisiones y retenciones). */
+  pasarela?: string;
 };
 
 export type ResultadoConciliacion = {
@@ -141,6 +145,13 @@ export function conciliar(params: {
   libros: MovLibro[];
   /** Comprobantes (de libros) del RP mensual de gastos bancarios de esta cuenta. */
   comprobantesGastosBancarios?: string[];
+  /**
+   * Pasarelas de pago: sus abonos llegan netos de comisiones y retenciones contra RC por el
+   * valor completo. Esas diferencias se cruzan con el RP de comisiones de la plataforma.
+   */
+  pasarelas?: Array<{ plataforma: string; patron: RegExp; comprobantes: string[] }>;
+  /** Ajustes al peso ya enviados: comprobante del ajuste y el RC/RP que ajusta. */
+  ajustes?: Array<{ comprobante: string; origen: string }>;
 }): ResultadoConciliacion {
   const banco = params.banco.map((b) => ({ ...b, valor: roundCOP(b.valor) }));
   const libros = params.libros.map((l) => ({ ...l, valor: roundCOP(l.valor) }));
@@ -181,6 +192,62 @@ export function conciliar(params: {
         mismos,
         `Comprobante ${[...new Set(mismos.map((l) => l.comprobante))].join(", ")}`,
       );
+  }
+
+  // 1b. Abonos de pasarelas (netos) contra sus RC (brutos) y el RP de comisiones del mes.
+  for (const p of params.pasarelas ?? []) {
+    const difs = diferencias.filter(
+      (d) =>
+        d.diferencia < 0 && d.banco.length && d.banco.every((b) => p.patron.test(b.descripcion)),
+    );
+    if (!difs.length) continue;
+    const comps = new Set(p.comprobantes.map(normalizarComprobante));
+    const rp = libresL().filter(
+      (l) => l.valor < 0 && comps.has(normalizarComprobante(l.comprobante)),
+    );
+    if (!rp.length) {
+      for (const d of difs) {
+        d.pasarela = p.plataforma;
+        d.criterio = `${d.criterio} · abono de ${p.plataforma} neto de comisiones y retenciones: falta el RP de comisiones del mes`;
+      }
+      continue;
+    }
+    for (const d of difs) diferencias.splice(diferencias.indexOf(d), 1);
+    for (const l of rp) usadosL.add(l.id);
+    const bs = difs.flatMap((d) => d.banco);
+    const ls = [...difs.flatMap((d) => d.libros), ...rp];
+    const dif = roundCOP(bs.reduce((s, b) => s + b.valor, 0) - ls.reduce((s, l) => s + l.valor, 0));
+    (Math.abs(dif) < 0.01 ? conciliados : diferencias).push({
+      banco: bs,
+      libros: ls,
+      criterio:
+        Math.abs(dif) < 0.01
+          ? `Abonos de ${p.plataforma} netos de comisiones y retenciones (RP ${[...new Set(rp.map((l) => l.comprobante))].join(", ")})`
+          : `Abonos de ${p.plataforma}: el RP de comisiones no cubre exactamente los descuentos`,
+      diferencia: dif,
+      pasarela: p.plataforma,
+    });
+  }
+
+  // 1c. Diferencias ya ajustadas en Siigo (ajuste al peso enviado desde la conciliación).
+  for (const a of params.ajustes ?? []) {
+    const d = diferencias.find((x) =>
+      x.libros.some((l) =>
+        normalizarComprobante(a.origen).split(",").includes(normalizarComprobante(l.comprobante)),
+      ),
+    );
+    const l = libresL().find(
+      (x) => normalizarComprobante(x.comprobante) === normalizarComprobante(a.comprobante),
+    );
+    if (!d || !l) continue;
+    usadosL.add(l.id);
+    d.libros = [...d.libros, l];
+    d.diferencia = roundCOP(d.diferencia - l.valor);
+    d.criterio = `${d.criterio} · ajuste al peso ${l.comprobante}`;
+    if (Math.abs(d.diferencia) < 0.01) {
+      diferencias.splice(diferencias.indexOf(d), 1);
+      conciliados.push(d);
+    }
   }
 
   // 2. Gastos bancarios del mes contra su comprobante único.
@@ -334,6 +401,7 @@ export type LineaAuxiliar = {
   voucher: string | null;
   entry_date_text: string | null;
   provider_name: string | null;
+  provider_nit?: string | null;
   description: string | null;
   detail?: string | null;
   debit: number | null;
@@ -355,9 +423,15 @@ export type EntradaCuenta = {
   periodo: string; // yyyy-MM
   extracto: MovBanco[];
   auxiliar: LineaAuxiliar[];
-  rpEnviados: Array<MovLibro & { cuenta: string | null; grupo: string | null }>;
+  rpEnviados: Array<
+    MovLibro & { cuenta: string | null; grupo: string | null; pasarela?: string | null }
+  >;
   rcApi: Array<MovLibro & { cuenta: string | null }>;
+  /** Ajustes al peso enviados desde la conciliación (comprobante contable en Siigo). */
+  ajustesEnviados?: Array<MovLibro & { cuenta: string | null; ajusta: string }>;
   previas: PartidaConciliatoria[];
+  /** Pasarelas de pago de la empresa (Bold, Wompi…): sus abonos llegan netos. */
+  pasarelas?: string[];
 };
 
 /**
@@ -372,6 +446,8 @@ export function armarConciliacion(e: EntradaCuenta): {
   banco: MovBanco[];
   libros: MovLibro[];
   comprobantesGastosBancarios: string[];
+  pasarelas: Array<{ plataforma: string; patron: RegExp; comprobantes: string[] }>;
+  ajustes: Array<{ comprobante: string; origen: string }>;
   movimientoLibros: number;
 } {
   const enMes = (f: string | null) => !!f && f.slice(0, 7) === e.periodo;
@@ -382,6 +458,7 @@ export function armarConciliacion(e: EntradaCuenta): {
       fecha: fechaAuxiliar(l.entry_date_text) ?? "",
       comprobante: String(l.voucher ?? "").trim(),
       tercero: l.provider_name,
+      terceroNit: l.provider_nit ?? null,
       descripcion: l.description ?? l.detail ?? null,
       valor: roundCOP(Number(l.debit ?? 0) - Number(l.credit ?? 0)),
       origen: "auxiliar" as const,
@@ -411,9 +488,12 @@ export function armarConciliacion(e: EntradaCuenta): {
   const complemento = [
     ...[...porComp.values()].filter((r) => !enAuxiliar.has(normalizarComprobante(r.comprobante))),
     ...deCuenta(e.rcApi).filter((r) => !enAuxiliar.has(normalizarComprobante(r.comprobante))),
+    ...deCuenta(e.ajustesEnviados ?? []).filter(
+      (r) => !enAuxiliar.has(normalizarComprobante(r.comprobante)),
+    ),
   ];
   // Citar en el extracto los RP individuales enviados (mismo valor y fecha).
-  const individuales = rps.filter((r) => !r.grupo);
+  const individuales = rps.filter((r) => !r.grupo && !r.pasarela);
   const usados = new Set<string>();
   const banco = e.extracto.map((b) => {
     const r = individuales.find(
@@ -429,6 +509,107 @@ export function armarConciliacion(e: EntradaCuenta): {
     banco: [...banco, ...prev.banco],
     libros: [...libros, ...prev.libros],
     comprobantesGastosBancarios: [...new Set(rps.filter((r) => r.grupo).map((r) => r.comprobante))],
+    ajustes: deCuenta(e.ajustesEnviados ?? []).map((a) => ({
+      comprobante: a.comprobante,
+      origen: a.ajusta,
+    })),
+    pasarelas: (e.pasarelas ?? []).map((plataforma) => ({
+      plataforma,
+      patron: new RegExp(`\\b${plataforma.replace(/[^A-Za-z0-9]/g, "")}\\b`, "i"),
+      comprobantes: rps.filter((r) => r.pasarela === plataforma).map((r) => r.comprobante),
+    })),
     movimientoLibros: roundCOP(libros.reduce((s, l) => s + l.valor, 0)),
+  };
+}
+
+export type AjustePropuesto = {
+  /** Clave estable: cuenta, comprobantes y abono del banco (fecha y valor). */
+  clave: string;
+  fecha: string;
+  /** Diferencia banco − libros: > 0 ingreso (débito al banco), < 0 gasto (crédito al banco). */
+  valor: number;
+  origen: string;
+  terceroNit: string | null;
+  tercero: string | null;
+  descripcion: string;
+};
+
+/**
+ * Diferencias de valor dentro del tope del ajuste al peso (no de pasarelas): se pueden
+ * ajustar en Siigo con un comprobante contable contra el banco.
+ */
+export function ajustesAlPeso(
+  r: ResultadoConciliacion,
+  etiqueta: string,
+  tope: number,
+): AjustePropuesto[] {
+  return r.diferencias
+    .filter(
+      (d) =>
+        !d.pasarela &&
+        d.libros.length > 0 &&
+        Math.abs(d.diferencia) >= 0.01 &&
+        Math.abs(d.diferencia) <= tope + 0.001,
+    )
+    .map((d) => {
+      const comps = [...new Set(d.libros.map((l) => l.comprobante).filter(Boolean))];
+      const b = d.banco[0];
+      return {
+        clave: [
+          "ajuste",
+          etiqueta.toUpperCase(),
+          comps.map(normalizarComprobante).sort().join(","),
+          b?.fecha ?? "",
+          roundCOP(d.banco.reduce((s, x) => s + x.valor, 0)).toFixed(2),
+        ].join("|"),
+        fecha: [b?.fecha, ...d.libros.map((l) => l.fecha)].filter(Boolean).sort().at(-1) ?? "",
+        valor: d.diferencia,
+        origen: comps.join(","),
+        terceroNit: d.libros.find((l) => l.terceroNit)?.terceroNit ?? null,
+        tercero: d.libros.find((l) => l.tercero)?.tercero ?? null,
+        descripcion: `Ajuste al peso ${comps.join(", ")} vs banco ${b?.descripcion ?? ""}`
+          .replace(/\s+/g, " ")
+          .slice(0, 200),
+      };
+    });
+}
+
+/**
+ * Comprobante contable del ajuste al peso: diferencia > 0 → débito al banco y crédito al
+ * ingreso; < 0 → débito al gasto y crédito al banco. Con el tercero del RC/RP.
+ */
+export function payloadAjusteAlPeso(params: {
+  documentId: number;
+  fecha: string;
+  valor: number;
+  cuentaBanco: string;
+  cuentaIngreso: string;
+  cuentaGasto: string;
+  terceroNit: string;
+  descripcion: string;
+  referencia: string;
+}): Record<string, unknown> {
+  const v = roundCOP(Math.abs(params.valor));
+  const ingreso = params.valor > 0;
+  const customer = { identification: params.terceroNit.replace(/\D/g, ""), branch_office: 0 };
+  const obs = `${params.descripcion} · Ref ${params.referencia}`.slice(0, 250);
+  return {
+    document: { id: params.documentId },
+    date: params.fecha,
+    observations: obs,
+    items: [
+      {
+        account: { code: ingreso ? params.cuentaBanco : params.cuentaGasto, movement: "Debit" },
+        customer,
+        description: params.descripcion.slice(0, 100),
+        value: v,
+      },
+      {
+        account: { code: ingreso ? params.cuentaIngreso : params.cuentaBanco, movement: "Credit" },
+        customer,
+        description: params.descripcion.slice(0, 100),
+        value: v,
+      },
+    ],
   };
 }
