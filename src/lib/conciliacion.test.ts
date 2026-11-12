@@ -532,3 +532,86 @@ describe("registro en lote", () => {
     expect(armado.movimientoLibros).toBe(-100000);
   });
 });
+
+describe("gastos bancarios del mes con cobros por correo", () => {
+  const extracto = [
+    b("g1", "2026-10-05", "SERVICIO PAGO A PROVEEDORES", -1000),
+    b("g2", "2026-10-06", "IMPTO GOBIERNO 4X1000", -40),
+    b("e1", "2026-10-23", "SERVICIO E-MAILS ENVIADOS", -280),
+    b("e2", "2026-10-23", "SERVICIO E-MAILS ENVIADOS", -280),
+  ];
+  const rpGrupo = (id: string, fecha: string, valor: number) => ({
+    id,
+    fecha,
+    comprobante: "RP-4-90",
+    tercero: null,
+    descripcion: null,
+    valor,
+    cuenta: "AHORROS",
+    grupo: "bancario|AHORROS",
+  });
+  const base = {
+    etiqueta: "AHORROS",
+    cuentaContable: "11200502",
+    periodo: "2026-10",
+    extracto,
+    auxiliar: [],
+    rcApi: [],
+    previas: [],
+    rpEnviados: [
+      rpGrupo("x1", "2026-10-05", -1000),
+      rpGrupo("x2", "2026-10-06", -40),
+      rpGrupo("x3", "2026-10-23", -280),
+      rpGrupo("x4", "2026-10-23", -280),
+    ],
+  };
+  it("el RP mensual cruza con todos sus movimientos, incluidos los cobros por correo", () => {
+    const r = conciliar(armarConciliacion(base));
+    expect(r.diferencias).toHaveLength(0);
+    expect(r.faltaEnLibros).toHaveLength(0);
+    expect(r.conciliados[0]!.banco).toHaveLength(4);
+  });
+  it("si además se enviaron un lote por los correos y un ajuste por la misma diferencia, se anulan entre sí", () => {
+    const armado = armarConciliacion({
+      ...base,
+      lotesEnviados: [
+        {
+          id: "lote",
+          fecha: "2026-10-31",
+          comprobante: "RP-4-91",
+          tercero: null,
+          descripcion: null,
+          valor: -560,
+          cuenta: "AHORROS",
+          movimientos: [
+            { fecha: "2026-10-23", valor: -280 },
+            { fecha: "2026-10-23", valor: -280 },
+          ],
+        },
+      ],
+      ajustesEnviados: [
+        {
+          id: "aj-1",
+          fecha: "2026-10-31",
+          comprobante: "CC-1-9",
+          tercero: null,
+          descripcion: null,
+          valor: 560,
+          cuenta: "AHORROS",
+          ajusta: "RP-4-90",
+        },
+      ],
+    });
+    const r = conciliar(armado);
+    expect(r.diferencias).toHaveLength(0);
+    expect(r.faltaEnLibros).toHaveLength(0);
+    expect(r.sobraEnLibros).toHaveLength(0);
+    expect(
+      diferenciaSinExplicar({
+        saldoExtracto: -1600,
+        saldoLibros: armado.movimientoLibros,
+        partidas: partidasAlCorte(r),
+      }),
+    ).toBe(0);
+  });
+});
