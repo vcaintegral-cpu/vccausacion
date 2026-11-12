@@ -159,6 +159,8 @@ export function conciliar(params: {
    * el comprobante de reclasificación anula en libros el RC/RP de origen.
    */
   reclasificaciones?: Array<{ comprobante: string; origen: string }>;
+  /** Documentos que agrupan varios movimientos del extracto (registro en lote). */
+  lotes?: Array<{ comprobante: string; movimientos: Array<{ fecha: string; valor: number }> }>;
 }): ResultadoConciliacion {
   const banco = params.banco.map((b) => ({ ...b, valor: roundCOP(b.valor) }));
   const libros = params.libros.map((l) => ({ ...l, valor: roundCOP(l.valor) }));
@@ -193,6 +195,22 @@ export function conciliar(params: {
         iguales(l.valor, -x.valor),
     );
     if (o) marcar([], [o, x], `${o.comprobante} reclasificado a otra cuenta (${x.comprobante})`);
+  }
+
+  // 0b. Lotes: un documento de Siigo contra los movimientos del extracto que agrupa.
+  for (const lote of params.lotes ?? []) {
+    const l = libresL().find(
+      (x) => normalizarComprobante(x.comprobante) === normalizarComprobante(lote.comprobante),
+    );
+    if (!l) continue;
+    const bs: MovBanco[] = [];
+    for (const m of lote.movimientos) {
+      const b = libresB().find(
+        (x) => !bs.includes(x) && x.fecha === m.fecha && iguales(x.valor, m.valor),
+      );
+      if (b) bs.push(b);
+    }
+    if (bs.length) marcar(bs, [l], `Registrados en lote (${l.comprobante})`);
   }
 
   // 1. Comprobante citado.
@@ -522,6 +540,10 @@ export type EntradaCuenta = {
    * RC/RP, `ajusta` = su comprobante) y en la correcta (cruza con el banco).
    */
   reclasificacionesEnviadas?: Array<MovLibro & { cuenta: string | null; ajusta: string }>;
+  /** Documentos en lote enviados (RP o RC): el total y los movimientos del extracto que agrupa. */
+  lotesEnviados?: Array<
+    MovLibro & { cuenta: string | null; movimientos: Array<{ fecha: string; valor: number }> }
+  >;
   previas: PartidaConciliatoria[];
   /**
    * Registros de Siigo con fecha anterior al mes creados después del corte (p. ej. el RP de
@@ -547,6 +569,7 @@ export function armarConciliacion(e: EntradaCuenta): {
   pasarelas: Array<{ plataforma: string; patron: RegExp; comprobantes: string[] }>;
   ajustes: Array<{ comprobante: string; origen: string }>;
   reclasificaciones: Array<{ comprobante: string; origen: string }>;
+  lotes: Array<{ comprobante: string; movimientos: Array<{ fecha: string; valor: number }> }>;
   /** Movimiento de libros con fecha del mes (o posterior). */
   movimientoLibros: number;
   /**
@@ -632,6 +655,9 @@ export function armarConciliacion(e: EntradaCuenta): {
     ...deCuenta(e.reclasificacionesEnviadas ?? []).filter(
       (r) => !enAuxiliar.has(normalizarComprobante(r.comprobante)),
     ),
+    ...deCuenta(e.lotesEnviados ?? [])
+      .filter((r) => !enAuxiliar.has(normalizarComprobante(r.comprobante)))
+      .map(({ movimientos: _m, ...r }) => r),
   ];
   // Citar en el extracto los RP individuales enviados (mismo valor y fecha).
   const individuales = rps.filter((r) => !r.grupo && !r.pasarela);
@@ -648,7 +674,8 @@ export function armarConciliacion(e: EntradaCuenta): {
   // y leído por la API): una vez por comprobante y valor.
   const vistos = new Set<string>();
   const unicos = complemento.filter((c) => {
-    const k = `${normalizarComprobante(c.comprobante)}|${roundCOP(c.valor)}|${c.id.startsWith("rcl-") ? c.id : ""}`;
+    // Los ajustes de un mismo comprobante (lote de diferencias) son líneas distintas.
+    const k = `${normalizarComprobante(c.comprobante)}|${roundCOP(c.valor)}|${c.id.startsWith("rcl-") || c.id.startsWith("aj-") ? c.id : ""}`;
     if (vistos.has(k)) return false;
     vistos.add(k);
     return true;
@@ -662,6 +689,10 @@ export function armarConciliacion(e: EntradaCuenta): {
     ajustes: deCuenta(e.ajustesEnviados ?? []).map((a) => ({
       comprobante: a.comprobante,
       origen: a.ajusta,
+    })),
+    lotes: deCuenta(e.lotesEnviados ?? []).map((l) => ({
+      comprobante: l.comprobante,
+      movimientos: l.movimientos,
     })),
     reclasificaciones: deCuenta(e.reclasificacionesEnviadas ?? [])
       .filter((a) => a.ajusta)
