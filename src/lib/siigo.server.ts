@@ -412,6 +412,7 @@ export async function siigoCrearComprobante<T = { id?: string; name?: string }>(
     try {
       const tipos = await siigoGetCatalogo<DocType[] | { results?: DocType[] }>(
         `/v1/document-types?type=${destino.tipo}`,
+        "/v1/document-types?type=CC",
       );
       const t = (Array.isArray(tipos) ? tipos : (tipos.results ?? [])).find(
         (x) => Number(x.id) === documentId,
@@ -427,6 +428,7 @@ export async function siigoCrearComprobante<T = { id?: string; name?: string }>(
       try {
         const r = await siigoGet<{ results?: J[] } | J[]>(
           `${destino.ruta}?created_start=${desde}&page=${page}&page_size=100`,
+          `/v1/journals?created_start=${desde}&page=${page}&page_size=100`,
         );
         l = Array.isArray(r) ? r : (r.results ?? []);
       } catch {
@@ -445,6 +447,7 @@ export async function siigoCrearComprobante<T = { id?: string; name?: string }>(
     try {
       return await siigoPost<T>(
         destino.ruta,
+        "/v1/journals",
         numero == null ? payload : { ...payload, number: numero },
       );
     } catch (e) {
