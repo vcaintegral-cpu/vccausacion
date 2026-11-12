@@ -18,9 +18,16 @@ import { Input } from "@/components/ui/input";
 import { readRawHistory } from "@/lib/history-raw";
 import { supabase } from "@/integrations/supabase/client";
 import { AccountCombobox, type PucOption } from "@/components/account-combobox";
+import { TerceroCombobox, type TerceroOption } from "@/components/tercero-combobox";
+import { egresosEnviar } from "@/lib/egresos.functions";
 import {
+  ajusteDeDiferencia,
   ajustesAlPeso,
   armarConciliacion,
+  clavePartida,
+  partidaDeBanco,
+  partidaDeDiferencia,
+  partidaDeLibro,
   conciliar,
   detectarCuentaErrada,
   diferenciaSinExplicar,
@@ -55,6 +62,8 @@ import {
   conciliacionGuardarCuentasPasarela,
   conciliacionMovimientoSiigo,
   conciliacionReclasificar,
+  conciliacionRegistrarRc,
+  conciliacionRegistrarRp,
   type FuentesConciliacion,
 } from "@/lib/conciliacion.functions";
 import type { BalanceCuenta } from "@/lib/siigo-movimiento.server";
@@ -158,21 +167,52 @@ function Conciliacion() {
   const reclasificar = useServerFn(conciliacionReclasificar);
   const crearRpPasarela = useServerFn(conciliacionCrearRpPasarela);
   const guardarCuentasPas = useServerFn(conciliacionGuardarCuentasPasarela);
-  const puc = useQuery({
-    queryKey: ["puc-1355", companyId],
+  // PUC y terceros de la empresa (para registrar en Siigo desde la conciliación).
+  const catalogos = useQuery({
+    queryKey: ["conciliacion-catalogos", companyId],
     enabled: !!companyId,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("puc_accounts")
-        .select("code, name, active, level, parent_code, has_children, is_movement")
-        .eq("company_id", companyId!)
-        .like("code", "1355%")
-        .order("code")
-        .limit(1000);
-      if (error) throw new Error(error.message);
-      return (data ?? []) as PucOption[];
+      const leer = async <T,>(
+        q: (
+          a: number,
+          b: number,
+        ) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+      ) => {
+        const out: T[] = [];
+        for (let a = 0; ; a += 1000) {
+          const { data, error } = await q(a, a + 999);
+          if (error) throw new Error(error.message);
+          const l = (data ?? []) as T[];
+          out.push(...l);
+          if (l.length < 1000) return out;
+        }
+      };
+      const [puc, terceros] = await Promise.all([
+        leer<PucOption>((a, b) =>
+          supabase
+            .from("puc_accounts")
+            .select("code, name, active, level, parent_code, has_children, is_movement")
+            .eq("company_id", companyId!)
+            .order("code")
+            .range(a, b),
+        ),
+        leer<TerceroOption>((a, b) =>
+          supabase
+            .from("providers")
+            .select("nit, name")
+            .eq("company_id", companyId!)
+            .order("name")
+            .range(a, b),
+        ),
+      ]);
+      return { puc, terceros: terceros.filter((t) => t.nit && t.name) };
     },
   });
+  const puc = { data: (catalogos.data?.puc ?? []).filter((c) => c.code.startsWith("1355")) };
+  const registrarRp = useServerFn(conciliacionRegistrarRp);
+  const registrarRc = useServerFn(conciliacionRegistrarRc);
+  const enviarEgreso = useServerFn(egresosEnviar);
+  const [notas, setNotas] = useState<Record<string, string>>({});
   const mFuentes = useMutation({
     mutationFn: async () => {
       const f = await cargar({ data: { companyId: companyId!, periodo } });
@@ -202,6 +242,7 @@ function Conciliacion() {
     },
     onSuccess: ({ f, pdfs }) => {
       setExtractosPdf(pdfs);
+      setNotas((x) => ({ ...f.notas, ...x }));
       setCuentasPas(f.cuentasPasarela);
       setDesde((d) => d || `${periodo}-01`);
       setHasta((h) => h || finDeMes(periodo));
@@ -365,7 +406,10 @@ function Conciliacion() {
         pasarelas: fuentes.pasarelas.map((p) => p.plataforma),
       });
       const resultado = conciliar(armado);
-      const partidas = partidasAlCorte(resultado);
+      const partidas = partidasAlCorte(resultado).map((p) => ({
+        ...p,
+        nota: notas[clavePartida(p)] || null,
+      }));
       const saldoExtractoFinal = b.saldoFinal;
       const ini = saldosLibros[c.etiqueta];
       const saldoLibrosInicial = ini != null && ini !== "" ? Number(ini) : null;
@@ -396,7 +440,7 @@ function Conciliacion() {
         ),
       };
     });
-  }, [fuentes, base, pasarelas, anteriorSubida, auxiliar, saldosLibros, periodo]);
+  }, [fuentes, base, pasarelas, anteriorSubida, auxiliar, saldosLibros, periodo, notas]);
 
   // RC/RP registrados en otra cuenta bancaria (aún sin reclasificar en Siigo).
   const cuentaErrada = useMemo(() => {
@@ -546,6 +590,88 @@ function Conciliacion() {
       setEnviando(null);
     }
   };
+  /** Registra en Siigo una línea del extracto o una diferencia, con la cuenta y el tercero escogidos. */
+  const onRegistrar = async (
+    cuenta: string,
+    linea:
+      | { tipo: "salida" | "entrada"; mov: MovBanco }
+      | { tipo: "diferencia"; ajuste: AjustePropuesto },
+    f: {
+      terceroNit: string;
+      terceroNombre: string | null;
+      cuenta: string;
+      descripcion: string;
+      enviar: boolean;
+    },
+  ) => {
+    const k = "ajuste" in linea ? linea.ajuste.clave : linea.mov.id;
+    setEnviando(`reg-${k}`);
+    try {
+      if (linea.tipo === "salida") {
+        const r = await registrarRp({
+          data: {
+            companyId,
+            periodo,
+            cuenta,
+            mov: {
+              fecha: linea.mov.fecha,
+              descripcion: linea.mov.descripcion,
+              valor: linea.mov.valor,
+            },
+            terceroNit: f.terceroNit,
+            terceroNombre: f.terceroNombre,
+            cuentaDebito: f.cuenta,
+            descripcion: f.descripcion,
+            aprobar: f.enviar,
+          },
+        });
+        if (f.enviar && r.estado === "aprobado") {
+          const e = await enviarEgreso({ data: { egresoId: r.id } });
+          if (e.ok) toast.success(e.message);
+          else toast.error(e.message);
+        } else toast.success(r.mensaje);
+      } else if (linea.tipo === "entrada") {
+        const r = await registrarRc({
+          data: {
+            companyId,
+            periodo,
+            cuenta,
+            mov: {
+              fecha: linea.mov.fecha,
+              descripcion: linea.mov.descripcion,
+              valor: linea.mov.valor,
+            },
+            terceroNit: f.terceroNit,
+            cuentaCredito: f.cuenta,
+            descripcion: f.descripcion,
+          },
+        });
+        if (r.ok) toast.success(r.mensaje);
+        else toast.error(r.mensaje);
+      } else if ("ajuste" in linea) {
+        const r = await enviarAjuste({
+          data: {
+            companyId,
+            periodo,
+            cuenta,
+            ajuste: {
+              ...linea.ajuste,
+              terceroNit: f.terceroNit || linea.ajuste.terceroNit,
+              descripcion: f.descripcion || linea.ajuste.descripcion,
+            },
+            contrapartida: f.cuenta,
+          },
+        });
+        if (r.ok) toast.success(r.mensaje);
+        else toast.error(r.mensaje);
+      }
+      mFuentes.mutate();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnviando(null);
+    }
+  };
   const onReclasificar = async () => {
     const items = cuentaErrada.filter((r) => marcadas.has(r.clave));
     if (!items.length) return;
@@ -627,6 +753,7 @@ function Conciliacion() {
             Comprobante: p.comprobante ?? "",
             Tercero: p.tercero ?? "",
             Valor: p.valor,
+            Nota: p.nota ?? "",
           })),
         ),
       ),
@@ -789,6 +916,31 @@ function Conciliacion() {
   };
 
   const vista = calculos.find((c) => c.etiqueta === cuentaVista) ?? calculos[0] ?? null;
+  const accion = (
+    etiqueta: string,
+    tipo: "salida" | "entrada" | "diferencia" | "libros",
+    partida: PartidaConciliatoria,
+    opciones: {
+      id: string;
+      sugerido?: { nit: string | null; nombre: string | null };
+      registrar?: (f: FormRegistro) => void;
+    },
+  ) => {
+    const k = clavePartida(partida);
+    return (
+      <AccionLinea
+        tipo={tipo}
+        nota={notas[k] ?? ""}
+        onNota={(n) => setNotas((x) => ({ ...x, [k]: n }))}
+        puc={catalogos.data?.puc ?? []}
+        terceros={catalogos.data?.terceros ?? []}
+        sugerido={opciones.sugerido ?? { nit: null, nombre: null }}
+        descripcion={partida.descripcion.slice(0, 120)}
+        ocupado={enviando === `reg-${opciones.id}`}
+        {...(opciones.registrar ? { onRegistrar: opciones.registrar } : {})}
+      />
+    );
+  };
   const fuenteVista = fuentes?.cuentas.find((c) => c.etiqueta === vista?.etiqueta);
 
   return (
@@ -1396,6 +1548,15 @@ function Conciliacion() {
                           : "No está en Egresos y pagos",
                     ];
                   })}
+                acciones={vista.resultado.faltaEnLibros
+                  .filter((b) => b.valor < 0)
+                  .map((b) =>
+                    accion(vista.etiqueta, "salida", partidaDeBanco(b), {
+                      id: b.id,
+                      registrar: (f) =>
+                        void onRegistrar(vista.etiqueta, { tipo: "salida", mov: b }, f),
+                    }),
+                  )}
               />
               <Lista
                 titulo={`Ingresos sin RC en Siigo — ${vista.etiqueta}`}
@@ -1408,6 +1569,15 @@ function Conciliacion() {
                     cop(b.valor),
                     (b.refs ?? []).join(", ") || (b.previa ? "Del mes anterior" : ""),
                   ])}
+                acciones={vista.resultado.faltaEnLibros
+                  .filter((b) => b.valor > 0)
+                  .map((b) =>
+                    accion(vista.etiqueta, "entrada", partidaDeBanco(b), {
+                      id: b.id,
+                      registrar: (f) =>
+                        void onRegistrar(vista.etiqueta, { tipo: "entrada", mov: b }, f),
+                    }),
+                  )}
               />
               <Lista
                 titulo={`Diferencias de valor (RC/RP vs banco) — ${vista.etiqueta}`}
@@ -1418,6 +1588,29 @@ function Conciliacion() {
                   `${cop(d.banco.reduce((s, b) => s + b.valor, 0))} vs ${cop(d.libros.reduce((s, l) => s + l.valor, 0))}`,
                   `Diferencia ${cop(d.diferencia)}`,
                 ])}
+                acciones={vista.resultado.diferencias.map((d) => {
+                  const a =
+                    d.libros.length && !d.pasarela ? ajusteDeDiferencia(d, vista.etiqueta) : null;
+                  return accion(
+                    vista.etiqueta,
+                    a ? "diferencia" : "libros",
+                    partidaDeDiferencia(d),
+                    {
+                      id: a?.clave ?? "",
+                      sugerido: { nit: a?.terceroNit ?? null, nombre: a?.tercero ?? null },
+                      ...(a
+                        ? {
+                            registrar: (f: FormRegistro) =>
+                              void onRegistrar(
+                                vista.etiqueta,
+                                { tipo: "diferencia", ajuste: a },
+                                f,
+                              ),
+                          }
+                        : {}),
+                    },
+                  );
+                })}
               />
               <Lista
                 titulo={`En Siigo y no en el extracto — ${vista.etiqueta}`}
@@ -1428,6 +1621,9 @@ function Conciliacion() {
                   cop(l.valor),
                   l.previa ? "Del mes anterior" : (l.origen ?? ""),
                 ])}
+                acciones={vista.resultado.sobraEnLibros.map((l) =>
+                  accion(vista.etiqueta, "libros", partidaDeLibro(l), { id: l.id }),
+                )}
               />
             </div>
           ) : null}
@@ -1442,7 +1638,18 @@ function Conciliacion() {
   );
 }
 
-function Lista({ titulo, ayuda, filas }: { titulo: string; ayuda: string; filas: string[][] }) {
+function Lista({
+  titulo,
+  ayuda,
+  filas,
+  acciones,
+}: {
+  titulo: string;
+  ayuda: string;
+  filas: string[][];
+  /** Acciones por fila (registrar en Siigo o dejar como partida conciliatoria). */
+  acciones?: React.ReactNode[];
+}) {
   return (
     <div className="rounded-lg border bg-card p-3 text-xs">
       <div className="font-semibold">
@@ -1450,15 +1657,156 @@ function Lista({ titulo, ayuda, filas }: { titulo: string; ayuda: string; filas:
       </div>
       <div className="text-muted-foreground">{ayuda}</div>
       {filas.length ? (
-        <div className="mt-2 max-h-72 overflow-auto rounded border">
+        <div className="mt-2 max-h-96 overflow-auto rounded border">
           {filas.map((f, i) => (
-            <div key={i} className="flex gap-2 border-b px-2 py-1">
-              <span className="w-24">{f[0]}</span>
-              <span className="flex-1">{f[1]}</span>
-              <span className="w-48 text-right">{f[2]}</span>
-              <span className="w-56 text-muted-foreground">{f[3]}</span>
+            <div key={`${f.join("|")}#${i}`} className="border-b px-2 py-1">
+              <div className="flex gap-2">
+                <span className="w-24">{f[0]}</span>
+                <span className="flex-1">{f[1]}</span>
+                <span className="w-48 text-right">{f[2]}</span>
+                <span className="w-56 text-muted-foreground">{f[3]}</span>
+              </div>
+              {acciones?.[i] ?? null}
             </div>
           ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type FormRegistro = {
+  terceroNit: string;
+  terceroNombre: string | null;
+  cuenta: string;
+  descripcion: string;
+  enviar: boolean;
+};
+
+/**
+ * Acciones de una línea de la conciliación: registrarla en Siigo escogiendo la cuenta y el
+ * tercero (salida → RP detallado, entrada → RC detallado, diferencia → comprobante contable)
+ * o dejarla como partida conciliatoria con una nota que sale en el Excel exportado.
+ */
+function AccionLinea({
+  tipo,
+  nota,
+  onNota,
+  puc,
+  terceros,
+  sugerido,
+  descripcion,
+  ocupado,
+  onRegistrar,
+}: {
+  tipo: "salida" | "entrada" | "diferencia" | "libros";
+  nota: string;
+  onNota: (n: string) => void;
+  puc: PucOption[];
+  terceros: TerceroOption[];
+  sugerido: { nit: string | null; nombre: string | null };
+  descripcion: string;
+  ocupado: boolean;
+  onRegistrar?: (f: FormRegistro) => void;
+}) {
+  const [modo, setModo] = useState<null | "registrar" | "partida">(nota ? "partida" : null);
+  const [f, setF] = useState<FormRegistro>({
+    terceroNit: sugerido.nit ?? "",
+    terceroNombre: sugerido.nombre,
+    cuenta: "",
+    descripcion,
+    enviar: true,
+  });
+  const etiqueta =
+    tipo === "salida"
+      ? "Registrar RP en Siigo"
+      : tipo === "entrada"
+        ? "Registrar RC en Siigo"
+        : "Ajustar en Siigo";
+  const ayuda =
+    tipo === "salida"
+      ? "Débito a la cuenta escogida y crédito al banco (recibo de pago detallado)."
+      : tipo === "entrada"
+        ? "Débito al banco y crédito a la cuenta escogida (recibo de caja detallado)."
+        : "Comprobante contable: banco contra la cuenta escogida por la diferencia.";
+  return (
+    <div className="mt-1 pl-24">
+      <div className="flex flex-wrap items-center gap-2">
+        {tipo !== "libros" && onRegistrar ? (
+          <button
+            type="button"
+            className={`underline ${modo === "registrar" ? "font-semibold text-blue-800" : "text-blue-700"}`}
+            onClick={() => setModo(modo === "registrar" ? null : "registrar")}
+          >
+            {etiqueta}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className={`underline ${modo === "partida" ? "font-semibold text-slate-800" : "text-slate-600"}`}
+          onClick={() => setModo(modo === "partida" ? null : "partida")}
+        >
+          {nota ? `Partida conciliatoria: ${nota}` : "Dejar como partida conciliatoria"}
+        </button>
+      </div>
+      {modo === "partida" ? (
+        <div className="mt-1 flex items-center gap-2">
+          <Input
+            className="h-7 max-w-xl"
+            placeholder="Nota para el reporte (p. ej. cheque en tránsito, consignación por identificar)"
+            value={nota}
+            onChange={(e) => onNota(e.target.value)}
+          />
+          <span className="text-muted-foreground">Queda en las partidas al corte del Excel.</span>
+        </div>
+      ) : null}
+      {modo === "registrar" && onRegistrar ? (
+        <div className="mt-1 space-y-1 rounded border bg-muted/30 p-2">
+          <div className="text-muted-foreground">{ayuda}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <TerceroCombobox
+              terceros={terceros}
+              value={f.terceroNit}
+              onChange={(nit, nombre) =>
+                setF((x) => ({ ...x, terceroNit: nit, terceroNombre: nombre }))
+              }
+            />
+            <AccountCombobox
+              accounts={puc}
+              value={f.cuenta}
+              onChange={(code) => setF((x) => ({ ...x, cuenta: code }))}
+              placeholder="Cuenta contable…"
+              className="h-8 w-72"
+            />
+            <Input
+              className="h-8 w-72"
+              value={f.descripcion}
+              onChange={(e) => setF((x) => ({ ...x, descripcion: e.target.value }))}
+            />
+            {tipo === "salida" ? (
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={f.enviar}
+                  onChange={(e) => setF((x) => ({ ...x, enviar: e.target.checked }))}
+                />
+                Enviar ya a Siigo (si no, queda listo en Egresos y pagos)
+              </label>
+            ) : null}
+            <Button
+              size="sm"
+              className="h-8"
+              disabled={ocupado || !f.terceroNit || !f.cuenta}
+              onClick={() => onRegistrar(f)}
+            >
+              {ocupado ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              ) : (
+                <Send className="mr-1 h-3 w-3" />
+              )}
+              {tipo === "salida" && !f.enviar ? "Crear en Egresos y pagos" : "Enviar a Siigo"}
+            </Button>
+          </div>
         </div>
       ) : null}
     </div>

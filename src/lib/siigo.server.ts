@@ -401,6 +401,8 @@ export async function siigoJournalDocumentId(): Promise<number> {
  */
 export async function siigoCrearComprobante<T = { id?: string; name?: string }>(
   payload: Record<string, unknown>,
+  /** Ruta y tipo de documento (CC por defecto; RC para recibos de caja). */
+  destino: { ruta: string; tipo: string } = { ruta: "/v1/journals", tipo: "CC" },
 ): Promise<T> {
   const documentId = Number((payload["document"] as { id?: number } | undefined)?.id);
   type DocType = { id?: number; automatic_number?: boolean; consecutive?: number };
@@ -409,7 +411,7 @@ export async function siigoCrearComprobante<T = { id?: string; name?: string }>(
     let mayor = 0;
     try {
       const tipos = await siigoGetCatalogo<DocType[] | { results?: DocType[] }>(
-        "/v1/document-types?type=CC",
+        `/v1/document-types?type=${destino.tipo}`,
       );
       const t = (Array.isArray(tipos) ? tipos : (tipos.results ?? [])).find(
         (x) => Number(x.id) === documentId,
@@ -424,7 +426,7 @@ export async function siigoCrearComprobante<T = { id?: string; name?: string }>(
       let l: J[] = [];
       try {
         const r = await siigoGet<{ results?: J[] } | J[]>(
-          `/v1/journals?created_start=${desde}&page=${page}&page_size=100`,
+          `${destino.ruta}?created_start=${desde}&page=${page}&page_size=100`,
         );
         l = Array.isArray(r) ? r : (r.results ?? []);
       } catch {
@@ -442,7 +444,7 @@ export async function siigoCrearComprobante<T = { id?: string; name?: string }>(
   for (let intento = 0; intento < 6; intento++) {
     try {
       return await siigoPost<T>(
-        "/v1/journals",
+        destino.ruta,
         numero == null ? payload : { ...payload, number: numero },
       );
     } catch (e) {

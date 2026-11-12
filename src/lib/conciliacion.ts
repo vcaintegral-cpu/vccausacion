@@ -66,6 +66,8 @@ export type PartidaConciliatoria = {
   comprobante: string | null;
   tercero: string | null;
   valor: number; // signo del lado donde está (banco: + ingreso; libros: + débito; diferencia: banco − libros)
+  /** Nota de la usuaria al dejarla como partida conciliatoria. */
+  nota?: string | null;
 };
 
 const sinTildes = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -136,7 +138,7 @@ const iguales = (a: number, b: number) => Math.abs(roundCOP(a) - roundCOP(b)) < 
 
 /** Cargos del banco que van en un solo comprobante mensual (comisiones, IVA, 4x1000). */
 export const esGastoBancario = (descripcion: string) =>
-  /4\s*X\s*1000|GRAVAMEN|IMPTO GOBIERNO|CUOTA (PLAN|MANEJO)|C MANEJO|COMISION|SERVICIO PAGO|COBRO IVA|IVA CUOTA|IVA COMIS|CARGO/i.test(
+  /4\s*X\s*1000|GRAVAMEN|IMPTO GOBIERNO|CUOTA (PLAN|MANEJO)|C MANEJO|CUOTA MANEJO|COMISION|\bCOMIS\b|SWIFT|SERVICIO PAGO|COBRO IVA|IVA CUOTA|IVA COMIS|IVA POR SERVICIOS|CARGO/i.test(
     sinTildes(descripcion),
   );
 
@@ -319,6 +321,43 @@ export function conciliar(params: {
       );
   }
 
+  // 4b. Un movimiento del banco contra varios registros del mismo tercero (un pago que se
+  // registró en 2 o 3 recibos): completa las diferencias por comprobante y los libres.
+  const delTercero = (b: MovBanco, ref: MovLibro | null) => (l: MovLibro) =>
+    Math.sign(l.valor) === Math.sign(b.valor) &&
+    dias(l.fecha, b.fecha) <= 10 &&
+    (ref
+      ? similitud(l.tercero ?? l.descripcion, ref.tercero ?? ref.descripcion) >= 0.5 ||
+        similitud(l.tercero ?? l.descripcion, b.descripcion) >= 0.5
+      : similitud(l.tercero ?? l.descripcion, b.descripcion) >= 0.5);
+  for (const d of [...diferencias]) {
+    if (d.banco.length !== 1 || d.pasarela) continue;
+    const b = d.banco[0]!;
+    const cands = libresL()
+      .filter(delTercero(b, d.libros[0] ?? null))
+      .slice(0, 12);
+    const combo = buscarCombinacionLibros(cands, d.diferencia, 3);
+    if (!combo) continue;
+    for (const l of combo) usadosL.add(l.id);
+    diferencias.splice(diferencias.indexOf(d), 1);
+    conciliados.push({
+      ...d,
+      libros: [...d.libros, ...combo],
+      diferencia: 0,
+      criterio: `${d.criterio} + ${combo.map((l) => l.comprobante).join(", ")} (pago registrado en varios recibos)`,
+    });
+  }
+  for (const b of libresB()) {
+    const cands = libresL().filter(delTercero(b, null)).slice(0, 12);
+    const combo = buscarCombinacionLibros(cands, b.valor, 3, 2);
+    if (combo)
+      marcar(
+        [b],
+        combo,
+        `Un movimiento del banco contra ${combo.length} registros (pago registrado en varios recibos)`,
+      );
+  }
+
   return { conciliados, diferencias, faltaEnLibros: libresB(), sobraEnLibros: libresL() };
 }
 
@@ -336,33 +375,62 @@ function buscarCombinacion(cands: MovBanco[], objetivo: number, max: number): Mo
   return rec(0, 0, []);
 }
 
+function buscarCombinacionLibros(
+  cands: MovLibro[],
+  objetivo: number,
+  max: number,
+  min = 1,
+): MovLibro[] | null {
+  const n = cands.length;
+  const rec = (inicio: number, suma: number, elegidos: MovLibro[]): MovLibro[] | null => {
+    if (elegidos.length >= min && iguales(suma, objetivo)) return elegidos;
+    if (elegidos.length === max) return null;
+    for (let i = inicio; i < n; i++) {
+      const r = rec(i + 1, suma + cands[i]!.valor, [...elegidos, cands[i]!]);
+      if (r) return r;
+    }
+    return null;
+  };
+  return rec(0, 0, []);
+}
+
+/** Partida conciliatoria de un movimiento del banco sin registro en libros. */
+export const partidaDeBanco = (b: MovBanco): PartidaConciliatoria => ({
+  tipo: "banco_sin_libros",
+  fecha: b.fecha,
+  descripcion: b.descripcion,
+  comprobante: b.refs?.[0] ?? null,
+  tercero: b.tercero ?? null,
+  valor: b.valor,
+});
+/** Partida conciliatoria de un registro de libros sin movimiento en el banco. */
+export const partidaDeLibro = (l: MovLibro): PartidaConciliatoria => ({
+  tipo: "libros_sin_banco",
+  fecha: l.fecha,
+  descripcion: l.descripcion ?? l.comprobante,
+  comprobante: l.comprobante,
+  tercero: l.tercero,
+  valor: l.valor,
+});
+/** Partida conciliatoria de una diferencia de valor (banco − libros). */
+export const partidaDeDiferencia = (d: Cruce): PartidaConciliatoria => ({
+  tipo: "diferencia",
+  fecha: d.banco[0]?.fecha ?? d.libros[0]?.fecha ?? "",
+  descripcion: `${d.banco.map((b) => b.descripcion).join(" + ")} vs ${d.libros.map((l) => l.comprobante).join(", ")}`,
+  comprobante: d.libros.map((l) => l.comprobante).join(", ") || null,
+  tercero: d.libros[0]?.tercero ?? null,
+  valor: d.diferencia,
+});
+/** Clave estable de una partida (para la nota de la usuaria). */
+export const clavePartida = (p: PartidaConciliatoria) =>
+  `${p.tipo}|${p.fecha}|${roundCOP(p.valor).toFixed(2)}|${p.descripcion}`;
+
 /** Partidas conciliatorias al corte (lo que no cruzó y las diferencias). */
 export function partidasAlCorte(r: ResultadoConciliacion): PartidaConciliatoria[] {
   return [
-    ...r.faltaEnLibros.map((b) => ({
-      tipo: "banco_sin_libros" as const,
-      fecha: b.fecha,
-      descripcion: b.descripcion,
-      comprobante: b.refs?.[0] ?? null,
-      tercero: b.tercero ?? null,
-      valor: b.valor,
-    })),
-    ...r.sobraEnLibros.map((l) => ({
-      tipo: "libros_sin_banco" as const,
-      fecha: l.fecha,
-      descripcion: l.descripcion ?? l.comprobante,
-      comprobante: l.comprobante,
-      tercero: l.tercero,
-      valor: l.valor,
-    })),
-    ...r.diferencias.map((d) => ({
-      tipo: "diferencia" as const,
-      fecha: d.banco[0]?.fecha ?? d.libros[0]?.fecha ?? "",
-      descripcion: `${d.banco.map((b) => b.descripcion).join(" + ")} vs ${d.libros.map((l) => l.comprobante).join(", ")}`,
-      comprobante: d.libros.map((l) => l.comprobante).join(", ") || null,
-      tercero: d.libros[0]?.tercero ?? null,
-      valor: d.diferencia,
-    })),
+    ...r.faltaEnLibros.map(partidaDeBanco),
+    ...r.sobraEnLibros.map(partidaDeLibro),
+    ...r.diferencias.map(partidaDeDiferencia),
   ];
 }
 
@@ -532,7 +600,16 @@ export function armarConciliacion(e: EntradaCuenta): {
     usados.add(r.id);
     return { ...b, refs: [...new Set([...(b.refs ?? []), r.comprobante])] };
   });
-  const libros = [...auxiliar, ...complemento.map((c) => ({ ...c, valor: roundCOP(c.valor) }))];
+  // Un mismo comprobante puede llegar por dos fuentes (p. ej. RC creado desde la conciliación
+  // y leído por la API): una vez por comprobante y valor.
+  const vistos = new Set<string>();
+  const unicos = complemento.filter((c) => {
+    const k = `${normalizarComprobante(c.comprobante)}|${roundCOP(c.valor)}|${c.id.startsWith("rcl-") ? c.id : ""}`;
+    if (vistos.has(k)) return false;
+    vistos.add(k);
+    return true;
+  });
+  const libros = [...auxiliar, ...unicos.map((c) => ({ ...c, valor: roundCOP(c.valor) }))];
   const prev = partidasPrevias(e.previas);
   return {
     banco: [...banco, ...prev.banco],
@@ -583,27 +660,30 @@ export function ajustesAlPeso(
         Math.abs(d.diferencia) >= 0.01 &&
         Math.abs(d.diferencia) <= tope + 0.001,
     )
-    .map((d) => {
-      const comps = [...new Set(d.libros.map((l) => l.comprobante).filter(Boolean))];
-      const b = d.banco[0];
-      return {
-        clave: [
-          "ajuste",
-          etiqueta.toUpperCase(),
-          comps.map(normalizarComprobante).sort().join(","),
-          b?.fecha ?? "",
-          roundCOP(d.banco.reduce((s, x) => s + x.valor, 0)).toFixed(2),
-        ].join("|"),
-        fecha: [b?.fecha, ...d.libros.map((l) => l.fecha)].filter(Boolean).sort().at(-1) ?? "",
-        valor: d.diferencia,
-        origen: comps.join(","),
-        terceroNit: d.libros.find((l) => l.terceroNit)?.terceroNit ?? null,
-        tercero: d.libros.find((l) => l.tercero)?.tercero ?? null,
-        descripcion: `Ajuste al peso ${comps.join(", ")} vs banco ${b?.descripcion ?? ""}`
-          .replace(/\s+/g, " ")
-          .slice(0, 200),
-      };
-    });
+    .map((d) => ajusteDeDiferencia(d, etiqueta));
+}
+
+/** Ajuste en Siigo de una diferencia de valor (con la clave estable de la diferencia). */
+export function ajusteDeDiferencia(d: Cruce, etiqueta: string): AjustePropuesto {
+  const comps = [...new Set(d.libros.map((l) => l.comprobante).filter(Boolean))];
+  const b = d.banco[0];
+  return {
+    clave: [
+      "ajuste",
+      etiqueta.toUpperCase(),
+      comps.map(normalizarComprobante).sort().join(","),
+      b?.fecha ?? "",
+      roundCOP(d.banco.reduce((s, x) => s + x.valor, 0)).toFixed(2),
+    ].join("|"),
+    fecha: [b?.fecha, ...d.libros.map((l) => l.fecha)].filter(Boolean).sort().at(-1) ?? "",
+    valor: d.diferencia,
+    origen: comps.join(","),
+    terceroNit: d.libros.find((l) => l.terceroNit)?.terceroNit ?? null,
+    tercero: d.libros.find((l) => l.tercero)?.tercero ?? null,
+    descripcion: `Ajuste ${comps.join(", ")} vs banco ${b?.descripcion ?? ""}`
+      .replace(/\s+/g, " ")
+      .slice(0, 200),
+  };
 }
 
 /**

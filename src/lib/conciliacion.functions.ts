@@ -40,6 +40,8 @@ export type FuentesConciliacion = {
       pasarela: string | null;
     }
   >;
+  /** Notas de la usuaria en las partidas de la conciliación guardada de este mes (por clave). */
+  notas: Record<string, string>;
   /** Extractos en PDF de la bandeja (se leen en el navegador). */
   pdfs: Array<{ etiqueta: string; nombre: string; base64: string }>;
   /** Pasarelas de pago (empresas con esa función): cobros del mes y del mes anterior. */
@@ -540,7 +542,20 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
       .eq("company_id", data.companyId)
       .eq("periodo", data.periodo);
 
+    // Notas de las partidas de la conciliación de este mes ya guardada.
+    const { data: actual } = await db
+      .from("conciliaciones_bancarias")
+      .select("partidas")
+      .eq("company_id", data.companyId)
+      .eq("periodo", data.periodo);
+    const { clavePartida } = await import("./conciliacion");
+    const notas: Record<string, string> = {};
+    for (const c of (actual ?? []) as Array<{ partidas: unknown }>)
+      for (const p of (c.partidas ?? []) as PartidaConciliatoria[])
+        if (p.nota) notas[clavePartida(p)] = p.nota;
+
     return {
+      notas,
       cuentas,
       rpEnviados,
       egresosPendientes,
@@ -937,7 +952,17 @@ export const conciliacionCrearRpPasarela = createServerFn({ method: "POST" })
 export const conciliacionEnviarAjuste = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(
-    (input: { companyId: string; periodo: string; cuenta: string; ajuste: AjustePropuesto }) => {
+    (input: {
+      companyId: string;
+      periodo: string;
+      cuenta: string;
+      ajuste: AjustePropuesto;
+      /**
+       * Cuenta contrapartida escogida por la usuaria: ajusta cualquier diferencia (sin tope)
+       * contra esa cuenta en lugar de las del ajuste al peso.
+       */
+      contrapartida?: string | null;
+    }) => {
       if (!input?.companyId || !/^\d{4}-\d{2}$/.test(input.periodo ?? "") || !input.ajuste?.clave)
         throw new Error("Datos del ajuste incompletos.");
       if (!/^\d{4}-\d{2}-\d{2}$/.test(input.ajuste.fecha ?? ""))
@@ -951,7 +976,8 @@ export const conciliacionEnviarAjuste = createServerFn({ method: "POST" })
     const { cargarAjustes } = await import("./egresos.server");
     const aj = await cargarAjustes(db, data.companyId);
     const v = Math.round(Math.abs(Number(a.valor)) * 100) / 100;
-    if (!(v >= 0.01) || v > aj.tope + 0.001)
+    const elegida = String(data.contrapartida ?? "").replace(/\D/g, "") || null;
+    if (!(v >= 0.01) || (!elegida && v > aj.tope + 0.001))
       throw new Error(
         `La diferencia (${v.toLocaleString("es-CO")}) no está dentro del tope del ajuste al peso (${aj.tope.toLocaleString("es-CO")}).`,
       );
@@ -959,8 +985,8 @@ export const conciliacionEnviarAjuste = createServerFn({ method: "POST" })
       throw new Error(
         `El ${a.origen} no trae el NIT del tercero: sube el auxiliar de Siigo o trae el movimiento desde Siigo.`,
       );
-    const cuentaAjuste = Number(a.valor) > 0 ? aj.credito : aj.debito;
-    if (!aj.debito || !aj.credito)
+    const cuentaAjuste = elegida ?? (Number(a.valor) > 0 ? aj.credito : aj.debito);
+    if (!elegida && (!aj.debito || !aj.credito))
       throw new Error(
         "Faltan las cuentas del ajuste al peso (Egresos y pagos → cuentas de ajuste).",
       );
@@ -992,6 +1018,7 @@ export const conciliacionEnviarAjuste = createServerFn({ method: "POST" })
     const base = {
       company_id: data.companyId,
       periodo: data.periodo,
+      tipo: elegida ? "ajuste" : "ajuste_peso",
       cuenta_etiqueta: data.cuenta,
       clave: a.clave,
       fecha: a.fecha,
@@ -1029,8 +1056,8 @@ export const conciliacionEnviarAjuste = createServerFn({ method: "POST" })
         fecha: a.fecha,
         valor: Number(a.valor),
         cuentaBanco,
-        cuentaIngreso: aj.credito,
-        cuentaGasto: aj.debito,
+        cuentaIngreso: elegida ?? aj.credito!,
+        cuentaGasto: elegida ?? aj.debito!,
         terceroNit: a.terceroNit,
         descripcion: a.descripcion,
         referencia: id.slice(0, 8),
@@ -1211,4 +1238,258 @@ export const conciliacionReclasificar = createServerFn({ method: "POST" })
       }
     }
     return { resultados };
+  });
+
+/**
+ * Salida del extracto sin RP: crea en Egresos y pagos el recibo de pago detallado (débito a
+ * la cuenta escogida, crédito al banco) con el tercero escogido, aprobado si se pide enviar
+ * (el envío lo hace egresosEnviar, con su bloqueo y control de errores).
+ */
+export const conciliacionRegistrarRp = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: {
+      companyId: string;
+      periodo: string;
+      cuenta: string;
+      mov: { fecha: string; descripcion: string; valor: number };
+      terceroNit: string;
+      terceroNombre: string | null;
+      cuentaDebito: string;
+      descripcion: string;
+      aprobar: boolean;
+    }) => {
+      if (!input?.companyId || !/^\d{4}-\d{2}$/.test(input.periodo ?? ""))
+        throw new Error("Empresa y mes requeridos.");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(input.mov?.fecha ?? "") || !(Number(input.mov.valor) < 0))
+        throw new Error("Solo las salidas del banco se registran como recibo de pago.");
+      if (!String(input.terceroNit ?? "").replace(/\D/g, "")) throw new Error("Escoge el tercero.");
+      if (!/^\d{4,10}$/.test(String(input.cuentaDebito ?? "")))
+        throw new Error("Escoge la cuenta.");
+      return input;
+    },
+  )
+  .handler(async ({ data, context }) => {
+    const db = context.supabase;
+    const { data: banco } = await db
+      .from("egreso_reglas")
+      .select("cuenta_banco")
+      .eq("company_id", data.companyId)
+      .eq("clase", "banco")
+      .ilike("patron", data.cuenta)
+      .maybeSingle();
+    const cuentaBanco = (banco as { cuenta_banco: string | null } | null)?.cuenta_banco;
+    if (!cuentaBanco) throw new Error(`La cuenta ${data.cuenta} no tiene cuenta contable.`);
+    const valor = Math.round(Math.abs(Number(data.mov.valor)) * 100) / 100;
+    const huella = [...`${data.mov.descripcion}`].reduce(
+      (h, c) => (h * 31 + c.charCodeAt(0)) >>> 0,
+      7,
+    );
+    const clave = `conciliacion|${data.cuenta.toUpperCase()}|${data.mov.fecha}|${valor.toFixed(2)}|${huella.toString(36)}`;
+    const { data: prev } = await db
+      .from("egresos")
+      .select("id, siigo_id, siigo_nombre, estado")
+      .eq("company_id", data.companyId)
+      .eq("clave", clave)
+      .maybeSingle();
+    if (prev?.siigo_id)
+      return {
+        id: prev.id,
+        estado: prev.estado,
+        mensaje: `Ya está en Siigo (${prev.siigo_nombre}).`,
+      };
+    if (prev && ["enviando", "enviado"].includes(prev.estado))
+      throw new Error("Ese recibo se está enviando; espera el resultado.");
+    const descripcion = data.descripcion.trim() || data.mov.descripcion;
+    const nit = String(data.terceroNit).replace(/\D/g, "");
+    const propuesta = {
+      tipo: "detallado",
+      terceroNit: nit,
+      terceroNombre: data.terceroNombre,
+      items: [],
+      cuentas: [
+        {
+          code: data.cuentaDebito,
+          movimiento: "Debit",
+          valor,
+          descripcion: descripcion.slice(0, 100),
+        },
+        { code: cuentaBanco, movimiento: "Credit", valor, descripcion: descripcion.slice(0, 100) },
+      ],
+      paymentTypeId: null,
+      cuentaBanco,
+      listo: true,
+      motivos: [],
+      notas: ["Registrado desde la conciliación bancaria."],
+    };
+    const fila = {
+      company_id: data.companyId,
+      period: data.periodo,
+      clave,
+      origen: "conciliacion",
+      origen_archivo: null,
+      fecha: data.mov.fecha,
+      valor,
+      cuenta_etiqueta: data.cuenta,
+      descripcion,
+      relacion: null,
+      aplicacion: null,
+      observaciones: data.mov.descripcion.slice(0, 1000),
+      tercero_nit: nit,
+      tercero_nombre: data.terceroNombre,
+      tipo: "detallado",
+      propuesta: propuesta as never,
+      estado: data.aprobar ? "aprobado" : "listo",
+      motivos: [],
+      editado_por_usuaria: true,
+    };
+    const { data: g, error } = prev
+      ? await db
+          .from("egresos")
+          .update(fila)
+          .eq("id", prev.id)
+          .is("siigo_id", null)
+          .select("id, estado")
+          .single()
+      : await db.from("egresos").insert(fila).select("id, estado").single();
+    if (error || !g) throw new Error(error?.message ?? "No se pudo guardar el recibo.");
+    return { id: g.id, estado: g.estado, mensaje: "Recibo de pago creado en Egresos y pagos." };
+  });
+
+/**
+ * Entrada del extracto sin RC: recibo de caja detallado en Siigo (débito al banco, crédito a
+ * la cuenta escogida) con el tercero escogido. Una sola vez por movimiento (clave).
+ */
+export const conciliacionRegistrarRc = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: {
+      companyId: string;
+      periodo: string;
+      cuenta: string;
+      mov: { fecha: string; descripcion: string; valor: number };
+      terceroNit: string;
+      cuentaCredito: string;
+      descripcion: string;
+    }) => {
+      if (!input?.companyId || !/^\d{4}-\d{2}$/.test(input.periodo ?? ""))
+        throw new Error("Empresa y mes requeridos.");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(input.mov?.fecha ?? "") || !(Number(input.mov.valor) > 0))
+        throw new Error("Solo las entradas del banco se registran como recibo de caja.");
+      if (!String(input.terceroNit ?? "").replace(/\D/g, "")) throw new Error("Escoge el tercero.");
+      if (!/^\d{4,10}$/.test(String(input.cuentaCredito ?? "")))
+        throw new Error("Escoge la cuenta.");
+      return input;
+    },
+  )
+  .handler(async ({ data, context }) => {
+    const db = context.supabase;
+    const { data: banco } = await db
+      .from("egreso_reglas")
+      .select("cuenta_banco")
+      .eq("company_id", data.companyId)
+      .eq("clase", "banco")
+      .ilike("patron", data.cuenta)
+      .maybeSingle();
+    const cuentaBanco = (banco as { cuenta_banco: string | null } | null)?.cuenta_banco;
+    if (!cuentaBanco) throw new Error(`La cuenta ${data.cuenta} no tiene cuenta contable.`);
+    const valor = Math.round(Number(data.mov.valor) * 100) / 100;
+    const nit = String(data.terceroNit).replace(/\D/g, "");
+    const descripcion = (data.descripcion.trim() || data.mov.descripcion).slice(0, 200);
+    const huella = [...data.mov.descripcion].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+    const clave = `rc|${data.cuenta.toUpperCase()}|${data.mov.fecha}|${valor.toFixed(2)}|${huella.toString(36)}`;
+    const { data: previo } = await db
+      .from("conciliacion_ajustes")
+      .select("id, siigo_id, siigo_nombre, estado")
+      .eq("company_id", data.companyId)
+      .eq("clave", clave)
+      .maybeSingle();
+    if (previo?.siigo_id)
+      return { ok: true, mensaje: `Ya está en Siigo (${previo.siigo_nombre}); no se reenvía.` };
+    if (previo?.estado === "enviando") throw new Error("Ese recibo se está enviando.");
+    const { data: u } = await context.supabase.auth.getUser();
+    const base = {
+      company_id: data.companyId,
+      periodo: data.periodo,
+      tipo: "registro_rc",
+      cuenta_etiqueta: data.cuenta,
+      clave,
+      fecha: data.mov.fecha,
+      valor,
+      cuenta_banco: cuentaBanco,
+      cuenta_ajuste: data.cuentaCredito,
+      tercero_nit: nit,
+      comprobante_origen: null,
+      descripcion,
+      estado: "enviando",
+      siigo_error: null,
+      created_by: u.user?.id ?? null,
+    };
+    const bloqueo = previo
+      ? await db
+          .from("conciliacion_ajustes")
+          .update(base)
+          .eq("id", previo.id)
+          .in("estado", ["pendiente", "error"])
+          .is("siigo_id", null)
+          .select("id")
+      : await db.from("conciliacion_ajustes").insert(base).select("id");
+    if (bloqueo.error || !(bloqueo.data ?? []).length)
+      throw new Error(bloqueo.error?.message ?? "El recibo ya se está procesando.");
+    const id = (bloqueo.data as Array<{ id: string }>)[0]!.id;
+    try {
+      const { siigoGet, siigoCrearComprobante, siigoUseCompany } = await import("./siigo.server");
+      await siigoUseCompany(data.companyId);
+      type Doc = { id?: number; active?: boolean };
+      const docs = await siigoGet<Doc[] | { results?: Doc[] }>("/v1/document-types?type=RC");
+      const activos = (Array.isArray(docs) ? docs : (docs.results ?? [])).filter(
+        (d) => d.id && d.active !== false,
+      );
+      if (!activos.length)
+        throw new Error("La empresa no tiene un tipo de recibo de caja (RC) activo en Siigo.");
+      const { impuestosParaCuentas } = await import("./egresos.server");
+      const { mapa } = await impuestosParaCuentas(
+        db,
+        data.companyId,
+        /^(1355|2365|2367|2368|2408)/.test(data.cuentaCredito) ? [data.cuentaCredito] : [],
+      );
+      const taxId = mapa.get(data.cuentaCredito);
+      const obs = `${descripcion} · Ref ${id.slice(0, 8)}`.slice(0, 250);
+      const r = await siigoCrearComprobante<{ id?: string; name?: string }>(
+        {
+          document: { id: Number(activos[0]!.id) },
+          date: data.mov.fecha,
+          type: "Detailed",
+          customer: { identification: nit, branch_office: 0 },
+          items: [
+            {
+              account: { code: cuentaBanco, movement: "Debit" },
+              description: descripcion.slice(0, 100),
+              value: valor,
+            },
+            {
+              account: { code: data.cuentaCredito, movement: "Credit" },
+              ...(taxId ? { tax: { id: taxId } } : {}),
+              description: descripcion.slice(0, 100),
+              value: valor,
+            },
+          ],
+          observations: obs,
+        },
+        { ruta: "/v1/vouchers", tipo: "RC" },
+      );
+      await db
+        .from("conciliacion_ajustes")
+        .update({ estado: "enviado", siigo_id: String(r.id ?? ""), siigo_nombre: r.name ?? null })
+        .eq("id", id);
+      return { ok: true, mensaje: `Recibo de caja creado en Siigo: ${r.name ?? r.id}.` };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await db
+        .from("conciliacion_ajustes")
+        .update({ estado: "error", siigo_error: msg.slice(0, 2000) })
+        .eq("id", id)
+        .is("siigo_id", null);
+      return { ok: false, mensaje: msg };
+    }
   });

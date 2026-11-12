@@ -225,6 +225,13 @@
       "when": 1794487638375,
       "tag": "0031_restrict_retention_bases_read",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794489515796,
+      "tag": "0032_conciliacion_registros",
+      "breakpoints": true
     }
   ]
 }
