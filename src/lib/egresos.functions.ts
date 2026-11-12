@@ -1090,9 +1090,35 @@ export const egresosReplicar = createServerFn({ method: "POST" })
           descripcion: string | null;
           relacion: string | null;
           estado: string;
+          tercero_nit: string | null;
+          tercero_nombre: string | null;
         }
       >) {
         if (["enviando", "enviado"].includes(d.estado)) continue;
+        // El pago de facturas y el anticipo son de un tercero: nunca se pasan a un pago que
+        // es de otro proveedor (su NIT o su nombre en el reporte es distinto).
+        const nitDestino = nitSinDv(String(d.tercero_nit ?? ""));
+        const nombreDestino = String(d.tercero_nombre ?? "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toUpperCase()
+          .replace(/[^A-Z0-9]+/g, " ")
+          .trim();
+        const nombreOrigen = String(po.terceroNombre ?? origen.tercero_nombre ?? "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toUpperCase()
+          .replace(/[^A-Z0-9]+/g, " ")
+          .trim();
+        const otroTercero =
+          (!!nitDestino && !!po.terceroNit && nitDestino !== nitSinDv(po.terceroNit)) ||
+          (!nitDestino && !!nombreDestino && !!nombreOrigen && nombreDestino !== nombreOrigen);
+        if ((po.tipo === "pago_facturas" || po.tipo === "anticipo") && otroTercero) {
+          mensajes.push(
+            `${String(d.fecha).slice(0, 10)} ${d.descripcion ?? ""}: no se replicó, es de otro tercero (${d.tercero_nombre ?? d.tercero_nit}).`,
+          );
+          continue;
+        }
         const valor = Number(d.valor);
         const b = banco(d.cuenta_etiqueta);
         const p: Propuesta = {
@@ -1112,6 +1138,12 @@ export const egresosReplicar = createServerFn({ method: "POST" })
             `Tratamiento replicado de ${String(origen.fecha).slice(0, 10)} ${origen.descripcion ?? ""}.`,
           ],
         };
+        // En un recibo detallado (cuentas) se replican las cuentas, no el tercero: cada pago
+        // conserva el suyo cuando lo tiene.
+        if (po.tipo === "detallado" && nitDestino) {
+          p.terceroNit = nitDestino;
+          p.terceroNombre = d.tercero_nombre ?? p.terceroNombre;
+        }
         if (po.tipo === "detallado") {
           const debito = po.cuentas.find((c) => c.movimiento === "Debit")?.code;
           if (debito && p.cuentaBanco) {
