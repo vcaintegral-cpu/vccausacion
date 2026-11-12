@@ -1020,7 +1020,8 @@ export const conciliacionEnviarAjuste = createServerFn({ method: "POST" })
     const id = (bloqueo.data as Array<{ id: string }>)[0]!.id;
 
     try {
-      const { siigoPost, siigoUseCompany, siigoJournalDocumentId } = await import("./siigo.server");
+      const { siigoCrearComprobante, siigoUseCompany, siigoJournalDocumentId } =
+        await import("./siigo.server");
       await siigoUseCompany(data.companyId);
       const { payloadAjusteAlPeso } = await import("./conciliacion");
       const payload = payloadAjusteAlPeso({
@@ -1034,7 +1035,7 @@ export const conciliacionEnviarAjuste = createServerFn({ method: "POST" })
         descripcion: a.descripcion,
         referencia: id.slice(0, 8),
       });
-      const r = await siigoPost<{ id?: string; name?: string }>("/v1/journals", payload);
+      const r = await siigoCrearComprobante<{ id?: string; name?: string }>(payload);
       await db
         .from("conciliacion_ajustes")
         .update({ estado: "enviado", siigo_id: String(r.id ?? ""), siigo_nombre: r.name ?? null })
@@ -1088,7 +1089,8 @@ export const conciliacionReclasificar = createServerFn({ method: "POST" })
         (r) => r.patron.toUpperCase() === etiqueta.toUpperCase(),
       )?.cuenta_banco ?? null;
     const { data: u } = await context.supabase.auth.getUser();
-    const { siigoPost, siigoUseCompany, siigoJournalDocumentId } = await import("./siigo.server");
+    const { siigoCrearComprobante, siigoUseCompany, siigoJournalDocumentId } =
+      await import("./siigo.server");
     const { payloadReclasificacion } = await import("./conciliacion");
     await siigoUseCompany(data.companyId);
     let documentId: number | null = null;
@@ -1173,8 +1175,7 @@ export const conciliacionReclasificar = createServerFn({ method: "POST" })
       const id = (bloqueo.data as Array<{ id: string }>)[0]!.id;
       try {
         documentId ??= await siigoJournalDocumentId();
-        const res = await siigoPost<{ id?: string; name?: string }>(
-          "/v1/journals",
+        const res = await siigoCrearComprobante<{ id?: string; name?: string }>(
           payloadReclasificacion({
             documentId,
             fecha: r.fecha,
