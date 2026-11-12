@@ -24,6 +24,8 @@ export type MovBanco = {
   tercero?: string | null;
   /** Partida que viene de la conciliación anterior. */
   previa?: boolean;
+  /** Nota de la partida (se traslada de un corte al siguiente). */
+  nota?: string | null;
 };
 
 export type MovLibro = {
@@ -38,6 +40,8 @@ export type MovLibro = {
   /** Origen: auxiliar subido, API de Siigo (RC) o RP enviado desde la herramienta. */
   origen?: "auxiliar" | "api" | "herramienta" | "previa";
   previa?: boolean;
+  /** Nota de la partida (se traslada de un corte al siguiente). */
+  nota?: string | null;
 };
 
 export type Cruce = {
@@ -439,6 +443,7 @@ export const partidaDeBanco = (b: MovBanco): PartidaConciliatoria => ({
   comprobante: b.refs?.[0] ?? null,
   tercero: b.tercero ?? null,
   valor: b.valor,
+  ...(b.nota ? { nota: b.nota } : {}),
 });
 /** Partida conciliatoria de un registro de libros sin movimiento en el banco. */
 export const partidaDeLibro = (l: MovLibro): PartidaConciliatoria => ({
@@ -448,6 +453,7 @@ export const partidaDeLibro = (l: MovLibro): PartidaConciliatoria => ({
   comprobante: l.comprobante,
   tercero: l.tercero,
   valor: l.valor,
+  ...(l.nota ? { nota: l.nota } : {}),
 });
 /** Partida conciliatoria de una diferencia de valor (banco − libros). */
 export const partidaDeDiferencia = (d: Cruce): PartidaConciliatoria => ({
@@ -504,6 +510,7 @@ export function partidasPrevias(partidas: PartidaConciliatoria[]): {
         refs: p.comprobante ? comprobantesEnTexto(p.comprobante) : [],
         tercero: p.tercero,
         previa: true,
+        nota: p.nota ?? null,
       });
     else if (p.tipo === "libros_sin_banco")
       libros.push({
@@ -515,6 +522,7 @@ export function partidasPrevias(partidas: PartidaConciliatoria[]): {
         valor: p.valor,
         origen: "previa",
         previa: true,
+        nota: p.nota ?? null,
       });
   });
   return { banco, libros };
@@ -970,4 +978,90 @@ export function payloadReclasificacion(params: {
       },
     ],
   };
+}
+
+export type Verificacion = { nivel: "error" | "aviso"; texto: string };
+
+/**
+ * Verificaciones del arrastre de una cuenta (antes de mirar el mes):
+ * - el saldo anterior del extracto debe ser el saldo del extracto de la conciliación
+ *   anterior (si no, hubo cargos o abonos del banco que no se vieron al cierre);
+ * - los libros al cierre anterior no deben haber cambiado después de la conciliación
+ *   (registros o anulaciones con fecha del mes anterior hechos después del corte);
+ * - la diferencia de saldos iniciales (extracto − libros) debe ser exactamente la de las
+ *   partidas del corte anterior.
+ */
+export function verificarArrastre(p: {
+  saldoExtractoInicial: number | null;
+  saldoLibrosInicial: number | null;
+  /** Saldos al corte de la conciliación anterior (guardada o subida). */
+  anteriorExtracto: number | null;
+  anteriorLibros: number | null;
+  previas: PartidaConciliatoria[];
+  /** Registros con fecha anterior al mes, creados después del corte, que cruzan partidas. */
+  movimientoAnterior: number;
+  /** El saldo inicial de libros es el del balance de prueba actual (ya los incluye). */
+  saldoDeBalance: boolean;
+}): Verificacion[] {
+  const out: Verificacion[] = [];
+  const f = (n: number) =>
+    n.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (p.saldoExtractoInicial != null && p.anteriorExtracto != null) {
+    const d = roundCOP(p.saldoExtractoInicial - p.anteriorExtracto);
+    if (Math.abs(d) >= 0.01)
+      out.push({
+        nivel: "error",
+        texto: `El saldo anterior del extracto (${f(p.saldoExtractoInicial)}) no es el saldo del extracto de la conciliación anterior (${f(p.anteriorExtracto)}): diferencia ${f(d)}. Revise la conciliación anterior: hubo cargos o abonos del banco que no se vieron al cierre.`,
+      });
+  }
+  if (p.saldoLibrosInicial != null && p.anteriorLibros != null) {
+    const esperado = roundCOP(p.anteriorLibros + (p.saldoDeBalance ? p.movimientoAnterior : 0));
+    const d = roundCOP(p.saldoLibrosInicial - esperado);
+    if (Math.abs(d) >= 0.01)
+      out.push({
+        nivel: "aviso",
+        texto: `Los libros al cierre anterior cambiaron ${f(d)} después de la conciliación (saldo de la conciliación anterior ${f(p.anteriorLibros)}, saldo inicial de este mes ${f(p.saldoLibrosInicial)}): hubo registros o anulaciones con fecha del mes anterior. Revíselos en Siigo.`,
+      });
+  }
+  if (p.saldoExtractoInicial != null && p.saldoLibrosInicial != null) {
+    const dif = roundCOP(p.saldoExtractoInicial - p.saldoLibrosInicial);
+    const explicada = roundCOP(
+      p.previas.reduce((s, x) => s + (x.tipo === "libros_sin_banco" ? -x.valor : x.valor), 0) -
+        (p.saldoDeBalance ? p.movimientoAnterior : 0),
+    );
+    const d = roundCOP(dif - explicada);
+    if (Math.abs(d) >= 0.01)
+      out.push({
+        nivel: "error",
+        texto: `La diferencia de saldos iniciales (extracto − libros = ${f(dif)}) no es la de las partidas del corte anterior (${f(explicada)}): faltan ${f(d)} por explicar desde el cierre anterior.`,
+      });
+  }
+  return out;
+}
+
+/**
+ * Recibos cruzados con el banco cuyo tercero no se parece en nada al del banco o al de la
+ * relación del reporte (p. ej. un pago a un proveedor registrado a otro tercero).
+ */
+export function tercerosDudosos(r: ResultadoConciliacion): Array<{
+  banco: MovBanco;
+  libro: MovLibro;
+}> {
+  const out: Array<{ banco: MovBanco; libro: MovLibro }> = [];
+  for (const c of r.conciliados) {
+    if (c.banco.length !== 1 || c.libros.length !== 1) continue;
+    const b = c.banco[0]!;
+    const l = c.libros[0]!;
+    if (!l.tercero || l.previa || b.previa) continue;
+    const texto = b.tercero || b.descripcion;
+    if (!palabras(texto).length || !palabras(l.tercero).length) continue;
+    if (similitud(l.tercero, texto) === 0 && similitud(l.tercero, b.descripcion) === 0)
+      out.push({ banco: b, libro: l });
+  }
+  return out;
+}
+
+/** Patrón de una descripción del banco para aprender la cuenta y el tercero con que se registra. */
+export function patronDescripcion(descripcion: string): string {
+  return palabras(descripcion).slice(0, 3).join(" ");
 }

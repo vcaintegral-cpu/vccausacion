@@ -7,6 +7,10 @@ import {
   conciliar,
   diferenciaSinExplicar,
   partidasAlCorte,
+  partidasPrevias,
+  patronDescripcion,
+  tercerosDudosos,
+  verificarArrastre,
   type MovBanco,
   type MovLibro,
 } from "./conciliacion";
@@ -613,5 +617,66 @@ describe("gastos bancarios del mes con cobros por correo", () => {
         partidas: partidasAlCorte(r),
       }),
     ).toBe(0);
+  });
+});
+
+describe("verificación del arrastre y alertas", () => {
+  it("saldo anterior del extracto distinto, libros cambiados después del cierre y arrastre que no cuadra", () => {
+    const previas = [
+      {
+        tipo: "libros_sin_banco" as const,
+        fecha: "2026-09-30",
+        descripcion: "RC en tránsito",
+        comprobante: "RC-1-1",
+        tercero: null,
+        valor: 1000000,
+      },
+    ];
+    // Cierre anterior: extracto 5.017.863,61; libros 6.017.863,61 (− 1.000.000 en tránsito).
+    const ok = verificarArrastre({
+      saldoExtractoInicial: 5017863.61,
+      saldoLibrosInicial: 6017863.61,
+      anteriorExtracto: 5017863.61,
+      anteriorLibros: 6017863.61,
+      previas,
+      movimientoAnterior: 0,
+      saldoDeBalance: false,
+    });
+    expect(ok).toEqual([]);
+    // El extracto real arrancó 17.863,61 más abajo y los libros se corrigieron después del cierre.
+    const v = verificarArrastre({
+      saldoExtractoInicial: 5000000,
+      saldoLibrosInicial: 6000000,
+      anteriorExtracto: 5017863.61,
+      anteriorLibros: 6017863.61,
+      previas,
+      movimientoAnterior: 0,
+      saldoDeBalance: true,
+    });
+    expect(v.map((x) => x.nivel)).toEqual(["error", "aviso"]);
+    expect(v[0]!.texto).toMatch(/17.863,61/);
+  });
+
+  it("recibo cruzado a nombre de otro tercero y nota que pasa al corte siguiente", () => {
+    const r = conciliar({
+      banco: [b("b1", "2026-10-07", "PAGO A PROVE METALES DEL SUR", -500000, ["RP-4-7"])],
+      libros: [l("l1", "2026-10-07", "RP-4-7", -500000, "COMERCIALIZADORA OTRA SAS")],
+    });
+    expect(tercerosDudosos(r).map((x) => x.libro.comprobante)).toEqual(["RP-4-7"]);
+    const sigue = conciliar({
+      ...partidasPrevias([
+        {
+          tipo: "banco_sin_libros",
+          fecha: "2026-08-19",
+          descripcion: "CONSIGNACION",
+          comprobante: null,
+          tercero: null,
+          valor: 300000,
+          nota: "Por identificar",
+        },
+      ]),
+    });
+    expect(partidasAlCorte(sigue)[0]!.nota).toBe("Por identificar");
+    expect(patronDescripcion("PAGO PSE MERCADOPAGO COLOMBI 123")).toBe("MERCADOPAGO COLOMBI");
   });
 });

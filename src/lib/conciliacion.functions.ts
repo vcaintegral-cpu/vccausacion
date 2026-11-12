@@ -63,6 +63,17 @@ export type FuentesConciliacion = {
    * del mes (cruzan con las partidas pendientes del corte anterior).
    */
   librosAnteriores: LineaAuxiliar[];
+  /**
+   * Cuenta y tercero con que la usuaria registró antes movimientos parecidos del extracto
+   * (patrón de la descripción y tipo: salida, entrada o diferencia).
+   */
+  aprendidas: Array<{
+    tipo: string;
+    patron: string;
+    cuenta: string | null;
+    terceroNit: string | null;
+    terceroNombre: string | null;
+  }>;
   /** Cuentas por pagar vivas (sincronizadas de Siigo) para proponer el RP de pago de facturas. */
   cxp: CxpAbierta[];
   /** Fecha de la última sincronización de las CxP con Siigo. */
@@ -746,7 +757,32 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
         .sort()
         .at(-1) || null;
 
+    const { data: reglasConc } = await db
+      .from("egreso_reglas")
+      .select("patron, cuenta_debito, tercero_nit, notas")
+      .eq("company_id", data.companyId)
+      .eq("clase", "concepto")
+      .like("patron", "conc:%");
+    const aprendidas = (
+      (reglasConc ?? []) as Array<{
+        patron: string;
+        cuenta_debito: string | null;
+        tercero_nit: string | null;
+        notas: string | null;
+      }>
+    ).map((r) => {
+      const [, tipo = "", ...resto] = r.patron.split(":");
+      return {
+        tipo,
+        patron: resto.join(":"),
+        cuenta: r.cuenta_debito,
+        terceroNit: r.tercero_nit,
+        terceroNombre: r.notas,
+      };
+    });
+
     return {
+      aprendidas,
       cxp,
       cxpLeidas,
       librosAnteriores,
@@ -2134,4 +2170,41 @@ export const conciliacionRegistrarRpFacturas = createServerFn({ method: "POST" }
       : await db.from("egresos").insert(fila).select("id, estado").single();
     if (error || !g) throw new Error(error?.message ?? "No se pudo guardar el recibo.");
     return { id: g.id, estado: g.estado, mensaje: "Recibo de pago de facturas listo." };
+  });
+
+/**
+ * Aprende la cuenta y el tercero con que la usuaria registró un movimiento del extracto, por
+ * el patrón de su descripción: la próxima vez se proponen solos.
+ */
+export const conciliacionAprender = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: {
+      companyId: string;
+      tipo: "salida" | "entrada" | "diferencia";
+      patron: string;
+      cuenta: string;
+      terceroNit: string | null;
+      terceroNombre: string | null;
+    }) => {
+      if (!input?.companyId || !input.patron?.trim() || !/^\d{4,10}$/.test(input.cuenta ?? ""))
+        throw new Error("Datos para aprender incompletos.");
+      return input;
+    },
+  )
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase.from("egreso_reglas").upsert(
+      {
+        company_id: data.companyId,
+        clase: "concepto",
+        patron: `conc:${data.tipo}:${data.patron.trim().slice(0, 120)}`,
+        tipo: "conciliacion",
+        cuenta_debito: data.cuenta,
+        tercero_nit: data.terceroNit ? data.terceroNit.replace(/\D/g, "") : null,
+        notas: data.terceroNombre,
+      },
+      { onConflict: "company_id,clase,patron" },
+    );
+    if (error) throw new Error(error.message);
+    return { ok: true };
   });
