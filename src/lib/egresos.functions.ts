@@ -292,7 +292,8 @@ export const egresosEnviar = createServerFn({ method: "POST" })
       return { ok: false, siigoNombre: null, message: errores.join(" "), validacion: true };
     }
 
-    const { siigoGet, siigoPost, siigoUseCompany } = await import("./siigo.server");
+    const { siigoGet, siigoPostConImpuestos, siigoUseCompany } = await import("./siigo.server");
+    const { aprenderImpuestoCuenta } = await import("./egresos.server");
     await siigoUseCompany(f.company_id);
     let documentId = data.documentId ?? null;
     if (!documentId) {
@@ -349,9 +350,10 @@ export const egresosEnviar = createServerFn({ method: "POST" })
     try {
       for (const parte of partes) {
         if (creados.some((c) => c.parte === parte.parte)) continue;
-        const res = await siigoPost<{ id?: string; name?: string }>(
+        const res = await siigoPostConImpuestos<{ id?: string; name?: string }>(
           "/v1/payment-receipts",
           parte.payload,
+          (cuenta, taxId) => aprenderImpuestoCuenta(db, f.company_id, cuenta, taxId),
         );
         if (!res?.id) throw new Error("Siigo no devolvió el identificador del recibo.");
         let nombre = res.name ?? null;
@@ -419,7 +421,7 @@ export const egresosEnviar = createServerFn({ method: "POST" })
             }>;
             const code = items[Number(sinImpuesto[1])]?.account?.code;
             return code
-              ? `La cuenta ${code} está vinculada a un impuesto en Siigo y no se pudo identificar cuál (revisa que el nombre de la cuenta en el PUC indique la tarifa, p. ej. «1,5%», o que el impuesto exista activo en Siigo). `
+              ? `La cuenta ${code} está vinculada a un impuesto en Siigo y Siigo no aceptó ninguno de los impuestos activos de ese tipo. En Siigo (Configuración → Impuestos), revisa que exista activo el impuesto cuya cuenta contable de ventas sea ${code} (p. ej. «Retención en la fuente tarjetas 1,5%»), o escoge otra cuenta 1355 que sí esté vinculada. `
               : "";
           })()
         : "";
@@ -810,7 +812,8 @@ export const egresosEnviarGrupoBancario = createServerFn({ method: "POST" })
       const finMes = new Date(Date.UTC(anio, mes, 0)).toISOString().slice(0, 10);
       const hoy = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
       const fecha = finMes < hoy ? finMes : hoy;
-      const { siigoGet, siigoPost, siigoUseCompany } = await import("./siigo.server");
+      const { siigoGet, siigoPostConImpuestos, siigoUseCompany } = await import("./siigo.server");
+      const { aprenderImpuestoCuenta } = await import("./egresos.server");
       await siigoUseCompany(data.companyId);
       const documentId = await tipoReciboPago();
       const { payload, total, errores } = payloadReciboAgrupado(
@@ -861,9 +864,10 @@ export const egresosEnviarGrupoBancario = createServerFn({ method: "POST" })
         throw new Error("Otro envío está en curso para estos gastos bancarios.");
       }
       try {
-        const res = await siigoPost<{ id?: string; name?: string }>(
+        const res = await siigoPostConImpuestos<{ id?: string; name?: string }>(
           "/v1/payment-receipts",
           payload,
+          (cuenta, taxId) => aprenderImpuestoCuenta(db, data.companyId, cuenta, taxId),
         );
         if (!res?.id) throw new Error("Siigo no devolvió el identificador del recibo.");
         let nombre = res.name ?? null;

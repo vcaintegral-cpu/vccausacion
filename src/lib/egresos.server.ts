@@ -228,12 +228,45 @@ export async function impuestosPorCuenta(db: Db, companyId: string): Promise<Map
  * resuelve con el catálogo de impuestos de Siigo y el nombre de la cuenta en el PUC.
  * Requiere la empresa de Siigo ya activa (siigoUseCompany).
  */
+/**
+ * Guarda el impuesto de Siigo que Siigo aceptó para una cuenta (p. ej. 1355 anticipos de
+ * retención, que el catálogo de la empresa no vincula): se usa directo la próxima vez.
+ */
+export async function aprenderImpuestoCuenta(
+  db: Db,
+  companyId: string,
+  cuenta: string,
+  taxId: number,
+): Promise<void> {
+  await db.from("egreso_reglas").upsert(
+    {
+      company_id: companyId,
+      clase: "concepto",
+      patron: `impuesto:${cuenta}`,
+      tipo: "impuesto",
+      cuenta_debito: String(taxId),
+    },
+    { onConflict: "company_id,clase,patron" },
+  );
+}
+
 export async function impuestosParaCuentas(
   db: Db,
   companyId: string,
   codigos: string[],
 ): Promise<{ mapa: Map<string, number>; sinImpuesto: string[] }> {
   const mapa = await impuestosPorCuenta(db, companyId);
+  // Impuestos aprendidos al enviar (los que Siigo aceptó para la cuenta) mandan.
+  const { data: aprendidos } = await db
+    .from("egreso_reglas")
+    .select("patron, cuenta_debito")
+    .eq("company_id", companyId)
+    .eq("clase", "concepto")
+    .like("patron", "impuesto:%");
+  for (const r of (aprendidos ?? []) as Array<{ patron: string; cuenta_debito: string | null }>) {
+    const id = Number(r.cuenta_debito);
+    if (Number.isFinite(id) && id > 0) mapa.set(r.patron.slice("impuesto:".length), id);
+  }
   const faltan = [...new Set(codigos)].filter((c) => c && !mapa.has(c));
   if (!faltan.length) return { mapa, sinImpuesto: [] };
   const [{ siigoGetCatalogo }, { impuestoParaCuenta }] = await Promise.all([

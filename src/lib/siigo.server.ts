@@ -393,6 +393,106 @@ export async function siigoJournalDocumentId(): Promise<number> {
   });
 }
 
+/** Tipo de impuesto de Siigo que corresponde a una cuenta de retención o IVA. */
+function tipoImpuestoDeCuenta(codigo: string): RegExp | null {
+  if (/^(135517|2367)/.test(codigo)) return /RETE ?IVA|RETENCION.*IVA/;
+  if (/^(135518|2368)/.test(codigo)) return /RETE ?ICA|RETENCION.*ICA|INDUSTRIA/;
+  if (/^(1355|2365)/.test(codigo)) return /RETE ?FUENTE|RETEFUENTE|RETENCION.*FUENTE|RENTA/;
+  if (/^2408/.test(codigo)) return /^IVA/;
+  return null;
+}
+
+export type ImpuestoCatalogo = { id?: number | string; name?: string; type?: string; active?: boolean };
+
+/**
+ * Decide el siguiente intento cuando Siigo rechaza el impuesto de una línea («items[N].tax.id»
+ * con «tax_settings» o «required»): el siguiente impuesto activo del tipo de la cuenta aún
+ * no probado, puesto en todas las líneas de esa cuenta. null si no aplica o no quedan.
+ */
+export function reintentoImpuesto(
+  mensaje: string,
+  payload: Record<string, unknown>,
+  catalogo: ImpuestoCatalogo[],
+  probados: Map<string, Set<number>>,
+): { payload: Record<string, unknown>; cuenta: string; taxId: number } | null {
+  type Item = { account?: { code?: string | number }; tax?: { id?: number | string } };
+  const x = /items\[(\d+)\]\.tax\.id/.exec(mensaje);
+  if (!x || !/tax_settings|required/i.test(mensaje)) return null;
+  const items = (payload["items"] ?? []) as Item[];
+  const linea = items[Number(x[1])];
+  const cuenta = String(linea?.account?.code ?? "").trim();
+  const tipo = tipoImpuestoDeCuenta(cuenta);
+  if (!cuenta || !tipo) return null;
+  const norm = (t: string) =>
+    t
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, " ");
+  const ya = probados.get(cuenta) ?? new Set<number>();
+  const anterior = Number(linea?.tax?.id);
+  if (Number.isFinite(anterior)) ya.add(anterior);
+  probados.set(cuenta, ya);
+  const taxId = catalogo
+    .filter(
+      (t) =>
+        t.active !== false && t.id != null && tipo.test(norm(`${t.type ?? ""} ${t.name ?? ""}`)),
+    )
+    .map((t) => Number(t.id))
+    .find((id) => Number.isFinite(id) && !ya.has(id));
+  if (taxId == null) return null;
+  ya.add(taxId);
+  return {
+    cuenta,
+    taxId,
+    payload: {
+      ...payload,
+      items: items.map((it) =>
+        String(it.account?.code ?? "").trim() === cuenta ? { ...it, tax: { id: taxId } } : it,
+      ),
+    },
+  };
+}
+
+/**
+ * POST a Siigo que resuelve el impuesto de las líneas de cuentas vinculadas a un impuesto:
+ * si Siigo rechaza el «tax.id» de una línea, se prueban los impuestos activos del mismo tipo
+ * (retefuente, reteIVA, reteICA, IVA) hasta que Siigo acepte el vinculado a esa cuenta.
+ * Siigo no crea nada en los intentos rechazados. `alAprender` guarda el impuesto aceptado
+ * por cuenta para la próxima vez.
+ */
+export async function siigoPostConImpuestos<T>(
+  ruta: string,
+  payload: Record<string, unknown>,
+  alAprender?: (cuenta: string, taxId: number) => Promise<void>,
+): Promise<T> {
+  const probados = new Map<string, Set<number>>();
+  const puestos = new Map<string, number>();
+  let catalogo: ImpuestoCatalogo[] | null = null;
+  let actual = payload;
+  for (let intento = 0; intento < 15; intento++) {
+    try {
+      const r = await siigoPost<T>(ruta, actual);
+      if (alAprender) for (const [c, id] of puestos) await alAprender(c, id).catch(() => undefined);
+      return r;
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      if (!/items\[\d+\]\.tax\.id/.test(m)) throw e;
+      if (!catalogo) {
+        const lista = await siigoGetCatalogo<ImpuestoCatalogo[] | { results?: ImpuestoCatalogo[] }>(
+          "/v1/taxes",
+        );
+        catalogo = Array.isArray(lista) ? lista : (lista.results ?? []);
+      }
+      const sig = reintentoImpuesto(m, actual, catalogo, probados);
+      if (!sig) throw e;
+      puestos.set(sig.cuenta, sig.taxId);
+      actual = sig.payload;
+    }
+  }
+  throw new Error("Siigo no aceptó ningún impuesto para la cuenta de la línea.");
+}
+
 /**
  * Crea un comprobante contable (CC) en Siigo. Si el tipo de comprobante no numera solo,
  * Siigo exige `number` («The field number is required»): se envía el siguiente consecutivo
@@ -444,7 +544,7 @@ export async function siigoCrearComprobante<T = { id?: string; name?: string }>(
   };
   for (let intento = 0; intento < 6; intento++) {
     try {
-      return await siigoPost<T>(
+      return await siigoPostConImpuestos<T>(
         destino.ruta,
         numero == null ? payload : { ...payload, number: numero },
       );
