@@ -1291,3 +1291,83 @@ export function refrescarSaldos(
   }
   return { propuesta: cambio ? { ...p, items: unidas } : p, cambio };
 }
+
+/** Impuesto del catálogo de Siigo (/v1/taxes). */
+export type ImpuestoSiigo = {
+  id?: number | string;
+  name?: string;
+  type?: string;
+  percentage?: number;
+  active?: boolean;
+  account?: { code?: string | number } | string | number;
+  accounting_account?: { code?: string | number } | string | number;
+  account_code?: string | number;
+};
+
+const cuentaDeImpuesto = (t: ImpuestoSiigo) => {
+  for (const v of [t.account, t.accounting_account, t.account_code]) {
+    if (v == null) continue;
+    const c = typeof v === "object" ? v.code : v;
+    if (c != null && String(c).trim()) return String(c).trim();
+  }
+  return "";
+};
+
+/**
+ * Impuesto de Siigo de una cuenta de retenciones o IVA que no está vinculada en el catálogo
+ * de la empresa (p. ej. 1355 «anticipo de retención», el lado de ventas del impuesto):
+ * 1. el impuesto cuya cuenta es esa; 2. el del tipo de la cuenta (1355 15/2365 retefuente,
+ * 1355 17/2367 reteIVA, 1355 18/2368 reteICA, 2408 IVA) con la tarifa del nombre de la
+ * cuenta («… 1%», «(1,104%)»); si hay varios, el de nombre más parecido. Sin tarifa en el
+ * nombre o sin candidato, null (nunca adivina).
+ */
+export function impuestoParaCuenta(
+  codigo: string,
+  nombreCuenta: string | null,
+  impuestos: ImpuestoSiigo[],
+): number | null {
+  const activos = impuestos.filter((t) => t.active !== false && t.id != null);
+  const exacto = activos.filter((t) => cuentaDeImpuesto(t) === codigo);
+  if (exacto.length === 1) return Number(exacto[0]!.id);
+  const tipo = /^(135517|2367)/.test(codigo)
+    ? /RETE ?IVA|RETENCION.*IVA/
+    : /^(135518|2368)/.test(codigo)
+      ? /RETE ?ICA|RETENCION.*ICA|INDUSTRIA/
+      : /^(1355|2365)/.test(codigo)
+        ? /RETE ?FUENTE|RETEFUENTE|RETENCION.*FUENTE|RENTA/
+        : /^2408/.test(codigo)
+          ? /^IVA/
+          : null;
+  if (!tipo) return null;
+  const n = normalizar(nombreCuenta);
+  // La tarifa se lee del nombre original (normalizar quita «%», «,» y «.»).
+  const crudo = String(nombreCuenta ?? "");
+  const tarifas = [...crudo.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map((m) =>
+    Number(m[1]!.replace(",", ".")),
+  );
+  const tarifa = tarifas.at(-1);
+  if (tarifa == null || !Number.isFinite(tarifa)) return null;
+  const cands = activos.filter((t) => {
+    const p = Number(t.percentage);
+    const esTipo = tipo.test(normalizar(`${t.type ?? ""} ${t.name ?? ""}`));
+    // ReteICA puede venir en porcentaje o en por mil.
+    return esTipo && (Math.abs(p - tarifa) < 0.0005 || Math.abs(p - tarifa * 10) < 0.0005);
+  });
+  if (!cands.length) return null;
+  const palabras = new Set(n.split(/[^A-Z0-9]+/).filter((w) => w.length > 3));
+  const puntaje = (t: ImpuestoSiigo) =>
+    normalizar(t.name)
+      .split(/[^A-Z0-9]+/)
+      .filter((w) => palabras.has(w)).length;
+  return Number(cands.sort((a, b) => puntaje(b) - puntaje(a))[0]!.id);
+}
+
+/** Cuentas de las líneas del recibo que Siigo puede exigir con impuesto (tax.id). */
+export function cuentasConImpuesto(p: Propuesta): string[] {
+  const codigos = [
+    ...p.cuentas.map((c) => c.code),
+    ...(p.lineas ?? []).map((l) => l.code),
+    p.ajuste?.cuenta ?? "",
+  ];
+  return [...new Set(codigos.filter((c) => /^(1355|2365|2367|2368|2408)/.test(String(c))))];
+}

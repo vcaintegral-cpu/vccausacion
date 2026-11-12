@@ -222,6 +222,44 @@ export async function impuestosPorCuenta(db: Db, companyId: string): Promise<Map
   return out;
 }
 
+/**
+ * Mapa cuenta → impuesto de Siigo para las cuentas de un recibo: el del catálogo de la
+ * empresa y, para las cuentas que no estén (p. ej. 1355 anticipos de retención), el que se
+ * resuelve con el catálogo de impuestos de Siigo y el nombre de la cuenta en el PUC.
+ * Requiere la empresa de Siigo ya activa (siigoUseCompany).
+ */
+export async function impuestosParaCuentas(
+  db: Db,
+  companyId: string,
+  codigos: string[],
+): Promise<{ mapa: Map<string, number>; sinImpuesto: string[] }> {
+  const mapa = await impuestosPorCuenta(db, companyId);
+  const faltan = [...new Set(codigos)].filter((c) => c && !mapa.has(c));
+  if (!faltan.length) return { mapa, sinImpuesto: [] };
+  const [{ siigoGetCatalogo }, { impuestoParaCuenta }] = await Promise.all([
+    import("./siigo.server"),
+    import("./egresos"),
+  ]);
+  const { data: puc } = await db
+    .from("puc_accounts")
+    .select("code, name")
+    .eq("company_id", companyId)
+    .in("code", faltan);
+  type T = import("./egresos").ImpuestoSiigo;
+  const r = await siigoGetCatalogo<T[] | { results?: T[] }>("/v1/taxes");
+  const impuestos = Array.isArray(r) ? r : (r.results ?? []);
+  const sinImpuesto: string[] = [];
+  for (const c of faltan) {
+    const nombre =
+      ((puc ?? []) as Array<{ code: string; name: string | null }>).find((p) => p.code === c)
+        ?.name ?? null;
+    const id = impuestoParaCuenta(c, nombre, impuestos);
+    if (id != null && Number.isFinite(id)) mapa.set(c, id);
+    else sinImpuesto.push(c);
+  }
+  return { mapa, sinImpuesto };
+}
+
 /** Contexto para proponer: CxP, terceros, reglas, precedente del auxiliar y facturas causadas. */
 export async function cargarContexto(db: Db, companyId: string): Promise<Contexto> {
   const [cxp, provs, reglas, hist, causadas, puc] = await Promise.all([
