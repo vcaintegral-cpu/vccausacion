@@ -393,6 +393,74 @@ export async function siigoJournalDocumentId(): Promise<number> {
   });
 }
 
+/**
+ * Crea un comprobante contable (CC) en Siigo. Si el tipo de comprobante no numera solo,
+ * Siigo exige `number` («The field number is required»): se envía el siguiente consecutivo
+ * (el mayor de los comprobantes de ese tipo y el informado por el tipo de documento) y, si
+ * ya existe, el siguiente. El documento es el mismo en cada intento (máx. 6).
+ */
+export async function siigoCrearComprobante<T = { id?: string; name?: string }>(
+  payload: Record<string, unknown>,
+): Promise<T> {
+  const documentId = Number((payload["document"] as { id?: number } | undefined)?.id);
+  type DocType = { id?: number; automatic_number?: boolean; consecutive?: number };
+  let numero: number | null = null;
+  const siguiente = async () => {
+    let mayor = 0;
+    try {
+      const tipos = await siigoGetCatalogo<DocType[] | { results?: DocType[] }>(
+        "/v1/document-types?type=CC",
+      );
+      const t = (Array.isArray(tipos) ? tipos : (tipos.results ?? [])).find(
+        (x) => Number(x.id) === documentId,
+      );
+      if (typeof t?.consecutive === "number") mayor = Math.max(mayor, t.consecutive - 1);
+    } catch {
+      // Sin catálogo se usa el listado de comprobantes.
+    }
+    const desde = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+    type J = { document?: { id?: number | string }; number?: number | string };
+    for (let page = 1; page <= 30; page++) {
+      let l: J[] = [];
+      try {
+        const r = await siigoGet<{ results?: J[] } | J[]>(
+          `/v1/journals?created_start=${desde}&page=${page}&page_size=100`,
+        );
+        l = Array.isArray(r) ? r : (r.results ?? []);
+      } catch {
+        break;
+      }
+      for (const j of l) {
+        if (Number(j.document?.id) !== documentId) continue;
+        const n = Number(String(j.number ?? "").replace(/\D/g, ""));
+        if (Number.isFinite(n) && n > mayor) mayor = n;
+      }
+      if (l.length < 100) break;
+    }
+    return mayor + 1;
+  };
+  for (let intento = 0; intento < 6; intento++) {
+    try {
+      return await siigoPost<T>(
+        "/v1/journals",
+        numero == null ? payload : { ...payload, number: numero },
+      );
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e);
+      if (/parameter_required/i.test(raw) && /number/i.test(raw) && numero == null) {
+        numero = await siguiente();
+        continue;
+      }
+      if (numero != null && /already exist|ya existe|duplicate|in use|en uso/i.test(raw)) {
+        numero += 1;
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error("Siigo no aceptó el consecutivo del comprobante contable tras varios intentos.");
+}
+
 export function buildSiigoJournalPayload(params: {
   documentId: number;
   date: string;
