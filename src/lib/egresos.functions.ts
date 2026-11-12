@@ -303,7 +303,7 @@ export const egresosEnviar = createServerFn({ method: "POST" })
         );
       documentId = Number(activos[0]!.id);
     }
-    const payload = payloadRecibo(movimiento, p, documentId);
+    const payload = payloadRecibo(movimiento, p, documentId, String(f.id).slice(0, 8));
 
     // Bloqueo contra doble envío.
     const { data: bloqueado } = await db
@@ -366,7 +366,10 @@ export const egresosEnviar = createServerFn({ method: "POST" })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       // Respuesta perdida (red): el recibo pudo crearse; no se reintenta solo.
-      const incierto = !/\b(400|401|403|404|409|422)\b/.test(msg);
+      // 409 «duplicated_document»: Siigo dice que ya existe un recibo igual; puede ser
+      // este mismo pago creado en un intento anterior, así que se verifica antes de reintentar.
+      const incierto =
+        /\b409\b|duplicated_document/.test(msg) || !/\b(400|401|403|404|422)\b/.test(msg);
       await db
         .from("egresos")
         .update({
@@ -817,7 +820,10 @@ export const egresosEnviarGrupoBancario = createServerFn({ method: "POST" })
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        const incierto = !/\b(400|401|403|404|409|422)\b/.test(msg);
+        // 409 «duplicated_document»: Siigo dice que ya existe un recibo igual; puede ser
+        // este mismo pago creado en un intento anterior, así que se verifica antes de reintentar.
+        const incierto =
+          /\b409\b|duplicated_document/.test(msg) || !/\b(400|401|403|404|422)\b/.test(msg);
         await db
           .from("egresos")
           .update({

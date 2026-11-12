@@ -937,3 +937,22 @@ describe("saldos vigentes y RP detallado con varias líneas", () => {
     expect(erroresAntesDeEnviar(m, malo).join(" ")).toMatch(/no cuadran/);
   });
 });
+
+describe("referencia única del recibo en Siigo", () => {
+  it("dos pagos idénticos llevan observaciones distintas; el mismo pago, la misma", () => {
+    const m = mov({ valor: 29400, relacion: "A09860476" });
+    const p = {
+      ...proponerEgreso(m, ctx()),
+      tipo: "anticipo" as const,
+      terceroNit: "860016640",
+      paymentTypeId: "5640",
+    };
+    const a = payloadRecibo(m, p, 77, "aaaa1111") as { observations: string };
+    const b = payloadRecibo(m, p, 77, "bbbb2222") as { observations: string };
+    expect(a.observations).not.toBe(b.observations);
+    expect(a.observations).toMatch(/Ref aaaa1111$/);
+    expect((payloadRecibo(m, p, 77, "aaaa1111") as { observations: string }).observations).toBe(
+      a.observations,
+    );
+  });
+});
