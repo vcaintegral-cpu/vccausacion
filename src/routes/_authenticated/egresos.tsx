@@ -203,6 +203,12 @@ function Egresos() {
       return data;
     },
   });
+  const leerAjustes = useServerFn(egresosCuentasAjuste);
+  const ajustesEmpresa = useQuery({
+    queryKey: ["egreso-ajustes", companyId],
+    enabled: !!companyId,
+    queryFn: () => leerAjustes({ data: { companyId: companyId! } }),
+  });
   const reglasBanco = useQuery({
     queryKey: ["egreso-bancos", companyId],
     enabled: !!companyId,
@@ -897,6 +903,7 @@ function Egresos() {
           fila={editando}
           cxp={(cxp.data ?? []) as Cxp[]}
           pendientes={lista}
+          tope={ajustesEmpresa.data?.tope ?? 1000}
           onClose={() => setEditando(null)}
           onSaved={() => {
             setEditando(null);
@@ -952,12 +959,15 @@ function EditarEgreso({
   fila,
   cxp,
   pendientes,
+  tope,
   onClose,
   onSaved,
 }: {
   fila: Fila;
   cxp: Cxp[];
   pendientes: Fila[];
+  /** Tope del ajuste al peso de la empresa. */
+  tope: number;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -1261,13 +1271,13 @@ function EditarEgreso({
               >
                 Aplicado {cop(suma)} de {cop(valor)}
               </div>
-              {valor - suma > 1000 && items.length ? (
+              {valor - suma > tope && items.length ? (
                 <div className="text-blue-700">
                   Al guardar, el excedente de {cop(valor - suma)} (pago mayor que las facturas) se
                   lleva a anticipos del proveedor, en la cuenta de anticipos de la empresa.
                 </div>
               ) : null}
-              {Math.abs(valor - suma) >= 0.01 && Math.abs(valor - suma) <= 1000 ? (
+              {Math.abs(valor - suma) >= 0.01 && Math.abs(valor - suma) <= tope ? (
                 <div className="text-blue-700">
                   Al guardar se agrega un ajuste al peso{" "}
                   {valor > suma ? "débito (se pagó de más)" : "crédito (se pagó de menos)"} de{" "}
@@ -1341,12 +1351,14 @@ function CuentasAjuste({
     credito: string;
     cxp: string;
     anticipo: string;
+    tope: string;
   } | null>(null);
   const v = form ?? {
     debito: cuentas.data?.debito ?? "",
     credito: cuentas.data?.credito ?? "",
     cxp: cuentas.data?.cxp ?? "",
     anticipo: cuentas.data?.anticipo ?? "",
+    tope: cuentas.data?.tope != null ? String(cuentas.data.tope) : "1000",
   };
   const onGuardar = async () => {
     try {
@@ -1357,6 +1369,7 @@ function CuentasAjuste({
           credito: v.credito || null,
           cxp: v.cxp || null,
           anticipo: v.anticipo || null,
+          tope: v.tope === "" ? null : Number(v.tope),
           periodo,
         },
       });
@@ -1368,7 +1381,7 @@ function CuentasAjuste({
       toast.error(e instanceof Error ? e.message : String(e));
     }
   };
-  const campo = (k: "debito" | "credito" | "cxp" | "anticipo", etiqueta: string) => (
+  const campo = (k: "debito" | "credito" | "cxp" | "anticipo" | "tope", etiqueta: string) => (
     <label className="flex items-center gap-1">
       {etiqueta}
       <Input
@@ -1391,6 +1404,7 @@ function CuentasAjuste({
         {campo("credito", "Crédito (pagó de menos)")}
         {campo("cxp", "CxP cruzada")}
         {campo("anticipo", "Anticipos (excedente)")}
+        {campo("tope", "Tope del ajuste ($)")}
         <Button size="sm" variant="outline" className="h-7" onClick={onGuardar} disabled={!form}>
           Guardar
         </Button>
