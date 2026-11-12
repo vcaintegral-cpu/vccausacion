@@ -628,8 +628,8 @@ export type Database = {
           siigo_error: string | null
           siigo_id: string | null
           siigo_nombre: string | null
-          tipo: string
           tercero_nit: string
+          tipo: string
           updated_at: string
           valor: number
         }
@@ -651,8 +651,8 @@ export type Database = {
           siigo_error?: string | null
           siigo_id?: string | null
           siigo_nombre?: string | null
-          tipo?: string
           tercero_nit: string
+          tipo?: string
           updated_at?: string
           valor: number
         }
@@ -674,8 +674,8 @@ export type Database = {
           siigo_error?: string | null
           siigo_id?: string | null
           siigo_nombre?: string | null
-          tipo?: string
           tercero_nit?: string
+          tipo?: string
           updated_at?: string
           valor?: number
         }
@@ -3040,6 +3040,7 @@ export type Database = {
           provider_name: string | null
           provider_nit: string | null
           quote: number
+          siigo_purchase_id: string | null
           synced_at: string
         }
         Insert: {
@@ -3055,6 +3056,7 @@ export type Database = {
           provider_name?: string | null
           provider_nit?: string | null
           quote?: number
+          siigo_purchase_id?: string | null
           synced_at?: string
         }
         Update: {
@@ -3070,6 +3072,7 @@ export type Database = {
           provider_name?: string | null
           provider_nit?: string | null
           quote?: number
+          siigo_purchase_id?: string | null
           synced_at?: string
         }
         Relationships: [
