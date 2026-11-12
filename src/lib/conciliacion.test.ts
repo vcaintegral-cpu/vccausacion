@@ -432,3 +432,64 @@ describe("conciliación anterior en formato de reporte", () => {
     ).toBe(0);
   });
 });
+
+describe("partidas del corte anterior registradas después con su fecha original", () => {
+  it("el RP con fecha de mayo creado en noviembre cruza con la partida pendiente; los demás se ignoran", () => {
+    const armado = armarConciliacion({
+      etiqueta: "CORRIENTE",
+      cuentaContable: "11100501",
+      periodo: "2026-10",
+      extracto: [b("b1", "2026-10-05", "PAGO A PROVE X", -100000, ["RP-4-1"])],
+      auxiliar: [
+        {
+          account_code: "11100501",
+          voucher: "RP-4-1",
+          entry_date_text: "05/10/2026",
+          provider_name: "X",
+          description: null,
+          debit: 0,
+          credit: 100000,
+        },
+      ],
+      rpEnviados: [],
+      rcApi: [],
+      previas: [
+        {
+          tipo: "banco_sin_libros",
+          fecha: "2026-05-19",
+          descripcion: "PAGO PSE PROVEEDOR",
+          comprobante: null,
+          tercero: null,
+          valor: -351050,
+        },
+      ],
+      librosAnteriores: [
+        {
+          account_code: "11100501",
+          voucher: "RP-4-90",
+          entry_date_text: "19/05/2026",
+          provider_name: "PROVEEDOR",
+          description: null,
+          debit: 0,
+          credit: 351050,
+        },
+        // Otro registro atrasado que no corresponde a ninguna partida: ya estaba en el saldo.
+        {
+          account_code: "11100501",
+          voucher: "RP-4-91",
+          entry_date_text: "20/09/2026",
+          provider_name: "OTRO",
+          description: null,
+          debit: 0,
+          credit: 5000,
+        },
+      ],
+    });
+    expect(armado.movimientoLibros).toBe(-100000);
+    expect(armado.movimientoAnterior).toBe(-351050);
+    const r = conciliar(armado);
+    expect(r.faltaEnLibros).toHaveLength(0);
+    expect(r.sobraEnLibros).toHaveLength(0);
+    expect(r.conciliados).toHaveLength(2);
+  });
+});

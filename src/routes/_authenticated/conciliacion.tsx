@@ -156,6 +156,8 @@ function Conciliacion() {
   }>({ retefuente: null, reteiva: null, reteica: null });
   const [enviando, setEnviando] = useState<string | null>(null);
   const [saldosLibros, setSaldosLibros] = useState<Record<string, string>>({});
+  /** Cuentas cuyo saldo inicial de libros viene del balance de prueba actual de Siigo. */
+  const [saldoDeBalance, setSaldoDeBalance] = useState<Set<string>>(new Set());
   const [cuentaVista, setCuentaVista] = useState<string | null>(null);
   const refAux = useRef<HTMLInputElement>(null);
   const refAnt = useRef<HTMLInputElement>(null);
@@ -403,6 +405,7 @@ function Conciliacion() {
             },
           ]),
         previas: previasDe(c.etiqueta),
+        librosAnteriores: fuentes.librosAnteriores,
         pasarelas: fuentes.pasarelas.map((p) => p.plataforma),
       });
       const resultado = conciliar(armado);
@@ -415,7 +418,14 @@ function Conciliacion() {
       const saldoLibrosInicial = ini != null && ini !== "" ? Number(ini) : null;
       const saldoLibrosFinal =
         saldoLibrosInicial != null
-          ? Math.round((saldoLibrosInicial + armado.movimientoLibros) * 100) / 100
+          ? Math.round(
+              (saldoLibrosInicial +
+                armado.movimientoLibros +
+                // El saldo del balance de prueba actual ya incluye lo registrado con fecha
+                // de meses anteriores; el de la conciliación anterior no.
+                (saldoDeBalance.has(c.etiqueta) ? 0 : armado.movimientoAnterior)) *
+                100,
+            ) / 100
           : null;
       return {
         etiqueta: c.etiqueta,
@@ -440,7 +450,17 @@ function Conciliacion() {
         ),
       };
     });
-  }, [fuentes, base, pasarelas, anteriorSubida, auxiliar, saldosLibros, periodo, notas]);
+  }, [
+    fuentes,
+    base,
+    pasarelas,
+    anteriorSubida,
+    auxiliar,
+    saldosLibros,
+    saldoDeBalance,
+    periodo,
+    notas,
+  ]);
 
   // RC/RP registrados en otra cuenta bancaria (aún sin reclasificar en Siigo).
   const cuentaErrada = useMemo(() => {
@@ -563,6 +583,14 @@ function Conciliacion() {
           }
           return n;
         });
+      if (r.balance.length && fuentes)
+        setSaldoDeBalance(
+          new Set(
+            fuentes.cuentas
+              .filter((c) => r.balance.some((y) => y.cuenta === c.cuentaContable))
+              .map((c) => c.etiqueta),
+          ),
+        );
       for (const w of r.advertencias) toast.warning(w);
       toast.success(
         `Movimiento de Siigo: ${r.filas.length} movimientos de bancos y caja en ${r.documentos} documentos.`,
@@ -1191,9 +1219,14 @@ function Conciliacion() {
                           type="number"
                           value={saldosLibros[c.etiqueta] ?? ""}
                           placeholder="Saldo 1.º del mes"
-                          onChange={(e) =>
-                            setSaldosLibros((x) => ({ ...x, [c.etiqueta]: e.target.value }))
-                          }
+                          onChange={(e) => {
+                            setSaldosLibros((x) => ({ ...x, [c.etiqueta]: e.target.value }));
+                            setSaldoDeBalance((x) => {
+                              const n = new Set(x);
+                              n.delete(c.etiqueta);
+                              return n;
+                            });
+                          }}
                         />
                       </td>
                       <td className="p-2 text-right">
