@@ -609,6 +609,65 @@ export type Database = {
           },
         ]
       }
+      conciliaciones_bancarias: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          cuenta_contable: string | null
+          cuenta_etiqueta: string
+          id: string
+          partidas: Json
+          periodo: string
+          resumen: Json
+          saldo_extracto_final: number | null
+          saldo_extracto_inicial: number | null
+          saldo_libros_final: number | null
+          saldo_libros_inicial: number | null
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          cuenta_contable?: string | null
+          cuenta_etiqueta: string
+          id?: string
+          partidas?: Json
+          periodo: string
+          resumen?: Json
+          saldo_extracto_final?: number | null
+          saldo_extracto_inicial?: number | null
+          saldo_libros_final?: number | null
+          saldo_libros_inicial?: number | null
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          cuenta_contable?: string | null
+          cuenta_etiqueta?: string
+          id?: string
+          partidas?: Json
+          periodo?: string
+          resumen?: Json
+          saldo_extracto_final?: number | null
+          saldo_extracto_inicial?: number | null
+          saldo_libros_final?: number | null
+          saldo_libros_inicial?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conciliaciones_bancarias_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cost_centers: {
         Row: {
           code: string

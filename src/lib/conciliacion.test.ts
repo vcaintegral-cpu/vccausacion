@@ -1,0 +1,297 @@
+import * as XLSX from "xlsx";
+import { describe, expect, it } from "vitest";
+
+import {
+  armarConciliacion,
+  comprobantesEnTexto,
+  conciliar,
+  diferenciaSinExplicar,
+  partidasAlCorte,
+  type MovBanco,
+  type MovLibro,
+} from "./conciliacion";
+import { leerConciliacionAnterior, leerExtractoBancolombia } from "./lectores-extracto";
+
+// Datos ficticios.
+const b = (
+  id: string,
+  fecha: string,
+  descripcion: string,
+  valor: number,
+  refs: string[] = [],
+): MovBanco => ({ id, fecha, descripcion, valor, refs });
+const l = (
+  id: string,
+  fecha: string,
+  comprobante: string,
+  valor: number,
+  tercero: string | null = null,
+): MovLibro => ({
+  id,
+  fecha,
+  comprobante,
+  tercero,
+  descripcion: null,
+  valor,
+});
+
+describe("cruce extracto vs libros", () => {
+  it("por comprobante, por valor y fecha, agrupado (nómina) y gastos bancarios en un comprobante", () => {
+    const banco = [
+      b("b1", "2026-10-01", "PAGO DE PROV CLIENTE UNO", 1007400, ["RC-1-100"]),
+      b("b2", "2026-10-03", "PAGO A PROVE PINTURAS DEL VALLE", -392725),
+      b("b3", "2026-10-25", "PAGO A NOMIN JUAN PEREZ", -1514416),
+      b("b4", "2026-10-25", "PAGO A NOMIN JUAN PEREZ", -326230),
+      b("b5", "2026-10-05", "IMPTO GOBIERNO 4X1000", -1570.9),
+      b("b6", "2026-10-05", "CUOTA PLAN CANAL NEGOCIOS", -78000),
+      b("b7", "2026-10-20", "PAGO DE PROV CLIENTE DOS", 500000),
+      b("b8", "2026-10-22", "PAGO A PROVE SIN REGISTRO", -250000),
+    ];
+    const libros = [
+      l("l1", "2026-10-01", "RC-1-100", 1007400, "CLIENTE UNO"),
+      l("l2", "2026-10-04", "RP-4-10", -392725, "PINTURAS DEL VALLE SAS"),
+      l("l3", "2026-10-31", "CC-997-5", -1840646, "JUAN PEREZ"),
+      l("l4", "2026-10-31", "RP-4-99", -79570.9, "BANCO EJEMPLO"),
+      l("l5", "2026-10-20", "RC-1-200", 480000, "CLIENTE DOS"),
+      l("l6", "2026-10-30", "RP-4-50", -120000, "PROVEEDOR EN TRANSITO"),
+    ];
+    banco[6]!.refs = ["RC-1-200"];
+    const r = conciliar({ banco, libros, comprobantesGastosBancarios: ["RP-4-99"] });
+    expect(r.conciliados.map((c) => c.criterio)).toEqual([
+      "Comprobante RC-1-100",
+      "Gastos bancarios del mes (comprobante único)",
+      "Mismo valor, 1 día(s) de diferencia",
+      "2 movimientos del banco contra un registro (pago en partes)",
+    ]);
+    // El RC por un valor distinto al abono es una diferencia a ajustar en Siigo.
+    expect(r.diferencias).toHaveLength(1);
+    expect(r.diferencias[0]).toMatchObject({ diferencia: 20000 });
+    expect(r.faltaEnLibros.map((x) => x.id)).toEqual(["b8"]);
+    expect(r.sobraEnLibros.map((x) => x.id)).toEqual(["l6"]);
+    const partidas = partidasAlCorte(r);
+    expect(partidas.map((p) => [p.tipo, p.valor])).toEqual([
+      ["banco_sin_libros", -250000],
+      ["libros_sin_banco", -120000],
+      ["diferencia", 20000],
+    ]);
+    // Prueba de saldos: extracto − libros = −250.000 − (−120.000) + 20.000 = −110.000.
+    expect(diferenciaSinExplicar({ saldoExtracto: 1000000, saldoLibros: 1110000, partidas })).toBe(
+      0,
+    );
+  });
+
+  it("las partidas del corte anterior se cruzan en el mes y lo que sigue pendiente queda al nuevo corte", () => {
+    const r0 = conciliar({
+      ...armarConciliacion({
+        etiqueta: "CORRIENTE",
+        cuentaContable: "11100501",
+        periodo: "2026-10",
+        extracto: [b("b1", "2026-10-02", "PAGO A PROVE EN TRANSITO", -120000)],
+        auxiliar: [],
+        rpEnviados: [],
+        rcApi: [],
+        previas: [
+          {
+            tipo: "libros_sin_banco",
+            fecha: "2026-09-30",
+            descripcion: "Cheque",
+            comprobante: "RP-4-50",
+            tercero: null,
+            valor: -120000,
+          },
+          {
+            tipo: "banco_sin_libros",
+            fecha: "2026-09-29",
+            descripcion: "Consignación sin identificar",
+            comprobante: null,
+            tercero: null,
+            valor: 75000,
+          },
+        ],
+      }),
+    });
+    expect(r0.conciliados).toHaveLength(1);
+    expect(partidasAlCorte(r0).map((p) => [p.tipo, p.valor])).toEqual([
+      ["banco_sin_libros", 75000],
+    ]);
+  });
+
+  it("libros: auxiliar de la cuenta en el mes, completado con RP de la herramienta y RC de la API", () => {
+    const a = armarConciliacion({
+      etiqueta: "CORRIENTE",
+      cuentaContable: "11100501",
+      periodo: "2026-10",
+      extracto: [
+        b("b1", "2026-10-03", "PAGO A PROVE X", -392725),
+        b("b2", "2026-10-05", "IMPTO GOBIERNO 4X1000", -1570.9),
+      ],
+      auxiliar: [
+        {
+          account_code: "11100501",
+          voucher: "RC-1-100",
+          entry_date_text: "01/10/2026",
+          provider_name: "CLIENTE",
+          description: null,
+          debit: 1007400,
+          credit: 0,
+        },
+        {
+          account_code: "11200502",
+          voucher: "RC-1-101",
+          entry_date_text: "01/10/2026",
+          provider_name: "OTRA CUENTA",
+          description: null,
+          debit: 5,
+          credit: 0,
+        },
+        {
+          account_code: "11100501",
+          voucher: "RC-1-90",
+          entry_date_text: "30/09/2026",
+          provider_name: "MES ANTERIOR",
+          description: null,
+          debit: 7,
+          credit: 0,
+        },
+      ],
+      rpEnviados: [
+        {
+          id: "x1",
+          fecha: "2026-10-03",
+          comprobante: "RP-4-10",
+          tercero: "X",
+          descripcion: null,
+          valor: -392725,
+          cuenta: "CORRIENTE",
+          grupo: null,
+        },
+        {
+          id: "x2",
+          fecha: "2026-10-05",
+          comprobante: "RP-4-99",
+          tercero: null,
+          descripcion: null,
+          valor: -1000,
+          cuenta: "CORRIENTE",
+          grupo: "bancario|CORRIENTE",
+        },
+        {
+          id: "x3",
+          fecha: "2026-10-09",
+          comprobante: "RP-4-99",
+          tercero: null,
+          descripcion: null,
+          valor: -570.9,
+          cuenta: "CORRIENTE",
+          grupo: "bancario|CORRIENTE",
+        },
+      ],
+      rcApi: [
+        {
+          id: "r1",
+          fecha: "2026-10-01",
+          comprobante: "RC-1-100",
+          tercero: null,
+          descripcion: null,
+          valor: 1007400,
+          cuenta: "CORRIENTE",
+        },
+        {
+          id: "r2",
+          fecha: "2026-10-08",
+          comprobante: "RC-1-150",
+          tercero: null,
+          descripcion: null,
+          valor: 300000,
+          cuenta: "CORRIENTE",
+        },
+      ],
+      previas: [],
+    });
+    expect(a.libros.map((x) => [x.comprobante, x.valor])).toEqual([
+      ["RC-1-100", 1007400],
+      ["RP-4-10", -392725],
+      ["RP-4-99", -1570.9],
+      ["RC-1-150", 300000],
+    ]);
+    expect(a.banco[0]!.refs).toEqual(["RP-4-10"]);
+    expect(a.comprobantesGastosBancarios).toEqual(["RP-4-99"]);
+  });
+
+  it("comprobantes citados en la relación", () => {
+    expect(comprobantesEnTexto("RC-1-24500 y RC-1-24498")).toEqual(["RC-1-24500", "RC-1-24498"]);
+    expect(comprobantesEnTexto("Fact. 27508")).toEqual([]);
+  });
+});
+
+describe("lectores", () => {
+  it("extracto Bancolombia en Excel: saldos y movimientos con el año del corte", () => {
+    const filas = [
+      [null],
+      ["Información General:"],
+      ["DESDE", "HASTA", "TIPO CUENTA", "NRO CUENTA"],
+      ["2026/09/30", "2026/10/31", "CUENTA CORRIENTE", "00000000001"],
+      ["Resumen:"],
+      ["SALDO ANTERIOR", "TOTAL ABONOS", "TOTAL CARGOS", "SALDO ACTUAL"],
+      ["1,000,000.00", "500,000.00", "200,000.00", "1,300,000.00"],
+      ["Movimientos:"],
+      ["FECHA", "DESCRIPCIÓN", "SUCURSAL", "DCTO.", "VALOR", "SALDO"],
+      ["1/10", "PAGO DE PROV CLIENTE", null, null, "500,000.00", "1,500,000.00"],
+      ["2/10", "PAGO A PROVE PROVEEDOR", null, null, "-200,000.00", "1,300,000.00"],
+      [null, "FIN ESTADO DE CUENTA"],
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(filas), "Table1");
+    const ext = leerExtractoBancolombia(
+      new Uint8Array(XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer),
+    );
+    expect(ext).toMatchObject({
+      saldoInicial: 1000000,
+      saldoFinal: 1300000,
+      cuentaNumero: "00000000001",
+    });
+    expect(ext.movimientos.map((m) => [m.fecha, m.valor])).toEqual([
+      ["2026-10-01", 500000],
+      ["2026-10-02", -200000],
+    ]);
+  });
+
+  it("conciliación anterior: hojas «Falta / Sobra en contabilidad» o el formato que exporta la herramienta", () => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.aoa_to_sheet([
+        ["Fecha", "Concepto", "Tercero", "Ingreso", "Salida"],
+        ["29/09/2026", "Consignación sin identificar", null, 75000, null],
+      ]),
+      "Falta en Contabilidad",
+    );
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.aoa_to_sheet([
+        ["Fecha", "Comprobante", "Tercero", "Débito", "Crédito"],
+        ["30/09/2026", "RP-4-50", "PROVEEDOR", null, 120000],
+      ]),
+      "Sobra en Contabilidad",
+    );
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.aoa_to_sheet([
+        ["Cuenta", "Tipo", "Fecha", "Descripción", "Comprobante", "Tercero", "Valor"],
+        ["AHORROS", "Libros sin banco", "30/09/2026", "Cheque", "RP-4-60", "X", -50000],
+      ]),
+      "Partidas",
+    );
+    const r = leerConciliacionAnterior(
+      new Uint8Array(XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer),
+      "CORRIENTE",
+    );
+    expect(r.porCuenta.get("CORRIENTE")!.map((p) => [p.tipo, p.valor])).toEqual([
+      ["banco_sin_libros", 75000],
+      ["libros_sin_banco", -120000],
+    ]);
+    expect(r.porCuenta.get("AHORROS")!.map((p) => [p.tipo, p.comprobante, p.valor])).toEqual([
+      ["libros_sin_banco", "RP-4-60", -50000],
+    ]);
+  });
+});

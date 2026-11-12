@@ -114,7 +114,9 @@ async function carpetasObjetivo(
     if (sub) {
       const hija = raiz.find((n) => n.isFolder && mismoNombre(n.name, sub));
       if (!hija) {
-        result.advertencias.push(`La carpeta no tiene la subcarpeta "${sub}"; no se importó nada para no tomar otras carpetas.`);
+        result.advertencias.push(
+          `La carpeta no tiene la subcarpeta "${sub}"; no se importó nada para no tomar otras carpetas.`,
+        );
         return [];
       }
       return [{ id: hija.id, ruta: hija.name, periodo: null }];
@@ -175,7 +177,8 @@ async function archivosBajo(
   // nivel: una sola llamada de listado por nivel para todas.
   type Pos = { ruta: string; periodo: Objetivo["periodo"] };
   let nivel = new Map<string, Pos>();
-  for (const o of objetivos) if (!nivel.has(o.id)) nivel.set(o.id, { ruta: o.ruta, periodo: o.periodo });
+  for (const o of objetivos)
+    if (!nivel.has(o.id)) nivel.set(o.id, { ruta: o.ruta, periodo: o.periodo });
   const vistos = new Set<string>();
   for (let profundidad = 0; nivel.size > 0 && profundidad < 6; profundidad++) {
     const siguiente = new Map<string, Pos>();
@@ -184,7 +187,10 @@ async function archivosBajo(
       if (padre === undefined || vistos.has(n.id)) continue;
       vistos.add(n.id);
       if (n.isFolder) {
-        siguiente.set(n.id, { ruta: padre.ruta ? `${padre.ruta}/${n.name}` : n.name, periodo: padre.periodo });
+        siguiente.set(n.id, {
+          ruta: padre.ruta ? `${padre.ruta}/${n.name}` : n.name,
+          periodo: padre.periodo,
+        });
         continue;
       }
       const tipo = tipoDeArchivo(proposito, n.name, n.mimeType);
@@ -282,7 +288,12 @@ async function cargasYTareasVivas(admin: SupabaseClient, uploadIds: string[], it
         .select("id, upload_id, status, invoice_id")
         .in(col, ids.slice(i, i + 200));
       if (error) throw new Error(error.message);
-      for (const r of (data ?? []) as Array<{ id: string; upload_id: string; status: string; invoice_id: string | null }>) {
+      for (const r of (data ?? []) as Array<{
+        id: string;
+        upload_id: string;
+        status: string;
+        invoice_id: string | null;
+      }>) {
         if (tareaMuerta(r)) continue;
         cargas.add(r.upload_id);
         tareas.add(r.id);
@@ -299,14 +310,21 @@ async function cargasYTareasVivas(admin: SupabaseClient, uploadIds: string[], it
  * La duplicidad real sigue protegida por CUFE / NIT + número al guardar el borrador.
  */
 export function debeReenviarse(
-  previo: { status: string; upload_id: string | null; bulk_item_id: string | null; message: string | null; file_type: string | null },
+  previo: {
+    status: string;
+    upload_id: string | null;
+    bulk_item_id: string | null;
+    message: string | null;
+    file_type: string | null;
+  },
   vivas: { cargas: Set<string>; tareas: Set<string> },
 ): boolean {
   if (previo.status !== "queued" && previo.status !== "duplicate") return false;
   // Dos copias del mismo archivo en la carpeta: la copia no se vuelve a descargar.
   if (/^Archivo repetido/.test(previo.message ?? "")) return false;
   if (previo.bulk_item_id) return !vivas.tareas.has(previo.bulk_item_id);
-  if (previo.upload_id) return previo.file_type === "recibidos_excel" ? !vivas.cargas.has(previo.upload_id) : false;
+  if (previo.upload_id)
+    return previo.file_type === "recibidos_excel" ? !vivas.cargas.has(previo.upload_id) : false;
   return true;
 }
 
@@ -376,7 +394,9 @@ export async function syncSource(
     for (let i = 0; i < ids.length; i += 300) {
       const { data, error } = await admin
         .from("document_source_files")
-        .select("external_id, name, external_modified_at, status, upload_id, bulk_item_id, message, file_type")
+        .select(
+          "external_id, name, external_modified_at, status, upload_id, bulk_item_id, message, file_type",
+        )
         .eq("company_id", source.company_id)
         .eq("provider", source.provider)
         .in("external_id", ids.slice(i, i + 300));
@@ -420,7 +440,9 @@ export async function syncSource(
       // (solo entran los documentos nuevos; los ya cargados se reconocen por CUFE).
       // Un Excel que quedó en error (p. ej. por una regla de lectura ya corregida) se reintenta.
       else if (
-        (a.tipo === "recibidos_excel" || (a.tipo === "relacion_pagos" && funcionActiva(empresa.nit, "lector_consolidado_pagos"))) &&
+        (a.tipo === "recibidos_excel" ||
+          (a.tipo === "relacion_pagos" &&
+            funcionActiva(empresa.nit, "lector_consolidado_pagos"))) &&
         (!mismoMomento(previo.modified, a.node.modifiedAt) || previo.status === "error")
       )
         aProcesar.push(a);
@@ -438,7 +460,9 @@ export async function syncSource(
           return { ...a, bytes, huella: await sha256Hex(bytes) };
         } catch (e) {
           // No se registra: se reintenta en la próxima revisión.
-          result.errores.push(`${a.ruta}/${a.node.name}: ${e instanceof Error ? e.message : String(e)}`);
+          result.errores.push(
+            `${a.ruta}/${a.node.name}: ${e instanceof Error ? e.message : String(e)}`,
+          );
           return null;
         }
       });
@@ -486,12 +510,47 @@ export async function syncSource(
       for (const d of await descargar(relaciones)) {
         try {
           const { leerConsolidadoPagos } = await import("./lector-consolidado-pagos");
-          const { guardarLectura, proponerPeriodo, sugerirBancos } = await import("./egresos.server");
+          const { guardarLectura, proponerPeriodo, sugerirBancos } =
+            await import("./egresos.server");
           const lectura = leerConsolidadoPagos(d.bytes, d.node.name);
-          if (!lectura.hoja) throw new Error(lectura.advertencias.join(" ") || "No es un reporte de pagos.");
+          if (!lectura.hoja)
+            throw new Error(lectura.advertencias.join(" ") || "No es un reporte de pagos.");
           const g = await guardarLectura(admin, source.company_id, lectura, d.node.name);
-          await sugerirBancos(admin, source.company_id, lectura.egresos.map((e) => e.cuenta ?? ""));
+          await sugerirBancos(
+            admin,
+            source.company_id,
+            lectura.egresos.map((e) => e.cuenta ?? ""),
+          );
           const p = await proponerPeriodo(admin, source.company_id, g.periodo!);
+          // Copia del reporte en la bandeja de egresos: la conciliación bancaria lee de ahí las
+          // hojas de bancos sin extracto en Excel y la hoja de efectivo (caja).
+          const yaGuardado = await huellasExistentes(
+            admin,
+            "payment_documents",
+            source.company_id,
+            [d.huella],
+          );
+          if (!yaGuardado.has(d.huella)) {
+            const ruta = `${ownerId}/${source.company_id}/egresos/${source.id}/relacion-${d.huella.slice(0, 16)}.xlsx`;
+            const { error: errSubida } = await admin.storage
+              .from("facturas")
+              .upload(ruta, d.bytes, {
+                upsert: true,
+                contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              });
+            if (!errSubida)
+              await admin.from("payment_documents").insert({
+                company_id: source.company_id,
+                kind: "relacion_pagos",
+                file_name: d.node.name,
+                folder_path: d.ruta,
+                period: d.periodo,
+                storage_path: ruta,
+                mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                size_bytes: d.bytes.byteLength,
+                fingerprint: d.huella,
+              });
+          }
           filas.set(d.node.id, {
             ...filaArchivo(source, d),
             fingerprint: d.huella,
@@ -501,7 +560,12 @@ export async function syncSource(
           result.egresosRecibidos += g.nuevos;
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
-          filas.set(d.node.id, { ...filaArchivo(source, d), fingerprint: d.huella, status: "error", message });
+          filas.set(d.node.id, {
+            ...filaArchivo(source, d),
+            fingerprint: d.huella,
+            status: "error",
+            message,
+          });
           result.errores.push(`${d.ruta}/${d.node.name}: ${message}`);
         }
       }
@@ -606,7 +670,10 @@ export async function syncSource(
  * documentos del Excel RECIBIDOS cargados (tareas excel:…) y las facturas que ya
  * existen en la app (de los últimos 18 meses).
  */
-async function facturasConocidas(admin: SupabaseClient, companyId: string): Promise<FacturaConocida[]> {
+async function facturasConocidas(
+  admin: SupabaseClient,
+  companyId: string,
+): Promise<FacturaConocida[]> {
   const out: FacturaConocida[] = [];
   const PAGINA = 1000;
   for (let desde = 0; ; desde += PAGINA) {
@@ -620,7 +687,10 @@ async function facturasConocidas(admin: SupabaseClient, companyId: string): Prom
       .or("status.neq.completed,invoice_id.not.is.null")
       .range(desde, desde + PAGINA - 1);
     if (error) throw new Error(error.message);
-    for (const r of (data ?? []) as Array<{ provider_nit: string | null; invoice_number: string | null }>) {
+    for (const r of (data ?? []) as Array<{
+      provider_nit: string | null;
+      invoice_number: string | null;
+    }>) {
       const numero = String(r.invoice_number ?? "");
       const corte = numero.lastIndexOf("-");
       if (!r.provider_nit || !numero) continue;
@@ -642,8 +712,18 @@ async function facturasConocidas(admin: SupabaseClient, companyId: string): Prom
       .gte("issue_date", desdeFecha)
       .range(desde, desde + PAGINA - 1);
     if (error) throw new Error(error.message);
-    for (const r of (data ?? []) as Array<{ provider_nit: string | null; prefix: string | null; number: string | null }>) {
-      if (r.provider_nit && r.number) out.push({ nit: r.provider_nit, prefijo: r.prefix ?? "", numero: r.number, origen: "en la app" });
+    for (const r of (data ?? []) as Array<{
+      provider_nit: string | null;
+      prefix: string | null;
+      number: string | null;
+    }>) {
+      if (r.provider_nit && r.number)
+        out.push({
+          nit: r.provider_nit,
+          prefijo: r.prefix ?? "",
+          numero: r.number,
+          origen: "en la app",
+        });
     }
     if ((data ?? []).length < PAGINA) break;
   }

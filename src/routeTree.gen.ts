@@ -19,6 +19,7 @@ import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedAprendizajeRouteImport } from './routes/_authenticated/aprendizaje'
 import { Route as AuthenticatedBorradoresRouteImport } from './routes/_authenticated/borradores'
 import { Route as AuthenticatedCausarRouteImport } from './routes/_authenticated/causar'
+import { Route as AuthenticatedConciliacionRouteImport } from './routes/_authenticated/conciliacion'
 import { Route as AuthenticatedDocumentosRouteImport } from './routes/_authenticated/documentos'
 import { Route as AuthenticatedDocumentosSoporteRouteImport } from './routes/_authenticated/documentos-soporte'
 import { Route as AuthenticatedEgresosRouteImport } from './routes/_authenticated/egresos'
@@ -82,6 +83,12 @@ const AuthenticatedCausarRoute = AuthenticatedCausarRouteImport.update({
   path: '/causar',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedConciliacionRoute =
+  AuthenticatedConciliacionRouteImport.update({
+    id: '/conciliacion',
+    path: '/conciliacion',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedDocumentosRoute = AuthenticatedDocumentosRouteImport.update({
   id: '/documentos',
   path: '/documentos',
@@ -156,6 +163,7 @@ export interface FileRoutesByFullPath {
   '/aprendizaje': typeof AuthenticatedAprendizajeRoute
   '/borradores': typeof AuthenticatedBorradoresRoute
   '/causar': typeof AuthenticatedCausarRoute
+  '/conciliacion': typeof AuthenticatedConciliacionRoute
   '/documentos': typeof AuthenticatedDocumentosRoute
   '/documentos-soporte': typeof AuthenticatedDocumentosSoporteRoute
   '/egresos': typeof AuthenticatedEgresosRoute
@@ -179,6 +187,7 @@ export interface FileRoutesByTo {
   '/aprendizaje': typeof AuthenticatedAprendizajeRoute
   '/borradores': typeof AuthenticatedBorradoresRoute
   '/causar': typeof AuthenticatedCausarRoute
+  '/conciliacion': typeof AuthenticatedConciliacionRoute
   '/documentos': typeof AuthenticatedDocumentosRoute
   '/documentos-soporte': typeof AuthenticatedDocumentosSoporteRoute
   '/egresos': typeof AuthenticatedEgresosRoute
@@ -204,6 +213,7 @@ export interface FileRoutesById {
   '/_authenticated/aprendizaje': typeof AuthenticatedAprendizajeRoute
   '/_authenticated/borradores': typeof AuthenticatedBorradoresRoute
   '/_authenticated/causar': typeof AuthenticatedCausarRoute
+  '/_authenticated/conciliacion': typeof AuthenticatedConciliacionRoute
   '/_authenticated/documentos': typeof AuthenticatedDocumentosRoute
   '/_authenticated/documentos-soporte': typeof AuthenticatedDocumentosSoporteRoute
   '/_authenticated/egresos': typeof AuthenticatedEgresosRoute
@@ -229,6 +239,7 @@ export interface FileRouteTypes {
     | '/aprendizaje'
     | '/borradores'
     | '/causar'
+    | '/conciliacion'
     | '/documentos'
     | '/documentos-soporte'
     | '/egresos'
@@ -252,6 +263,7 @@ export interface FileRouteTypes {
     | '/aprendizaje'
     | '/borradores'
     | '/causar'
+    | '/conciliacion'
     | '/documentos'
     | '/documentos-soporte'
     | '/egresos'
@@ -276,6 +288,7 @@ export interface FileRouteTypes {
     | '/_authenticated/aprendizaje'
     | '/_authenticated/borradores'
     | '/_authenticated/causar'
+    | '/_authenticated/conciliacion'
     | '/_authenticated/documentos'
     | '/_authenticated/documentos-soporte'
     | '/_authenticated/egresos'
@@ -373,6 +386,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCausarRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/conciliacion': {
+      id: '/_authenticated/conciliacion'
+      path: '/conciliacion'
+      fullPath: '/conciliacion'
+      preLoaderRoute: typeof AuthenticatedConciliacionRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/documentos': {
       id: '/_authenticated/documentos'
       path: '/documentos'
@@ -465,6 +485,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedAprendizajeRoute: typeof AuthenticatedAprendizajeRoute
   AuthenticatedBorradoresRoute: typeof AuthenticatedBorradoresRoute
   AuthenticatedCausarRoute: typeof AuthenticatedCausarRoute
+  AuthenticatedConciliacionRoute: typeof AuthenticatedConciliacionRoute
   AuthenticatedDocumentosRoute: typeof AuthenticatedDocumentosRoute
   AuthenticatedDocumentosSoporteRoute: typeof AuthenticatedDocumentosSoporteRoute
   AuthenticatedEgresosRoute: typeof AuthenticatedEgresosRoute
@@ -482,6 +503,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAprendizajeRoute: AuthenticatedAprendizajeRoute,
   AuthenticatedBorradoresRoute: AuthenticatedBorradoresRoute,
   AuthenticatedCausarRoute: AuthenticatedCausarRoute,
+  AuthenticatedConciliacionRoute: AuthenticatedConciliacionRoute,
   AuthenticatedDocumentosRoute: AuthenticatedDocumentosRoute,
   AuthenticatedDocumentosSoporteRoute: AuthenticatedDocumentosSoporteRoute,
   AuthenticatedEgresosRoute: AuthenticatedEgresosRoute,
