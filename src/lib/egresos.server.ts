@@ -201,6 +201,27 @@ export async function saldosVigentes(
   }));
 }
 
+/** Cuenta contable → id del impuesto en Siigo (impuestos sincronizados con cuenta). */
+export async function impuestosPorCuenta(db: Db, companyId: string): Promise<Map<string, number>> {
+  const { data } = await db
+    .from("tax_rates")
+    .select("account_code, siigo_id, active")
+    .eq("company_id", companyId)
+    .not("account_code", "is", null)
+    .not("siigo_id", "is", null);
+  const out = new Map<string, number>();
+  for (const t of (data ?? []) as Array<{
+    account_code: string;
+    siigo_id: string;
+    active: boolean | null;
+  }>) {
+    if (t.active === false || out.has(t.account_code)) continue;
+    const id = Number(t.siigo_id);
+    if (Number.isFinite(id)) out.set(t.account_code, id);
+  }
+  return out;
+}
+
 /** Contexto para proponer: CxP, terceros, reglas, precedente del auxiliar y facturas causadas. */
 export async function cargarContexto(db: Db, companyId: string): Promise<Contexto> {
   const [cxp, provs, reglas, hist, causadas, puc] = await Promise.all([

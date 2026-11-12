@@ -309,12 +309,35 @@ export const egresosEnviar = createServerFn({ method: "POST" })
         );
       documentId = Number(activos[0]!.id);
     }
-    const payload = payloadRecibo(movimiento, p, documentId, String(f.id).slice(0, 8));
+    const { impuestosPorCuenta } = await import("./egresos.server");
+    const { payloadAnticipo } = await import("./egresos");
+    const impuestos = await impuestosPorCuenta(db, f.company_id);
+    const ref = String(f.id).slice(0, 8);
+    // Uno o dos recibos: el de las facturas/cuentas y, si hay excedente, el de anticipo.
+    const partes: Array<{ parte: "pago" | "anticipo"; payload: Record<string, unknown> }> = [];
+    const valorPrincipal =
+      Number(f.valor) - (p.tipo === "pago_facturas" ? Number(p.anticipo?.valor ?? 0) : 0);
+    if (valorPrincipal > 0.009)
+      partes.push({
+        parte: "pago",
+        payload: payloadRecibo(movimiento, p, documentId, ref, impuestos),
+      });
+    const anticipo = payloadAnticipo(movimiento, p, documentId, ref);
+    if (anticipo) partes.push({ parte: "anticipo", payload: anticipo });
+    // Recibos ya creados en un intento anterior (no se vuelven a crear).
+    const previo = (f.siigo_payload ?? {}) as {
+      creados?: Array<{ parte: string; id: string; nombre: string | null }>;
+    };
+    const creados = [...(previo.creados ?? [])];
 
     // Bloqueo contra doble envío.
     const { data: bloqueado } = await db
       .from("egresos")
-      .update({ estado: "enviando", siigo_error: null, siigo_payload: payload as never })
+      .update({
+        estado: "enviando",
+        siigo_error: null,
+        siigo_payload: { partes, creados } as never,
+      })
       .eq("id", f.id)
       .eq("estado", "aprobado")
       .is("siigo_id", null)
@@ -322,23 +345,36 @@ export const egresosEnviar = createServerFn({ method: "POST" })
     if (!bloqueado?.length) throw new Error("Este egreso ya se está enviando a Siigo.");
 
     try {
-      const res = await siigoPost<{ id?: string; name?: string }>("/v1/payment-receipts", payload);
-      if (!res?.id) throw new Error("Siigo no devolvió el identificador del recibo.");
-      let nombre = res.name ?? null;
-      try {
-        const leido = await siigoGet<{ name?: string }>(
-          `/v1/payment-receipts/${encodeURIComponent(res.id)}`,
+      for (const parte of partes) {
+        if (creados.some((c) => c.parte === parte.parte)) continue;
+        const res = await siigoPost<{ id?: string; name?: string }>(
+          "/v1/payment-receipts",
+          parte.payload,
         );
-        nombre = leido?.name ?? nombre;
-      } catch {
-        /* la lectura de verificación es opcional */
+        if (!res?.id) throw new Error("Siigo no devolvió el identificador del recibo.");
+        let nombre = res.name ?? null;
+        try {
+          const leido = await siigoGet<{ name?: string }>(
+            `/v1/payment-receipts/${encodeURIComponent(res.id)}`,
+          );
+          nombre = leido?.name ?? nombre;
+        } catch {
+          /* la lectura de verificación es opcional */
+        }
+        creados.push({ parte: parte.parte, id: String(res.id), nombre });
+        // Se guarda cada recibo creado de inmediato: un reintento no lo vuelve a crear.
+        await db
+          .from("egresos")
+          .update({ siigo_payload: { partes, creados } as never })
+          .eq("id", f.id);
       }
+      const nombres = creados.map((c) => c.nombre ?? c.id).join(" + ");
       await db
         .from("egresos")
         .update({
           estado: "enviado",
-          siigo_id: String(res.id),
-          siigo_nombre: nombre,
+          siigo_id: creados[0]!.id,
+          siigo_nombre: nombres,
           enviado_at: new Date().toISOString(),
           siigo_error: null,
         })
@@ -364,11 +400,7 @@ export const egresosEnviar = createServerFn({ method: "POST" })
               .eq("consecutive", i.consecutive)
               .eq("quote", i.quote);
         }
-      return {
-        ok: true,
-        siigoNombre: nombre,
-        message: `Recibo ${nombre ?? res.id} creado en Siigo.`,
-      };
+      return { ok: true, siigoNombre: nombres, message: `Recibo ${nombres} creado en Siigo.` };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       // Respuesta perdida (red): el recibo pudo crearse; no se reintenta solo.
@@ -376,14 +408,20 @@ export const egresosEnviar = createServerFn({ method: "POST" })
       // este mismo pago creado en un intento anterior, así que se verifica antes de reintentar.
       const incierto =
         /\b409\b|duplicated_document/.test(msg) || !/\b(400|401|403|404|422)\b/.test(msg);
+      const parcial = creados.length
+        ? `Ya se creó en Siigo ${creados.map((c) => `${c.nombre ?? c.id} (${c.parte === "pago" ? "facturas" : "anticipo"})`).join(", ")}; al reintentar solo se crea lo que falta. `
+        : "";
       await db
         .from("egresos")
         .update({
           estado: "error",
+          siigo_payload: { partes, creados } as never,
           siigo_error:
+            parcial +
             (incierto
               ? "Respuesta de Siigo incierta: verifica en Siigo si el recibo se creó antes de reintentar. "
-              : "") + msg.slice(0, 1800),
+              : "") +
+            msg.slice(0, 1600),
         })
         .eq("id", f.id)
         .is("siigo_id", null);
@@ -769,6 +807,7 @@ export const egresosEnviarGrupoBancario = createServerFn({ method: "POST" })
         documentId,
         fecha,
         etiqueta,
+        await (await import("./egresos.server")).impuestosPorCuenta(db, data.companyId),
       );
       if (errores.length) throw new Error(errores.join(" "));
 

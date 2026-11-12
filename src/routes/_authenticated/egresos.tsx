@@ -857,8 +857,7 @@ function Egresos() {
                     ))}
                     {f.propuesta?.anticipo ? (
                       <div>
-                        Anticipo (excedente) débito {f.propuesta.anticipo.cuenta}:{" "}
-                        {cop(f.propuesta.anticipo.valor)}
+                        + Recibo de anticipo aparte (excedente): {cop(f.propuesta.anticipo.valor)}
                       </div>
                     ) : null}
                     {f.propuesta?.ajuste ? (
@@ -1383,8 +1382,9 @@ function EditarEgreso({
               </div>
               {valor - suma > tope && items.length ? (
                 <div className="text-blue-700">
-                  Al guardar, el excedente de {cop(valor - suma)} (pago mayor que las facturas) se
-                  lleva a anticipos del proveedor, en la cuenta de anticipos de la empresa.
+                  Al enviar, el excedente de {cop(valor - suma)} (pago mayor que las facturas) va en
+                  un recibo de ANTICIPO aparte al proveedor, desde el mismo banco; los dos recibos
+                  suman lo pagado.
                 </div>
               ) : null}
               {Math.abs(valor - suma) >= 0.01 && Math.abs(valor - suma) <= tope ? (
