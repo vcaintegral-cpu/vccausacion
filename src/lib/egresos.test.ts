@@ -882,3 +882,58 @@ describe("líneas adicionales en el pago de facturas", () => {
     ).toMatch(/no tiene cuenta/);
   });
 });
+
+describe("saldos vigentes y RP detallado con varias líneas", () => {
+  it("un pago revisado a mano toma el saldo actual de la CxP (corregida en Siigo)", async () => {
+    const { refrescarSaldos } = await import("./egresos");
+    const m = mov({ valor: 12794123.45, relacion: "FE5258" });
+    const p = {
+      ...proponerEgreso(m, ctx()),
+      tipo: "pago_facturas" as const,
+      terceroNit: "900111222",
+      items: [
+        {
+          prefix: "FE",
+          consecutive: 5258,
+          quote: 1,
+          valor: 12794123.45,
+          factura: "FE-5258",
+          saldo: 12465623.45,
+        },
+      ],
+      paymentTypeId: "5638",
+    };
+    expect(erroresAntesDeEnviar(m, p).join(" ")).toMatch(/supera el saldo/);
+    const r = refrescarSaldos(p, [
+      { prefix: "FE", consecutive: 5258, quote: 1, balance: 12794123.45 },
+    ]);
+    expect(r.cambio).toBe(true);
+    expect(erroresAntesDeEnviar(m, r.propuesta)).toEqual([]);
+  });
+  it("RP detallado: débito principal + otras líneas (débito y crédito) + crédito al banco", () => {
+    const m = mov({ valor: 1926000, relacion: "Impuestos Importación", tercero: null });
+    const p = {
+      ...proponerEgreso(m, ctx()),
+      tipo: "detallado" as const,
+      terceroNit: "800197268",
+      cuentaBanco: "11100501",
+      cuentas: [
+        {
+          code: "24081003",
+          movimiento: "Debit" as const,
+          valor: 1626000,
+          descripcion: "IVA importación",
+        },
+        { code: "14350501", movimiento: "Debit" as const, valor: 320000, descripcion: "Arancel" },
+        { code: "42958101", movimiento: "Credit" as const, valor: 20000, descripcion: "Redondeo" },
+        { code: "11100501", movimiento: "Credit" as const, valor: 1926000, descripcion: "Pago" },
+      ],
+    };
+    expect(erroresAntesDeEnviar(m, p)).toEqual([]);
+    const malo = {
+      ...p,
+      cuentas: p.cuentas.map((c) => (c.code === "14350501" ? { ...c, valor: 300000 } : c)),
+    };
+    expect(erroresAntesDeEnviar(m, malo).join(" ")).toMatch(/no cuadran/);
+  });
+});

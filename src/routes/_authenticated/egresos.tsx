@@ -1042,7 +1042,13 @@ function EditarEgreso({
   const [nit, setNit] = useState(base.terceroNit ?? fila.tercero_nit ?? "");
   const [items, setItems] = useState<ItemPago[]>(base.items ?? []);
   // Líneas adicionales del pago de facturas: otras cuentas y valores para completar el RP.
-  const [lineas, setLineas] = useState<CuentaDetallada[]>(base.lineas ?? []);
+  const [lineas, setLineas] = useState<CuentaDetallada[]>(
+    base.lineas ??
+      // RP detallado ya guardado: [débito principal, ...otras líneas, crédito al banco].
+      (base.tipo === "detallado" && (base.cuentas ?? []).length > 2
+        ? base.cuentas.slice(1, -1)
+        : []),
+  );
   const [cuentaDebito, setCuentaDebito] = useState(
     base.cuentas?.find((c) => c.movimiento === "Debit")?.code ?? "",
   );
@@ -1074,6 +1080,8 @@ function EditarEgreso({
     0,
   );
   const suma = items.reduce((s, i) => s + Number(i.valor || 0), 0) + netoOtras;
+  // RP detallado: la cuenta débito principal lleva lo que no cubren las otras líneas.
+  const valorPrincipal = Math.round((valor - netoOtras) * 100) / 100;
 
   const onGuardar = async () => {
     setGuardando(true);
@@ -1085,10 +1093,22 @@ function EditarEgreso({
       terceroNombre: fila.tercero_nombre,
       items: tipo === "pago_facturas" ? items : [],
       lineas: tipo === "pago_facturas" ? lineas.filter((l) => l.code || Number(l.valor)) : null,
+      // RP detallado: débito principal por lo que no cubren las otras líneas, las otras
+      // líneas y el crédito al banco/caja por lo pagado.
       cuentas:
         tipo === "detallado" && cuentaDebito && cuentaBanco
           ? [
-              { code: cuentaDebito.trim(), movimiento: "Debit", valor, descripcion: desc },
+              ...(valorPrincipal > 0.009
+                ? [
+                    {
+                      code: cuentaDebito.trim(),
+                      movimiento: "Debit" as const,
+                      valor: valorPrincipal,
+                      descripcion: desc,
+                    },
+                  ]
+                : []),
+              ...lineas.filter((l) => l.code || Number(l.valor)),
               { code: cuentaBanco.trim(), movimiento: "Credit", valor, descripcion: desc },
             ]
           : [],
@@ -1322,86 +1342,13 @@ function EditarEgreso({
                   </div>
                 ) : null}
               </div>
-              <div className="mt-2 font-medium">
-                Otras líneas del recibo (cuentas y valores adicionales)
-              </div>
-              {lineas.map((l, i) => (
-                <div key={i} className="flex flex-wrap items-center gap-2">
-                  <div className="min-w-80 flex-1">
-                    <AccountCombobox
-                      accounts={puc}
-                      value={l.code}
-                      onChange={(code) =>
-                        setLineas((xs) => xs.map((x, j) => (j === i ? { ...x, code } : x)))
-                      }
-                      placeholder="Código o nombre de la cuenta…"
-                      className="h-7"
-                    />
-                  </div>
-                  <select
-                    className="h-7 rounded border bg-background px-1"
-                    value={l.movimiento}
-                    onChange={(e) =>
-                      setLineas((xs) =>
-                        xs.map((x, j) =>
-                          j === i ? { ...x, movimiento: e.target.value as "Debit" | "Credit" } : x,
-                        ),
-                      )
-                    }
-                  >
-                    <option value="Debit">Débito</option>
-                    <option value="Credit">Crédito</option>
-                  </select>
-                  <Input
-                    className="h-7 w-32"
-                    type="number"
-                    value={l.valor || ""}
-                    placeholder="Valor"
-                    onChange={(e) =>
-                      setLineas((xs) =>
-                        xs.map((x, j) => (j === i ? { ...x, valor: Number(e.target.value) } : x)),
-                      )
-                    }
-                  />
-                  <Input
-                    className="h-7 w-48"
-                    value={l.descripcion}
-                    placeholder="Descripción"
-                    onChange={(e) =>
-                      setLineas((xs) =>
-                        xs.map((x, j) => (j === i ? { ...x, descripcion: e.target.value } : x)),
-                      )
-                    }
-                  />
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 px-2 text-red-700"
-                    onClick={() => setLineas((xs) => xs.filter((_, j) => j !== i))}
-                  >
-                    Borrar
-                  </Button>
-                </div>
-              ))}
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7"
-                onClick={() =>
-                  setLineas((xs) => [
-                    ...xs,
-                    {
-                      code: "",
-                      movimiento: "Debit",
-                      // Por defecto, lo que falta para cuadrar el pago.
-                      valor: Math.max(0, Math.round((valor - suma) * 100) / 100),
-                      descripcion: String(fila.descripcion ?? "").slice(0, 100),
-                    },
-                  ])
-                }
-              >
-                + Agregar línea
-              </Button>
+              <EditorLineas
+                lineas={lineas}
+                setLineas={setLineas}
+                puc={puc}
+                faltante={valor - suma}
+                descripcion={String(fila.descripcion ?? "")}
+              />
               <div
                 className={Math.abs(suma - valor) > 0.009 ? "text-amber-700" : "text-emerald-700"}
               >
@@ -1446,6 +1393,21 @@ function EditarEgreso({
                   onChange={(e) => setCuentaBanco(e.target.value.replace(/\D/g, ""))}
                 />
               </label>
+              <div className="w-full space-y-1">
+                <EditorLineas
+                  lineas={lineas}
+                  setLineas={setLineas}
+                  puc={puc}
+                  faltante={0}
+                  descripcion={String(fila.descripcion ?? "")}
+                />
+                {lineas.length ? (
+                  <div className={valorPrincipal < -0.009 ? "text-amber-700" : "text-emerald-700"}>
+                    Cuenta débito principal {cuentaDebito || "—"}: {cop(valorPrincipal)} · otras
+                    líneas {cop(netoOtras)} · crédito {cuentaBanco || "banco"}: {cop(valor)}
+                  </div>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
@@ -1550,5 +1512,105 @@ function CuentasAjuste({
         </Button>
       </div>
     </div>
+  );
+}
+
+/** Líneas adicionales del recibo: cuenta, débito/crédito, valor y descripción; agregar y borrar. */
+function EditorLineas({
+  lineas,
+  setLineas,
+  puc,
+  faltante,
+  descripcion,
+}: {
+  lineas: CuentaDetallada[];
+  setLineas: React.Dispatch<React.SetStateAction<CuentaDetallada[]>>;
+  puc: PucOption[];
+  faltante: number;
+  descripcion: string;
+}) {
+  return (
+    <>
+      <div className="mt-2 font-medium">
+        Otras líneas del recibo (cuentas y valores adicionales)
+      </div>
+      {lineas.map((l, i) => (
+        <div key={i} className="flex flex-wrap items-center gap-2">
+          <div className="min-w-80 flex-1">
+            <AccountCombobox
+              accounts={puc}
+              value={l.code}
+              onChange={(code) =>
+                setLineas((xs) => xs.map((x, j) => (j === i ? { ...x, code } : x)))
+              }
+              placeholder="Código o nombre de la cuenta…"
+              className="h-7"
+            />
+          </div>
+          <select
+            className="h-7 rounded border bg-background px-1"
+            value={l.movimiento}
+            onChange={(e) =>
+              setLineas((xs) =>
+                xs.map((x, j) =>
+                  j === i ? { ...x, movimiento: e.target.value as "Debit" | "Credit" } : x,
+                ),
+              )
+            }
+          >
+            <option value="Debit">Débito</option>
+            <option value="Credit">Crédito</option>
+          </select>
+          <Input
+            className="h-7 w-32"
+            type="number"
+            value={l.valor || ""}
+            placeholder="Valor"
+            onChange={(e) =>
+              setLineas((xs) =>
+                xs.map((x, j) => (j === i ? { ...x, valor: Number(e.target.value) } : x)),
+              )
+            }
+          />
+          <Input
+            className="h-7 w-48"
+            value={l.descripcion}
+            placeholder="Descripción"
+            onChange={(e) =>
+              setLineas((xs) =>
+                xs.map((x, j) => (j === i ? { ...x, descripcion: e.target.value } : x)),
+              )
+            }
+          />
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-red-700"
+            onClick={() => setLineas((xs) => xs.filter((_, j) => j !== i))}
+          >
+            Borrar
+          </Button>
+        </div>
+      ))}
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7"
+        onClick={() =>
+          setLineas((xs) => [
+            ...xs,
+            {
+              code: "",
+              movimiento: "Debit",
+              // Por defecto, lo que falta para cuadrar el pago.
+              valor: Math.max(0, Math.round(faltante * 100) / 100),
+              descripcion: descripcion.slice(0, 100),
+            },
+          ])
+        }
+      >
+        + Agregar línea
+      </Button>
+    </>
   );
 }
