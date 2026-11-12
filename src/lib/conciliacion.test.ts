@@ -295,3 +295,31 @@ describe("lectores", () => {
     ]);
   });
 });
+
+describe("un pago registrado en varios recibos y comisiones del exterior", () => {
+  it("completa la diferencia por comprobante con otro RP del mismo tercero y cruza 1 banco : N libros", () => {
+    const r = conciliar({
+      banco: [
+        b("b1", "2026-10-08", "PAGO A PROVE ANA LOPEZ C", -1500000, ["RP-4-10"]),
+        b("b2", "2026-10-09", "PAGO A PROVE SALUD EJEMPLO S", -141750),
+        b("b3", "2026-10-08", "COMIS SWIFT GIRO VTA MDA EXT", -104000),
+      ],
+      libros: [
+        l("l1", "2026-10-08", "RP-4-10", -600000, "Ana Lopez Cano"),
+        l("l2", "2026-10-08", "RP-4-11", -900000, "Ana Lopez Cano"),
+        l("l3", "2026-10-09", "RP-4-12", -70875, "Salud Ejemplo SAS"),
+        l("l4", "2026-10-12", "RP-4-13", -70875, "Salud Ejemplo SAS"),
+        l("l5", "2026-10-31", "RP-4-99", -104000, "BANCO"),
+      ],
+      comprobantesGastosBancarios: ["RP-4-99"],
+    });
+    expect(r.diferencias).toHaveLength(0);
+    expect(r.faltaEnLibros).toHaveLength(0);
+    expect(r.sobraEnLibros).toHaveLength(0);
+    expect(r.conciliados.map((c) => c.libros.map((x) => x.comprobante).join("+")).sort()).toEqual([
+      "RP-4-10+RP-4-11",
+      "RP-4-12+RP-4-13",
+      "RP-4-99",
+    ]);
+  });
+});
