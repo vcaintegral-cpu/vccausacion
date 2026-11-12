@@ -232,6 +232,13 @@
       "when": 1794489515796,
       "tag": "0032_conciliacion_registros",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794495349564,
+      "tag": "0033_conciliacion_registros",
+      "breakpoints": true
     }
   ]
 }
