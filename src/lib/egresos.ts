@@ -55,6 +55,10 @@ export type ItemPago = {
   valor: number;
   factura: string | null;
   saldo: number;
+  /** Fecha de vencimiento de la CxP (yyyy-MM-dd): Siigo la exige al cruzarla en un RP detallado. */
+  vence?: string | null;
+  /** El vencimiento ya no está en las CxP sincronizadas de Siigo (pagado o reidentificado). */
+  noVigente?: boolean;
 };
 export type CuentaDetallada = {
   code: string;
@@ -762,6 +766,7 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
           valor: v,
           factura: e.ref.texto,
           saldo: e.cxp.balance,
+          vence: e.cxp.dueDate,
         });
         const declaradoAbono = /ABONO|PARCIAL/.test(
           normalizar([m.aplicacion, m.observaciones].join(" ")),
@@ -908,7 +913,12 @@ export function payloadRecibo(
     // es un saldo a favor), el ajuste y el crédito al banco por lo pagado.
     const items: Array<Record<string, unknown>> = p.items.map((i) => ({
       account: { code: String(p.cuentaCxp ?? ""), movement: i.valor >= 0 ? "Debit" : "Credit" },
-      due: { prefix: i.prefix, consecutive: i.consecutive, quote: i.quote },
+      due: {
+        prefix: i.prefix,
+        consecutive: i.consecutive,
+        quote: i.quote,
+        ...(i.vence ? { date: String(i.vence).slice(0, 10) } : {}),
+      },
       description: `Pago ${i.factura ?? `${i.prefix}-${i.consecutive}`}`.slice(0, 100),
       value: roundCOP(Math.abs(i.valor)),
     }));
@@ -1017,9 +1027,21 @@ export function erroresAntesDeEnviar(
     }
     if (ajuste && !p.ajuste?.cuenta) e.push("Falta la cuenta del ajuste al peso.");
     if (anticipo && !p.anticipo?.cuenta) e.push("Falta la cuenta de anticipos a proveedores.");
+    if ((ajuste || anticipo || (p.lineas ?? []).length) && p.items.some((i) => !i.vence))
+      e.push(
+        "Falta la fecha de vencimiento de una factura (Siigo la exige en el recibo detallado): sincroniza las CxP y vuelve a proponer.",
+      );
     if (ajuste || anticipo || (p.lineas ?? []).length) {
       if (!p.cuentaCxp) e.push("Falta la cuenta por pagar que se cruza en el recibo detallado.");
       if (!p.cuentaBanco) e.push("Falta la cuenta de banco/caja del recibo detallado.");
+    }
+    for (const i of p.items) {
+      if (Math.abs(Number(i.valor)) < 0.01)
+        e.push(`${i.factura ?? `${i.prefix}-${i.consecutive}`}: quita la factura con valor 0.`);
+      if (i.noVigente)
+        e.push(
+          `${i.factura ?? `${i.prefix}-${i.consecutive}`} (${i.prefix}-${i.consecutive}) ya no está en las cuentas por pagar de Siigo: vuelve a elegir la factura.`,
+        );
     }
     for (const i of p.items)
       if (i.valor > i.saldo + 0.009)
@@ -1162,18 +1184,35 @@ export function payloadReciboAgrupado(
  */
 export function refrescarSaldos(
   p: Propuesta,
-  cxp: Array<Pick<CuentaPorPagar, "prefix" | "consecutive" | "quote" | "balance">>,
+  cxp: Array<
+    Pick<CuentaPorPagar, "prefix" | "consecutive" | "quote" | "balance"> & {
+      dueDate?: string | null;
+    }
+  >,
 ): { propuesta: Propuesta; cambio: boolean } {
   if (p.tipo !== "pago_facturas" || !p.items?.length) return { propuesta: p, cambio: false };
-  const saldo = new Map(
-    cxp.map((c) => [`${c.prefix}|${c.consecutive}|${c.quote}`, Number(c.balance)]),
-  );
+  const vigente = new Map(cxp.map((c) => [`${c.prefix}|${c.consecutive}|${c.quote}`, c]));
   let cambio = false;
-  const items = p.items.map((i) => {
-    const actual = saldo.get(`${i.prefix}|${i.consecutive}|${i.quote}`);
-    if (actual == null || Math.abs(actual - Number(i.saldo)) < 0.005) return i;
-    cambio = true;
-    return { ...i, saldo: actual };
-  });
+  // Las facturas con valor 0 sobran (Siigo las rechaza: «invalid_amount»).
+  const items = p.items
+    .filter((i) => {
+      if (Math.abs(Number(i.valor)) >= 0.01) return true;
+      cambio = true;
+      return false;
+    })
+    .map((i) => {
+      const c = vigente.get(`${i.prefix}|${i.consecutive}|${i.quote}`);
+      if (!c) {
+        if (i.noVigente) return i;
+        cambio = true;
+        return { ...i, noVigente: true };
+      }
+      const saldo = Number(c.balance);
+      const vence = c.dueDate ?? i.vence ?? null;
+      if (Math.abs(saldo - Number(i.saldo)) < 0.005 && vence === (i.vence ?? null) && !i.noVigente)
+        return i;
+      cambio = true;
+      return { ...i, saldo, vence, noVigente: false };
+    });
   return { propuesta: cambio ? { ...p, items } : p, cambio };
 }

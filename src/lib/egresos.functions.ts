@@ -232,7 +232,13 @@ export const egresosAprobar = createServerFn({ method: "POST" })
     return { cambiados: (filas ?? []).length };
   });
 
-type ResultadoEnvio = { ok: boolean; siigoNombre: string | null; message: string };
+type ResultadoEnvio = {
+  ok: boolean;
+  siigoNombre: string | null;
+  message: string;
+  /** Rechazo de validación (de la herramienta o de Siigo 4xx): propio de ese recibo. */
+  validacion?: boolean;
+};
 
 /**
  * Crea en Siigo el recibo de pago/egreso de un egreso aprobado. Una sola vez: bloqueo
@@ -280,10 +286,10 @@ export const egresosEnviar = createServerFn({ method: "POST" })
     if (errores.length) {
       await db
         .from("egresos")
-        .update({ estado: "por_revisar", motivos: errores })
+        .update({ estado: "por_revisar", motivos: errores, propuesta: p as never })
         .eq("id", f.id)
         .is("siigo_id", null);
-      return { ok: false, siigoNombre: null, message: errores.join(" ") };
+      return { ok: false, siigoNombre: null, message: errores.join(" "), validacion: true };
     }
 
     const { siigoGet, siigoPost, siigoUseCompany } = await import("./siigo.server");
@@ -1063,6 +1069,7 @@ export const egresosReplicar = createServerFn({ method: "POST" })
               valor: v,
               factura: c.factura_proveedor,
               saldo: c.balance,
+              vence: c.due_date,
             });
             c.disponible = Math.round((c.disponible - v) * 100) / 100;
             restante = Math.round((restante - v) * 100) / 100;

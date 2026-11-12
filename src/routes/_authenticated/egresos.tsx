@@ -399,9 +399,14 @@ function Egresos() {
     let detenido = false;
     for (const [i, id] of ids.entries()) {
       let exito = false;
+      // Un rechazo de validación de Siigo (400, 404, 409, 422) es propio de ese recibo: no
+      // cuenta para detener el envío. Sí cuentan los errores generales (red, 401, 5xx).
+      let general = true;
       try {
         const r = await enviar({ data: { egresoId: id } });
         exito = r.ok;
+        if (!r.ok && (r.validacion || /respondi[oó] (400|404|409|422)/.test(r.message)))
+          general = false;
       } catch {
         exito = false;
       }
@@ -410,7 +415,7 @@ function Egresos() {
         seguidos = 0;
       } else {
         errores += 1;
-        seguidos += 1;
+        seguidos = general ? seguidos + 1 : 0;
       }
       setEnviando({ hechos: i + 1, total: ids.length });
       if (seguidos >= 3) {
@@ -1323,6 +1328,7 @@ function EditarEgreso({
                                     valor: Math.min(Number(c.balance), Math.max(0, valor - suma)),
                                     factura: c.factura_proveedor,
                                     saldo: Number(c.balance),
+                                    vence: c.due_date,
                                   },
                                 ]
                               : xs.filter((x) => `${x.prefix}-${x.consecutive}-${x.quote}` !== k),
