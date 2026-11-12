@@ -218,6 +218,13 @@
       "when": 1794484955679,
       "tag": "0030_conciliacion_ajustes",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1794487638375,
+      "tag": "0031_restrict_retention_bases_read",
+      "breakpoints": true
     }
   ]
 }
