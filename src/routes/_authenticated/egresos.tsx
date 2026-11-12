@@ -16,6 +16,8 @@ import { useActiveCompany } from "@/lib/active-company";
 import { EmptyCompany } from "@/components/app-shell";
 import { usePerfilActivo } from "@/empresas/use-perfil";
 import { ComprasPorPagarPanel } from "@/components/compras-por-pagar-panel";
+import { AccountCombobox, type PucOption } from "@/components/account-combobox";
+import { TerceroCombobox, type TerceroOption } from "@/components/tercero-combobox";
 import { cop, fecha } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -201,6 +203,44 @@ function Egresos() {
         .limit(5000);
       if (error) throw error;
       return data;
+    },
+  });
+  // Terceros y PUC de la empresa para buscar por NIT/nombre y por código/nombre de cuenta.
+  const catalogos = useQuery({
+    queryKey: ["egresos-catalogos", companyId],
+    enabled: !!companyId,
+    staleTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      const leer = async <T,>(
+        consulta: (a: number, b: number) => PromiseLike<{ data: unknown }>,
+      ) => {
+        const out: T[] = [];
+        for (let a = 0; ; a += 1000) {
+          const { data } = await consulta(a, a + 999);
+          out.push(...((data ?? []) as T[]));
+          if (((data ?? []) as T[]).length < 1000) break;
+        }
+        return out;
+      };
+      const [terceros, puc] = await Promise.all([
+        leer<TerceroOption>((a, b) =>
+          supabase
+            .from("providers")
+            .select("nit, name")
+            .eq("company_id", companyId!)
+            .order("name")
+            .range(a, b),
+        ),
+        leer<PucOption>((a, b) =>
+          supabase
+            .from("puc_accounts")
+            .select("code, name, active, level, parent_code, has_children, is_movement")
+            .eq("company_id", companyId!)
+            .order("code")
+            .range(a, b),
+        ),
+      ]);
+      return { terceros: terceros.filter((t) => t.nit && t.name), puc };
     },
   });
   const leerAjustes = useServerFn(egresosCuentasAjuste);
@@ -904,6 +944,8 @@ function Egresos() {
           cxp={(cxp.data ?? []) as Cxp[]}
           pendientes={lista}
           tope={ajustesEmpresa.data?.tope ?? 1000}
+          terceros={catalogos.data?.terceros ?? []}
+          puc={catalogos.data?.puc ?? []}
           onClose={() => setEditando(null)}
           onSaved={() => {
             setEditando(null);
@@ -960,6 +1002,8 @@ function EditarEgreso({
   cxp,
   pendientes,
   tope,
+  terceros,
+  puc,
   onClose,
   onSaved,
 }: {
@@ -968,6 +1012,8 @@ function EditarEgreso({
   pendientes: Fila[];
   /** Tope del ajuste al peso de la empresa. */
   tope: number;
+  terceros: TerceroOption[];
+  puc: PucOption[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -1185,13 +1231,9 @@ function EditarEgreso({
                 ))}
               </select>
             </label>
-            <label className="flex items-center gap-1">
-              NIT del tercero
-              <Input
-                className="h-7 w-36"
-                value={nit}
-                onChange={(e) => setNit(e.target.value.replace(/[^\d]/g, ""))}
-              />
+            <label className="flex min-w-80 items-center gap-1">
+              Tercero
+              <TerceroCombobox terceros={terceros} value={nit} onChange={(n) => setNit(n)} />
             </label>
           </div>
 
@@ -1289,13 +1331,14 @@ function EditarEgreso({
 
           {tipo === "detallado" ? (
             <div className="flex flex-wrap gap-3">
-              <label className="flex items-center gap-1">
+              <label className="flex min-w-96 items-center gap-1">
                 Cuenta débito
-                <Input
-                  className="h-7 w-32"
+                <AccountCombobox
+                  accounts={puc}
                   value={cuentaDebito}
-                  onChange={(e) => setCuentaDebito(e.target.value.replace(/\D/g, ""))}
-                  placeholder="p. ej. 53051501"
+                  onChange={(code) => setCuentaDebito(code)}
+                  placeholder="Código o nombre de la cuenta…"
+                  className="h-7"
                 />
               </label>
               <label className="flex items-center gap-1">
