@@ -67,6 +67,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-11",
   },
+  reporte_conciliacion_firma: {
+    descripcion:
+      "Conciliación bancaria: descarga un Excel por cuenta en el formato de la firma («Reporte Conciliación» con resumen, movimiento del mes, partidas del extracto y de libros, resumen por tipo, gastos bancarios y firmas, y la hoja de trabajo con columnas D y E y fórmulas), que se vuelve a leer el mes siguiente",
+    porDefecto: false,
+    agregada: "2026-11-12",
+  },
   pasarelas_pago: {
     descripcion:
       "Conciliación bancaria: lee las hojas de las pasarelas de pago (Bold, Wompi…) del reporte mensual, cruza cada cobro con su RC y con el abono neto del banco, y propone el RP mensual de comisiones y retenciones contra la factura de la plataforma",

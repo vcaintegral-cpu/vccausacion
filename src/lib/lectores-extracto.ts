@@ -417,7 +417,7 @@ function leerReporteConciliacion(filas: unknown[][]): {
   for (const f of filas) {
     const t = textoFila(f);
     if (
-      /PARTIDAS DEL EXTRACTO QUE NO|EXTRACTO QUE NO ESTAN|PLANILLA QUE FALTAN EN EL AUXILIAR/.test(
+      /PARTIDAS DEL EXTRACTO QUE NO|EXTRACTO QUE NO ESTAN|PLANILLA QUE FALTAN EN EL AUXILIAR|PLANILLA QUE NO ESTAN/.test(
         t,
       )
     ) {

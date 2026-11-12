@@ -17,6 +17,7 @@ import type {
 import type { ItemPago } from "@/lib/egresos";
 import type { TransaccionPasarela } from "@/lib/pasarelas";
 import type { BalanceCuenta } from "@/lib/siigo-movimiento.server";
+import type { CxpAbierta } from "@/lib/cxp-sugerencias";
 
 /** Detalle de un registro en lote: tipo de líneas y cada movimiento agrupado. */
 export type LoteDetalle = {
@@ -62,6 +63,10 @@ export type FuentesConciliacion = {
    * del mes (cruzan con las partidas pendientes del corte anterior).
    */
   librosAnteriores: LineaAuxiliar[];
+  /** Cuentas por pagar vivas (sincronizadas de Siigo) para proponer el RP de pago de facturas. */
+  cxp: CxpAbierta[];
+  /** Fecha de la última sincronización de las CxP con Siigo. */
+  cxpLeidas: string | null;
   /** Notas de la usuaria en las partidas de la conciliación guardada de este mes (por clave). */
   notas: Record<string, string>;
   /** Extractos en PDF de la bandeja (se leen en el navegador). */
@@ -705,7 +710,45 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
       for (const p of (c.partidas ?? []) as PartidaConciliatoria[])
         if (p.nota) notas[clavePartida(p)] = p.nota;
 
+    // Cuentas por pagar vivas (última sincronización con Siigo).
+    const { data: cxpDb } = await db
+      .from("siigo_cuentas_por_pagar")
+      .select(
+        "prefix, consecutive, quote, balance, due_date, provider_nit, provider_name, factura_proveedor, synced_at",
+      )
+      .eq("company_id", data.companyId)
+      .gt("balance", 0)
+      .limit(3000);
+    const filasCxp = (cxpDb ?? []) as Array<{
+      prefix: string;
+      consecutive: number;
+      quote: number;
+      balance: number;
+      due_date: string | null;
+      provider_nit: string | null;
+      provider_name: string | null;
+      factura_proveedor: string | null;
+      synced_at: string | null;
+    }>;
+    const cxp: CxpAbierta[] = filasCxp.map((c) => ({
+      prefix: c.prefix,
+      consecutive: Number(c.consecutive),
+      quote: Number(c.quote ?? 1),
+      balance: Number(c.balance),
+      dueDate: c.due_date ? String(c.due_date).slice(0, 10) : null,
+      providerNit: c.provider_nit,
+      providerName: c.provider_name,
+      factura: c.factura_proveedor,
+    }));
+    const cxpLeidas =
+      filasCxp
+        .map((c) => c.synced_at ?? "")
+        .sort()
+        .at(-1) || null;
+
     return {
+      cxp,
+      cxpLeidas,
       librosAnteriores,
       notas,
       cuentas,
@@ -1949,4 +1992,146 @@ export const conciliacionRegistrarLote = createServerFn({ method: "POST" })
         .is("siigo_id", null);
       return { ok: false, mensaje: msg };
     }
+  });
+
+/**
+ * Salida del extracto sin RP que paga facturas abiertas del proveedor: crea en Egresos y pagos
+ * el RP de pago de facturas (abono a cada vencimiento de la CxP, forma de pago del banco),
+ * aprobado para enviarlo con egresosEnviar. Valida los saldos vigentes de las CxP.
+ */
+export const conciliacionRegistrarRpFacturas = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: {
+      companyId: string;
+      periodo: string;
+      cuenta: string;
+      mov: { fecha: string; descripcion: string; valor: number };
+      terceroNit: string;
+      terceroNombre: string | null;
+      items: Array<{
+        prefix: string;
+        consecutive: number;
+        quote: number;
+        factura: string | null;
+        valor: number;
+      }>;
+    }) => {
+      if (!input?.companyId || !/^\d{4}-\d{2}$/.test(input.periodo ?? ""))
+        throw new Error("Empresa y mes requeridos.");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(input.mov?.fecha ?? "") || !(Number(input.mov.valor) < 0))
+        throw new Error("Solo las salidas del banco pagan facturas.");
+      if (!input.items?.length || input.items.some((i) => !(Number(i.valor) > 0)))
+        throw new Error("Faltan las facturas a pagar.");
+      return input;
+    },
+  )
+  .handler(async ({ data, context }) => {
+    const db = context.supabase;
+    const { data: banco } = await db
+      .from("egreso_reglas")
+      .select("cuenta_banco, payment_type_id")
+      .eq("company_id", data.companyId)
+      .eq("clase", "banco")
+      .ilike("patron", data.cuenta)
+      .maybeSingle();
+    const regla = banco as { cuenta_banco: string | null; payment_type_id: string | null } | null;
+    if (!regla?.payment_type_id)
+      throw new Error(
+        `La cuenta ${data.cuenta} no tiene forma de pago de Siigo (Egresos y pagos → origen del pago).`,
+      );
+    const valor = Math.round(Math.abs(Number(data.mov.valor)) * 100) / 100;
+    const suma = Math.round(data.items.reduce((t, i) => t + Number(i.valor), 0) * 100) / 100;
+    if (Math.abs(suma - valor) > 0.009)
+      throw new Error(`Las facturas suman ${suma} y el pago es ${valor}.`);
+    const { saldosVigentes, cargarAjustes } = await import("./egresos.server");
+    const vigentes = await saldosVigentes(db, data.companyId, data.items);
+    const items = data.items.map((i) => {
+      const v = vigentes.find(
+        (c) =>
+          c.prefix === i.prefix &&
+          c.consecutive === Number(i.consecutive) &&
+          c.quote === Number(i.quote),
+      );
+      if (!v)
+        throw new Error(
+          `${i.factura ?? `${i.prefix}-${i.consecutive}`} ya no está en las CxP de Siigo: sincroniza las CxP.`,
+        );
+      if (Number(i.valor) > v.balance + 0.009)
+        throw new Error(
+          `${i.factura ?? `${i.prefix}-${i.consecutive}`}: el valor supera el saldo en Siigo.`,
+        );
+      return {
+        prefix: i.prefix,
+        consecutive: Number(i.consecutive),
+        quote: Number(i.quote),
+        valor: Math.round(Number(i.valor) * 100) / 100,
+        factura: i.factura,
+        saldo: v.balance,
+        vence: v.dueDate,
+      };
+    });
+    const aj = await cargarAjustes(db, data.companyId);
+    const huella = [...data.mov.descripcion].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+    const clave = `conciliacion|${data.cuenta.toUpperCase()}|${data.mov.fecha}|${valor.toFixed(2)}|${huella.toString(36)}`;
+    const { data: prev } = await db
+      .from("egresos")
+      .select("id, siigo_id, siigo_nombre, estado")
+      .eq("company_id", data.companyId)
+      .eq("clave", clave)
+      .maybeSingle();
+    if (prev?.siigo_id)
+      return {
+        id: prev.id,
+        estado: prev.estado,
+        mensaje: `Ya está en Siigo (${prev.siigo_nombre}).`,
+      };
+    if (prev && ["enviando", "enviado"].includes(prev.estado))
+      throw new Error("Ese recibo se está enviando; espera el resultado.");
+    const nit = String(data.terceroNit).replace(/\D/g, "");
+    const propuesta = {
+      tipo: "pago_facturas",
+      terceroNit: nit,
+      terceroNombre: data.terceroNombre,
+      items,
+      cuentas: [],
+      paymentTypeId: regla.payment_type_id,
+      cuentaBanco: regla.cuenta_banco,
+      listo: true,
+      motivos: [],
+      notas: ["Registrado desde la conciliación bancaria contra las CxP de Siigo."],
+      cuentaCxp: aj.cxp,
+    };
+    const fila = {
+      company_id: data.companyId,
+      period: data.periodo,
+      clave,
+      origen: "conciliacion",
+      origen_archivo: null,
+      fecha: data.mov.fecha,
+      valor,
+      cuenta_etiqueta: data.cuenta,
+      descripcion: data.mov.descripcion,
+      relacion: items.map((i) => i.factura ?? `${i.prefix}-${i.consecutive}`).join(", "),
+      aplicacion: null,
+      observaciones: null,
+      tercero_nit: nit,
+      tercero_nombre: data.terceroNombre,
+      tipo: "pago_facturas",
+      propuesta: propuesta as never,
+      estado: "aprobado",
+      motivos: [],
+      editado_por_usuaria: true,
+    };
+    const { data: g, error } = prev
+      ? await db
+          .from("egresos")
+          .update(fila)
+          .eq("id", prev.id)
+          .is("siigo_id", null)
+          .select("id, estado")
+          .single()
+      : await db.from("egresos").insert(fila).select("id, estado").single();
+    if (error || !g) throw new Error(error?.message ?? "No se pudo guardar el recibo.");
+    return { id: g.id, estado: g.estado, mensaje: "Recibo de pago de facturas listo." };
   });
