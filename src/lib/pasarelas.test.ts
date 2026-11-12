@@ -5,7 +5,9 @@ import {
   ajustesAlPeso,
   armarConciliacion,
   conciliar,
+  detectarCuentaErrada,
   payloadAjusteAlPeso,
+  payloadReclasificacion,
   type MovBanco,
 } from "./conciliacion";
 import { compararExtractos, leerExtractoPdf, type ItemPdf } from "./extracto-pdf";
@@ -483,5 +485,104 @@ describe("ajustes al peso y extractos PDF", () => {
       creditos: 200,
       saldoFinal: 1300,
     });
+  });
+});
+
+describe("RC/RP en otra cuenta bancaria", () => {
+  it("detecta el recibo en la cuenta errada, arma la reclasificación y, enviada, ambas cuentas cruzan", () => {
+    const corriente = conciliar({
+      banco: [b("c1", "2026-10-10", "PAGO DE PROV CLIENTE DOS", 250000)],
+      libros: [],
+    });
+    const ahorros = conciliar({
+      banco: [],
+      libros: [
+        {
+          id: "a1",
+          fecha: "2026-10-10",
+          comprobante: "RC-1-77",
+          tercero: "CLIENTE DOS",
+          terceroNit: "800000002",
+          descripcion: null,
+          valor: 250000,
+        },
+        {
+          id: "a2",
+          fecha: "2026-10-12",
+          comprobante: "RP-4-88",
+          tercero: "OTRO",
+          descripcion: null,
+          valor: -90000,
+        },
+      ],
+    });
+    const r = detectarCuentaErrada([
+      { etiqueta: "CORRIENTE", cuentaContable: "11100501", resultado: corriente },
+      { etiqueta: "AHORROS", cuentaContable: "11200501", resultado: ahorros },
+    ]);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({
+      comprobante: "RC-1-77",
+      desde: { etiqueta: "AHORROS" },
+      hacia: { etiqueta: "CORRIENTE" },
+      criterio: "Mismo valor y fecha en el extracto de CORRIENTE",
+    });
+    const p = payloadReclasificacion({
+      documentId: 1,
+      fecha: "2026-10-10",
+      valor: 250000,
+      cuentaErrada: "11200501",
+      cuentaCorrecta: "11100501",
+      terceroNit: "800000002",
+      descripcion: "Reclasificación",
+      referencia: "x",
+    });
+    expect(
+      (p["items"] as Array<{ account: { code: string; movement: string } }>).map((i) => [
+        i.account.code,
+        i.account.movement,
+      ]),
+    ).toEqual([
+      ["11100501", "Debit"],
+      ["11200501", "Credit"],
+    ]);
+    // Enviada (CC-1-5): en Ahorros anula el RC; en Corriente cruza con el abono.
+    const ah2 = conciliar({
+      banco: [],
+      libros: [
+        {
+          id: "a1",
+          fecha: "2026-10-10",
+          comprobante: "RC-1-77",
+          tercero: null,
+          descripcion: null,
+          valor: 250000,
+        },
+        {
+          id: "x",
+          fecha: "2026-10-10",
+          comprobante: "CC-1-5",
+          tercero: null,
+          descripcion: null,
+          valor: -250000,
+        },
+      ],
+      reclasificaciones: [{ comprobante: "CC-1-5", origen: "RC-1-77" }],
+    });
+    expect(ah2.sobraEnLibros).toHaveLength(0);
+    const co2 = conciliar({
+      banco: [b("c1", "2026-10-10", "PAGO DE PROV CLIENTE DOS", 250000)],
+      libros: [
+        {
+          id: "y",
+          fecha: "2026-10-10",
+          comprobante: "CC-1-5",
+          tercero: null,
+          descripcion: null,
+          valor: 250000,
+        },
+      ],
+    });
+    expect(co2.conciliados).toHaveLength(1);
   });
 });

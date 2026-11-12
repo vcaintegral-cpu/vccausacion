@@ -1,13 +1,16 @@
--- Conciliación bancaria (todas las empresas): ajustes al peso enviados a Siigo como
--- comprobante contable desde la conciliación (diferencia entre el RC/RP y el banco dentro
--- del tope). Uno por diferencia (clave estable); con identidad de Siigo no se modifica,
--- no se borra ni se reenvía.
+-- Conciliación bancaria (todas las empresas): comprobantes contables enviados a Siigo desde
+-- la conciliación:
+--   ajuste_peso: diferencia entre el RC/RP y el banco dentro del tope;
+--   reclasificacion: RC/RP registrado en otra cuenta bancaria (de cuenta_banco a cuenta_ajuste).
+-- Uno por clave estable; con identidad de Siigo no se modifica, no se borra ni se reenvía.
 CREATE TABLE IF NOT EXISTS public.conciliacion_ajustes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id uuid NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
   periodo text NOT NULL,
   cuenta_etiqueta text NOT NULL,
   clave text NOT NULL,
+  tipo text NOT NULL DEFAULT 'ajuste_peso' CHECK (tipo IN ('ajuste_peso', 'reclasificacion')),
+  cuenta_destino_etiqueta text,
   fecha date NOT NULL,
   valor numeric(18,2) NOT NULL,
   cuenta_banco text NOT NULL,

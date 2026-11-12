@@ -22,6 +22,7 @@ import {
   ajustesAlPeso,
   armarConciliacion,
   conciliar,
+  detectarCuentaErrada,
   diferenciaSinExplicar,
   fechaAuxiliar,
   partidasAlCorte,
@@ -53,6 +54,7 @@ import {
   conciliacionGuardar,
   conciliacionGuardarCuentasPasarela,
   conciliacionMovimientoSiigo,
+  conciliacionReclasificar,
   type FuentesConciliacion,
 } from "@/lib/conciliacion.functions";
 import type { BalanceCuenta } from "@/lib/siigo-movimiento.server";
@@ -153,6 +155,7 @@ function Conciliacion() {
   const guardar = useServerFn(conciliacionGuardar);
   const traerSiigo = useServerFn(conciliacionMovimientoSiigo);
   const enviarAjuste = useServerFn(conciliacionEnviarAjuste);
+  const reclasificar = useServerFn(conciliacionReclasificar);
   const crearRpPasarela = useServerFn(conciliacionCrearRpPasarela);
   const guardarCuentasPas = useServerFn(conciliacionGuardarCuentasPasarela);
   const puc = useQuery({
@@ -319,7 +322,7 @@ function Conciliacion() {
         rpEnviados: fuentes.rpEnviados,
         rcApi: fuentes.rcApi,
         ajustesEnviados: fuentes.ajustes
-          .filter((a) => a.siigoNombre)
+          .filter((a) => a.siigoNombre && a.tipo !== "reclasificacion")
           .map((a) => ({
             id: `aj-${a.clave}`,
             fecha: a.fecha,
@@ -331,6 +334,33 @@ function Conciliacion() {
             cuenta: a.cuenta,
             ajusta: a.origen ?? "",
           })),
+        // Reclasificación enviada: sale de la cuenta errada (anula el RC/RP) y entra a la correcta.
+        reclasificacionesEnviadas: fuentes.ajustes
+          .filter((a) => a.siigoNombre && a.tipo === "reclasificacion" && a.cuentaDestino)
+          .flatMap((a) => [
+            {
+              id: `rcl-d-${a.clave}`,
+              fecha: a.fecha,
+              comprobante: a.siigoNombre!,
+              tercero: null,
+              descripcion: `Reclasificación de ${a.origen ?? ""} a ${a.cuentaDestino}`,
+              valor: -a.valor,
+              origen: "herramienta" as const,
+              cuenta: a.cuenta,
+              ajusta: a.origen ?? "",
+            },
+            {
+              id: `rcl-h-${a.clave}`,
+              fecha: a.fecha,
+              comprobante: a.siigoNombre!,
+              tercero: null,
+              descripcion: `Reclasificación de ${a.origen ?? ""} desde ${a.cuenta}`,
+              valor: a.valor,
+              origen: "herramienta" as const,
+              cuenta: a.cuentaDestino,
+              ajusta: "",
+            },
+          ]),
         previas: previasDe(c.etiqueta),
         pasarelas: fuentes.pasarelas.map((p) => p.plataforma),
       });
@@ -367,6 +397,17 @@ function Conciliacion() {
       };
     });
   }, [fuentes, base, pasarelas, anteriorSubida, auxiliar, saldosLibros, periodo]);
+
+  // RC/RP registrados en otra cuenta bancaria (aún sin reclasificar en Siigo).
+  const cuentaErrada = useMemo(() => {
+    const hechas = new Set(
+      (fuentes?.ajustes ?? [])
+        .filter((a) => a.tipo === "reclasificacion" && (a.siigoNombre || a.estado === "enviando"))
+        .map((a) => a.clave),
+    );
+    return detectarCuentaErrada(calculos).filter((r) => !hechas.has(r.clave));
+  }, [calculos, fuentes]);
+  const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
 
   if (!companyId) return <EmptyCompany />;
 
@@ -498,6 +539,23 @@ function Conciliacion() {
       const r = await enviarAjuste({ data: { companyId, periodo, cuenta, ajuste: a } });
       if (r.ok) toast.success(r.mensaje);
       else toast.error(r.mensaje);
+      mFuentes.mutate();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnviando(null);
+    }
+  };
+  const onReclasificar = async () => {
+    const items = cuentaErrada.filter((r) => marcadas.has(r.clave));
+    if (!items.length) return;
+    setEnviando("reclasificar");
+    try {
+      const { resultados } = await reclasificar({ data: { companyId, periodo, items } });
+      const ok = resultados.filter((r) => r.ok).length;
+      if (ok) toast.success(`${ok} recibo(s) reclasificado(s) en Siigo.`);
+      for (const r of resultados.filter((x) => !x.ok)) toast.error(r.mensaje);
+      setMarcadas(new Set());
       mFuentes.mutate();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -997,6 +1055,100 @@ function Conciliacion() {
             </Button>
           </div>
 
+          {cuentaErrada.length || fuentes.ajustes.some((a) => a.tipo === "reclasificacion") ? (
+            <div className="space-y-2 rounded-lg border bg-card p-3 text-xs">
+              <div className="font-semibold">RC/RP registrados en otra cuenta bancaria</div>
+              <div className="text-muted-foreground">
+                El recibo está en los libros de una cuenta sin su movimiento en el extracto, y el
+                movimiento está en el extracto de otra cuenta sin registro. Al reclasificar se crea
+                en Siigo un comprobante contable por recibo que pasa el valor a la cuenta correcta
+                (con el tercero del recibo); el RC/RP original no se modifica.
+              </div>
+              {cuentaErrada.length ? (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={cuentaErrada.every((r) => marcadas.has(r.clave))}
+                        onChange={(e) =>
+                          setMarcadas(
+                            e.target.checked
+                              ? new Set(cuentaErrada.map((r) => r.clave))
+                              : new Set(),
+                          )
+                        }
+                      />
+                      Seleccionar todos ({cuentaErrada.length})
+                    </label>
+                    <Button
+                      size="sm"
+                      onClick={() => void onReclasificar()}
+                      disabled={
+                        !cuentaErrada.some((r) => marcadas.has(r.clave)) ||
+                        enviando === "reclasificar"
+                      }
+                    >
+                      {enviando === "reclasificar" ? (
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="mr-1 h-4 w-4" />
+                      )}
+                      Reclasificar seleccionados en Siigo (
+                      {cuentaErrada.filter((r) => marcadas.has(r.clave)).length})
+                    </Button>
+                  </div>
+                  <div className="max-h-80 overflow-auto rounded border">
+                    {cuentaErrada.map((r) => (
+                      <label key={r.clave} className="flex items-center gap-2 border-b px-2 py-1">
+                        <input
+                          type="checkbox"
+                          checked={marcadas.has(r.clave)}
+                          onChange={(e) =>
+                            setMarcadas((x) => {
+                              const n = new Set(x);
+                              if (e.target.checked) n.add(r.clave);
+                              else n.delete(r.clave);
+                              return n;
+                            })
+                          }
+                        />
+                        <span className="w-24">{fecha(r.fecha)}</span>
+                        <span className="w-28 font-medium">{r.comprobante}</span>
+                        <span className="flex-1">
+                          {r.tercero ?? ""} {r.terceroNit ?? "(sin NIT)"} · banco:{" "}
+                          {fecha(r.banco.fecha)} {r.banco.descripcion}
+                        </span>
+                        <span className="w-32 text-right">{cop(r.valor)}</span>
+                        <span className="w-64">
+                          {r.desde.etiqueta} → <b>{r.hacia.etiqueta}</b>
+                          <span className="block text-muted-foreground">{r.criterio}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+              {fuentes.ajustes
+                .filter((a) => a.tipo === "reclasificacion")
+                .map((a) => (
+                  <div key={a.clave} className="flex gap-2">
+                    <span className="w-24">{fecha(a.fecha)}</span>
+                    <span className="flex-1">
+                      {a.origen}: {a.cuenta} → {a.cuentaDestino}
+                    </span>
+                    <span className="w-32 text-right">{cop(a.valor)}</span>
+                    <span
+                      className={`w-72 ${a.estado === "error" ? "text-red-700" : "text-emerald-700"}`}
+                    >
+                      {a.siigoNombre ? `En Siigo: ${a.siigoNombre}` : a.estado}
+                      {a.error ? ` · ${a.error.slice(0, 160)}` : ""}
+                    </span>
+                  </div>
+                ))}
+            </div>
+          ) : null}
+
           {pasarelas.length ? (
             <div className="space-y-3 rounded-lg border bg-card p-3 text-xs">
               <div className="font-semibold">Pasarelas de pago</div>
@@ -1168,7 +1320,10 @@ function Conciliacion() {
                   ]}
                 />
               ) : null}
-              {vista.ajustes.length || fuentes.ajustes.some((a) => a.cuenta === vista.etiqueta) ? (
+              {vista.ajustes.length ||
+              fuentes.ajustes.some(
+                (a) => a.cuenta === vista.etiqueta && a.tipo !== "reclasificacion",
+              ) ? (
                 <div className="rounded-lg border bg-card p-3 text-xs">
                   <div className="font-semibold">
                     Ajustes al peso — {vista.etiqueta} (tope {cop(fuentes.ajusteCuentas.tope)})
@@ -1181,7 +1336,7 @@ function Conciliacion() {
                   </div>
                   <div className="mt-2 space-y-1">
                     {fuentes.ajustes
-                      .filter((a) => a.cuenta === vista.etiqueta)
+                      .filter((a) => a.cuenta === vista.etiqueta && a.tipo !== "reclasificacion")
                       .map((a) => (
                         <div key={a.clave} className="flex gap-2">
                           <span className="w-24">{fecha(a.fecha)}</span>

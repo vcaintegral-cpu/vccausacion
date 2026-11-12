@@ -8,6 +8,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type {
   AjustePropuesto,
+  Reclasificacion,
   LineaAuxiliar,
   MovBanco,
   MovLibro,
@@ -56,9 +57,14 @@ export type FuentesConciliacion = {
   cuentasPasarela: { retefuente: string | null; reteiva: string | null; reteica: string | null };
   /** Cuentas y tope del ajuste al peso (Egresos y pagos). */
   ajusteCuentas: { debito: string | null; credito: string | null; tope: number };
-  /** Ajustes al peso registrados desde la conciliación (enviados o con error). */
+  /**
+   * Comprobantes registrados desde la conciliación (enviados o con error): ajustes al peso y
+   * reclasificaciones de RC/RP a la cuenta bancaria correcta (cuenta → cuentaDestino).
+   */
   ajustes: Array<{
     clave: string;
+    tipo: string;
+    cuentaDestino: string | null;
     cuenta: string;
     fecha: string;
     valor: number;
@@ -529,7 +535,7 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
     const { data: ajustesDb } = await db
       .from("conciliacion_ajustes")
       .select(
-        "clave, cuenta_etiqueta, fecha, valor, comprobante_origen, estado, siigo_nombre, siigo_error",
+        "clave, tipo, cuenta_destino_etiqueta, cuenta_etiqueta, fecha, valor, comprobante_origen, estado, siigo_nombre, siigo_error",
       )
       .eq("company_id", data.companyId)
       .eq("periodo", data.periodo);
@@ -552,6 +558,8 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
       ajustes: (
         (ajustesDb ?? []) as Array<{
           clave: string;
+          tipo: string;
+          cuenta_destino_etiqueta: string | null;
           cuenta_etiqueta: string;
           fecha: string;
           valor: number;
@@ -562,6 +570,8 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
         }>
       ).map((a) => ({
         clave: a.clave,
+        tipo: a.tipo,
+        cuentaDestino: a.cuenta_destino_etiqueta,
         cuenta: a.cuenta_etiqueta,
         fecha: String(a.fecha).slice(0, 10),
         valor: Number(a.valor),
@@ -1043,4 +1053,161 @@ export const conciliacionEnviarAjuste = createServerFn({ method: "POST" })
         .is("siigo_id", null);
       return { ok: false, siigoNombre: null, mensaje: msg };
     }
+  });
+
+/**
+ * Reclasifica en Siigo RC/RP registrados en otra cuenta bancaria: un comprobante contable
+ * por recibo (de la cuenta errada a la correcta, con su tercero). Uno a uno; los errores
+ * quedan registrados y el lote sigue. Nunca se reenvía uno que ya está en Siigo.
+ */
+export const conciliacionReclasificar = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { companyId: string; periodo: string; items: Reclasificacion[] }) => {
+    if (!input?.companyId || !/^\d{4}-\d{2}$/.test(input.periodo ?? "") || !input.items?.length)
+      throw new Error("Selecciona los recibos a reclasificar.");
+    if (input.items.length > 100) throw new Error("Máximo 100 recibos por lote.");
+    for (const r of input.items)
+      if (
+        !r.clave ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(r.fecha ?? "") ||
+        !(Math.abs(Number(r.valor)) >= 0.01)
+      )
+        throw new Error(`Datos incompletos en ${r.comprobante ?? "un recibo"}.`);
+    return input;
+  })
+  .handler(async ({ data, context }) => {
+    const db = context.supabase;
+    const { data: reglas, error } = await db
+      .from("egreso_reglas")
+      .select("patron, cuenta_banco")
+      .eq("company_id", data.companyId)
+      .eq("clase", "banco");
+    if (error) throw new Error(error.message);
+    const cuentaDe = (etiqueta: string) =>
+      ((reglas ?? []) as Array<{ patron: string; cuenta_banco: string | null }>).find(
+        (r) => r.patron.toUpperCase() === etiqueta.toUpperCase(),
+      )?.cuenta_banco ?? null;
+    const { data: u } = await context.supabase.auth.getUser();
+    const { siigoPost, siigoUseCompany, siigoJournalDocumentId } = await import("./siigo.server");
+    const { payloadReclasificacion } = await import("./conciliacion");
+    await siigoUseCompany(data.companyId);
+    let documentId: number | null = null;
+    const resultados: Array<{ clave: string; ok: boolean; mensaje: string }> = [];
+    for (const r of data.items) {
+      const errada = cuentaDe(r.desde.etiqueta);
+      const correcta = cuentaDe(r.hacia.etiqueta);
+      if (!errada || !correcta || errada === correcta) {
+        resultados.push({
+          clave: r.clave,
+          ok: false,
+          mensaje: `${r.comprobante}: cuentas contables no configuradas.`,
+        });
+        continue;
+      }
+      if (!r.terceroNit) {
+        resultados.push({
+          clave: r.clave,
+          ok: false,
+          mensaje: `${r.comprobante}: sin NIT del tercero (sube el auxiliar o trae el movimiento de Siigo).`,
+        });
+        continue;
+      }
+      const { data: previo } = await db
+        .from("conciliacion_ajustes")
+        .select("id, siigo_id, siigo_nombre, estado")
+        .eq("company_id", data.companyId)
+        .eq("clave", r.clave)
+        .maybeSingle();
+      if (previo?.siigo_id) {
+        resultados.push({
+          clave: r.clave,
+          ok: true,
+          mensaje: `${r.comprobante}: ya reclasificado (${previo.siigo_nombre}).`,
+        });
+        continue;
+      }
+      if (previo?.estado === "enviando") {
+        resultados.push({
+          clave: r.clave,
+          ok: false,
+          mensaje: `${r.comprobante}: se está enviando.`,
+        });
+        continue;
+      }
+      const descripcion = `Reclasificación ${r.comprobante} de ${r.desde.etiqueta} a ${r.hacia.etiqueta}`;
+      const base = {
+        company_id: data.companyId,
+        periodo: data.periodo,
+        tipo: "reclasificacion",
+        cuenta_etiqueta: r.desde.etiqueta,
+        cuenta_destino_etiqueta: r.hacia.etiqueta,
+        clave: r.clave,
+        fecha: r.fecha,
+        valor: Number(r.valor),
+        cuenta_banco: errada,
+        cuenta_ajuste: correcta,
+        tercero_nit: r.terceroNit,
+        comprobante_origen: r.comprobante,
+        descripcion,
+        estado: "enviando",
+        siigo_error: null,
+        created_by: u.user?.id ?? null,
+      };
+      const bloqueo = previo
+        ? await db
+            .from("conciliacion_ajustes")
+            .update(base)
+            .eq("id", previo.id)
+            .in("estado", ["pendiente", "error"])
+            .is("siigo_id", null)
+            .select("id")
+        : await db.from("conciliacion_ajustes").insert(base).select("id");
+      if (bloqueo.error || !(bloqueo.data ?? []).length) {
+        resultados.push({
+          clave: r.clave,
+          ok: false,
+          mensaje: `${r.comprobante}: ${bloqueo.error?.message ?? "ya se está procesando"}`,
+        });
+        continue;
+      }
+      const id = (bloqueo.data as Array<{ id: string }>)[0]!.id;
+      try {
+        documentId ??= await siigoJournalDocumentId();
+        const res = await siigoPost<{ id?: string; name?: string }>(
+          "/v1/journals",
+          payloadReclasificacion({
+            documentId,
+            fecha: r.fecha,
+            valor: Number(r.valor),
+            cuentaErrada: errada,
+            cuentaCorrecta: correcta,
+            terceroNit: r.terceroNit,
+            descripcion,
+            referencia: id.slice(0, 8),
+          }),
+        );
+        await db
+          .from("conciliacion_ajustes")
+          .update({
+            estado: "enviado",
+            siigo_id: String(res.id ?? ""),
+            siigo_nombre: res.name ?? null,
+          })
+          .eq("id", id);
+        resultados.push({
+          clave: r.clave,
+          ok: true,
+          mensaje: `${r.comprobante}: ${res.name ?? res.id}`,
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await db
+          .from("conciliacion_ajustes")
+          .update({ estado: "error", siigo_error: msg.slice(0, 2000) })
+          .eq("id", id)
+          .is("siigo_id", null);
+        resultados.push({ clave: r.clave, ok: false, mensaje: `${r.comprobante}: ${msg}` });
+      }
+    }
+    return { resultados };
   });

@@ -618,6 +618,7 @@ export type Database = {
           created_by: string | null
           cuenta_ajuste: string
           cuenta_banco: string
+          cuenta_destino_etiqueta: string | null
           cuenta_etiqueta: string
           descripcion: string | null
           estado: string
@@ -627,6 +628,7 @@ export type Database = {
           siigo_error: string | null
           siigo_id: string | null
           siigo_nombre: string | null
+          tipo: string
           tercero_nit: string
           updated_at: string
           valor: number
@@ -639,6 +641,7 @@ export type Database = {
           created_by?: string | null
           cuenta_ajuste: string
           cuenta_banco: string
+          cuenta_destino_etiqueta?: string | null
           cuenta_etiqueta: string
           descripcion?: string | null
           estado?: string
@@ -648,6 +651,7 @@ export type Database = {
           siigo_error?: string | null
           siigo_id?: string | null
           siigo_nombre?: string | null
+          tipo?: string
           tercero_nit: string
           updated_at?: string
           valor: number
@@ -660,6 +664,7 @@ export type Database = {
           created_by?: string | null
           cuenta_ajuste?: string
           cuenta_banco?: string
+          cuenta_destino_etiqueta?: string | null
           cuenta_etiqueta?: string
           descripcion?: string | null
           estado?: string
@@ -669,6 +674,7 @@ export type Database = {
           siigo_error?: string | null
           siigo_id?: string | null
           siigo_nombre?: string | null
+          tipo?: string
           tercero_nit?: string
           updated_at?: string
           valor?: number

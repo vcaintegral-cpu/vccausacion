@@ -152,6 +152,11 @@ export function conciliar(params: {
   pasarelas?: Array<{ plataforma: string; patron: RegExp; comprobantes: string[] }>;
   /** Ajustes al peso ya enviados: comprobante del ajuste y el RC/RP que ajusta. */
   ajustes?: Array<{ comprobante: string; origen: string }>;
+  /**
+   * Reclasificaciones enviadas que sacan de esta cuenta un RC/RP registrado en otro banco:
+   * el comprobante de reclasificación anula en libros el RC/RP de origen.
+   */
+  reclasificaciones?: Array<{ comprobante: string; origen: string }>;
 }): ResultadoConciliacion {
   const banco = params.banco.map((b) => ({ ...b, valor: roundCOP(b.valor) }));
   const libros = params.libros.map((l) => ({ ...l, valor: roundCOP(l.valor) }));
@@ -172,6 +177,21 @@ export function conciliar(params: {
       diferencia: dif,
     });
   };
+
+  // 0. RC/RP reclasificados a otra cuenta: el comprobante de reclasificación lo anula aquí.
+  for (const rc of params.reclasificaciones ?? []) {
+    const x = libresL().find(
+      (l) => normalizarComprobante(l.comprobante) === normalizarComprobante(rc.comprobante),
+    );
+    if (!x) continue;
+    const o = libresL().find(
+      (l) =>
+        l.id !== x.id &&
+        normalizarComprobante(l.comprobante) === normalizarComprobante(rc.origen) &&
+        iguales(l.valor, -x.valor),
+    );
+    if (o) marcar([], [o, x], `${o.comprobante} reclasificado a otra cuenta (${x.comprobante})`);
+  }
 
   // 1. Comprobante citado.
   const porComprobante = new Map<string, MovLibro[]>();
@@ -429,6 +449,11 @@ export type EntradaCuenta = {
   rcApi: Array<MovLibro & { cuenta: string | null }>;
   /** Ajustes al peso enviados desde la conciliación (comprobante contable en Siigo). */
   ajustesEnviados?: Array<MovLibro & { cuenta: string | null; ajusta: string }>;
+  /**
+   * Reclasificaciones enviadas, un movimiento por cuenta: en la cuenta errada (anula el
+   * RC/RP, `ajusta` = su comprobante) y en la correcta (cruza con el banco).
+   */
+  reclasificacionesEnviadas?: Array<MovLibro & { cuenta: string | null; ajusta: string }>;
   previas: PartidaConciliatoria[];
   /** Pasarelas de pago de la empresa (Bold, Wompi…): sus abonos llegan netos. */
   pasarelas?: string[];
@@ -448,6 +473,7 @@ export function armarConciliacion(e: EntradaCuenta): {
   comprobantesGastosBancarios: string[];
   pasarelas: Array<{ plataforma: string; patron: RegExp; comprobantes: string[] }>;
   ajustes: Array<{ comprobante: string; origen: string }>;
+  reclasificaciones: Array<{ comprobante: string; origen: string }>;
   movimientoLibros: number;
 } {
   const enMes = (f: string | null) => !!f && f.slice(0, 7) === e.periodo;
@@ -491,6 +517,9 @@ export function armarConciliacion(e: EntradaCuenta): {
     ...deCuenta(e.ajustesEnviados ?? []).filter(
       (r) => !enAuxiliar.has(normalizarComprobante(r.comprobante)),
     ),
+    ...deCuenta(e.reclasificacionesEnviadas ?? []).filter(
+      (r) => !enAuxiliar.has(normalizarComprobante(r.comprobante)),
+    ),
   ];
   // Citar en el extracto los RP individuales enviados (mismo valor y fecha).
   const individuales = rps.filter((r) => !r.grupo && !r.pasarela);
@@ -513,6 +542,9 @@ export function armarConciliacion(e: EntradaCuenta): {
       comprobante: a.comprobante,
       origen: a.ajusta,
     })),
+    reclasificaciones: deCuenta(e.reclasificacionesEnviadas ?? [])
+      .filter((a) => a.ajusta)
+      .map((a) => ({ comprobante: a.comprobante, origen: a.ajusta })),
     pasarelas: (e.pasarelas ?? []).map((plataforma) => ({
       plataforma,
       patron: new RegExp(`\\b${plataforma.replace(/[^A-Za-z0-9]/g, "")}\\b`, "i"),
@@ -608,6 +640,149 @@ export function payloadAjusteAlPeso(params: {
         account: { code: ingreso ? params.cuentaIngreso : params.cuentaBanco, movement: "Credit" },
         customer,
         description: params.descripcion.slice(0, 100),
+        value: v,
+      },
+    ],
+  };
+}
+
+export type Reclasificacion = {
+  /** Clave estable: comprobante, cuenta errada y cuenta correcta. */
+  clave: string;
+  comprobante: string;
+  fecha: string;
+  /** Valor del RC/RP en libros (+ débito: RC/ingreso; − crédito: RP/salida). */
+  valor: number;
+  tercero: string | null;
+  terceroNit: string | null;
+  /** Cuenta donde quedó registrado (errada) y la del extracto donde está el movimiento. */
+  desde: { etiqueta: string; cuenta: string | null };
+  hacia: { etiqueta: string; cuenta: string | null };
+  banco: { fecha: string; descripcion: string; valor: number };
+  criterio: string;
+};
+
+/**
+ * RC/RP registrados en otra cuenta bancaria: está en los libros de una cuenta sin su
+ * movimiento en el extracto, y el movimiento está en el extracto de otra cuenta sin registro.
+ * Primero por comprobante citado en el extracto; luego mismo valor exacto, hasta 5 días,
+ * desempate por fecha y nombre. Cada movimiento se usa una vez.
+ */
+export function detectarCuentaErrada(
+  cuentas: Array<{
+    etiqueta: string;
+    cuentaContable: string | null;
+    resultado: ResultadoConciliacion;
+  }>,
+): Reclasificacion[] {
+  const libros = cuentas.flatMap((c) =>
+    c.resultado.sobraEnLibros
+      .filter((l) => !l.previa && l.comprobante && /^(RC|RP)\b|^(RC|RP)-/i.test(l.comprobante))
+      .map((l) => ({ c, l })),
+  );
+  const bancos = cuentas.flatMap((c) =>
+    c.resultado.faltaEnLibros.filter((b) => !b.previa).map((b) => ({ c, b })),
+  );
+  const usadosL = new Set<string>();
+  const usadosB = new Set<string>();
+  const out: Reclasificacion[] = [];
+  const agregar = (x: (typeof libros)[number], y: (typeof bancos)[number], criterio: string) => {
+    usadosL.add(`${x.c.etiqueta}|${x.l.id}`);
+    usadosB.add(`${y.c.etiqueta}|${y.b.id}`);
+    out.push({
+      clave: [
+        "reclasificacion",
+        normalizarComprobante(x.l.comprobante),
+        x.c.etiqueta.toUpperCase(),
+        y.c.etiqueta.toUpperCase(),
+        roundCOP(x.l.valor).toFixed(2),
+      ].join("|"),
+      comprobante: x.l.comprobante,
+      fecha: x.l.fecha,
+      valor: x.l.valor,
+      tercero: x.l.tercero,
+      terceroNit: x.l.terceroNit ?? null,
+      desde: { etiqueta: x.c.etiqueta, cuenta: x.c.cuentaContable },
+      hacia: { etiqueta: y.c.etiqueta, cuenta: y.c.cuentaContable },
+      banco: { fecha: y.b.fecha, descripcion: y.b.descripcion, valor: y.b.valor },
+      criterio,
+    });
+  };
+  // 1. El extracto de otra cuenta cita el comprobante.
+  for (const x of libros)
+    for (const y of bancos) {
+      if (usadosL.has(`${x.c.etiqueta}|${x.l.id}`) || usadosB.has(`${y.c.etiqueta}|${y.b.id}`))
+        continue;
+      if (y.c.etiqueta === x.c.etiqueta || !iguales(y.b.valor, x.l.valor)) continue;
+      if (
+        (y.b.refs ?? []).some(
+          (r) => normalizarComprobante(r) === normalizarComprobante(x.l.comprobante),
+        )
+      )
+        agregar(x, y, `Comprobante citado en el extracto de ${y.c.etiqueta}`);
+    }
+  // 2. Mismo valor y fecha cercana en el extracto de otra cuenta.
+  for (const tol of [0, 1, 2, 3, 5]) {
+    for (const x of libros) {
+      if (usadosL.has(`${x.c.etiqueta}|${x.l.id}`)) continue;
+      const cands = bancos.filter(
+        (y) =>
+          y.c.etiqueta !== x.c.etiqueta &&
+          !usadosB.has(`${y.c.etiqueta}|${y.b.id}`) &&
+          iguales(y.b.valor, x.l.valor) &&
+          dias(y.b.fecha, x.l.fecha) <= tol,
+      );
+      if (!cands.length) continue;
+      const y = cands.sort(
+        (a, b) =>
+          similitud(b.b.descripcion, x.l.tercero ?? x.l.descripcion) -
+          similitud(a.b.descripcion, x.l.tercero ?? x.l.descripcion),
+      )[0]!;
+      agregar(
+        x,
+        y,
+        tol === 0
+          ? `Mismo valor y fecha en el extracto de ${y.c.etiqueta}`
+          : `Mismo valor, ${tol} día(s) de diferencia, en el extracto de ${y.c.etiqueta}`,
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * Comprobante contable de reclasificación: el valor del RC/RP pasa de la cuenta errada a la
+ * correcta (RC: débito a la correcta y crédito a la errada; RP: al revés), con su tercero.
+ */
+export function payloadReclasificacion(params: {
+  documentId: number;
+  fecha: string;
+  valor: number;
+  cuentaErrada: string;
+  cuentaCorrecta: string;
+  terceroNit: string;
+  descripcion: string;
+  referencia: string;
+}): Record<string, unknown> {
+  const v = roundCOP(Math.abs(params.valor));
+  const entra = params.valor > 0;
+  const customer = { identification: params.terceroNit.replace(/\D/g, ""), branch_office: 0 };
+  const desc = params.descripcion.slice(0, 100);
+  return {
+    document: { id: params.documentId },
+    date: params.fecha,
+    observations: `${params.descripcion} · Ref ${params.referencia}`.slice(0, 250),
+    items: [
+      {
+        account: { code: entra ? params.cuentaCorrecta : params.cuentaErrada, movement: "Debit" },
+        customer,
+        description: desc,
+        value: v,
+      },
+      {
+        account: { code: entra ? params.cuentaErrada : params.cuentaCorrecta, movement: "Credit" },
+        customer,
+        description: desc,
         value: v,
       },
     ],
