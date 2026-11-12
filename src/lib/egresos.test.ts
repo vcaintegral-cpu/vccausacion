@@ -831,3 +831,54 @@ describe("tope del ajuste al peso configurable por empresa", () => {
     expect(diferenciaDelPago(99500, 100000, { ...base, tope: 100 }).error).toMatch(/tope/);
   });
 });
+
+describe("líneas adicionales en el pago de facturas", () => {
+  it("factura + línea de gasto sin factura: RP detallado que cuadra con el pago", async () => {
+    const { netoLineas } = await import("./egresos");
+    const lineas = [
+      {
+        code: "51959501",
+        movimiento: "Debit" as const,
+        valor: 49102,
+        descripcion: "Consumo sin factura",
+      },
+    ];
+    expect(netoLineas(lineas)).toBe(49102);
+    const m = mov({ valor: 160000, relacion: "GUE172736" });
+    const p = {
+      ...proponerEgreso(m, ctx()),
+      tipo: "pago_facturas" as const,
+      terceroNit: "900111222",
+      items: [
+        {
+          prefix: "GUE",
+          consecutive: 172736,
+          quote: 1,
+          valor: 110898,
+          factura: "GUE-172736",
+          saldo: 110898,
+        },
+      ],
+      ajuste: null,
+      anticipo: null,
+      lineas,
+      cuentaCxp: "22050501",
+      cuentaBanco: "11050501",
+    };
+    expect(erroresAntesDeEnviar(m, p)).toEqual([]);
+    const payload = payloadRecibo(m, p, 77) as {
+      type: string;
+      items: Array<{ account: { code: string; movement: string }; value: number }>;
+    };
+    expect(payload.type).toBe("Detailed");
+    expect(payload.items.map((i) => [i.account.code, i.account.movement, i.value])).toEqual([
+      ["22050501", "Debit", 110898],
+      ["51959501", "Debit", 49102],
+      ["11050501", "Credit", 160000],
+    ]);
+    // Una línea sin cuenta o sin valor no se puede enviar.
+    expect(
+      erroresAntesDeEnviar(m, { ...p, lineas: [{ ...lineas[0]!, code: "" }] }).join(" "),
+    ).toMatch(/no tiene cuenta/);
+  });
+});
