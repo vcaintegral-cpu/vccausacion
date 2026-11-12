@@ -49,7 +49,7 @@ import {
   egresosGuardarCuentasAjuste,
 } from "@/lib/egresos.functions";
 import type { CuentaDetallada, ItemPago, Propuesta, TipoEgreso } from "@/lib/egresos";
-import { normalizar, patronConcepto } from "@/lib/egresos";
+import { nitSinDv, normalizar, patronConcepto } from "@/lib/egresos";
 
 export const Route = createFileRoute("/_authenticated/egresos")({
   head: () => ({
@@ -1008,6 +1008,18 @@ function pagosParecidos(origen: Fila, pendientes: Fila[]): Fila[] {
     .filter(Boolean)
     .slice(0, 3)
     .join(" ");
+  // Pago de facturas o anticipo: solo pagos del mismo tercero (mismo NIT, o mismo nombre
+  // cuando el pago no trae NIT). Replicarlo en otro proveedor le pondría el tercero y las
+  // facturas de este.
+  if (origen.tipo === "pago_facturas" || origen.tipo === "anticipo")
+    return pendientes.filter(
+      (f) =>
+        f.id !== origen.id &&
+        !f.siigo_id &&
+        ["por_revisar", "listo"].includes(f.estado) &&
+        ((!!nit && !!f.tercero_nit && nitSinDv(f.tercero_nit) === nitSinDv(nit)) ||
+          (!f.tercero_nit && !!tercero && normalizar(f.tercero_nombre) === tercero)),
+    );
   return pendientes.filter(
     (f) =>
       f.id !== origen.id &&
@@ -1150,7 +1162,7 @@ function EditarEgreso({
       // Otros pagos pendientes parecidos: se ofrece replicar este tratamiento.
       const similares = r.errores.length
         ? []
-        : pagosParecidos({ ...fila, tercero_nit: nit || fila.tercero_nit }, pendientes);
+        : pagosParecidos({ ...fila, tipo, tercero_nit: nit || fila.tercero_nit }, pendientes);
       if (similares.length) {
         setParecidos(similares);
         setMarcados(new Set(similares.map((f) => f.id)));
