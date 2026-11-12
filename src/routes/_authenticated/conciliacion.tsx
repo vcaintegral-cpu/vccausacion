@@ -469,15 +469,32 @@ function Conciliacion() {
       const r = leerConciliacionAnterior(
         await file.arrayBuffer(),
         cuentaAnterior || fuentes?.cuentas[0]?.etiqueta || "",
+        fuentes?.cuentas ?? [],
+        !!cuentaAnterior,
       );
       setAnteriorSubida((x) => {
         const n = new Map(x);
         for (const [k, v] of r.porCuenta) n.set(k, v);
         return n;
       });
+      // El saldo final en libros del corte anterior es el saldo inicial de este mes.
+      setSaldosLibros((x) => {
+        const n = { ...x };
+        for (const [k, sld] of r.saldos) {
+          const et = fuentes?.cuentas.find((c) => c.etiqueta.toUpperCase() === k)?.etiqueta ?? k;
+          if (sld.libros != null && (n[et] == null || n[et] === "")) n[et] = String(sld.libros);
+        }
+        return n;
+      });
       for (const w of r.advertencias) toast.warning(w);
       toast.success(
-        `Conciliación anterior: ${[...r.porCuenta.values()].reduce((s, v) => s + v.length, 0)} partidas en ${r.porCuenta.size} cuenta(s).`,
+        [...r.porCuenta]
+          .map(([k, v]) =>
+            v.length
+              ? `${k}: ${v.length} partidas conciliatorias`
+              : `${k}: conciliada sin partidas pendientes`,
+          )
+          .join(" · ") || "No se encontraron partidas en el archivo.",
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -1068,7 +1085,7 @@ function Conciliacion() {
           <div className="text-muted-foreground">
             {fuentes?.anterior.length
               ? `Se usa la conciliación guardada del mes anterior (${fuentes.anterior.map((a) => `${a.cuenta}: ${a.partidas.length} partidas`).join(", ")}).`
-              : "Primera vez: sube el Excel de la conciliación del mes anterior con sus partidas conciliatorias. Si el archivo no trae columna de cuenta, elige a qué cuenta corresponde."}
+              : "Primera vez: sube los Excel de la conciliación del mes anterior (puedes elegir varios). El reporte trae la cuenta contable y se asigna solo; si el archivo no la trae, elige la cuenta."}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <select
@@ -1087,11 +1104,15 @@ function Conciliacion() {
               ref={refAnt}
               type="file"
               accept=".xlsx,.xls"
+              multiple
               className="hidden"
               onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void subirAnterior(f);
+                // Una conciliación por cuenta: se pueden elegir varias a la vez.
+                const fs = [...(e.target.files ?? [])];
                 e.target.value = "";
+                void (async () => {
+                  for (const f of fs) await subirAnterior(f);
+                })();
               }}
             />
             <Button
