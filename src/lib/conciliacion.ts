@@ -138,7 +138,7 @@ const iguales = (a: number, b: number) => Math.abs(roundCOP(a) - roundCOP(b)) < 
 
 /** Cargos del banco que van en un solo comprobante mensual (comisiones, IVA, 4x1000). */
 export const esGastoBancario = (descripcion: string) =>
-  /4\s*X\s*1000|GRAVAMEN|IMPTO GOBIERNO|CUOTA (PLAN|MANEJO)|C MANEJO|CUOTA MANEJO|COMISION|\bCOMIS\b|SWIFT|SERVICIO PAGO|COBRO IVA|IVA CUOTA|IVA COMIS|IVA POR SERVICIOS|CARGO/i.test(
+  /4\s*X\s*1000|GRAVAMEN|IMPTO GOBIERNO|CUOTA (PLAN|MANEJO)|C MANEJO|CUOTA MANEJO|COMISION|\bCOMIS\b|SWIFT|SERVICIO (PAGO|E ?MAIL|DE PAGO)|E-?MAILS|COBRO IVA|IVA CUOTA|IVA COMIS|IVA POR SERVICIOS|IVA PAGOS|INTERESES? (DE )?MORA|CARGO/i.test(
     sinTildes(descripcion),
   );
 
@@ -147,6 +147,8 @@ export function conciliar(params: {
   libros: MovLibro[];
   /** Comprobantes (de libros) del RP mensual de gastos bancarios de esta cuenta. */
   comprobantesGastosBancarios?: string[];
+  /** Movimientos (fecha y valor) con que se armó ese RP: se cruzan primero, uno a uno. */
+  detalleGastosBancarios?: Array<{ fecha: string; valor: number }>;
   /**
    * Pasarelas de pago: sus abonos llegan netos de comisiones y retenciones contra RC por el
    * valor completo. Esas diferencias se cruzan con el RP de comisiones de la plataforma.
@@ -269,7 +271,32 @@ export function conciliar(params: {
     });
   }
 
-  // 1c. Diferencias ya ajustadas en Siigo (ajuste al peso enviado desde la conciliación).
+  // 2. Gastos bancarios del mes contra su comprobante único.
+  const gb = new Set((params.comprobantesGastosBancarios ?? []).map(normalizarComprobante));
+  if (gb.size) {
+    const ls = libresL().filter((l) => gb.has(normalizarComprobante(l.comprobante)));
+    const libres = libresB().filter((b) => b.valor < 0 && !b.previa);
+    const objetivo = roundCOP(ls.reduce((t, l) => t + l.valor, 0));
+    // Primero los movimientos con que se armó el RP (fecha ±3 días y valor exacto); si no
+    // suman el RP, se completan con los cargos que por su descripción son gastos bancarios.
+    const bs: MovBanco[] = [];
+    for (const m of params.detalleGastosBancarios ?? []) {
+      const b = libres.find(
+        (x) => !bs.includes(x) && iguales(x.valor, m.valor) && dias(x.fecha, m.fecha) <= 3,
+      );
+      if (b) bs.push(b);
+    }
+    if (
+      !iguales(
+        bs.reduce((t, b) => t + b.valor, 0),
+        objetivo,
+      )
+    )
+      for (const b of libres) if (!bs.includes(b) && esGastoBancario(b.descripcion)) bs.push(b);
+    if (ls.length && bs.length) marcar(bs, ls, "Gastos bancarios del mes (comprobante único)");
+  }
+
+  // 2b. Diferencias ya ajustadas en Siigo (ajuste al peso enviado desde la conciliación).
   for (const a of params.ajustes ?? []) {
     const d = diferencias.find((x) =>
       x.libros.some((l) =>
@@ -288,14 +315,6 @@ export function conciliar(params: {
       diferencias.splice(diferencias.indexOf(d), 1);
       conciliados.push(d);
     }
-  }
-
-  // 2. Gastos bancarios del mes contra su comprobante único.
-  const gb = new Set((params.comprobantesGastosBancarios ?? []).map(normalizarComprobante));
-  if (gb.size) {
-    const ls = libresL().filter((l) => gb.has(normalizarComprobante(l.comprobante)));
-    const bs = libresB().filter((b) => b.valor < 0 && esGastoBancario(b.descripcion) && !b.previa);
-    if (ls.length && bs.length) marcar(bs, ls, "Gastos bancarios del mes (comprobante único)");
   }
 
   // 3. Mismo valor, fecha cercana, desempate por nombre.
@@ -566,6 +585,7 @@ export function armarConciliacion(e: EntradaCuenta): {
   banco: MovBanco[];
   libros: MovLibro[];
   comprobantesGastosBancarios: string[];
+  detalleGastosBancarios: Array<{ fecha: string; valor: number }>;
   pasarelas: Array<{ plataforma: string; patron: RegExp; comprobantes: string[] }>;
   ajustes: Array<{ comprobante: string; origen: string }>;
   reclasificaciones: Array<{ comprobante: string; origen: string }>;
@@ -686,6 +706,9 @@ export function armarConciliacion(e: EntradaCuenta): {
     banco: [...banco, ...prev.banco],
     libros: [...libros, ...prev.libros],
     comprobantesGastosBancarios: [...new Set(rps.filter((r) => r.grupo).map((r) => r.comprobante))],
+    detalleGastosBancarios: rps
+      .filter((r) => r.grupo)
+      .map((r) => ({ fecha: r.fecha, valor: roundCOP(r.valor) })),
     ajustes: deCuenta(e.ajustesEnviados ?? []).map((a) => ({
       comprobante: a.comprobante,
       origen: a.ajusta,

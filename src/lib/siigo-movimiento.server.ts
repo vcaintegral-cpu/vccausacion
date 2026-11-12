@@ -18,6 +18,11 @@ export type CuentaMovimiento = {
   cuentaContable: string;
   /** Forma de pago de Siigo asociada a la cuenta (RP del módulo de egresos). */
   paymentTypeId: string | null;
+  /**
+   * Nombre de esa forma de pago («Cuenta Cte»): los RC y facturas usan formas de pago con
+   * otro id pero el mismo nombre.
+   */
+  formaPagoNombre?: string | null;
 };
 
 export type BalanceCuenta = {
@@ -59,23 +64,55 @@ const sinTildes = (s: unknown) =>
     .trim();
 
 /** La forma de pago corresponde a la cuenta: por su id o por la etiqueta en su nombre. */
-function cuentaDePago(p: Pago, cuentas: CuentaMovimiento[]): CuentaMovimiento | null {
+export function cuentaDePago(
+  p: { id?: number | string; name?: string },
+  cuentas: CuentaMovimiento[],
+): CuentaMovimiento | null {
   if (p.id != null) {
     const c = cuentas.find((x) => x.paymentTypeId && String(x.paymentTypeId) === String(p.id));
     if (c) return c;
   }
   const n = sinTildes(p.name);
   if (!n) return null;
-  return (
-    cuentas.find((c) => {
-      const e = sinTildes(c.etiqueta);
-      if (/EFECTIVO|CAJA/.test(e)) return /EFECTIVO|CAJA/.test(n);
-      return e
-        .split(" ")
-        .filter((w) => w.length >= 4)
-        .some((w) => n.includes(w.replace(/S$/, "")));
-    }) ?? null
-  );
+  // 1. Mismo nombre de la forma de pago configurada para la cuenta.
+  const mismo = cuentas.filter((c) => c.formaPagoNombre && sinTildes(c.formaPagoNombre) === n);
+  if (mismo.length === 1) return mismo[0]!;
+  // 2. Palabras de la etiqueta en el nombre (DAVIVIENDA), o su abreviatura (CTE, AHO, CAJA).
+  const palabrasN = new Set(n.split(" "));
+  const abrev: Record<string, string[]> = {
+    CORRIENTE: ["CTE", "CORRIENTE"],
+    AHORROS: ["AHO", "AHORRO", "AHORROS"],
+    EFECTIVO: ["CAJA", "EFECTIVO"],
+    CAJA: ["CAJA", "EFECTIVO"],
+  };
+  const puntajes = cuentas.map((c) => {
+    let pts = 0;
+    for (const w of sinTildes(c.etiqueta)
+      .split(" ")
+      .filter((x) => x.length >= 3)) {
+      if (n.includes(w.replace(/S$/, "")) && !abrev[w]) pts += 2;
+      if ((abrev[w] ?? []).some((a) => palabrasN.has(a))) pts += 1;
+    }
+    return { c, pts };
+  });
+  const max = Math.max(0, ...puntajes.map((x) => x.pts));
+  const mejores = puntajes.filter((x) => x.pts === max && max > 0);
+  return mejores.length === 1 ? mejores[0]!.c : null;
+}
+
+/** Nombres de las formas de pago de recibos de pago de Siigo (id → nombre). */
+export async function nombresFormasPago(): Promise<Map<string, string>> {
+  const { siigoGetCatalogo } = await import("./siigo.server");
+  type P = { id?: number | string; name?: string };
+  const out = new Map<string, string>();
+  try {
+    const r = await siigoGetCatalogo<P[] | { results?: P[] }>("/v1/payment-types?document_type=RP");
+    for (const x of Array.isArray(r) ? r : (r.results ?? []))
+      if (x.id != null && x.name) out.set(String(x.id), x.name);
+  } catch {
+    // Sin catálogo se usa la etiqueta de la cuenta.
+  }
+  return out;
 }
 
 /**

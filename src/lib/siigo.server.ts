@@ -420,9 +420,10 @@ export async function siigoCrearComprobante<T = { id?: string; name?: string }>(
     } catch {
       // Sin catálogo se usa el listado de comprobantes.
     }
-    const desde = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+    // Pocas páginas: cada llamada cuenta para el límite de subpeticiones del servidor.
+    const desde = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
     type J = { document?: { id?: number | string }; number?: number | string };
-    for (let page = 1; page <= 30; page++) {
+    for (let page = 1; page <= 6; page++) {
       let l: J[] = [];
       try {
         const r = await siigoGet<{ results?: J[] } | J[]>(

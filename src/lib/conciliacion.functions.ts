@@ -37,6 +37,8 @@ export type CuentaConciliable = {
   etiqueta: string;
   cuentaContable: string | null;
   paymentTypeId: string | null;
+  /** Nombre de la forma de pago de Siigo de la cuenta (los RC usan otra con el mismo nombre). */
+  formaPagoNombre?: string | null;
   fuente: string | null;
   movimientos: MovBanco[];
   saldoInicial: number | null;
@@ -360,11 +362,18 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
     try {
       const { siigoGet, siigoUseCompany } = await import("./siigo.server");
       await siigoUseCompany(data.companyId);
-      const porForma = new Map(
-        ((reglas ?? []) as Array<{ patron: string; payment_type_id: string | null }>)
-          .filter((r) => r.payment_type_id)
-          .map((r) => [String(r.payment_type_id), r.patron]),
-      );
+      const { cuentaDePago, nombresFormasPago } = await import("./siigo-movimiento.server");
+      const nombres = await nombresFormasPago();
+      for (const c of cuentas)
+        c.formaPagoNombre = c.paymentTypeId ? (nombres.get(String(c.paymentTypeId)) ?? null) : null;
+      const cuentasMov = cuentas
+        .filter((c) => c.cuentaContable)
+        .map((c) => ({
+          etiqueta: c.etiqueta,
+          cuentaContable: String(c.cuentaContable),
+          paymentTypeId: c.paymentTypeId,
+          formaPagoNombre: c.formaPagoNombre ?? null,
+        }));
       type Rc = {
         id?: string;
         name?: string;
@@ -372,6 +381,11 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
         customer?: { identification?: string };
         payment?: { id?: number; name?: string; value?: number };
         payments?: Array<{ id?: number; name?: string; value?: number }>;
+        items?: Array<{
+          account?: { code?: string | number; movement?: string };
+          value?: number;
+          description?: string;
+        }>;
       };
       for (let page = 1; page <= 10; page++) {
         const r = await siigoGet<{ results?: Rc[] } | Rc[]>(
@@ -381,12 +395,27 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
         for (const v of l) {
           const f = String(v.date ?? "").slice(0, 10);
           if (!f || f < `${data.periodo}-01` || f > fin) continue;
+          // RC detallado: renglones con la cuenta del banco/caja.
+          for (const [i, it] of (v.items ?? []).entries()) {
+            const code = String(it.account?.code ?? "").trim();
+            const c = cuentasMov.find((x) => x.cuentaContable === code);
+            if (!c) continue;
+            const debito = /^D/i.test(String(it.account?.movement ?? ""));
+            rcApi.push({
+              id: `rc-${v.id}-i${i}`,
+              fecha: f,
+              comprobante: String(v.name ?? v.id),
+              tercero: v.customer?.identification ?? null,
+              terceroNit: v.customer?.identification ?? null,
+              descripcion: it.description ?? null,
+              valor: (debito ? 1 : -1) * Number(it.value ?? 0),
+              origen: "api",
+              cuenta: c.etiqueta,
+              formaPago: null,
+            });
+          }
           for (const p of v.payments ?? (v.payment ? [v.payment] : [])) {
-            const formaCuenta = p.id != null ? (porForma.get(String(p.id)) ?? null) : null;
-            const cuenta =
-              formaCuenta ??
-              cuentas.find((c) => p.name && coincideEtiqueta(c.etiqueta, p.name))?.etiqueta ??
-              null;
+            const cuenta = cuentaDePago(p, cuentasMov)?.etiqueta ?? null;
             rcApi.push({
               id: `rc-${v.id}-${p.id}`,
               fecha: f,
@@ -419,6 +448,7 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
           etiqueta: c.etiqueta,
           cuentaContable: String(c.cuentaContable),
           paymentTypeId: c.paymentTypeId,
+          formaPagoNombre: c.formaPagoNombre ?? null,
         }));
       if (conCuenta.length) {
         const { movimientoDesdeApi } = await import("./siigo-movimiento.server");
@@ -584,6 +614,77 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
       )?.cuenta_debito ?? null;
     const { cargarAjustes } = await import("./egresos.server");
     const aj = await cargarAjustes(db, data.companyId);
+    // Envíos que quedaron «enviando» (la respuesta de Siigo no alcanzó a guardarse): se busca
+    // en Siigo el documento por su referencia («Ref xxxxxxxx» en las observaciones). Si está,
+    // se marca enviado con su número; si no, queda con error y se puede reintentar.
+    try {
+      const hace = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+      const { data: colgados } = await db
+        .from("conciliacion_ajustes")
+        .select("id, tipo, detalle, created_at")
+        .eq("company_id", data.companyId)
+        .eq("estado", "enviando")
+        .is("siigo_id", null)
+        .lt("updated_at", hace)
+        .limit(10);
+      if ((colgados ?? []).length) {
+        const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+        await siigoUseCompany(data.companyId);
+        type D = { id?: string; name?: string; observations?: string };
+        const buscar = async (ruta: string, desde: string, ref: string) => {
+          for (let page = 1; page <= 5; page++) {
+            const r = await siigoGet<{ results?: D[] } | D[]>(
+              `${ruta}?created_start=${desde}&page=${page}&page_size=100`,
+            );
+            const l = Array.isArray(r) ? r : (r.results ?? []);
+            const d = l.find((x) => String(x.observations ?? "").includes(ref));
+            if (d) return d;
+            if (l.length < 100) return null;
+          }
+          return null;
+        };
+        for (const c of (colgados ?? []) as Array<{
+          id: string;
+          tipo: string;
+          detalle: { tipo?: string } | null;
+          created_at: string;
+        }>) {
+          const ref = `Ref ${c.id.slice(0, 8)}`;
+          const desde = String(c.created_at).slice(0, 10);
+          const rutas =
+            c.tipo === "lote" && c.detalle?.tipo === "salida"
+              ? ["/v1/payment-receipts"]
+              : c.tipo === "registro_rc" || (c.tipo === "lote" && c.detalle?.tipo === "entrada")
+                ? ["/v1/vouchers", "/v1/journals"]
+                : ["/v1/journals"];
+          let doc: D | null = null;
+          for (const ruta of rutas) {
+            doc = await buscar(ruta, desde, ref);
+            if (doc) break;
+          }
+          await db
+            .from("conciliacion_ajustes")
+            .update(
+              doc
+                ? {
+                    estado: "enviado",
+                    siigo_id: String(doc.id ?? ""),
+                    siigo_nombre: doc.name ?? null,
+                  }
+                : {
+                    estado: "error",
+                    siigo_error: `No se confirmó la respuesta de Siigo y no se encontró el documento con «${ref}»: revisa en Siigo antes de reintentar.`,
+                  },
+            )
+            .eq("id", c.id)
+            .is("siigo_id", null);
+        }
+      }
+    } catch (e) {
+      advertencias.push(
+        `No se pudieron verificar en Siigo los envíos pendientes: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
     const { data: ajustesDb } = await db
       .from("conciliacion_ajustes")
       .select(
@@ -744,7 +845,13 @@ export const conciliacionMovimientoSiigo = createServerFn({ method: "POST" })
         );
       const { siigoUseCompany } = await import("./siigo.server");
       await siigoUseCompany(data.companyId);
-      const { movimientoDesdeApi, balanceDesdeApi } = await import("./siigo-movimiento.server");
+      const { movimientoDesdeApi, balanceDesdeApi, nombresFormasPago } =
+        await import("./siigo-movimiento.server");
+      const nombres = await nombresFormasPago();
+      for (const c of cuentas)
+        (c as { formaPagoNombre?: string | null }).formaPagoNombre = c.paymentTypeId
+          ? (nombres.get(String(c.paymentTypeId)) ?? null)
+          : null;
       const mov = await movimientoDesdeApi({ desde: data.desde, hasta: data.hasta, cuentas });
       let balance: BalanceCuenta[] = [];
       const [a1, m1] = data.desde.split("-").map(Number) as [number, number];
