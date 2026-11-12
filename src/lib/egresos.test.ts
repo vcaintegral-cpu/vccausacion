@@ -806,15 +806,86 @@ describe("excedente del pago como anticipo al proveedor", () => {
       cuentaBanco: "11100501",
     };
     expect(erroresAntesDeEnviar(m, p)).toEqual([]);
-    const payload = payloadRecibo(m, p, 77) as {
+    // Siigo no admite la cuenta de anticipos sin vencimiento en el recibo detallado: van dos
+    // recibos, el de la factura por 600.000 y uno de ANTICIPO por el excedente de 1.900.000.
+    const { payloadAnticipo } = await import("./egresos");
+    const payload = payloadRecibo(m, { ...p, paymentTypeId: "5638" }, 77) as {
       type: string;
-      items: Array<{ account: { code: string; movement: string }; value: number }>;
+      items: Array<{ due: { prefix: string }; value: number }>;
+      payment: { id: number; value: number };
     };
-    expect(payload.type).toBe("Detailed");
-    expect(payload.items.map((i) => [i.account.code, i.account.movement, i.value])).toEqual([
-      ["22050501", "Debit", 600000],
-      ["13300501", "Debit", 1900000],
-      ["11100501", "Credit", 2500000],
+    expect(payload.type).toBe("DebtPayment");
+    expect(payload.items).toEqual([
+      { due: { prefix: "DS", consecutive: 417, quote: 1 }, value: 600000 },
+    ]);
+    expect(payload.payment).toEqual({ id: 5638, value: 600000 });
+    expect(payloadAnticipo(m, { ...p, paymentTypeId: "5638" }, 77, "abcd1234")).toMatchObject({
+      type: "AdvancePayment",
+      supplier: { identification: "900111222" },
+      payment: { id: 5638, value: 1900000 },
+    });
+  });
+  it("líneas en cuentas de impuestos llevan el id del impuesto de Siigo (tax.id)", () => {
+    const m = mov({ valor: 5360000, relacion: "Rte. Fte. Septiembre", tercero: null });
+    const p = {
+      ...proponerEgreso(m, ctx()),
+      tipo: "detallado" as const,
+      terceroNit: "800197268",
+      cuentaBanco: "11100501",
+      cuentas: [
+        { code: "23659001", movimiento: "Debit" as const, valor: 2723000, descripcion: "Rte fte" },
+        { code: "23657501", movimiento: "Debit" as const, valor: 2637000, descripcion: "Rte fte" },
+        { code: "11100501", movimiento: "Credit" as const, valor: 5360000, descripcion: "Pago" },
+      ],
+    };
+    const payload = payloadRecibo(m, p, 77, null, new Map([["23657501", 9001]])) as {
+      items: Array<{ account: { code: string }; tax?: { id: number } }>;
+    };
+    expect(payload.items.map((i) => [i.account.code, i.tax?.id ?? null])).toEqual([
+      ["23659001", null],
+      ["23657501", 9001],
+      ["11100501", null],
+    ]);
+  });
+  it("un vencimiento con su número viejo se reasigna a la misma factura vigente del proveedor", async () => {
+    const { refrescarSaldos } = await import("./egresos");
+    const p = {
+      ...proponerEgreso(mov({ valor: 1101365, relacion: "FECT 900" }), ctx()),
+      tipo: "pago_facturas" as const,
+      terceroNit: "900047000",
+      items: [
+        {
+          prefix: "FC-1",
+          consecutive: 5600,
+          quote: 1,
+          valor: 1101365,
+          factura: "FECT 900",
+          saldo: 1124999.82,
+        },
+      ],
+    };
+    const r = refrescarSaldos(p, [
+      {
+        prefix: "FECT",
+        consecutive: 900,
+        quote: 1,
+        balance: 1124999.82,
+        dueDate: "2026-10-01",
+        facturaProveedor: "FECT-900",
+        providerNit: "900047000",
+      },
+    ]);
+    expect(r.propuesta.items).toEqual([
+      {
+        prefix: "FECT",
+        consecutive: 900,
+        quote: 1,
+        valor: 1101365,
+        factura: "FECT 900",
+        saldo: 1124999.82,
+        vence: "2026-10-01",
+        noVigente: false,
+      },
     ]);
   });
 });

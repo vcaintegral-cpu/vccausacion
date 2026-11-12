@@ -893,8 +893,16 @@ export function payloadRecibo(
    * («duplicated_document»), y el reintento de un mismo pago sigue siendo idéntico.
    */
   referencia?: string | null,
+  /** Cuenta contable → id del impuesto en Siigo: Siigo exige «tax.id» en líneas de cuentas de impuestos. */
+  impuestos?: Map<string, number> | null,
 ): Record<string, unknown> {
-  const valor = roundCOP(m.valor);
+  // El excedente como anticipo va en su propio recibo (payloadAnticipo): este recibo es
+  // por lo pagado a las facturas, ajuste y otras líneas.
+  const valor = roundCOP(m.valor - (p.tipo === "pago_facturas" ? (p.anticipo?.valor ?? 0) : 0));
+  const conImpuesto = (code: string) => {
+    const id = impuestos?.get(String(code));
+    return id ? { tax: { id } } : {};
+  };
   const ref = referencia ? ` · Ref ${referencia}` : "";
   const observaciones =
     [m.descripcion, m.relacion]
@@ -905,9 +913,7 @@ export function payloadRecibo(
   const supplier = { identification: String(p.terceroNit ?? ""), branch_office: 0 };
   if (
     p.tipo === "pago_facturas" &&
-    ((p.ajuste && Math.abs(p.ajuste.valor) >= 0.01) ||
-      (p.anticipo && p.anticipo.valor >= 0.01) ||
-      (p.lineas ?? []).length > 0)
+    ((p.ajuste && Math.abs(p.ajuste.valor) >= 0.01) || (p.lineas ?? []).length > 0)
   ) {
     // Con ajuste al peso: RP detallado. Débito a la CxP cruzando cada vencimiento (crédito si
     // es un saldo a favor), el ajuste y el crédito al banco por lo pagado.
@@ -928,15 +934,10 @@ export function payloadRecibo(
         description: "Ajuste al peso",
         value: roundCOP(Math.abs(p.ajuste.valor)),
       });
-    if (p.anticipo && p.anticipo.valor >= 0.01)
-      items.push({
-        account: { code: p.anticipo.cuenta, movement: "Debit" },
-        description: "Anticipo (excedente del pago)",
-        value: roundCOP(p.anticipo.valor),
-      });
     for (const l of p.lineas ?? [])
       items.push({
         account: { code: l.code, movement: l.movimiento },
+        ...conImpuesto(l.code),
         description: (l.descripcion || "Otra línea").slice(0, 100),
         value: roundCOP(l.valor),
       });
@@ -984,12 +985,39 @@ export function payloadRecibo(
       supplier,
       items: p.cuentas.map((c) => ({
         account: { code: c.code, movement: c.movimiento },
+        ...conImpuesto(c.code),
         description: c.descripcion,
         value: roundCOP(c.valor),
       })),
       observations: observaciones,
     };
   throw new Error("Este egreso no genera recibo de pago en Siigo.");
+}
+
+/**
+ * Recibo de ANTICIPO por el excedente de un pago de facturas (Siigo no admite la cuenta de
+ * anticipos sin vencimiento dentro del recibo detallado): AdvancePayment al proveedor con
+ * la misma forma de pago (banco). Junto con el recibo de las facturas suma lo pagado.
+ */
+export function payloadAnticipo(
+  m: Pick<MovimientoPago, "fecha" | "descripcion" | "relacion">,
+  p: Propuesta,
+  documentId: number,
+  referencia?: string | null,
+): Record<string, unknown> | null {
+  if (p.tipo !== "pago_facturas" || !p.anticipo || p.anticipo.valor < 0.01) return null;
+  const ref = referencia ? ` · Ref ${referencia}-A` : "";
+  const obs = `Anticipo (excedente) · ${[m.descripcion, m.relacion].filter(Boolean).join(" · ")}`
+    .replace(/\s+/g, " ")
+    .slice(0, 250 - ref.length);
+  return {
+    document: { id: documentId },
+    date: m.fecha,
+    type: "AdvancePayment",
+    supplier: { identification: String(p.terceroNit ?? ""), branch_office: 0 },
+    payment: { id: Number(p.paymentTypeId), value: roundCOP(p.anticipo.valor) },
+    observations: obs + ref,
+  };
 }
 
 /** Neto de las líneas adicionales: débitos − créditos (lo que suman al pago). */
@@ -1026,12 +1054,13 @@ export function erroresAntesDeEnviar(
       if (!(Number(l.valor) > 0)) e.push(`La línea de la cuenta ${l.code || "—"} no tiene valor.`);
     }
     if (ajuste && !p.ajuste?.cuenta) e.push("Falta la cuenta del ajuste al peso.");
-    if (anticipo && !p.anticipo?.cuenta) e.push("Falta la cuenta de anticipos a proveedores.");
-    if ((ajuste || anticipo || (p.lineas ?? []).length) && p.items.some((i) => !i.vence))
+    if (anticipo && !p.paymentTypeId)
+      e.push("Falta la forma de pago de Siigo para el recibo de anticipo del excedente.");
+    if ((ajuste || (p.lineas ?? []).length) && p.items.some((i) => !i.vence))
       e.push(
         "Falta la fecha de vencimiento de una factura (Siigo la exige en el recibo detallado): sincroniza las CxP y vuelve a proponer.",
       );
-    if (ajuste || anticipo || (p.lineas ?? []).length) {
+    if (ajuste || (p.lineas ?? []).length) {
       if (!p.cuentaCxp) e.push("Falta la cuenta por pagar que se cruza en el recibo detallado.");
       if (!p.cuentaBanco) e.push("Falta la cuenta de banco/caja del recibo detallado.");
     }
@@ -1051,10 +1080,7 @@ export function erroresAntesDeEnviar(
   }
   if (
     (p.tipo === "anticipo" ||
-      (p.tipo === "pago_facturas" &&
-        !p.ajuste?.valor &&
-        !p.anticipo?.valor &&
-        !(p.lineas ?? []).length)) &&
+      (p.tipo === "pago_facturas" && !p.ajuste?.valor && !(p.lineas ?? []).length)) &&
     !p.paymentTypeId
   )
     e.push("Falta la forma de pago de Siigo.");
@@ -1129,6 +1155,8 @@ export function payloadReciboAgrupado(
   documentId: number,
   fecha: string,
   etiqueta: string,
+  /** Cuenta contable → id del impuesto en Siigo (p. ej. el IVA bancario en 2408). */
+  impuestos?: Map<string, number> | null,
 ): { payload: Record<string, unknown>; total: number; errores: string[] } {
   const errores: string[] = [];
   const bancos = [...new Set(movimientos.map((m) => m.propuesta.cuentaBanco).filter(Boolean))];
@@ -1151,8 +1179,10 @@ export function payloadReciboAgrupado(
       errores.push(`${m.fecha} ${m.descripcion ?? ""}: falta la cuenta débito.`);
       continue;
     }
+    const tax = impuestos?.get(debito.code);
     items.push({
       account: { code: debito.code, movement: "Debit" },
+      ...(tax ? { tax: { id: tax } } : {}),
       description: `${m.fecha} ${m.descripcion ?? ""}`.trim().slice(0, 100),
       value: roundCOP(m.valor),
     });
@@ -1187,6 +1217,8 @@ export function refrescarSaldos(
   cxp: Array<
     Pick<CuentaPorPagar, "prefix" | "consecutive" | "quote" | "balance"> & {
       dueDate?: string | null;
+      facturaProveedor?: string | null;
+      providerNit?: string | null;
     }
   >,
 ): { propuesta: Propuesta; cambio: boolean } {
@@ -1201,7 +1233,38 @@ export function refrescarSaldos(
       return false;
     })
     .map((i) => {
-      const c = vigente.get(`${i.prefix}|${i.consecutive}|${i.quote}`);
+      let c = vigente.get(`${i.prefix}|${i.consecutive}|${i.quote}`);
+      if (!c) {
+        // Vencimiento con su identificación vieja (p. ej. FC-1-5667): se busca la misma factura
+        // del proveedor del mismo tercero entre las CxP vigentes.
+        const ref = refFactura(String(i.factura ?? ""));
+        const candidatas = ref
+          ? cxp.filter((x) => {
+              const f = refDeFacturaProveedor(x.facturaProveedor ?? null);
+              return (
+                f &&
+                mismaFactura(f, ref) &&
+                (!p.terceroNit || !x.providerNit || nitSinDv(x.providerNit) === p.terceroNit)
+              );
+            })
+          : [];
+        if (candidatas.length === 1) c = candidatas[0]!;
+      }
+      if (
+        c &&
+        `${c.prefix}|${c.consecutive}|${c.quote}` !== `${i.prefix}|${i.consecutive}|${i.quote}`
+      ) {
+        cambio = true;
+        return {
+          ...i,
+          prefix: c.prefix,
+          consecutive: c.consecutive,
+          quote: c.quote,
+          saldo: Number(c.balance),
+          vence: c.dueDate ?? i.vence ?? null,
+          noVigente: false,
+        };
+      }
       if (!c) {
         if (i.noVigente) return i;
         cambio = true;
@@ -1214,5 +1277,17 @@ export function refrescarSaldos(
       cambio = true;
       return { ...i, saldo, vence, noVigente: false };
     });
-  return { propuesta: cambio ? { ...p, items } : p, cambio };
+  // Si dos líneas quedaron sobre el mismo vencimiento, se unen en una sola.
+  const unidas: ItemPago[] = [];
+  for (const i of items) {
+    const igual = unidas.find(
+      (u) => u.prefix === i.prefix && u.consecutive === i.consecutive && u.quote === i.quote,
+    );
+    if (!igual) unidas.push({ ...i });
+    else {
+      igual.valor = roundCOP(igual.valor + i.valor);
+      cambio = true;
+    }
+  }
+  return { propuesta: cambio ? { ...p, items: unidas } : p, cambio };
 }
