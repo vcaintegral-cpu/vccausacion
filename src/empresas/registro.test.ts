@@ -64,6 +64,7 @@ describe("alcance global vs. empresa", () => {
               ["función", "lector_consolidado_pagos", true],
               ["función", "compras_por_pagar", true],
               ["función", "pasarelas_pago", true],
+              ["función", "reporte_conciliacion_firma", true],
             ]
           : [],
       );

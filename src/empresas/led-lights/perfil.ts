@@ -36,6 +36,10 @@ export const LED_LIGHTS: PerfilEmpresa = {
     // Wompi (abona a la Corriente); el RC va por el valor completo, la plataforma consigna el
     // neto y factura sus comisiones, que se cruzan con lo descontado (hojas Bold y Wompi).
     pasarelas_pago: true,
+    // Instrucción del 2026-11-12: las conciliaciones se descargan en el formato de la firma
+    // (archivos de octubre 2026): un Excel por cuenta con «Reporte Conciliación» y la hoja
+    // de trabajo «CONCILIACION <MES>» (columnas D y E).
+    reporte_conciliacion_firma: true,
   },
   notas: [
     "Software contable: Siigo (comprobantes CE-1, RC-1, FC-1).",

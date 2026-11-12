@@ -19,7 +19,11 @@ import { readRawHistory } from "@/lib/history-raw";
 import { supabase } from "@/integrations/supabase/client";
 import { AccountCombobox, type PucOption } from "@/components/account-combobox";
 import { TerceroCombobox, type TerceroOption } from "@/components/tercero-combobox";
-import { egresosEnviar } from "@/lib/egresos.functions";
+import { egresosEnviar, egresosSincronizarCxP } from "@/lib/egresos.functions";
+import { useCompanies } from "@/components/app-shell";
+import { usePerfilActivo } from "@/empresas/use-perfil";
+import { libroConciliacionFirma, nombreArchivo } from "@/lib/conciliacion-reporte";
+import { sugerirFacturas, type SugerenciaCxp } from "@/lib/cxp-sugerencias";
 import {
   ajusteDeDiferencia,
   ajustesAlPeso,
@@ -63,6 +67,7 @@ import {
   conciliacionMovimientoSiigo,
   conciliacionReclasificar,
   conciliacionRegistrarLote,
+  conciliacionRegistrarRpFacturas,
   conciliacionRegistrarRc,
   conciliacionRegistrarRp,
   type FuentesConciliacion,
@@ -108,6 +113,9 @@ type Calculo = {
   movimientos: number;
   /** Diferencias dentro del tope del ajuste al peso aún sin ajustar en Siigo. */
   ajustes: AjustePropuesto[];
+  /** Movimientos del mes (extracto y libros, sin partidas del corte anterior) para el reporte. */
+  bancoMes: MovBanco[];
+  librosMes: MovLibro[];
 };
 
 const leerPdfBase64 = async (base64: string) => {
@@ -256,6 +264,10 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
   const registrarRc = useServerFn(conciliacionRegistrarRc);
   const registrarLote = useServerFn(conciliacionRegistrarLote);
   const enviarEgreso = useServerFn(egresosEnviar);
+  const perfilActivo = usePerfilActivo();
+  const { data: empresas } = useCompanies();
+  const registrarRpFacturas = useServerFn(conciliacionRegistrarRpFacturas);
+  const sincronizarCxp = useServerFn(egresosSincronizarCxP);
   const [notas, setNotas] = usePersistente<Record<string, string>>(k("notas"), {});
   const mFuentes = useMutation({
     /** silencioso: actualización en segundo plano al volver al panel (conserva lo hecho). */
@@ -531,6 +543,8 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
               })
             : null,
         movimientos: extracto.length,
+        bancoMes: extracto.filter((m) => !m.previa && m.fecha >= `${periodo}-01`),
+        librosMes: armado.libros.filter((l) => !l.previa && l.fecha >= `${periodo}-01`),
         ajustes: ajustesAlPeso(resultado, c.etiqueta, fuentes.ajusteCuentas.tope).filter(
           (a) => !enviados.has(a.clave),
         ),
@@ -841,6 +855,52 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
       `${clavesPartida.length} línea(s) quedan como partida conciliatoria; se guardan con «Guardar conciliación».`,
     );
   };
+  /** Sincroniza las CxP vivas de Siigo y vuelve a cruzar. */
+  const onSincronizarCxp = async () => {
+    setEnviando("cxp");
+    try {
+      await sincronizarCxp({ data: { companyId } });
+      toast.success("Cuentas por pagar sincronizadas con Siigo.");
+      mFuentes.mutate({ silencioso: true });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnviando(null);
+    }
+  };
+  /** Paga en Siigo la(s) factura(s) abierta(s) del proveedor de una salida del extracto. */
+  const onPagarFacturas = async (cuenta: string, b: MovBanco, sug: SugerenciaCxp) => {
+    setEnviando(`cxp-${b.id}`);
+    try {
+      const r = await registrarRpFacturas({
+        data: {
+          companyId,
+          periodo,
+          cuenta,
+          mov: { fecha: b.fecha, descripcion: b.descripcion, valor: b.valor },
+          terceroNit: sug.terceroNit,
+          terceroNombre: sug.terceroNombre,
+          items: sug.items.map((i) => ({
+            prefix: i.prefix,
+            consecutive: i.consecutive,
+            quote: i.quote,
+            factura: i.factura,
+            valor: i.valor,
+          })),
+        },
+      });
+      if (r.estado === "aprobado") {
+        const e = await enviarEgreso({ data: { egresoId: r.id } });
+        if (e.ok) toast.success(e.message);
+        else toast.error(e.message);
+      } else toast.success(r.mensaje);
+      mFuentes.mutate({ silencioso: true });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnviando(null);
+    }
+  };
   const onReclasificar = async () => {
     const items = cuentaErrada.filter((r) => marcadas.has(r.clave));
     if (!items.length) return;
@@ -883,6 +943,42 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
     }
   };
 
+  /** Conciliaciones en el formato de la firma: un Excel por cuenta, en un ZIP. */
+  const exportarFirma = async () => {
+    const empresa = empresas?.find((e) => e.id === companyId);
+    const JSZip = (await import("jszip")).default;
+    const zip = new JSZip();
+    for (const c of calculos) {
+      const esCaja = /EFECTIVO|CAJA/i.test(c.etiqueta);
+      const datos = {
+        empresa: { nombre: empresa?.name ?? "", nit: empresa?.nit ?? null },
+        etiqueta: c.etiqueta,
+        cuentaContable: c.cuentaContable,
+        cuentaNumero: extractosPdf[c.etiqueta]?.ext.cuentaNumero ?? null,
+        esCaja,
+        periodo,
+        saldoLibrosInicial: c.saldoLibrosInicial,
+        saldoLibrosFinal: c.saldoLibrosFinal,
+        saldoExtractoInicial: c.saldoExtractoInicial,
+        saldoExtractoFinal: c.saldoExtractoFinal,
+        extracto: c.bancoMes,
+        libros: c.librosMes,
+        partidas: c.partidas,
+      };
+      const wb = libroConciliacionFirma(datos);
+      zip.file(
+        nombreArchivo(datos),
+        XLSX.write(wb, { type: "array", bookType: "xlsx", cellDates: true }) as ArrayBuffer,
+      );
+    }
+    const blob = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Conciliaciones_${periodo}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
   const exportar = () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(
@@ -1461,7 +1557,29 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
             </table>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void onSincronizarCxp()}
+              disabled={enviando === "cxp"}
+            >
+              {enviando === "cxp" ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-1 h-4 w-4" />
+              )}
+              Sincronizar CxP de Siigo
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              {fuentes.cxp.length} CxP vivas
+              {fuentes.cxpLeidas ? ` · leídas ${fecha(fuentes.cxpLeidas.slice(0, 10))}` : ""}
+            </span>
+            {perfilActivo.funcion("reporte_conciliacion_firma") ? (
+              <Button size="sm" onClick={() => void exportarFirma()} disabled={!calculos.length}>
+                <Download className="mr-1 h-4 w-4" /> Descargar conciliaciones (formato de la firma)
+              </Button>
+            ) : null}
             <Button size="sm" variant="outline" onClick={exportar} disabled={!calculos.length}>
               <Download className="mr-1 h-4 w-4" /> Exportar Excel (partidas al corte y listados)
             </Button>
@@ -1818,13 +1936,46 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
                   })}
                 acciones={vista.resultado.faltaEnLibros
                   .filter((b) => b.valor < 0)
-                  .map((b) =>
-                    accion(vista.etiqueta, "salida", partidaDeBanco(b), {
-                      id: b.id,
-                      registrar: (f) =>
-                        void onRegistrar(vista.etiqueta, { tipo: "salida", mov: b }, f),
-                    }),
-                  )}
+                  .map((b) => {
+                    const sug = sugerirFacturas(b, fuentes.cxp);
+                    return (
+                      <div key={b.id}>
+                        {sug ? (
+                          <div className="mt-1 flex flex-wrap items-center gap-2 pl-24 text-emerald-800">
+                            <span>
+                              CxP viva de {sug.terceroNombre ?? sug.terceroNit}:{" "}
+                              {sug.items
+                                .map(
+                                  (i) =>
+                                    `${i.factura ?? `${i.prefix}-${i.consecutive}`} (${cop(i.valor)})`,
+                                )
+                                .join(" + ")}{" "}
+                              · {sug.criterio}
+                            </span>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7"
+                              disabled={enviando === `cxp-${b.id}`}
+                              onClick={() => void onPagarFacturas(vista.etiqueta, b, sug)}
+                            >
+                              {enviando === `cxp-${b.id}` ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : (
+                                <Send className="mr-1 h-3 w-3" />
+                              )}
+                              Pagar la factura en Siigo (RP)
+                            </Button>
+                          </div>
+                        ) : null}
+                        {accion(vista.etiqueta, "salida", partidaDeBanco(b), {
+                          id: b.id,
+                          registrar: (f) =>
+                            void onRegistrar(vista.etiqueta, { tipo: "salida", mov: b }, f),
+                        })}
+                      </div>
+                    );
+                  })}
               />
               <Lista
                 {...propsLote(
