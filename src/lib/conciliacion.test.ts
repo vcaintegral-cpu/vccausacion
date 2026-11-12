@@ -323,3 +323,112 @@ describe("un pago registrado en varios recibos y comisiones del exterior", () =>
     ]);
   });
 });
+
+describe("conciliación anterior en formato de reporte", () => {
+  it("lee cuenta contable, saldos y las dos secciones de partidas", () => {
+    const filas: unknown[][] = [
+      [null, "EMPRESA EJEMPLO S.A.S."],
+      [null, "Banco Uno – Cuenta Corriente   |   Cuenta contable 11100501 – Cta cte"],
+      [null, "Fecha de corte: 30 de septiembre de 2026   |   Cifras en pesos"],
+      [null, "1.  RESUMEN DE LA CONCILIACIÓN"],
+      [
+        null,
+        "Saldo según libros contables al 30/09/2026",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        1000000,
+      ],
+      [
+        null,
+        "Saldo según extracto bancario al 30/09/2026",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        1200000,
+      ],
+      [null, "2.  PARTIDAS DEL EXTRACTO QUE NO ESTÁN EN EL AUXILIAR"],
+      [
+        null,
+        "N°",
+        "Fecha",
+        "Descripción del movimiento bancario",
+        "# Ref.",
+        null,
+        "Valor",
+        "Período",
+        "Estado",
+        "Observación / acción requerida",
+      ],
+      [
+        null,
+        1,
+        "19/05",
+        "PAGO PSE PROVEEDOR",
+        null,
+        null,
+        -50000,
+        "MAYO",
+        "PENDIENTE",
+        "Por identificar",
+      ],
+      [null, 2, "15/09", "CONSIGNACION", null, null, 300000, "SEPTIEMBRE", "PENDIENTE", null],
+      [null, "TOTAL PARTIDAS", null, null, null, null, 250000],
+      [null, "3.  PARTIDAS DEL AUXILIAR QUE NO FIGURAN EN EL EXTRACTO"],
+      [
+        null,
+        "N°",
+        "Fecha",
+        "Concepto registrado en el auxiliar",
+        "# Ref.",
+        null,
+        "Valor",
+        "Período",
+        "Estado",
+        "Observación",
+      ],
+      [
+        null,
+        1,
+        "30/09/2026",
+        "CLIENTE — recaudo en tránsito",
+        "RC-1-5",
+        null,
+        50000,
+        "Septiembre",
+        "EN TRÁNSITO",
+        "Ingresa en octubre",
+      ],
+      [null, "TOTAL", null, null, null, null, 50000],
+      [null, "4.  RESUMEN POR TIPO DE PARTIDA"],
+      [null, "Tipo de partida", null, null, null, "Cant.", 99999],
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(filas), "Reporte Conciliación");
+    const r = leerConciliacionAnterior(
+      new Uint8Array(XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer),
+      "AHORROS",
+      [
+        { etiqueta: "AHORROS", cuentaContable: "11200502" },
+        { etiqueta: "CORRIENTE", cuentaContable: "11100501" },
+      ],
+      false,
+    );
+    const ps = r.porCuenta.get("CORRIENTE")!;
+    expect(ps.map((p) => [p.tipo, p.fecha, p.valor, p.comprobante, p.nota ?? null])).toEqual([
+      ["banco_sin_libros", "2026-05-19", -50000, null, "Por identificar"],
+      ["banco_sin_libros", "2026-09-15", 300000, null, null],
+      ["libros_sin_banco", "2026-09-30", 50000, "RC-1-5", "Ingresa en octubre"],
+    ]);
+    expect(r.saldos.get("CORRIENTE")).toEqual({ libros: 1000000, extracto: 1200000 });
+    expect(
+      diferenciaSinExplicar({ saldoExtracto: 1200000, saldoLibros: 1000000, partidas: ps }),
+    ).toBe(0);
+  });
+});

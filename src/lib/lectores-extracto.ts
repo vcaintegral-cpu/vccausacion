@@ -354,17 +354,172 @@ export function citarRelaciones(
 }
 
 /** Conciliación anterior: partidas por cuenta. Sin columna de cuenta, todas van a `cuentaPorDefecto`. */
+const MESES_LARGOS = [
+  "ENERO",
+  "FEBRERO",
+  "MARZO",
+  "ABRIL",
+  "MAYO",
+  "JUNIO",
+  "JULIO",
+  "AGOSTO",
+  "SEPTIEMBRE",
+  "OCTUBRE",
+  "NOVIEMBRE",
+  "DICIEMBRE",
+];
+
+/**
+ * Hoja de reporte de conciliación con secciones numeradas: «Cuenta contable 11100501»,
+ * «Fecha de corte: 30 de septiembre de 2026», «Saldo según libros/extracto», y las secciones
+ * «Partidas del extracto que no están en el auxiliar» (banco sin libros) y «Partidas del
+ * auxiliar que no figuran en el extracto» (libros sin banco), cada una con encabezado
+ * Fecha / Descripción / Ref. / Valor / Observación. Los valores van con el signo del lado
+ * donde están (banco: + entrada; libros: + débito).
+ */
+function leerReporteConciliacion(filas: unknown[][]): {
+  cuentaContable: string | null;
+  saldoLibros: number | null;
+  saldoExtracto: number | null;
+  partidas: PartidaConciliatoria[];
+  esReporte: boolean;
+} {
+  const textoFila = (f: unknown[]) => N((f ?? []).filter((x) => typeof x === "string").join(" "));
+  const ultimoNumero = (f: unknown[]) => {
+    const ns = (f ?? []).filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+    return ns.length ? ns[ns.length - 1]! : null;
+  };
+  let cuentaContable: string | null = null;
+  let anio: number | null = null;
+  let mesCorte: number | null = null;
+  let saldoLibros: number | null = null;
+  let saldoExtracto: number | null = null;
+  let esReporte = false;
+  for (const f of filas.slice(0, 20)) {
+    const t = textoFila(f);
+    const cc = /CUENTA CONTABLE (\d{6,10})/.exec(t);
+    if (cc && !cuentaContable) cuentaContable = cc[1]!;
+    const corte = /CORTE (\d{1,2}) DE ([A-Z]+) DE (\d{4})/.exec(t);
+    if (corte) {
+      anio = Number(corte[3]);
+      const m = MESES_LARGOS.indexOf(corte[2]!);
+      mesCorte = m >= 0 ? m + 1 : null;
+    }
+    if (/RESUMEN DE LA CONCILIACION/.test(t)) esReporte = true;
+    if (/^SALDO SEGUN LIBROS/.test(t) && saldoLibros == null) saldoLibros = ultimoNumero(f);
+    if (/^SALDO SEGUN (EXTRACTO|PLANILLA)/.test(t) && saldoExtracto == null)
+      saldoExtracto = ultimoNumero(f);
+  }
+  const partidas: PartidaConciliatoria[] = [];
+  if (!esReporte) return { cuentaContable, saldoLibros, saldoExtracto, partidas, esReporte };
+  let seccion: PartidaConciliatoria["tipo"] | null = null;
+  let c: { fecha: number; desc: number; ref: number; valor: number; obs: number } | null = null;
+  for (const f of filas) {
+    const t = textoFila(f);
+    if (
+      /PARTIDAS DEL EXTRACTO QUE NO|EXTRACTO QUE NO ESTAN|PLANILLA QUE FALTAN EN EL AUXILIAR/.test(
+        t,
+      )
+    ) {
+      seccion = "banco_sin_libros";
+      c = null;
+      continue;
+    }
+    if (/PARTIDAS DEL AUXILIAR QUE NO|AUXILIAR QUE NO (FIGURAN|CRUZAN)/.test(t)) {
+      seccion = "libros_sin_banco";
+      c = null;
+      continue;
+    }
+    // Otro título numerado («4. RESUMEN POR TIPO DE PARTIDA») cierra la sección.
+    if (/^\d+ [A-Z]/.test(t) && !(f ?? []).some((x) => typeof x === "number")) {
+      seccion = null;
+      c = null;
+      continue;
+    }
+    if (!seccion) continue;
+    const enc = (f ?? []).map(N);
+    if (enc.includes("FECHA") || enc.some((x) => x.startsWith("FECHA"))) {
+      const col = (re: RegExp) => enc.findIndex((x) => re.test(x));
+      c = {
+        fecha: col(/^FECHA/),
+        desc: col(/^(DESCRIPCION|CONCEPTO)/),
+        ref: col(/REF/),
+        valor: col(/^VALOR/),
+        obs: col(/^OBSERVACION/),
+      };
+      continue;
+    }
+    if (!c || c.valor < 0 || /^TOTAL/.test(t)) continue;
+    const v = f[c.valor];
+    const valor = typeof v === "number" ? v : numeroUS(v);
+    if (valor == null || Math.abs(valor) < 0.01) continue;
+    // «19/05» sin año: el del corte (o el anterior si el mes es posterior al del corte).
+    const crudo = c.fecha >= 0 ? f[c.fecha] : null;
+    const mDia = /^(\d{1,2})\/(\d{1,2})$/.exec(String(crudo ?? "").trim());
+    const anioFila =
+      mDia && anio && mesCorte && Number(mDia[2]) > mesCorte ? anio - 1 : (anio ?? undefined);
+    const fch = fecha(crudo, anioFila);
+    if (!fch) continue;
+    const ref = c.ref >= 0 ? String(f[c.ref] ?? "").trim() : "";
+    const obs = c.obs >= 0 ? String(f[c.obs] ?? "").trim() : "";
+    const desc = c.desc >= 0 ? String(f[c.desc] ?? "").trim() : "";
+    partidas.push({
+      tipo: seccion,
+      fecha: fch,
+      descripcion: desc,
+      comprobante: ref || null,
+      tercero: null,
+      valor,
+      ...(obs ? { nota: obs } : {}),
+    });
+  }
+  return { cuentaContable, saldoLibros, saldoExtracto, partidas, esReporte };
+}
+
 export function leerConciliacionAnterior(
   bytes: Uint8Array | ArrayBuffer,
   cuentaPorDefecto: string,
-): { porCuenta: Map<string, PartidaConciliatoria[]>; advertencias: string[] } {
+  /** Cuentas de la empresa: el reporte trae la cuenta contable y se asigna a su etiqueta. */
+  cuentas: Array<{ etiqueta: string; cuentaContable: string | null }> = [],
+  /** false: la cuenta por defecto no la eligió la usuaria (no se usa en un reporte con cuenta). */
+  cuentaElegida = true,
+): {
+  porCuenta: Map<string, PartidaConciliatoria[]>;
+  /** Saldos al corte del reporte (libros y extracto) por cuenta. */
+  saldos: Map<string, { libros: number | null; extracto: number | null }>;
+  /** Cuentas leídas de un reporte, aunque no tengan partidas (conciliadas sin pendientes). */
+  leidas: string[];
+  advertencias: string[];
+} {
   const wb = libro(bytes);
   const porCuenta = new Map<string, PartidaConciliatoria[]>();
+  const saldos = new Map<string, { libros: number | null; extracto: number | null }>();
+  const leidas: string[] = [];
   const advertencias: string[] = [];
   const agregar = (cuenta: string, p: PartidaConciliatoria) => {
     const k = N(cuenta) || N(cuentaPorDefecto);
     porCuenta.set(k, [...(porCuenta.get(k) ?? []), p]);
   };
+  // Reporte de conciliación con secciones (formato del papel de trabajo de la firma).
+  for (const nombre of wb.SheetNames) {
+    const r = leerReporteConciliacion(filasDe(wb.Sheets[nombre]!));
+    if (!r.esReporte) continue;
+    const etiqueta =
+      cuentas.find((c) => r.cuentaContable && c.cuentaContable === r.cuentaContable)?.etiqueta ??
+      (cuentaElegida || !r.cuentaContable ? cuentaPorDefecto : "");
+    if (!N(etiqueta)) {
+      advertencias.push(
+        `El reporte es de la cuenta contable ${r.cuentaContable ?? "—"}, que no está configurada en ninguna cuenta: elige la cuenta.`,
+      );
+      continue;
+    }
+    for (const p of r.partidas) agregar(etiqueta, p);
+    saldos.set(N(etiqueta), { libros: r.saldoLibros, extracto: r.saldoExtracto });
+    if (!leidas.includes(N(etiqueta))) leidas.push(N(etiqueta));
+    if (!porCuenta.has(N(etiqueta))) porCuenta.set(N(etiqueta), []);
+    // Un reporte por cuenta: las demás hojas del libro son papeles de trabajo.
+    return { porCuenta, saldos, leidas, advertencias };
+  }
   for (const nombre of wb.SheetNames) {
     const hoja = N(nombre);
     const filas = filasDe(wb.Sheets[nombre]!);
@@ -431,5 +586,5 @@ export function leerConciliacionAnterior(
   }
   if (!porCuenta.size)
     advertencias.push("No se encontraron partidas conciliatorias en el archivo.");
-  return { porCuenta, advertencias };
+  return { porCuenta, saldos, leidas, advertencias };
 }
