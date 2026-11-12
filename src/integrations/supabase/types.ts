@@ -609,6 +609,145 @@ export type Database = {
           },
         ]
       }
+      conciliacion_ajustes: {
+        Row: {
+          clave: string
+          company_id: string
+          comprobante_origen: string | null
+          created_at: string
+          created_by: string | null
+          cuenta_ajuste: string
+          cuenta_banco: string
+          cuenta_destino_etiqueta: string | null
+          cuenta_etiqueta: string
+          descripcion: string | null
+          estado: string
+          fecha: string
+          id: string
+          periodo: string
+          siigo_error: string | null
+          siigo_id: string | null
+          siigo_nombre: string | null
+          tipo: string
+          tercero_nit: string
+          updated_at: string
+          valor: number
+        }
+        Insert: {
+          clave: string
+          company_id: string
+          comprobante_origen?: string | null
+          created_at?: string
+          created_by?: string | null
+          cuenta_ajuste: string
+          cuenta_banco: string
+          cuenta_destino_etiqueta?: string | null
+          cuenta_etiqueta: string
+          descripcion?: string | null
+          estado?: string
+          fecha: string
+          id?: string
+          periodo: string
+          siigo_error?: string | null
+          siigo_id?: string | null
+          siigo_nombre?: string | null
+          tipo?: string
+          tercero_nit: string
+          updated_at?: string
+          valor: number
+        }
+        Update: {
+          clave?: string
+          company_id?: string
+          comprobante_origen?: string | null
+          created_at?: string
+          created_by?: string | null
+          cuenta_ajuste?: string
+          cuenta_banco?: string
+          cuenta_destino_etiqueta?: string | null
+          cuenta_etiqueta?: string
+          descripcion?: string | null
+          estado?: string
+          fecha?: string
+          id?: string
+          periodo?: string
+          siigo_error?: string | null
+          siigo_id?: string | null
+          siigo_nombre?: string | null
+          tipo?: string
+          tercero_nit?: string
+          updated_at?: string
+          valor?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conciliacion_ajustes_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      conciliaciones_bancarias: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          cuenta_contable: string | null
+          cuenta_etiqueta: string
+          id: string
+          partidas: Json
+          periodo: string
+          resumen: Json
+          saldo_extracto_final: number | null
+          saldo_extracto_inicial: number | null
+          saldo_libros_final: number | null
+          saldo_libros_inicial: number | null
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          cuenta_contable?: string | null
+          cuenta_etiqueta: string
+          id?: string
+          partidas?: Json
+          periodo: string
+          resumen?: Json
+          saldo_extracto_final?: number | null
+          saldo_extracto_inicial?: number | null
+          saldo_libros_final?: number | null
+          saldo_libros_inicial?: number | null
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          cuenta_contable?: string | null
+          cuenta_etiqueta?: string
+          id?: string
+          partidas?: Json
+          periodo?: string
+          resumen?: Json
+          saldo_extracto_final?: number | null
+          saldo_extracto_inicial?: number | null
+          saldo_libros_final?: number | null
+          saldo_libros_inicial?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conciliaciones_bancarias_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cost_centers: {
         Row: {
           code: string

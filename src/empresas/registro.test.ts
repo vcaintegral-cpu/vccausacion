@@ -63,6 +63,7 @@ describe("alcance global vs. empresa", () => {
               ["función", "iva_solo_descontable", true],
               ["función", "lector_consolidado_pagos", true],
               ["función", "compras_por_pagar", true],
+              ["función", "pasarelas_pago", true],
             ]
           : [],
       );

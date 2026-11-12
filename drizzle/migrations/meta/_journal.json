@@ -204,6 +204,20 @@
       "when": 1794414169285,
       "tag": "0028_cxp_compra_siigo",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794415169285,
+      "tag": "0029_conciliaciones_bancarias",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794484955679,
+      "tag": "0030_conciliacion_ajustes",
+      "breakpoints": true
     }
   ]
 }

@@ -15,6 +15,7 @@ export const MODULOS = {
   pendientes_siigo: { nombre: "Pendientes Siigo", ruta: "/pendientes-siigo" },
   documentos: { nombre: "Documentos", ruta: "/documentos" },
   egresos: { nombre: "Egresos y pagos", ruta: "/egresos" },
+  conciliacion: { nombre: "Conciliación bancaria", ruta: "/conciliacion" },
   aprendizaje: { nombre: "Aprendizaje contable", ruta: "/aprendizaje" },
   fuentes: { nombre: "Fuentes de documentos", ruta: "/fuentes" },
   integraciones: { nombre: "Integraciones", ruta: "/integraciones" },

@@ -19,6 +19,7 @@ export const MODULOS_POR_DEFECTO: Record<ModuloId, boolean> = {
   aprendizaje: true,
   fuentes: true,
   egresos: true,
+  conciliacion: true,
   integraciones: true,
   administracion: true,
   empresas: true,
@@ -65,6 +66,12 @@ export const FUNCIONES = {
       "Lee el reporte mensual de pagos con hoja «Consolidado» (FECHA, TERCERO, VALOR, CUENTA, RELACIÓN, APLICACIÓN, OBSERVACIONES) desde la carpeta de egresos o cargado a mano, para proponer los recibos de pago",
     porDefecto: false,
     agregada: "2026-11-11",
+  },
+  pasarelas_pago: {
+    descripcion:
+      "Conciliación bancaria: lee las hojas de las pasarelas de pago (Bold, Wompi…) del reporte mensual, cruza cada cobro con su RC y con el abono neto del banco, y propone el RP mensual de comisiones y retenciones contra la factura de la plataforma",
+    porDefecto: false,
+    agregada: "2026-11-12",
   },
   cargos_en_items: {
     descripcion:

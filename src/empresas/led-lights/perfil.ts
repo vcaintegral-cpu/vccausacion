@@ -32,6 +32,10 @@ export const LED_LIGHTS: PerfilEmpresa = {
     // Instrucción del 2026-11-11: todas las compras quedan por pagar (CxP 22050501); ninguna
     // se envía a Siigo pagada. Los pagos se hacen con el RP desde «Egresos y pagos».
     compras_por_pagar: true,
+    // Instrucción del 2026-11-12: los clientes también pagan por Bold (abona a Davivienda) y
+    // Wompi (abona a la Corriente); el RC va por el valor completo, la plataforma consigna el
+    // neto y factura sus comisiones, que se cruzan con lo descontado (hojas Bold y Wompi).
+    pasarelas_pago: true,
   },
   notas: [
     "Software contable: Siigo (comprobantes CE-1, RC-1, FC-1).",
@@ -41,6 +45,7 @@ export const LED_LIGHTS: PerfilEmpresa = {
     "Compras de inventario: renglón tipo producto con el producto del catálogo y cuenta 14 (1435 / 1498); productos nuevos se crean en Siigo al causar.",
     "INC, recargo y descuento global del documento se reparten en el valor de los ítems (proporcional); subtotal = suma de los ítems.",
     "Compras: siempre POR PAGAR en Siigo (forma de pago a crédito → CxP 22050501), nunca pagadas con tarjeta, efectivo o banco; el pago va con el RP.",
+    "Pasarelas: Bold (abona a Davivienda) y Wompi (abona a la Corriente). RC por el valor completo del cliente; la plataforma consigna el neto; sus facturas de comisiones se cruzan con lo descontado (RP mensual por plataforma).",
     "Egresos: Excel mensual «<MES> <AÑO>» en la carpeta del mes (hoja Consolidado: CUENTA, RELACIÓN, APLICACIÓN, OBSERVACIONES); los recibos de pago (RP) se proponen desde ahí.",
     "IVA de compras: siempre descontable 2408 (compras, servicios, gastos, importación); 621008 solo si se elige a mano.",
   ],
