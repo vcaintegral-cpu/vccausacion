@@ -48,7 +48,7 @@ import {
   egresosCuentasAjuste,
   egresosGuardarCuentasAjuste,
 } from "@/lib/egresos.functions";
-import type { ItemPago, Propuesta, TipoEgreso } from "@/lib/egresos";
+import type { CuentaDetallada, ItemPago, Propuesta, TipoEgreso } from "@/lib/egresos";
 import { normalizar, patronConcepto } from "@/lib/egresos";
 
 export const Route = createFileRoute("/_authenticated/egresos")({
@@ -825,6 +825,13 @@ function Egresos() {
                         ) : null}
                       </div>
                     ))}
+                    {f.propuesta?.lineas?.map((l, i) => (
+                      <div key={`l${i}`}>
+                        {l.movimiento === "Debit" ? "Débito" : "Crédito"} {l.code}:{" "}
+                        {cop(Number(l.valor))}
+                        {l.descripcion ? ` · ${l.descripcion}` : ""}
+                      </div>
+                    ))}
                     {f.propuesta?.anticipo ? (
                       <div>
                         Anticipo (excedente) débito {f.propuesta.anticipo.cuenta}:{" "}
@@ -1034,6 +1041,8 @@ function EditarEgreso({
   const [tipo, setTipo] = useState<TipoEgreso>(fila.tipo);
   const [nit, setNit] = useState(base.terceroNit ?? fila.tercero_nit ?? "");
   const [items, setItems] = useState<ItemPago[]>(base.items ?? []);
+  // Líneas adicionales del pago de facturas: otras cuentas y valores para completar el RP.
+  const [lineas, setLineas] = useState<CuentaDetallada[]>(base.lineas ?? []);
   const [cuentaDebito, setCuentaDebito] = useState(
     base.cuentas?.find((c) => c.movimiento === "Debit")?.code ?? "",
   );
@@ -1060,7 +1069,11 @@ function EditarEgreso({
         .some((x) => x.includes(q));
     return !nit || String(c.provider_nit ?? "") === nit.replace(/\D/g, "");
   });
-  const suma = items.reduce((s, i) => s + Number(i.valor || 0), 0);
+  const netoOtras = lineas.reduce(
+    (s, l) => s + (l.movimiento === "Debit" ? 1 : -1) * Number(l.valor || 0),
+    0,
+  );
+  const suma = items.reduce((s, i) => s + Number(i.valor || 0), 0) + netoOtras;
 
   const onGuardar = async () => {
     setGuardando(true);
@@ -1071,6 +1084,7 @@ function EditarEgreso({
       terceroNit: nit || null,
       terceroNombre: fila.tercero_nombre,
       items: tipo === "pago_facturas" ? items : [],
+      lineas: tipo === "pago_facturas" ? lineas.filter((l) => l.code || Number(l.valor)) : null,
       cuentas:
         tipo === "detallado" && cuentaDebito && cuentaBanco
           ? [
@@ -1308,10 +1322,93 @@ function EditarEgreso({
                   </div>
                 ) : null}
               </div>
+              <div className="mt-2 font-medium">
+                Otras líneas del recibo (cuentas y valores adicionales)
+              </div>
+              {lineas.map((l, i) => (
+                <div key={i} className="flex flex-wrap items-center gap-2">
+                  <div className="min-w-80 flex-1">
+                    <AccountCombobox
+                      accounts={puc}
+                      value={l.code}
+                      onChange={(code) =>
+                        setLineas((xs) => xs.map((x, j) => (j === i ? { ...x, code } : x)))
+                      }
+                      placeholder="Código o nombre de la cuenta…"
+                      className="h-7"
+                    />
+                  </div>
+                  <select
+                    className="h-7 rounded border bg-background px-1"
+                    value={l.movimiento}
+                    onChange={(e) =>
+                      setLineas((xs) =>
+                        xs.map((x, j) =>
+                          j === i ? { ...x, movimiento: e.target.value as "Debit" | "Credit" } : x,
+                        ),
+                      )
+                    }
+                  >
+                    <option value="Debit">Débito</option>
+                    <option value="Credit">Crédito</option>
+                  </select>
+                  <Input
+                    className="h-7 w-32"
+                    type="number"
+                    value={l.valor || ""}
+                    placeholder="Valor"
+                    onChange={(e) =>
+                      setLineas((xs) =>
+                        xs.map((x, j) => (j === i ? { ...x, valor: Number(e.target.value) } : x)),
+                      )
+                    }
+                  />
+                  <Input
+                    className="h-7 w-48"
+                    value={l.descripcion}
+                    placeholder="Descripción"
+                    onChange={(e) =>
+                      setLineas((xs) =>
+                        xs.map((x, j) => (j === i ? { ...x, descripcion: e.target.value } : x)),
+                      )
+                    }
+                  />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-red-700"
+                    onClick={() => setLineas((xs) => xs.filter((_, j) => j !== i))}
+                  >
+                    Borrar
+                  </Button>
+                </div>
+              ))}
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7"
+                onClick={() =>
+                  setLineas((xs) => [
+                    ...xs,
+                    {
+                      code: "",
+                      movimiento: "Debit",
+                      // Por defecto, lo que falta para cuadrar el pago.
+                      valor: Math.max(0, Math.round((valor - suma) * 100) / 100),
+                      descripcion: String(fila.descripcion ?? "").slice(0, 100),
+                    },
+                  ])
+                }
+              >
+                + Agregar línea
+              </Button>
               <div
                 className={Math.abs(suma - valor) > 0.009 ? "text-amber-700" : "text-emerald-700"}
               >
                 Aplicado {cop(suma)} de {cop(valor)}
+                {lineas.length
+                  ? ` (facturas ${cop(suma - netoOtras)} + otras líneas ${cop(netoOtras)})`
+                  : ""}
               </div>
               {valor - suma > tope && items.length ? (
                 <div className="text-blue-700">

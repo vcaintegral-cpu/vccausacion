@@ -146,16 +146,25 @@ export const egresosGuardarEdicion = createServerFn({ method: "POST" })
     // Ajuste al peso del pago de facturas: se recalcula aquí con las cuentas de la empresa.
     if (p.tipo === "pago_facturas") {
       const { cargarAjustes } = await import("./egresos.server");
-      const { diferenciaDelPago } = await import("./egresos");
+      const { diferenciaDelPago, netoLineas } = await import("./egresos");
       const ajustes = await cargarAjustes(db, f.company_id);
-      const suma = p.items.reduce((s, i) => s + Number(i.valor || 0), 0);
+      // Líneas adicionales escritas por la usuaria: solo las que tienen cuenta y valor.
+      p.lineas = (p.lineas ?? [])
+        .map((l) => ({
+          ...l,
+          code: String(l.code ?? "").replace(/\D/g, ""),
+          valor: Math.round(Number(l.valor || 0) * 100) / 100,
+        }))
+        .filter((l) => l.code || l.valor);
+      const suma = p.items.reduce((s, i) => s + Number(i.valor || 0), 0) + netoLineas(p.lineas);
       // Diferencia con el banco: ajuste al peso hasta el tope; si se pagó de más por encima
       // del tope, el excedente queda como anticipo al proveedor (cuenta 1330…).
       const dif = diferenciaDelPago(Number(f.valor), suma, ajustes);
       p.ajuste = dif.ajuste;
       p.anticipo = p.items.length ? dif.anticipo : null;
-      p.cuentaCxp = p.ajuste || p.anticipo ? ajustes.cxp : null;
-      if ((p.ajuste || p.anticipo) && !p.cuentaBanco) {
+      const detallado = !!(p.ajuste || p.anticipo || p.lineas.length);
+      p.cuentaCxp = detallado ? ajustes.cxp : null;
+      if (detallado && !p.cuentaBanco) {
         const { data: regla } = await db
           .from("egreso_reglas")
           .select("cuenta_banco")
@@ -173,6 +182,7 @@ export const egresosGuardarEdicion = createServerFn({ method: "POST" })
     } else {
       p.ajuste = null;
       p.anticipo = null;
+      p.lineas = null;
     }
     const errores =
       p.tipo === "omitir"
@@ -1002,6 +1012,7 @@ export const egresosReplicar = createServerFn({ method: "POST" })
           cuentaBanco: b?.cuenta_banco ?? null,
           ajuste: null,
           anticipo: null,
+          lineas: null,
           cuentaCxp: null,
           grupo: null,
           listo: false,

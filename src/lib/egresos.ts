@@ -87,6 +87,8 @@ export type Propuesta = {
   ajuste?: { valor: number; cuenta: string } | null;
   /** Parte del pago que excede las facturas: anticipo al proveedor (débito, cuenta 1330…). */
   anticipo?: { valor: number; cuenta: string } | null;
+  /** Líneas adicionales escritas por la usuaria en un pago de facturas (otras cuentas y valores). */
+  lineas?: CuentaDetallada[] | null;
   /** Cuenta por pagar que se cruza en el RP detallado (p. ej. 22050501). */
   cuentaCxp?: string | null;
 };
@@ -890,7 +892,9 @@ export function payloadRecibo(
   const supplier = { identification: String(p.terceroNit ?? ""), branch_office: 0 };
   if (
     p.tipo === "pago_facturas" &&
-    ((p.ajuste && Math.abs(p.ajuste.valor) >= 0.01) || (p.anticipo && p.anticipo.valor >= 0.01))
+    ((p.ajuste && Math.abs(p.ajuste.valor) >= 0.01) ||
+      (p.anticipo && p.anticipo.valor >= 0.01) ||
+      (p.lineas ?? []).length > 0)
   ) {
     // Con ajuste al peso: RP detallado. Débito a la CxP cruzando cada vencimiento (crédito si
     // es un saldo a favor), el ajuste y el crédito al banco por lo pagado.
@@ -911,6 +915,12 @@ export function payloadRecibo(
         account: { code: p.anticipo.cuenta, movement: "Debit" },
         description: "Anticipo (excedente del pago)",
         value: roundCOP(p.anticipo.valor),
+      });
+    for (const l of p.lineas ?? [])
+      items.push({
+        account: { code: l.code, movement: l.movimiento },
+        description: (l.descripcion || "Otra línea").slice(0, 100),
+        value: roundCOP(l.valor),
       });
     items.push({
       account: { code: String(p.cuentaBanco ?? ""), movement: "Credit" },
@@ -964,6 +974,16 @@ export function payloadRecibo(
   throw new Error("Este egreso no genera recibo de pago en Siigo.");
 }
 
+/** Neto de las líneas adicionales: débitos − créditos (lo que suman al pago). */
+export function netoLineas(lineas: CuentaDetallada[] | null | undefined): number {
+  return roundCOP(
+    (lineas ?? []).reduce(
+      (s, l) => s + (l.movimiento === "Debit" ? 1 : -1) * Number(l.valor || 0),
+      0,
+    ),
+  );
+}
+
 /** Validaciones antes de enviar (además de `listo`). */
 export function erroresAntesDeEnviar(
   m: Pick<MovimientoPago, "valor" | "fecha">,
@@ -978,13 +998,18 @@ export function erroresAntesDeEnviar(
     const suma = roundCOP(p.items.reduce((s, i) => s + i.valor, 0));
     const ajuste = roundCOP(p.ajuste?.valor ?? 0);
     const anticipo = roundCOP(p.anticipo?.valor ?? 0);
-    if (Math.abs(suma + ajuste + anticipo - valor) > 0.009)
+    const otras = netoLineas(p.lineas);
+    if (Math.abs(suma + ajuste + anticipo + otras - valor) > 0.009)
       e.push(
-        `Las facturas suman ${suma.toLocaleString("es-CO")}${ajuste ? ` más el ajuste al peso de ${ajuste.toLocaleString("es-CO")}` : ""}${anticipo ? ` más el anticipo de ${anticipo.toLocaleString("es-CO")}` : ""} y el pago es ${valor.toLocaleString("es-CO")}.`,
+        `Las facturas suman ${suma.toLocaleString("es-CO")}${otras ? `, las otras líneas ${otras.toLocaleString("es-CO")}` : ""}${ajuste ? `, el ajuste al peso ${ajuste.toLocaleString("es-CO")}` : ""}${anticipo ? `, el anticipo ${anticipo.toLocaleString("es-CO")}` : ""} y el pago es ${valor.toLocaleString("es-CO")}.`,
       );
+    for (const l of p.lineas ?? []) {
+      if (!l.code) e.push("Una línea adicional no tiene cuenta.");
+      if (!(Number(l.valor) > 0)) e.push(`La línea de la cuenta ${l.code || "—"} no tiene valor.`);
+    }
     if (ajuste && !p.ajuste?.cuenta) e.push("Falta la cuenta del ajuste al peso.");
     if (anticipo && !p.anticipo?.cuenta) e.push("Falta la cuenta de anticipos a proveedores.");
-    if (ajuste || anticipo) {
+    if (ajuste || anticipo || (p.lineas ?? []).length) {
       if (!p.cuentaCxp) e.push("Falta la cuenta por pagar que se cruza en el recibo detallado.");
       if (!p.cuentaBanco) e.push("Falta la cuenta de banco/caja del recibo detallado.");
     }
@@ -996,7 +1021,10 @@ export function erroresAntesDeEnviar(
   }
   if (
     (p.tipo === "anticipo" ||
-      (p.tipo === "pago_facturas" && !p.ajuste?.valor && !p.anticipo?.valor)) &&
+      (p.tipo === "pago_facturas" &&
+        !p.ajuste?.valor &&
+        !p.anticipo?.valor &&
+        !(p.lineas ?? []).length)) &&
     !p.paymentTypeId
   )
     e.push("Falta la forma de pago de Siigo.");
