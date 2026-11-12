@@ -87,6 +87,11 @@ export async function movimientoDesdeApi(params: {
   hasta: string;
   cuentas: CuentaMovimiento[];
   maxPaginas?: number;
+  /**
+   * Fecha de creación desde la que se listan los documentos (por defecto `desde`). Sirve para
+   * traer los registrados después del corte con fecha de meses anteriores.
+   */
+  creadoDesde?: string;
 }): Promise<{ filas: LineaAuxiliar[]; advertencias: string[]; documentos: number }> {
   const { siigoGet } = await import("./siigo.server");
   const codigos = new Set(params.cuentas.map((c) => c.cuentaContable));
@@ -166,7 +171,7 @@ export async function movimientoDesdeApi(params: {
       fila(d, c.cuentaContable, entra ? v : 0, entra ? 0 : v, tercero, p.name ?? null);
     }
   };
-  const desde = params.desde;
+  const desde = params.creadoDesde ?? params.desde;
   await listar(`/v1/journals?created_start=${desde}`, "Comprobantes contables", (d) =>
     renglones(d, null),
   );

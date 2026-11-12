@@ -523,6 +523,11 @@ export type EntradaCuenta = {
    */
   reclasificacionesEnviadas?: Array<MovLibro & { cuenta: string | null; ajusta: string }>;
   previas: PartidaConciliatoria[];
+  /**
+   * Registros de Siigo con fecha anterior al mes creados después del corte (p. ej. el RP de
+   * una partida pendiente de mayo registrado en noviembre): cruzan con las partidas previas.
+   */
+  librosAnteriores?: LineaAuxiliar[];
   /** Pasarelas de pago de la empresa (Bold, Wompi…): sus abonos llegan netos. */
   pasarelas?: string[];
 };
@@ -542,7 +547,14 @@ export function armarConciliacion(e: EntradaCuenta): {
   pasarelas: Array<{ plataforma: string; patron: RegExp; comprobantes: string[] }>;
   ajustes: Array<{ comprobante: string; origen: string }>;
   reclasificaciones: Array<{ comprobante: string; origen: string }>;
+  /** Movimiento de libros con fecha del mes (o posterior). */
   movimientoLibros: number;
+  /**
+   * Movimiento de libros con fecha anterior al mes registrado después del corte: suma al
+   * saldo final si el saldo inicial es el de la conciliación anterior (no si es el del
+   * balance de prueba actual, que ya lo incluye).
+   */
+  movimientoAnterior: number;
 } {
   const enMes = (f: string | null) => !!f && f.slice(0, 7) === e.periodo;
   const auxiliar: MovLibro[] = e.auxiliar
@@ -558,6 +570,38 @@ export function armarConciliacion(e: EntradaCuenta): {
       origen: "auxiliar" as const,
     }))
     .filter((l) => enMes(l.fecha) && l.valor !== 0);
+  const inicioMes = `${e.periodo}-01`;
+  // Registros con fecha anterior al mes creados después del corte (de la API de Siigo).
+  const anteriores: MovLibro[] = (e.librosAnteriores ?? [])
+    .filter((l) => e.cuentaContable && String(l.account_code ?? "").trim() === e.cuentaContable)
+    .map((l, i) => ({
+      id: `ant-${i}`,
+      fecha: fechaAuxiliar(l.entry_date_text) ?? "",
+      comprobante: String(l.voucher ?? "").trim(),
+      tercero: l.provider_name,
+      terceroNit: l.provider_nit ?? null,
+      descripcion: l.description ?? l.detail ?? null,
+      valor: roundCOP(Number(l.debit ?? 0) - Number(l.credit ?? 0)),
+      origen: "api" as const,
+    }))
+    .filter((l) => l.fecha && l.fecha < inicioMes && l.valor !== 0);
+  // Solo los que corresponden a una partida del corte anterior (banco sin libros, mismo
+  // valor): los demás ya estaban en el saldo en libros de la conciliación anterior.
+  const pendientes = e.previas
+    .filter((p) => p.tipo === "banco_sin_libros")
+    .map((p) => roundCOP(p.valor));
+  for (const a of anteriores) {
+    const i = pendientes.findIndex((v) => Math.abs(v - a.valor) < 0.01);
+    if (i < 0) continue;
+    if (
+      auxiliar.some(
+        (x) => normalizarComprobante(x.comprobante) === normalizarComprobante(a.comprobante),
+      )
+    )
+      continue;
+    pendientes.splice(i, 1);
+    auxiliar.push(a);
+  }
   const enAuxiliar = new Set(auxiliar.map((l) => normalizarComprobante(l.comprobante)));
   const k = (s: string | null) =>
     sinTildes(String(s ?? ""))
@@ -627,7 +671,12 @@ export function armarConciliacion(e: EntradaCuenta): {
       patron: new RegExp(`\\b${plataforma.replace(/[^A-Za-z0-9]/g, "")}\\b`, "i"),
       comprobantes: rps.filter((r) => r.pasarela === plataforma).map((r) => r.comprobante),
     })),
-    movimientoLibros: roundCOP(libros.reduce((s, l) => s + l.valor, 0)),
+    movimientoLibros: roundCOP(
+      libros.filter((l) => !(l.fecha && l.fecha < inicioMes)).reduce((s, l) => s + l.valor, 0),
+    ),
+    movimientoAnterior: roundCOP(
+      libros.filter((l) => l.fecha && l.fecha < inicioMes).reduce((s, l) => s + l.valor, 0),
+    ),
   };
 }
 

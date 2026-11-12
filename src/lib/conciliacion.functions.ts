@@ -40,6 +40,11 @@ export type FuentesConciliacion = {
       pasarela: string | null;
     }
   >;
+  /**
+   * Registros de Siigo de bancos y caja con fecha anterior al mes, creados desde el inicio
+   * del mes (cruzan con las partidas pendientes del corte anterior).
+   */
+  librosAnteriores: LineaAuxiliar[];
   /** Notas de la usuaria en las partidas de la conciliación guardada de este mes (por clave). */
   notas: Record<string, string>;
   /** Extractos en PDF de la bandeja (se leen en el navegador). */
@@ -387,6 +392,34 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
       );
     }
 
+    // Registros con fecha anterior al mes creados desde el inicio del mes (partidas del corte
+    // anterior que se registraron después, con su fecha original).
+    let librosAnteriores: LineaAuxiliar[] = [];
+    try {
+      const conCuenta = cuentas
+        .filter((c) => c.cuentaContable)
+        .map((c) => ({
+          etiqueta: c.etiqueta,
+          cuentaContable: String(c.cuentaContable),
+          paymentTypeId: c.paymentTypeId,
+        }));
+      if (conCuenta.length) {
+        const { movimientoDesdeApi } = await import("./siigo-movimiento.server");
+        const r = await movimientoDesdeApi({
+          desde: "2000-01-01",
+          hasta: new Date(Date.UTC(anio, mes - 1, 0)).toISOString().slice(0, 10),
+          creadoDesde: `${data.periodo}-01`,
+          cuentas: conCuenta,
+          maxPaginas: 5,
+        });
+        librosAnteriores = r.filas;
+      }
+    } catch (e) {
+      advertencias.push(
+        `No se pudieron leer de Siigo los registros con fecha de meses anteriores: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+
     // Conciliación guardada del mes anterior.
     const { data: previas } = await db
       .from("conciliaciones_bancarias")
@@ -555,6 +588,7 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
         if (p.nota) notas[clavePartida(p)] = p.nota;
 
     return {
+      librosAnteriores,
       notas,
       cuentas,
       rpEnviados,
