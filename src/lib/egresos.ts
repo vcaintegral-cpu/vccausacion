@@ -882,13 +882,21 @@ export function payloadRecibo(
   m: Pick<MovimientoPago, "fecha" | "descripcion" | "relacion" | "valor">,
   p: Propuesta,
   documentId: number,
+  /**
+   * Referencia única y estable del pago (p. ej. el id del egreso). Dos pagos legítimos
+   * idénticos (mismo tercero, valor, fecha y cuentas) no se confunden en Siigo
+   * («duplicated_document»), y el reintento de un mismo pago sigue siendo idéntico.
+   */
+  referencia?: string | null,
 ): Record<string, unknown> {
   const valor = roundCOP(m.valor);
-  const observaciones = [m.descripcion, m.relacion]
-    .filter(Boolean)
-    .join(" · ")
-    .replace(/\s+/g, " ")
-    .slice(0, 250);
+  const ref = referencia ? ` · Ref ${referencia}` : "";
+  const observaciones =
+    [m.descripcion, m.relacion]
+      .filter(Boolean)
+      .join(" · ")
+      .replace(/\s+/g, " ")
+      .slice(0, 250 - ref.length) + ref;
   const supplier = { identification: String(p.terceroNit ?? ""), branch_office: 0 };
   if (
     p.tipo === "pago_facturas" &&

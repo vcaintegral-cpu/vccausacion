@@ -391,23 +391,41 @@ function Egresos() {
     )
       return;
     setEnviando({ hechos: 0, total: ids.length });
+    // El envío sigue aunque un recibo falle: los errores quedan en la pestaña «Con error».
+    // Solo se detiene con 3 errores seguidos (credenciales, conexión o Siigo caído).
     let ok = 0;
+    let errores = 0;
+    let seguidos = 0;
+    let detenido = false;
     for (const [i, id] of ids.entries()) {
+      let exito = false;
       try {
         const r = await enviar({ data: { egresoId: id } });
-        if (r.ok) ok += 1;
-        else {
-          toast.error(`Siigo rechazó un recibo: ${r.message}`);
-          break; // se detiene en el primer error para revisarlo
-        }
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : String(e));
-        break;
+        exito = r.ok;
+      } catch {
+        exito = false;
+      }
+      if (exito) {
+        ok += 1;
+        seguidos = 0;
+      } else {
+        errores += 1;
+        seguidos += 1;
       }
       setEnviando({ hechos: i + 1, total: ids.length });
+      if (seguidos >= 3) {
+        detenido = true;
+        break;
+      }
     }
     setEnviando(null);
-    toast.success(`${ok} recibos creados en Siigo.`);
+    if (ok) toast.success(`${ok} recibos creados en Siigo.`);
+    if (errores)
+      toast.error(
+        detenido
+          ? `${errores} recibos con error y 3 seguidos: el envío se detuvo para revisar (puede ser la conexión o las credenciales de Siigo). Revísalos en «Con error».`
+          : `${errores} recibos con error; quedaron en la pestaña «Con error» para revisarlos.`,
+      );
     setSeleccion(new Set());
     refrescar();
   };
