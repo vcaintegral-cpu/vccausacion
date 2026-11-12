@@ -309,9 +309,11 @@ export const egresosEnviar = createServerFn({ method: "POST" })
         );
       documentId = Number(activos[0]!.id);
     }
-    const { impuestosPorCuenta } = await import("./egresos.server");
-    const { payloadAnticipo } = await import("./egresos");
-    const impuestos = await impuestosPorCuenta(db, f.company_id);
+    const { impuestosParaCuentas } = await import("./egresos.server");
+    const { payloadAnticipo, cuentasConImpuesto } = await import("./egresos");
+    // Cuentas de impuestos del recibo (incluidas las 1355 de retenciones que nos practicaron):
+    // Siigo exige su «tax.id».
+    const { mapa: impuestos } = await impuestosParaCuentas(db, f.company_id, cuentasConImpuesto(p));
     const ref = String(f.id).slice(0, 8);
     // Uno o dos recibos: el de las facturas/cuentas y, si hay excedente, el de anticipo.
     const partes: Array<{ parte: "pago" | "anticipo"; payload: Record<string, unknown> }> = [];
@@ -408,6 +410,19 @@ export const egresosEnviar = createServerFn({ method: "POST" })
       // este mismo pago creado en un intento anterior, así que se verifica antes de reintentar.
       const incierto =
         /\b409\b|duplicated_document/.test(msg) || !/\b(400|401|403|404|422)\b/.test(msg);
+      // «items[N].tax.id is required»: la cuenta de esa línea está vinculada a un impuesto.
+      const sinImpuesto = /items\[(\d+)\]\.tax\.id/.exec(msg);
+      const lineaImpuesto = sinImpuesto
+        ? (() => {
+            const items = (partes[creados.length]?.payload["items"] ?? []) as Array<{
+              account?: { code?: string };
+            }>;
+            const code = items[Number(sinImpuesto[1])]?.account?.code;
+            return code
+              ? `La cuenta ${code} está vinculada a un impuesto en Siigo y no se pudo identificar cuál (revisa que el nombre de la cuenta en el PUC indique la tarifa, p. ej. «1,5%», o que el impuesto exista activo en Siigo). `
+              : "";
+          })()
+        : "";
       const parcial = creados.length
         ? `Ya se creó en Siigo ${creados.map((c) => `${c.nombre ?? c.id} (${c.parte === "pago" ? "facturas" : "anticipo"})`).join(", ")}; al reintentar solo se crea lo que falta. `
         : "";
@@ -417,6 +432,7 @@ export const egresosEnviar = createServerFn({ method: "POST" })
           estado: "error",
           siigo_payload: { partes, creados } as never,
           siigo_error:
+            lineaImpuesto +
             parcial +
             (incierto
               ? "Respuesta de Siigo incierta: verifica en Siigo si el recibo se creó antes de reintentar. "
@@ -807,7 +823,19 @@ export const egresosEnviarGrupoBancario = createServerFn({ method: "POST" })
         documentId,
         fecha,
         etiqueta,
-        await (await import("./egresos.server")).impuestosPorCuenta(db, data.companyId),
+        (
+          await (
+            await import("./egresos.server")
+          ).impuestosParaCuentas(
+            db,
+            data.companyId,
+            lista.flatMap((f) =>
+              (f.propuesta as Propuesta).cuentas
+                .map((c) => c.code)
+                .filter((c) => /^(1355|2365|2367|2368|2408)/.test(c)),
+            ),
+          )
+        ).mapa,
       );
       if (errores.length) throw new Error(errores.join(" "));
 
