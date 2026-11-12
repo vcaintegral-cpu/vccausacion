@@ -54,6 +54,8 @@ export type DatosReporte = {
   libros: MovLibro[];
   /** Partidas al corte (con nota de la usuaria). */
   partidas: PartidaConciliatoria[];
+  /** Verificaciones del arrastre (saldos iniciales vs conciliación anterior). */
+  verificaciones?: Array<{ nivel: string; texto: string }>;
 };
 
 const fin = (periodo: string) => {
@@ -564,6 +566,8 @@ export function libroConciliacionFirma(d: DatosReporte): XLSX.WorkBook {
     );
   for (const [tipo, g] of grupos)
     fila(`•  ${tipo}: ${g.cant} partida(s) por ${pesos(g.valor)}. ${g.accion}`);
+  for (const v of d.verificaciones ?? [])
+    fila(`•  ${v.nivel === "error" ? "REVISAR" : "Atención"}: ${v.texto}`);
   r.push([]);
   r.push([]);
   r.push([

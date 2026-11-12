@@ -34,6 +34,10 @@ import {
   partidaDeLibro,
   conciliar,
   detectarCuentaErrada,
+  patronDescripcion,
+  tercerosDudosos,
+  verificarArrastre,
+  type Verificacion,
   diferenciaSinExplicar,
   fechaAuxiliar,
   partidasAlCorte,
@@ -61,6 +65,7 @@ import {
 import {
   conciliacionCrearRpPasarela,
   conciliacionEnviarAjuste,
+  conciliacionAprender,
   conciliacionFuentes,
   conciliacionGuardar,
   conciliacionGuardarCuentasPasarela,
@@ -113,6 +118,12 @@ type Calculo = {
   movimientos: number;
   /** Diferencias dentro del tope del ajuste al peso aún sin ajustar en Siigo. */
   ajustes: AjustePropuesto[];
+  /** Verificaciones del arrastre desde el cierre anterior. */
+  verificaciones: Verificacion[];
+  /** Recibos cruzados cuyo tercero no se parece al del banco o la relación. */
+  dudosos: ReturnType<typeof tercerosDudosos>;
+  /** Partidas del corte anterior: cuántas había y cuántas siguen abiertas. */
+  arrastre: { previas: number; siguen: number };
   /** Movimientos del mes (extracto y libros, sin partidas del corte anterior) para el reporte. */
   bancoMes: MovBanco[];
   librosMes: MovLibro[];
@@ -202,6 +213,10 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
     k("saldosLibros"),
     {},
   );
+  /** Saldos al corte de las conciliaciones anteriores subidas (por cuenta en mayúsculas). */
+  const [saldosAnteriores, setSaldosAnteriores] = usePersistente<
+    Record<string, { libros: number | null; extracto: number | null }>
+  >(k("saldosAnteriores"), {});
   /** Cuentas cuyo saldo inicial de libros viene del balance de prueba actual de Siigo. */
   const [saldoDeBalance, setSaldoDeBalance] = usePersistente<Set<string>>(
     k("saldoDeBalance"),
@@ -262,6 +277,7 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
   const puc = { data: (catalogos.data?.puc ?? []).filter((c) => c.code.startsWith("1355")) };
   const registrarRp = useServerFn(conciliacionRegistrarRp);
   const registrarRc = useServerFn(conciliacionRegistrarRc);
+  const aprender = useServerFn(conciliacionAprender);
   const registrarLote = useServerFn(conciliacionRegistrarLote);
   const enviarEgreso = useServerFn(egresosEnviar);
   const perfilActivo = usePerfilActivo();
@@ -509,7 +525,7 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
       const resultado = conciliar(armado);
       const partidas = partidasAlCorte(resultado).map((p) => ({
         ...p,
-        nota: notas[clavePartida(p)] || null,
+        nota: notas[clavePartida(p)] || p.nota || null,
       }));
       const saldoExtractoFinal = b.saldoFinal;
       const ini = saldosLibros[c.etiqueta];
@@ -543,6 +559,28 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
               })
             : null,
         movimientos: extracto.length,
+        verificaciones: (() => {
+          const ant = fuentes.anterior.find(
+            (a) => a.cuenta.toUpperCase() === c.etiqueta.toUpperCase(),
+          );
+          const sub = saldosAnteriores[c.etiqueta.toUpperCase()];
+          return verificarArrastre({
+            saldoExtractoInicial: b.saldoInicial,
+            saldoLibrosInicial,
+            anteriorExtracto: ant?.saldoExtractoFinal ?? sub?.extracto ?? null,
+            anteriorLibros: ant?.saldoLibrosFinal ?? sub?.libros ?? null,
+            previas: previasDe(c.etiqueta),
+            movimientoAnterior: armado.movimientoAnterior,
+            saldoDeBalance: saldoDeBalance.has(c.etiqueta),
+          });
+        })(),
+        dudosos: tercerosDudosos(resultado),
+        arrastre: {
+          previas: previasDe(c.etiqueta).length,
+          siguen:
+            resultado.faltaEnLibros.filter((x) => x.previa).length +
+            resultado.sobraEnLibros.filter((x) => x.previa).length,
+        },
         bancoMes: extracto.filter((m) => !m.previa && m.fecha >= `${periodo}-01`),
         librosMes: armado.libros.filter((l) => !l.previa && l.fecha >= `${periodo}-01`),
         ajustes: ajustesAlPeso(resultado, c.etiqueta, fuentes.ajusteCuentas.tope).filter(
@@ -558,6 +596,7 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
     auxiliar,
     saldosLibros,
     saldoDeBalance,
+    saldosAnteriores,
     periodo,
     notas,
   ]);
@@ -595,6 +634,11 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
       setAnteriorSubida((x) => {
         const n = new Map(x);
         for (const [k, v] of r.porCuenta) n.set(k, v);
+        return n;
+      });
+      setSaldosAnteriores((x) => {
+        const n = { ...x };
+        for (const [k2, sld] of r.saldos) n[k2] = sld;
         return n;
       });
       // El saldo final en libros del corte anterior es el saldo inicial de este mes.
@@ -751,6 +795,21 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
   ) => {
     const k = "ajuste" in linea ? linea.ajuste.clave : linea.mov.id;
     setEnviando(`reg-${k}`);
+    // Se aprende la cuenta y el tercero escogidos para movimientos parecidos.
+    const patron = patronDescripcion(
+      "ajuste" in linea ? linea.ajuste.descripcion : linea.mov.descripcion,
+    );
+    if (patron && f.cuenta)
+      void aprender({
+        data: {
+          companyId,
+          tipo: linea.tipo,
+          patron,
+          cuenta: f.cuenta,
+          terceroNit: f.terceroNit || null,
+          terceroNombre: f.terceroNombre,
+        },
+      }).catch(() => undefined);
     try {
       if (linea.tipo === "salida") {
         const r = await registrarRp({
@@ -820,6 +879,18 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
   /** Registra en Siigo en un solo documento las líneas marcadas de una lista. */
   const onLote = async (cuenta: string, lista: string, detalle: LoteDetalle, f: FormRegistro) => {
     setEnviando(`lote-${lista}`);
+    const patron = patronDescripcion(detalle.lineas[0]?.descripcion ?? "");
+    if (patron && f.cuenta)
+      void aprender({
+        data: {
+          companyId,
+          tipo: detalle.tipo,
+          patron,
+          cuenta: f.cuenta,
+          terceroNit: f.terceroNit || null,
+          terceroNombre: f.terceroNombre,
+        },
+      }).catch(() => undefined);
     try {
       const r = await registrarLote({
         data: {
@@ -945,6 +1016,8 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
 
   /** Conciliaciones en el formato de la firma: un Excel por cuenta, en un ZIP. */
   const exportarFirma = async () => {
+    // Al descargar se guarda la conciliación: sus partidas pasan al mes siguiente.
+    await onGuardar();
     const empresa = empresas?.find((e) => e.id === companyId);
     const JSZip = (await import("jszip")).default;
     const zip = new JSZip();
@@ -964,6 +1037,7 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
         extracto: c.bancoMes,
         libros: c.librosMes,
         partidas: c.partidas,
+        verificaciones: c.verificaciones,
       };
       const wb = libroConciliacionFirma(datos);
       zip.file(
@@ -1216,6 +1290,15 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
           n={elegidos.length}
           total={elegidos.reduce((t, i) => t + i.partida.valor, 0)}
           noRegistrables={elegidos.length - registrables.length}
+          sugerido={(() => {
+            const ap =
+              tipo === "libros" ? null : aprendida(tipo, elegidos[0]?.partida.descripcion ?? "");
+            return {
+              nit: ap?.terceroNit ?? null,
+              nombre: ap?.terceroNombre ?? null,
+              cuenta: ap?.cuenta ?? null,
+            };
+          })()}
           puc={catalogos.data?.puc ?? []}
           terceros={catalogos.data?.terceros ?? []}
           ocupado={enviando === `lote-${lista}`}
@@ -1253,6 +1336,12 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
       linea: { clave, fecha: b.fecha, descripcion: b.descripcion, valor: b.valor },
     };
   };
+  /** Cuenta y tercero aprendidos para un movimiento parecido del extracto. */
+  const aprendida = (tipo: string, descripcion: string) => {
+    const patron = patronDescripcion(descripcion);
+    if (!patron) return null;
+    return fuentes?.aprendidas.find((a) => a.tipo === tipo && a.patron === patron) ?? null;
+  };
   const accion = (
     etiqueta: string,
     tipo: "salida" | "entrada" | "diferencia" | "libros",
@@ -1271,7 +1360,14 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
         onNota={(n) => setNotas((x) => ({ ...x, [k]: n }))}
         puc={catalogos.data?.puc ?? []}
         terceros={catalogos.data?.terceros ?? []}
-        sugerido={opciones.sugerido ?? { nit: null, nombre: null }}
+        sugerido={(() => {
+          const ap = tipo === "libros" ? null : aprendida(tipo, partida.descripcion);
+          return {
+            nit: opciones.sugerido?.nit ?? ap?.terceroNit ?? null,
+            nombre: opciones.sugerido?.nombre ?? ap?.terceroNombre ?? null,
+            cuenta: ap?.cuenta ?? null,
+          };
+        })()}
         descripcion={partida.descripcion.slice(0, 120)}
         ocupado={enviando === `reg-${opciones.id}`}
         {...(opciones.registrar ? { onRegistrar: opciones.registrar } : {})}
@@ -1310,6 +1406,7 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
               setDesde("");
               setHasta("");
               setSeleccion({});
+              setSaldosAnteriores({});
             }}
             className="h-8 w-40"
           />
@@ -1492,6 +1589,14 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
                       <td className="p-2 font-medium">
                         {c.etiqueta}{" "}
                         <span className="text-muted-foreground">{c.cuentaContable}</span>
+                        {c.verificaciones.some((v) => v.nivel === "error") ? (
+                          <span
+                            className="ml-1 text-red-700"
+                            title="Revisar la verificación del arrastre"
+                          >
+                            ✖ arrastre
+                          </span>
+                        ) : null}
                       </td>
                       <td className="p-2">
                         {extractosManual[c.etiqueta]?.nombre ??
@@ -1822,6 +1927,45 @@ function ConciliacionEmpresa({ companyId }: { companyId: string }) {
 
           {vista ? (
             <div className="space-y-3">
+              {vista.verificaciones.length || vista.arrastre.previas ? (
+                <div className="space-y-1 rounded-lg border bg-card p-3 text-xs">
+                  <div className="font-semibold">Verificación del arrastre — {vista.etiqueta}</div>
+                  {vista.arrastre.previas ? (
+                    <div>
+                      Del corte anterior: {vista.arrastre.previas} partida(s);{" "}
+                      {vista.arrastre.previas - vista.arrastre.siguen} se cruzaron este mes y{" "}
+                      {vista.arrastre.siguen} siguen pendientes (pasan al corte de este mes con su
+                      nota).
+                    </div>
+                  ) : null}
+                  {vista.verificaciones.map((v) => (
+                    <div
+                      key={v.texto}
+                      className={v.nivel === "error" ? "text-red-700" : "text-amber-700"}
+                    >
+                      {v.nivel === "error" ? "✖ " : "⚠ "}
+                      {v.texto}
+                    </div>
+                  ))}
+                  {!vista.verificaciones.length ? (
+                    <div className="text-emerald-700">
+                      ✔ Saldos iniciales coherentes con la conciliación anterior.
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {vista.dudosos.length ? (
+                <Lista
+                  titulo={`Posible tercero equivocado en el recibo — ${vista.etiqueta}`}
+                  ayuda="Cruzan con el banco por valor o comprobante, pero el tercero del recibo en Siigo no se parece al del extracto o de la relación del reporte. Revise que el recibo esté a nombre del tercero correcto."
+                  filas={vista.dudosos.map((x) => [
+                    fecha(x.banco.fecha),
+                    `${x.banco.tercero ?? x.banco.descripcion} → ${x.libro.comprobante} a nombre de ${x.libro.tercero}`,
+                    cop(x.banco.valor),
+                    "Verificar en Siigo",
+                  ])}
+                />
+              ) : null}
               {fuenteVista?.advertencias.map((w) => (
                 <div key={w} className="text-xs text-amber-700">
                   • {w}
@@ -2174,6 +2318,7 @@ function LoteBar({
   n,
   total,
   noRegistrables,
+  sugerido,
   puc,
   terceros,
   ocupado,
@@ -2184,6 +2329,8 @@ function LoteBar({
   n: number;
   total: number;
   noRegistrables: number;
+  /** Cuenta y tercero aprendidos de registros anteriores parecidos. */
+  sugerido: { nit: string | null; nombre: string | null; cuenta: string | null };
   puc: PucOption[];
   terceros: TerceroOption[];
   ocupado: boolean;
@@ -2192,9 +2339,9 @@ function LoteBar({
 }) {
   const [nota, setNota] = useState("");
   const [f, setF] = useState<FormRegistro>({
-    terceroNit: "",
-    terceroNombre: null,
-    cuenta: "",
+    terceroNit: sugerido.nit ?? "",
+    terceroNombre: sugerido.nombre,
+    cuenta: sugerido.cuenta ?? "",
     descripcion: "",
     enviar: true,
   });
@@ -2298,7 +2445,7 @@ function AccionLinea({
   onNota: (n: string) => void;
   puc: PucOption[];
   terceros: TerceroOption[];
-  sugerido: { nit: string | null; nombre: string | null };
+  sugerido: { nit: string | null; nombre: string | null; cuenta?: string | null };
   descripcion: string;
   ocupado: boolean;
   onRegistrar?: (f: FormRegistro) => void;
@@ -2307,7 +2454,7 @@ function AccionLinea({
   const [f, setF] = useState<FormRegistro>({
     terceroNit: sugerido.nit ?? "",
     terceroNombre: sugerido.nombre,
-    cuenta: "",
+    cuenta: sugerido.cuenta ?? "",
     descripcion,
     enviar: true,
   });
