@@ -1294,6 +1294,83 @@ export const conciliacionReclasificar = createServerFn({ method: "POST" })
   });
 
 /**
+ * Ingreso al banco en Siigo: recibo de caja detallado (débito al banco por el total, crédito
+ * a cada cuenta). Si ningún tipo de RC de la empresa admite el recibo detallado (Siigo
+ * responde «Invalid value for parameter: type»), se registra como comprobante contable con
+ * las mismas cuentas y tercero.
+ */
+async function crearIngresoDetallado(p: {
+  fecha: string;
+  nit: string;
+  cuentaBanco: string;
+  total: number;
+  descripcion: string;
+  observaciones: string;
+  lineas: Array<{ cuenta: string; valor: number; descripcion: string; taxId?: number | null }>;
+}): Promise<{ id?: string; name?: string; comoComprobante: boolean }> {
+  const { siigoGet, siigoCrearComprobante, siigoJournalDocumentId } =
+    await import("./siigo.server");
+  type Doc = { id?: number; active?: boolean };
+  const docs = await siigoGet<Doc[] | { results?: Doc[] }>("/v1/document-types?type=RC");
+  const activos = (Array.isArray(docs) ? docs : (docs.results ?? [])).filter(
+    (d) => d.id && d.active !== false,
+  );
+  const credito = (customer?: Record<string, unknown>) =>
+    p.lineas.map((l) => ({
+      account: { code: l.cuenta, movement: "Credit" },
+      ...(customer ? { customer } : {}),
+      ...(l.taxId ? { tax: { id: l.taxId } } : {}),
+      description: l.descripcion.slice(0, 100),
+      value: Math.round(l.valor * 100) / 100,
+    }));
+  const total = Math.round(p.total * 100) / 100;
+  for (const d of activos) {
+    try {
+      const r = await siigoCrearComprobante<{ id?: string; name?: string }>(
+        {
+          document: { id: Number(d.id) },
+          date: p.fecha,
+          type: "Detailed",
+          customer: { identification: p.nit, branch_office: 0 },
+          items: [
+            {
+              account: { code: p.cuentaBanco, movement: "Debit" },
+              description: p.descripcion.slice(0, 100),
+              value: total,
+            },
+            ...credito(),
+          ],
+          observations: p.observaciones,
+        },
+        { ruta: "/v1/vouchers", tipo: "RC" },
+      );
+      return { ...r, comoComprobante: false };
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      // Este tipo de RC no admite el recibo detallado: se prueba el siguiente.
+      if (/parameters_exclusive|invalid value for parameter: ?type/i.test(m)) continue;
+      throw e;
+    }
+  }
+  const customer = { identification: p.nit, branch_office: 0 };
+  const r = await siigoCrearComprobante<{ id?: string; name?: string }>({
+    document: { id: await siigoJournalDocumentId() },
+    date: p.fecha,
+    observations: p.observaciones,
+    items: [
+      {
+        account: { code: p.cuentaBanco, movement: "Debit" },
+        customer,
+        description: p.descripcion.slice(0, 100),
+        value: total,
+      },
+      ...credito(customer),
+    ],
+  });
+  return { ...r, comoComprobante: true };
+}
+
+/**
  * Salida del extracto sin RP: crea en Egresos y pagos el recibo de pago detallado (débito a
  * la cuenta escogida, crédito al banco) con el tercero escogido, aprobado si se pide enviar
  * (el envío lo hace egresosEnviar, con su bloqueo y control de errores).
@@ -1491,51 +1568,40 @@ export const conciliacionRegistrarRc = createServerFn({ method: "POST" })
       throw new Error(bloqueo.error?.message ?? "El recibo ya se está procesando.");
     const id = (bloqueo.data as Array<{ id: string }>)[0]!.id;
     try {
-      const { siigoGet, siigoCrearComprobante, siigoUseCompany } = await import("./siigo.server");
+      const { siigoUseCompany } = await import("./siigo.server");
       await siigoUseCompany(data.companyId);
-      type Doc = { id?: number; active?: boolean };
-      const docs = await siigoGet<Doc[] | { results?: Doc[] }>("/v1/document-types?type=RC");
-      const activos = (Array.isArray(docs) ? docs : (docs.results ?? [])).filter(
-        (d) => d.id && d.active !== false,
-      );
-      if (!activos.length)
-        throw new Error("La empresa no tiene un tipo de recibo de caja (RC) activo en Siigo.");
       const { impuestosParaCuentas } = await import("./egresos.server");
       const { mapa } = await impuestosParaCuentas(
         db,
         data.companyId,
         /^(1355|2365|2367|2368|2408)/.test(data.cuentaCredito) ? [data.cuentaCredito] : [],
       );
-      const taxId = mapa.get(data.cuentaCredito);
-      const obs = `${descripcion} · Ref ${id.slice(0, 8)}`.slice(0, 250);
-      const r = await siigoCrearComprobante<{ id?: string; name?: string }>(
-        {
-          document: { id: Number(activos[0]!.id) },
-          date: data.mov.fecha,
-          type: "Detailed",
-          customer: { identification: nit, branch_office: 0 },
-          items: [
-            {
-              account: { code: cuentaBanco, movement: "Debit" },
-              description: descripcion.slice(0, 100),
-              value: valor,
-            },
-            {
-              account: { code: data.cuentaCredito, movement: "Credit" },
-              ...(taxId ? { tax: { id: taxId } } : {}),
-              description: descripcion.slice(0, 100),
-              value: valor,
-            },
-          ],
-          observations: obs,
-        },
-        { ruta: "/v1/vouchers", tipo: "RC" },
-      );
+      const r = await crearIngresoDetallado({
+        fecha: data.mov.fecha,
+        nit,
+        cuentaBanco,
+        total: valor,
+        descripcion,
+        observaciones: `${descripcion} · Ref ${id.slice(0, 8)}`.slice(0, 250),
+        lineas: [
+          {
+            cuenta: data.cuentaCredito,
+            valor,
+            descripcion,
+            taxId: mapa.get(data.cuentaCredito) ?? null,
+          },
+        ],
+      });
       await db
         .from("conciliacion_ajustes")
         .update({ estado: "enviado", siigo_id: String(r.id ?? ""), siigo_nombre: r.name ?? null })
         .eq("id", id);
-      return { ok: true, mensaje: `Recibo de caja creado en Siigo: ${r.name ?? r.id}.` };
+      return {
+        ok: true,
+        mensaje: r.comoComprobante
+          ? `El tipo de recibo de caja de Siigo no admite recibos detallados: se registró como comprobante contable ${r.name ?? r.id}.`
+          : `Recibo de caja creado en Siigo: ${r.name ?? r.id}.`,
+      };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       await db
@@ -1687,6 +1753,7 @@ export const conciliacionRegistrarLote = createServerFn({ method: "POST" })
         return Number(activos[0]!.id);
       };
       let r: { id?: string; name?: string };
+      let comoComprobante = false;
       if (tipo === "salida") {
         r = await siigoCrearComprobante(
           {
@@ -1712,29 +1779,22 @@ export const conciliacionRegistrarLote = createServerFn({ method: "POST" })
           { ruta: "/v1/payment-receipts", tipo: "RP" },
         );
       } else if (tipo === "entrada") {
-        r = await siigoCrearComprobante(
-          {
-            document: { id: await tipoDoc("RC") },
-            date: fecha,
-            type: "Detailed",
-            customer: { identification: nit, branch_office: 0 },
-            items: [
-              {
-                account: { code: cuentaBanco, movement: "Debit" },
-                description: descripcion.slice(0, 100),
-                value: r2(total),
-              },
-              ...lineas.map((l) => ({
-                account: { code: data.contrapartida, movement: "Credit" },
-                ...conTax,
-                description: desc(l),
-                value: r2(l.valor),
-              })),
-            ],
-            observations: obs,
-          },
-          { ruta: "/v1/vouchers", tipo: "RC" },
-        );
+        const ing = await crearIngresoDetallado({
+          fecha,
+          nit,
+          cuentaBanco,
+          total,
+          descripcion,
+          observaciones: obs,
+          lineas: lineas.map((l) => ({
+            cuenta: data.contrapartida,
+            valor: l.valor,
+            descripcion: desc(l),
+            taxId: tax ?? null,
+          })),
+        });
+        r = ing;
+        if (ing.comoComprobante) comoComprobante = true;
       } else {
         const customer = { identification: nit, branch_office: 0 };
         r = await siigoCrearComprobante({
@@ -1769,7 +1829,9 @@ export const conciliacionRegistrarLote = createServerFn({ method: "POST" })
         .eq("id", id);
       return {
         ok: true,
-        mensaje: `${lineas.length} líneas registradas en Siigo en ${r.name ?? r.id}.`,
+        mensaje: comoComprobante
+          ? `${lineas.length} líneas registradas en Siigo en el comprobante contable ${r.name ?? r.id} (el tipo de recibo de caja no admite recibos detallados).`
+          : `${lineas.length} líneas registradas en Siigo en ${r.name ?? r.id}.`,
       };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
