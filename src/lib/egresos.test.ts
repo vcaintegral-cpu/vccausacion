@@ -695,6 +695,7 @@ describe("ajuste al peso del recibo de pago", () => {
           valor: -39600,
           factura: "RP-4-77",
           saldo: -39600,
+          vence: "2026-09-01",
         },
         {
           prefix: "FE",
@@ -703,6 +704,7 @@ describe("ajuste al peso del recibo de pago", () => {
           valor: 133000.35,
           factura: "FE-501",
           saldo: 133000.35,
+          vence: "2026-10-02",
         },
       ],
       ajuste: { valor: -0.35, cuenta: "42958101" },
@@ -795,6 +797,7 @@ describe("excedente del pago como anticipo al proveedor", () => {
           valor: 600000,
           factura: "DS-417",
           saldo: 600000,
+          vence: "2026-10-08",
         },
       ],
       ajuste: null,
@@ -857,6 +860,7 @@ describe("líneas adicionales en el pago de facturas", () => {
           valor: 110898,
           factura: "GUE-172736",
           saldo: 110898,
+          vence: "2026-10-26",
         },
       ],
       ajuste: null,
@@ -954,5 +958,75 @@ describe("referencia única del recibo en Siigo", () => {
     expect((payloadRecibo(m, p, 77, "aaaa1111") as { observations: string }).observations).toBe(
       a.observations,
     );
+  });
+});
+
+describe("recibo detallado: fecha de vencimiento y facturas no vigentes", () => {
+  const ajustes = { debito: "53958101", credito: "42958101", cxp: "22050501", tope: 1000 };
+  it("cada vencimiento cruzado lleva su fecha (Siigo: «due.date is required»)", () => {
+    const m = mov({ valor: 8301850, relacion: "FEFO-37306" });
+    const p = {
+      ...proponerEgreso(m, ctx({ ajustes })),
+      tipo: "pago_facturas" as const,
+      terceroNit: "900111222",
+      items: [
+        {
+          prefix: "FEFO",
+          consecutive: 37306,
+          quote: 1,
+          valor: 8301849.88,
+          factura: "FEFO-37306",
+          saldo: 8301849.88,
+          vence: "2026-10-30",
+        },
+      ],
+      ajuste: { valor: 0.12, cuenta: "53958101" },
+      anticipo: null,
+      lineas: null,
+      cuentaCxp: "22050501",
+      cuentaBanco: "11100501",
+    };
+    expect(erroresAntesDeEnviar(m, p)).toEqual([]);
+    const payload = payloadRecibo(m, p, 77) as { items: Array<{ due?: { date?: string } }> };
+    expect(payload.items[0]!.due).toEqual({
+      prefix: "FEFO",
+      consecutive: 37306,
+      quote: 1,
+      date: "2026-10-30",
+    });
+    // Sin fecha de vencimiento no se envía.
+    expect(
+      erroresAntesDeEnviar(m, { ...p, items: [{ ...p.items[0]!, vence: null }] }).join(" "),
+    ).toMatch(/fecha de vencimiento/);
+  });
+  it("al refrescar: se quitan las facturas con valor 0 y se marcan las que ya no están en las CxP", async () => {
+    const { refrescarSaldos } = await import("./egresos");
+    const p = {
+      ...proponerEgreso(mov({ valor: 1101365, relacion: "FE 1" }), ctx()),
+      tipo: "pago_facturas" as const,
+      items: [
+        {
+          prefix: "FC-1",
+          consecutive: 5667,
+          quote: 1,
+          valor: 1101365,
+          factura: "FE-1",
+          saldo: 1124999.82,
+        },
+        { prefix: "FE", consecutive: 1, quote: 1, valor: 0, factura: "FE-1", saldo: 1124999.82 },
+      ],
+    };
+    const r = refrescarSaldos(p, [
+      { prefix: "FE", consecutive: 1, quote: 1, balance: 1124999.82, dueDate: "2026-10-01" },
+    ]);
+    expect(r.propuesta.items).toHaveLength(1);
+    expect(r.propuesta.items[0]).toMatchObject({ prefix: "FC-1", noVigente: true });
+    expect(
+      erroresAntesDeEnviar(mov({ valor: 1101365 }), {
+        ...r.propuesta,
+        paymentTypeId: "5638",
+        terceroNit: "900111222",
+      }).join(" "),
+    ).toMatch(/ya no está en las cuentas por pagar/);
   });
 });

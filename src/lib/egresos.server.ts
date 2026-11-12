@@ -181,16 +181,23 @@ export async function saldosVigentes(
   if (!items.length) return [];
   const { data } = await db
     .from("siigo_cuentas_por_pagar")
-    .select("prefix, consecutive, quote, balance")
+    .select("prefix, consecutive, quote, balance, due_date")
     .eq("company_id", companyId)
     .in("consecutive", [...new Set(items.map((i) => i.consecutive))]);
   return (
-    (data ?? []) as Array<{ prefix: string; consecutive: number; quote: number; balance: number }>
+    (data ?? []) as Array<{
+      prefix: string;
+      consecutive: number;
+      quote: number;
+      balance: number;
+      due_date: string | null;
+    }>
   ).map((c) => ({
     ...c,
     consecutive: Number(c.consecutive),
     quote: Number(c.quote),
     balance: Number(c.balance),
+    dueDate: c.due_date ? String(c.due_date).slice(0, 10) : null,
   }));
 }
 
