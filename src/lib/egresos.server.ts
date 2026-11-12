@@ -4,6 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   aprenderEgresos,
+  erroresAntesDeEnviar,
+  refrescarSaldos,
   conceptoDe,
   grupoBancario,
   nitSinDv,
@@ -168,6 +170,28 @@ export function cuentaAnticipoProveedores(
   if (proveedores.length >= 1)
     return proveedores.sort((a, b) => a.code.localeCompare(b.code))[0]!.code;
   return hojas.length === 1 ? hojas[0]!.code : null;
+}
+
+/** CxP vigentes (sincronizadas de Siigo) de las facturas de un pago. */
+export async function saldosVigentes(
+  db: Db,
+  companyId: string,
+  items: Array<{ prefix: string; consecutive: number; quote: number }>,
+) {
+  if (!items.length) return [];
+  const { data } = await db
+    .from("siigo_cuentas_por_pagar")
+    .select("prefix, consecutive, quote, balance")
+    .eq("company_id", companyId)
+    .in("consecutive", [...new Set(items.map((i) => i.consecutive))]);
+  return (
+    (data ?? []) as Array<{ prefix: string; consecutive: number; quote: number; balance: number }>
+  ).map((c) => ({
+    ...c,
+    consecutive: Number(c.consecutive),
+    quote: Number(c.quote),
+    balance: Number(c.balance),
+  }));
 }
 
 /** Contexto para proponer: CxP, terceros, reglas, precedente del auxiliar y facturas causadas. */
@@ -376,9 +400,34 @@ export async function proponerPeriodo(db: Db, companyId: string, periodo: string
   const cambios: FilaEgreso[] = [];
   for (const f of filas) {
     if (f.editado_por_usuaria || ["enviando", "enviado", "aprobado"].includes(f.estado)) {
-      // Lo revisado a mano se conserva; solo se le asigna su RP mensual de gastos bancarios.
+      // Lo revisado a mano se conserva; solo se le asigna su RP mensual de gastos bancarios
+      // y se actualizan los saldos de sus facturas con las CxP vigentes de Siigo.
       const prev = f.propuesta as Propuesta;
-      if (f.estado === "enviando" || f.estado === "enviado" || prev?.tipo !== "detallado") continue;
+      if (f.estado === "enviando" || f.estado === "enviado") continue;
+      if (prev?.tipo === "pago_facturas") {
+        const r = refrescarSaldos(prev, contexto.cxp);
+        if (r.cambio) {
+          const e = erroresAntesDeEnviar(movimientoDeFila(f), r.propuesta);
+          const estado = e.length
+            ? "por_revisar"
+            : f.estado === "por_revisar"
+              ? "aprobado"
+              : f.estado;
+          cambios.push({
+            ...f,
+            propuesta: {
+              ...r.propuesta,
+              listo: e.length === 0,
+              motivos: e,
+              diferencias: [],
+            } as Propuesta,
+            estado,
+            motivos: e,
+          });
+        }
+        continue;
+      }
+      if (prev?.tipo !== "detallado") continue;
       const grupo = grupoBancario(conceptoDe(movimientoDeFila(f))?.id ?? null, f.cuenta_etiqueta);
       if ((prev.grupo ?? null) !== grupo) cambios.push({ ...f, propuesta: { ...prev, grupo } });
       continue;

@@ -1036,8 +1036,17 @@ export function erroresAntesDeEnviar(
       p.cuentas.filter((x) => x.movimiento === "Credit").reduce((s, x) => s + x.valor, 0),
     );
     if (!p.cuentas.length) e.push("Faltan las cuentas del recibo detallado.");
-    if (Math.abs(d - c) > 0.009 || Math.abs(d - valor) > 0.009)
-      e.push("Débitos y créditos no cuadran con el valor del pago.");
+    // El banco/caja sale por lo pagado; débitos y créditos (incluidas otras líneas) cuadran.
+    const banco = roundCOP(
+      p.cuentas
+        .filter((x) => x.movimiento === "Credit" && (!p.cuentaBanco || x.code === p.cuentaBanco))
+        .reduce((s, x) => s + x.valor, 0),
+    );
+    if (Math.abs(d - c) > 0.009) e.push("Débitos y créditos del recibo no cuadran.");
+    else if (Math.abs((p.cuentaBanco ? banco : d) - valor) > 0.009)
+      e.push("El crédito al banco/caja no es el valor del pago.");
+    if (p.cuentas.some((x) => !x.code || !(Number(x.valor) > 0)))
+      e.push("Hay una línea sin cuenta o sin valor.");
   }
   if (p.tipo === "omitir" || p.tipo === "por_definir")
     e.push("Este egreso no genera recibo de pago.");
@@ -1136,4 +1145,27 @@ export function payloadReciboAgrupado(
     total,
     errores,
   };
+}
+
+/**
+ * Saldos vigentes de las facturas de un pago revisado a mano: se actualizan con las CxP
+ * sincronizadas de Siigo (p. ej. después de corregir una retención en Siigo), sin cambiar lo
+ * que eligió la usuaria. Devuelve la propuesta actualizada y si cambió algún saldo.
+ */
+export function refrescarSaldos(
+  p: Propuesta,
+  cxp: Array<Pick<CuentaPorPagar, "prefix" | "consecutive" | "quote" | "balance">>,
+): { propuesta: Propuesta; cambio: boolean } {
+  if (p.tipo !== "pago_facturas" || !p.items?.length) return { propuesta: p, cambio: false };
+  const saldo = new Map(
+    cxp.map((c) => [`${c.prefix}|${c.consecutive}|${c.quote}`, Number(c.balance)]),
+  );
+  let cambio = false;
+  const items = p.items.map((i) => {
+    const actual = saldo.get(`${i.prefix}|${i.consecutive}|${i.quote}`);
+    if (actual == null || Math.abs(actual - Number(i.saldo)) < 0.005) return i;
+    cambio = true;
+    return { ...i, saldo: actual };
+  });
+  return { propuesta: cambio ? { ...p, items } : p, cambio };
 }

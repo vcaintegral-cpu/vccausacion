@@ -145,8 +145,10 @@ export const egresosGuardarEdicion = createServerFn({ method: "POST" })
     }
     // Ajuste al peso del pago de facturas: se recalcula aquí con las cuentas de la empresa.
     if (p.tipo === "pago_facturas") {
-      const { cargarAjustes } = await import("./egresos.server");
-      const { diferenciaDelPago, netoLineas } = await import("./egresos");
+      const { cargarAjustes, saldosVigentes } = await import("./egresos.server");
+      const { diferenciaDelPago, netoLineas, refrescarSaldos } = await import("./egresos");
+      // Saldos vigentes de las facturas (CxP sincronizadas), no los que traía la pantalla.
+      p.items = refrescarSaldos(p, await saldosVigentes(db, f.company_id, p.items)).propuesta.items;
       const ajustes = await cargarAjustes(db, f.company_id);
       // Líneas adicionales escritas por la usuaria: solo las que tienen cuenta y valor.
       p.lineas = (p.lineas ?? [])
@@ -261,7 +263,13 @@ export const egresosEnviar = createServerFn({ method: "POST" })
       throw new Error(
         "Este gasto bancario va en el RP único del banco del mes: envíalo desde «RP de gastos bancarios».",
       );
-    const p = f.propuesta as unknown as Propuesta;
+    let p = f.propuesta as unknown as Propuesta;
+    if (p.tipo === "pago_facturas") {
+      // Antes de enviar se valida contra los saldos vigentes de las CxP.
+      const { saldosVigentes } = await import("./egresos.server");
+      const { refrescarSaldos } = await import("./egresos");
+      p = refrescarSaldos(p, await saldosVigentes(db, f.company_id, p.items)).propuesta;
+    }
     const movimiento = {
       fecha: String(f.fecha).slice(0, 10),
       descripcion: f.descripcion,
