@@ -18,6 +18,21 @@ import type { ItemPago } from "@/lib/egresos";
 import type { TransaccionPasarela } from "@/lib/pasarelas";
 import type { BalanceCuenta } from "@/lib/siigo-movimiento.server";
 
+/** Detalle de un registro en lote: tipo de líneas y cada movimiento agrupado. */
+export type LoteDetalle = {
+  tipo: "salida" | "entrada" | "diferencia";
+  lineas: Array<{
+    /** Clave de la línea: la de su partida (salida/entrada) o la de la diferencia. */
+    clave: string;
+    fecha: string;
+    descripcion: string;
+    /** Movimiento del extracto (salida/entrada) o diferencia banco − libros. */
+    valor: number;
+    /** Comprobantes de la diferencia (RC/RP) que ajusta. */
+    origen?: string | null;
+  }>;
+};
+
 export type CuentaConciliable = {
   etiqueta: string;
   cuentaContable: string | null;
@@ -71,6 +86,8 @@ export type FuentesConciliacion = {
   ajustes: Array<{
     clave: string;
     tipo: string;
+    /** Lote: tipo de líneas y sus movimientos (clave, fecha, valor, origen). */
+    detalle: LoteDetalle | null;
     cuentaDestino: string | null;
     cuenta: string;
     fecha: string;
@@ -570,7 +587,7 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
     const { data: ajustesDb } = await db
       .from("conciliacion_ajustes")
       .select(
-        "clave, tipo, cuenta_destino_etiqueta, cuenta_etiqueta, fecha, valor, comprobante_origen, estado, siigo_nombre, siigo_error",
+        "clave, tipo, detalle, cuenta_destino_etiqueta, cuenta_etiqueta, fecha, valor, comprobante_origen, estado, siigo_nombre, siigo_error",
       )
       .eq("company_id", data.companyId)
       .eq("periodo", data.periodo);
@@ -608,6 +625,7 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
         (ajustesDb ?? []) as Array<{
           clave: string;
           tipo: string;
+          detalle: unknown;
           cuenta_destino_etiqueta: string | null;
           cuenta_etiqueta: string;
           fecha: string;
@@ -620,6 +638,7 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
       ).map((a) => ({
         clave: a.clave,
         tipo: a.tipo,
+        detalle: (a.detalle ?? null) as LoteDetalle | null,
         cuentaDestino: a.cuenta_destino_etiqueta,
         cuenta: a.cuenta_etiqueta,
         fecha: String(a.fecha).slice(0, 10),
@@ -1517,6 +1536,241 @@ export const conciliacionRegistrarRc = createServerFn({ method: "POST" })
         .update({ estado: "enviado", siigo_id: String(r.id ?? ""), siigo_nombre: r.name ?? null })
         .eq("id", id);
       return { ok: true, mensaje: `Recibo de caja creado en Siigo: ${r.name ?? r.id}.` };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await db
+        .from("conciliacion_ajustes")
+        .update({ estado: "error", siigo_error: msg.slice(0, 2000) })
+        .eq("id", id)
+        .is("siigo_id", null);
+      return { ok: false, mensaje: msg };
+    }
+  });
+
+/**
+ * Registra en Siigo varias líneas marcadas en UN documento con la misma cuenta y tercero:
+ * salidas → un RP detallado (débito a la cuenta por cada movimiento, crédito al banco por el
+ * total); entradas → un RC detallado (débito al banco por el total, crédito a la cuenta por
+ * cada movimiento); diferencias → un comprobante contable (banco contra la cuenta, un par de
+ * renglones por diferencia). Fechado el último día del mes (u hoy, si es antes). Una sola
+ * vez por conjunto de líneas (clave del lote); nunca se reenvía uno que ya está en Siigo.
+ */
+export const conciliacionRegistrarLote = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: {
+      companyId: string;
+      periodo: string;
+      cuenta: string;
+      detalle: LoteDetalle;
+      terceroNit: string;
+      contrapartida: string;
+      descripcion: string;
+    }) => {
+      if (!input?.companyId || !/^\d{4}-\d{2}$/.test(input.periodo ?? ""))
+        throw new Error("Empresa y mes requeridos.");
+      const l = input.detalle?.lineas ?? [];
+      if (l.length < 1 || l.length > 300) throw new Error("Marca entre 1 y 300 líneas.");
+      const t = input.detalle.tipo;
+      if (t === "salida" && l.some((x) => !(x.valor < 0)))
+        throw new Error("El lote de salidas solo admite salidas del banco.");
+      if (t === "entrada" && l.some((x) => !(x.valor > 0)))
+        throw new Error("El lote de entradas solo admite entradas al banco.");
+      if (l.some((x) => !/^\d{4}-\d{2}-\d{2}$/.test(x.fecha) || !(Math.abs(x.valor) >= 0.01)))
+        throw new Error("Hay líneas sin fecha o sin valor.");
+      if (!String(input.terceroNit ?? "").replace(/\D/g, "")) throw new Error("Escoge el tercero.");
+      if (!/^\d{4,10}$/.test(String(input.contrapartida ?? "")))
+        throw new Error("Escoge la cuenta.");
+      return input;
+    },
+  )
+  .handler(async ({ data, context }) => {
+    const db = context.supabase;
+    const { data: banco } = await db
+      .from("egreso_reglas")
+      .select("cuenta_banco")
+      .eq("company_id", data.companyId)
+      .eq("clase", "banco")
+      .ilike("patron", data.cuenta)
+      .maybeSingle();
+    const cuentaBanco = (banco as { cuenta_banco: string | null } | null)?.cuenta_banco;
+    if (!cuentaBanco) throw new Error(`La cuenta ${data.cuenta} no tiene cuenta contable.`);
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const { tipo, lineas } = data.detalle;
+    const huella = [
+      ...lineas
+        .map((l) => l.clave)
+        .sort()
+        .join("§"),
+    ].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+    const clave = `lote|${tipo}|${data.cuenta.toUpperCase()}|${data.periodo}|${lineas.length}|${huella.toString(36)}`;
+    const total = r2(lineas.reduce((s, l) => s + l.valor, 0));
+    const nit = String(data.terceroNit).replace(/\D/g, "");
+    const [anio, mes] = data.periodo.split("-").map(Number) as [number, number];
+    const finMes = new Date(Date.UTC(anio, mes, 0)).toISOString().slice(0, 10);
+    const hoy = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
+    const fecha = finMes < hoy ? finMes : hoy;
+    const descripcion = (
+      data.descripcion.trim() ||
+      `${tipo === "salida" ? "Pagos" : tipo === "entrada" ? "Ingresos" : "Ajustes"} ${data.cuenta} ${data.periodo}`
+    ).slice(0, 200);
+
+    const { data: previo } = await db
+      .from("conciliacion_ajustes")
+      .select("id, siigo_id, siigo_nombre, estado")
+      .eq("company_id", data.companyId)
+      .eq("clave", clave)
+      .maybeSingle();
+    if (previo?.siigo_id)
+      return {
+        ok: true,
+        mensaje: `Ese lote ya está en Siigo (${previo.siigo_nombre}); no se reenvía.`,
+      };
+    if (previo?.estado === "enviando") throw new Error("Ese lote se está enviando.");
+    const { data: u } = await context.supabase.auth.getUser();
+    const base = {
+      company_id: data.companyId,
+      periodo: data.periodo,
+      tipo: "lote",
+      detalle: data.detalle as never,
+      cuenta_etiqueta: data.cuenta,
+      clave,
+      fecha,
+      valor: total,
+      cuenta_banco: cuentaBanco,
+      cuenta_ajuste: data.contrapartida,
+      tercero_nit: nit,
+      comprobante_origen: null,
+      descripcion,
+      estado: "enviando",
+      siigo_error: null,
+      created_by: u.user?.id ?? null,
+    };
+    const bloqueo = previo
+      ? await db
+          .from("conciliacion_ajustes")
+          .update(base)
+          .eq("id", previo.id)
+          .in("estado", ["pendiente", "error"])
+          .is("siigo_id", null)
+          .select("id")
+      : await db.from("conciliacion_ajustes").insert(base).select("id");
+    if (bloqueo.error || !(bloqueo.data ?? []).length)
+      throw new Error(bloqueo.error?.message ?? "El lote ya se está procesando.");
+    const id = (bloqueo.data as Array<{ id: string }>)[0]!.id;
+
+    try {
+      const { siigoGet, siigoCrearComprobante, siigoUseCompany, siigoJournalDocumentId } =
+        await import("./siigo.server");
+      await siigoUseCompany(data.companyId);
+      const { impuestosParaCuentas } = await import("./egresos.server");
+      const { mapa } = await impuestosParaCuentas(
+        db,
+        data.companyId,
+        /^(1355|2365|2367|2368|2408)/.test(data.contrapartida) ? [data.contrapartida] : [],
+      );
+      const tax = mapa.get(data.contrapartida);
+      const conTax = tax ? { tax: { id: tax } } : {};
+      const desc = (l: { fecha: string; descripcion: string }) =>
+        `${l.fecha} ${l.descripcion}`.replace(/\s+/g, " ").slice(0, 100);
+      const obs = `${descripcion} · ${lineas.length} movimientos · Ref ${id.slice(0, 8)}`.slice(
+        0,
+        250,
+      );
+      const tipoDoc = async (t: "RP" | "RC") => {
+        type Doc = { id?: number; active?: boolean };
+        const docs = await siigoGet<Doc[] | { results?: Doc[] }>(`/v1/document-types?type=${t}`);
+        const activos = (Array.isArray(docs) ? docs : (docs.results ?? [])).filter(
+          (d) => d.id && d.active !== false,
+        );
+        if (!activos.length) throw new Error(`La empresa no tiene un tipo ${t} activo en Siigo.`);
+        return Number(activos[0]!.id);
+      };
+      let r: { id?: string; name?: string };
+      if (tipo === "salida") {
+        r = await siigoCrearComprobante(
+          {
+            document: { id: await tipoDoc("RP") },
+            date: fecha,
+            type: "Detailed",
+            supplier: { identification: nit, branch_office: 0 },
+            items: [
+              ...lineas.map((l) => ({
+                account: { code: data.contrapartida, movement: "Debit" },
+                ...conTax,
+                description: desc(l),
+                value: r2(Math.abs(l.valor)),
+              })),
+              {
+                account: { code: cuentaBanco, movement: "Credit" },
+                description: descripcion.slice(0, 100),
+                value: r2(Math.abs(total)),
+              },
+            ],
+            observations: obs,
+          },
+          { ruta: "/v1/payment-receipts", tipo: "RP" },
+        );
+      } else if (tipo === "entrada") {
+        r = await siigoCrearComprobante(
+          {
+            document: { id: await tipoDoc("RC") },
+            date: fecha,
+            type: "Detailed",
+            customer: { identification: nit, branch_office: 0 },
+            items: [
+              {
+                account: { code: cuentaBanco, movement: "Debit" },
+                description: descripcion.slice(0, 100),
+                value: r2(total),
+              },
+              ...lineas.map((l) => ({
+                account: { code: data.contrapartida, movement: "Credit" },
+                ...conTax,
+                description: desc(l),
+                value: r2(l.valor),
+              })),
+            ],
+            observations: obs,
+          },
+          { ruta: "/v1/vouchers", tipo: "RC" },
+        );
+      } else {
+        const customer = { identification: nit, branch_office: 0 };
+        r = await siigoCrearComprobante({
+          document: { id: await siigoJournalDocumentId() },
+          date: fecha,
+          observations: obs,
+          items: lineas.flatMap((l) => {
+            const v = r2(Math.abs(l.valor));
+            const entra = l.valor > 0;
+            return [
+              {
+                account: { code: entra ? cuentaBanco : data.contrapartida, movement: "Debit" },
+                customer,
+                ...(entra ? {} : conTax),
+                description: desc(l),
+                value: v,
+              },
+              {
+                account: { code: entra ? data.contrapartida : cuentaBanco, movement: "Credit" },
+                customer,
+                ...(entra ? conTax : {}),
+                description: desc(l),
+                value: v,
+              },
+            ];
+          }),
+        });
+      }
+      await db
+        .from("conciliacion_ajustes")
+        .update({ estado: "enviado", siigo_id: String(r.id ?? ""), siigo_nombre: r.name ?? null })
+        .eq("id", id);
+      return {
+        ok: true,
+        mensaje: `${lineas.length} líneas registradas en Siigo en ${r.name ?? r.id}.`,
+      };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       await db

@@ -493,3 +493,42 @@ describe("partidas del corte anterior registradas después con su fecha original
     expect(r.conciliados).toHaveLength(2);
   });
 });
+
+describe("registro en lote", () => {
+  it("un RP que agrupa varias salidas cruza con cada movimiento del extracto", () => {
+    const armado = armarConciliacion({
+      etiqueta: "CORRIENTE",
+      cuentaContable: "11100501",
+      periodo: "2026-10",
+      extracto: [
+        b("b1", "2026-10-05", "PAGO PSE TIENDA", -70000),
+        b("b2", "2026-10-09", "PAGO PSE TIENDA", -30000),
+        b("b3", "2026-10-09", "OTRO", -5000),
+      ],
+      auxiliar: [],
+      rpEnviados: [],
+      rcApi: [],
+      previas: [],
+      lotesEnviados: [
+        {
+          id: "lote-1",
+          fecha: "2026-10-31",
+          comprobante: "RP-4-500",
+          tercero: null,
+          descripcion: null,
+          valor: -100000,
+          cuenta: "CORRIENTE",
+          movimientos: [
+            { fecha: "2026-10-05", valor: -70000 },
+            { fecha: "2026-10-09", valor: -30000 },
+          ],
+        },
+      ],
+    });
+    const r = conciliar(armado);
+    expect(r.conciliados).toHaveLength(1);
+    expect(r.conciliados[0]!.banco.map((x) => x.id)).toEqual(["b1", "b2"]);
+    expect(r.faltaEnLibros.map((x) => x.id)).toEqual(["b3"]);
+    expect(armado.movimientoLibros).toBe(-100000);
+  });
+});

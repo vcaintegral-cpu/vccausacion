@@ -5,7 +5,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { CloudDownload, Download, Loader2, RefreshCw, Save, Send, Upload } from "lucide-react";
@@ -62,9 +62,11 @@ import {
   conciliacionGuardarCuentasPasarela,
   conciliacionMovimientoSiigo,
   conciliacionReclasificar,
+  conciliacionRegistrarLote,
   conciliacionRegistrarRc,
   conciliacionRegistrarRp,
   type FuentesConciliacion,
+  type LoteDetalle,
 } from "@/lib/conciliacion.functions";
 import type { BalanceCuenta } from "@/lib/siigo-movimiento.server";
 
@@ -119,16 +121,49 @@ const finDeMes = (periodo: string) => {
   return new Date(Date.UTC(a, m, 0)).toISOString().slice(0, 10);
 };
 
+// Estado de la conciliación por empresa en memoria: se conserva al cambiar de panel dentro
+// de la aplicación (se pierde al recargar la página).
+const memoria = new Map<string, unknown>();
+function usePersistente<T>(clave: string, inicial: T | (() => T)) {
+  const [v, setV] = useState<T>(() =>
+    memoria.has(clave)
+      ? (memoria.get(clave) as T)
+      : typeof inicial === "function"
+        ? (inicial as () => T)()
+        : inicial,
+  );
+  const set = useCallback(
+    (u: SetStateAction<T>) =>
+      setV((prev) => {
+        const n = typeof u === "function" ? (u as (p: T) => T)(prev) : u;
+        memoria.set(clave, n);
+        return n;
+      }),
+    [clave],
+  );
+  return [v, set] as const;
+}
+
 function Conciliacion() {
   const companyId = useActiveCompany();
-  const [periodo, setPeriodo] = useState(mesAnterior());
-  const [fuentes, setFuentes] = useState<FuentesConciliacion | null>(null);
-  const [auxiliar, setAuxiliar] = useState<{ nombre: string; filas: LineaAuxiliar[] } | null>(null);
-  const [anteriorSubida, setAnteriorSubida] = useState<Map<string, PartidaConciliatoria[]>>(
+  if (!companyId) return <EmptyCompany />;
+  return <ConciliacionEmpresa key={companyId} companyId={companyId} />;
+}
+
+function ConciliacionEmpresa({ companyId }: { companyId: string }) {
+  const k = (n: string) => `${companyId}:${n}`;
+  const [periodo, setPeriodo] = usePersistente(k("periodo"), mesAnterior());
+  const [fuentes, setFuentes] = usePersistente<FuentesConciliacion | null>(k("fuentes"), null);
+  const [auxiliar, setAuxiliar] = usePersistente<{ nombre: string; filas: LineaAuxiliar[] } | null>(
+    k("auxiliar"),
+    null,
+  );
+  const [anteriorSubida, setAnteriorSubida] = usePersistente<Map<string, PartidaConciliatoria[]>>(
+    k("anteriorSubida"),
     new Map(),
   );
-  const [cuentaAnterior, setCuentaAnterior] = useState("");
-  const [extractosManual, setExtractosManual] = useState<
+  const [cuentaAnterior, setCuentaAnterior] = usePersistente(k("cuentaAnterior"), "");
+  const [extractosManual, setExtractosManual] = usePersistente<
     Record<
       string,
       {
@@ -138,27 +173,33 @@ function Conciliacion() {
         saldoFinal: number | null;
       }
     >
-  >({});
-  const [extractosPdf, setExtractosPdf] = useState<
+  >(k("extractosManual"), {});
+  const [extractosPdf, setExtractosPdf] = usePersistente<
     Record<string, { nombre: string; ext: Extracto; comparacion: ComparacionExtractos | null }>
-  >({});
-  const [desde, setDesde] = useState("");
-  const [hasta, setHasta] = useState("");
-  const [movSiigo, setMovSiigo] = useState<{
+  >(k("extractosPdf"), {});
+  const [desde, setDesde] = usePersistente(k("desde"), "");
+  const [hasta, setHasta] = usePersistente(k("hasta"), "");
+  const [movSiigo, setMovSiigo] = usePersistente<{
     balance: BalanceCuenta[];
     advertencias: string[];
     documentos: number;
-  } | null>(null);
-  const [cuentasPas, setCuentasPas] = useState<{
+  } | null>(k("movSiigo"), null);
+  const [cuentasPas, setCuentasPas] = usePersistente<{
     retefuente: string | null;
     reteiva: string | null;
     reteica: string | null;
-  }>({ retefuente: null, reteiva: null, reteica: null });
+  }>(k("cuentasPas"), { retefuente: null, reteiva: null, reteica: null });
   const [enviando, setEnviando] = useState<string | null>(null);
-  const [saldosLibros, setSaldosLibros] = useState<Record<string, string>>({});
+  const [saldosLibros, setSaldosLibros] = usePersistente<Record<string, string>>(
+    k("saldosLibros"),
+    {},
+  );
   /** Cuentas cuyo saldo inicial de libros viene del balance de prueba actual de Siigo. */
-  const [saldoDeBalance, setSaldoDeBalance] = useState<Set<string>>(new Set());
-  const [cuentaVista, setCuentaVista] = useState<string | null>(null);
+  const [saldoDeBalance, setSaldoDeBalance] = usePersistente<Set<string>>(
+    k("saldoDeBalance"),
+    new Set(),
+  );
+  const [cuentaVista, setCuentaVista] = usePersistente<string | null>(k("cuentaVista"), null);
   const refAux = useRef<HTMLInputElement>(null);
   const refAnt = useRef<HTMLInputElement>(null);
 
@@ -194,7 +235,7 @@ function Conciliacion() {
           supabase
             .from("puc_accounts")
             .select("code, name, active, level, parent_code, has_children, is_movement")
-            .eq("company_id", companyId!)
+            .eq("company_id", companyId)
             .order("code")
             .range(a, b),
         ),
@@ -202,7 +243,7 @@ function Conciliacion() {
           supabase
             .from("providers")
             .select("nit, name")
-            .eq("company_id", companyId!)
+            .eq("company_id", companyId)
             .order("name")
             .range(a, b),
         ),
@@ -213,11 +254,13 @@ function Conciliacion() {
   const puc = { data: (catalogos.data?.puc ?? []).filter((c) => c.code.startsWith("1355")) };
   const registrarRp = useServerFn(conciliacionRegistrarRp);
   const registrarRc = useServerFn(conciliacionRegistrarRc);
+  const registrarLote = useServerFn(conciliacionRegistrarLote);
   const enviarEgreso = useServerFn(egresosEnviar);
-  const [notas, setNotas] = useState<Record<string, string>>({});
+  const [notas, setNotas] = usePersistente<Record<string, string>>(k("notas"), {});
   const mFuentes = useMutation({
-    mutationFn: async () => {
-      const f = await cargar({ data: { companyId: companyId!, periodo } });
+    /** silencioso: actualización en segundo plano al volver al panel (conserva lo hecho). */
+    mutationFn: async (_opciones?: { silencioso?: boolean }) => {
+      const f = await cargar({ data: { companyId: companyId, periodo } });
       // Extractos PDF de la bandeja: se leen aquí y se comparan con la hoja del reporte.
       const pdfs: typeof extractosPdf = {};
       for (const p of f.pdfs) {
@@ -242,19 +285,24 @@ function Conciliacion() {
       }
       return { f, pdfs };
     },
-    onSuccess: ({ f, pdfs }) => {
-      setExtractosPdf(pdfs);
+    onSuccess: ({ f, pdfs }, opciones) => {
+      const silencioso = !!opciones?.silencioso;
+      // En la actualización en segundo plano se conservan los PDF cargados a mano.
+      setExtractosPdf((x) => (silencioso ? { ...pdfs, ...x } : pdfs));
       setNotas((x) => ({ ...f.notas, ...x }));
-      setCuentasPas(f.cuentasPasarela);
+      if (!silencioso) setCuentasPas(f.cuentasPasarela);
       setDesde((d) => d || `${periodo}-01`);
       setHasta((h) => h || finDeMes(periodo));
       setFuentes(f);
-      setCuentaVista(f.cuentas[0]?.etiqueta ?? null);
+      setCuentaVista((v) =>
+        v && f.cuentas.some((c) => c.etiqueta === v) ? v : (f.cuentas[0]?.etiqueta ?? null),
+      );
       // Saldo inicial de libros: el final guardado del mes anterior.
       const s: Record<string, string> = {};
       for (const a of f.anterior)
         if (a.saldoLibrosFinal != null) s[a.cuenta] = String(a.saldoLibrosFinal);
       setSaldosLibros((x) => ({ ...s, ...x }));
+      if (silencioso) return;
       for (const w of f.advertencias) toast.warning(w);
       toast.success(
         `Fuentes cargadas: ${f.cuentas.filter((c) => c.movimientos.length || pdfs[c.etiqueta]).length} de ${f.cuentas.length} cuentas con extracto.`,
@@ -262,6 +310,12 @@ function Conciliacion() {
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
+  // Al volver al panel con una conciliación en curso, se actualizan Siigo y la bandeja.
+  useEffect(() => {
+    if (fuentes) mFuentes.mutate({ silencioso: true });
+    // Solo al montar el panel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Extracto de cada cuenta: cargado a mano > PDF del banco (con las referencias de la hoja
   // del reporte, si la hay) > Excel de la bandeja u hoja del reporte.
@@ -351,7 +405,7 @@ function Conciliacion() {
     const enviados = new Set(
       fuentes.ajustes
         .filter((a) => a.estado === "enviado" || a.estado === "enviando")
-        .map((a) => a.clave),
+        .flatMap((a) => [a.clave, ...(a.detalle?.lineas ?? []).map((l) => l.clave)]),
     );
     return fuentes.cuentas.map((c) => {
       const b = base[c.etiqueta]!;
@@ -364,19 +418,51 @@ function Conciliacion() {
         auxiliar: auxiliar?.filas ?? [],
         rpEnviados: fuentes.rpEnviados,
         rcApi: fuentes.rcApi,
-        ajustesEnviados: fuentes.ajustes
-          .filter((a) => a.siigoNombre && a.tipo !== "reclasificacion")
+        // Lotes de RP/RC: un documento contra los movimientos del extracto que agrupa.
+        lotesEnviados: fuentes.ajustes
+          .filter((a) => a.tipo === "lote" && a.siigoNombre && a.detalle?.tipo !== "diferencia")
           .map((a) => ({
-            id: `aj-${a.clave}`,
+            id: `lote-${a.clave}`,
             fecha: a.fecha,
             comprobante: a.siigoNombre!,
             tercero: null,
-            descripcion: "Ajuste al peso",
+            descripcion: `Lote de ${a.detalle?.lineas.length ?? 0} movimientos`,
             valor: a.valor,
             origen: "herramienta" as const,
             cuenta: a.cuenta,
-            ajusta: a.origen ?? "",
+            movimientos: (a.detalle?.lineas ?? []).map((l) => ({ fecha: l.fecha, valor: l.valor })),
           })),
+        ajustesEnviados: [
+          // Lote de diferencias: un ajuste por línea dentro del mismo comprobante.
+          ...fuentes.ajustes
+            .filter((a) => a.tipo === "lote" && a.siigoNombre && a.detalle?.tipo === "diferencia")
+            .flatMap((a) =>
+              (a.detalle?.lineas ?? []).map((l, i) => ({
+                id: `aj-${a.clave}-${i}`,
+                fecha: a.fecha,
+                comprobante: a.siigoNombre!,
+                tercero: null,
+                descripcion: "Ajuste en lote",
+                valor: l.valor,
+                origen: "herramienta" as const,
+                cuenta: a.cuenta,
+                ajusta: l.origen ?? "",
+              })),
+            ),
+          ...fuentes.ajustes
+            .filter((a) => a.siigoNombre && a.tipo !== "reclasificacion" && a.tipo !== "lote")
+            .map((a) => ({
+              id: `aj-${a.clave}`,
+              fecha: a.fecha,
+              comprobante: a.siigoNombre!,
+              tercero: null,
+              descripcion: "Ajuste al peso",
+              valor: a.valor,
+              origen: "herramienta" as const,
+              cuenta: a.cuenta,
+              ajusta: a.origen ?? "",
+            })),
+        ],
         // Reclasificación enviada: sale de la cuenta errada (anula el RC/RP) y entra a la correcta.
         reclasificacionesEnviadas: fuentes.ajustes
           .filter((a) => a.siigoNombre && a.tipo === "reclasificacion" && a.cuentaDestino)
@@ -471,9 +557,9 @@ function Conciliacion() {
     );
     return detectarCuentaErrada(calculos).filter((r) => !hechas.has(r.clave));
   }, [calculos, fuentes]);
-  const [marcadas, setMarcadas] = useState<Set<string>>(new Set());
-
-  if (!companyId) return <EmptyCompany />;
+  /** Líneas marcadas por lista («CUENTA|tipo» → claves) para las acciones en lote. */
+  const [seleccion, setSeleccion] = usePersistente<Record<string, string[]>>(k("seleccion"), {});
+  const [marcadas, setMarcadas] = usePersistente<Set<string>>(k("marcadas"), new Set());
 
   const subirAuxiliar = async (file: File) => {
     try {
@@ -628,7 +714,7 @@ function Conciliacion() {
       const r = await enviarAjuste({ data: { companyId, periodo, cuenta, ajuste: a } });
       if (r.ok) toast.success(r.mensaje);
       else toast.error(r.mensaje);
-      mFuentes.mutate();
+      mFuentes.mutate({ silencioso: true });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -710,12 +796,50 @@ function Conciliacion() {
         if (r.ok) toast.success(r.mensaje);
         else toast.error(r.mensaje);
       }
-      mFuentes.mutate();
+      mFuentes.mutate({ silencioso: true });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setEnviando(null);
     }
+  };
+  /** Registra en Siigo en un solo documento las líneas marcadas de una lista. */
+  const onLote = async (cuenta: string, lista: string, detalle: LoteDetalle, f: FormRegistro) => {
+    setEnviando(`lote-${lista}`);
+    try {
+      const r = await registrarLote({
+        data: {
+          companyId,
+          periodo,
+          cuenta,
+          detalle,
+          terceroNit: f.terceroNit,
+          contrapartida: f.cuenta,
+          descripcion: f.descripcion,
+        },
+      });
+      if (r.ok) {
+        toast.success(r.mensaje);
+        setSeleccion((x) => ({ ...x, [lista]: [] }));
+      } else toast.error(r.mensaje);
+      mFuentes.mutate({ silencioso: true });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnviando(null);
+    }
+  };
+  /** Deja como partida conciliatoria, con la misma nota, las líneas marcadas de una lista. */
+  const onPartidaLote = (lista: string, clavesPartida: string[], nota: string) => {
+    setNotas((x) => {
+      const n = { ...x };
+      for (const c of clavesPartida) n[c] = nota.trim() || "Partida conciliatoria";
+      return n;
+    });
+    setSeleccion((x) => ({ ...x, [lista]: [] }));
+    toast.success(
+      `${clavesPartida.length} línea(s) quedan como partida conciliatoria; se guardan con «Guardar conciliación».`,
+    );
   };
   const onReclasificar = async () => {
     const items = cuentaErrada.filter((r) => marcadas.has(r.clave));
@@ -727,7 +851,7 @@ function Conciliacion() {
       if (ok) toast.success(`${ok} recibo(s) reclasificado(s) en Siigo.`);
       for (const r of resultados.filter((x) => !x.ok)) toast.error(r.mensaje);
       setMarcadas(new Set());
-      mFuentes.mutate();
+      mFuentes.mutate({ silencioso: true });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -751,7 +875,7 @@ function Conciliacion() {
         },
       });
       toast.success(x.mensaje);
-      mFuentes.mutate();
+      mFuentes.mutate({ silencioso: true });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -961,6 +1085,78 @@ function Conciliacion() {
   };
 
   const vista = calculos.find((c) => c.etiqueta === cuentaVista) ?? calculos[0] ?? null;
+  type ItemLote = {
+    clave: string;
+    partida: PartidaConciliatoria;
+    linea: LoteDetalle["lineas"][number] | null;
+  };
+  const propsLote = (
+    etiqueta: string,
+    tipo: "salida" | "entrada" | "diferencia" | "libros",
+    items: ItemLote[],
+  ) => {
+    const lista = `${etiqueta}|${tipo}`;
+    const marcadasL = new Set(seleccion[lista] ?? []);
+    const elegidos = items.filter((i) => marcadasL.has(i.clave));
+    const registrables = elegidos.filter((i) => i.linea);
+    return {
+      seleccion: {
+        claves: items.map((i) => i.clave),
+        marcadas: marcadasL,
+        onCambiar: (cs: string[], marcar: boolean) =>
+          setSeleccion((x) => {
+            const n = new Set(x[lista] ?? []);
+            for (const c of cs) {
+              if (marcar) n.add(c);
+              else n.delete(c);
+            }
+            return { ...x, [lista]: [...n] };
+          }),
+      },
+      lote: elegidos.length ? (
+        <LoteBar
+          key={lista}
+          tipo={tipo}
+          n={elegidos.length}
+          total={elegidos.reduce((t, i) => t + i.partida.valor, 0)}
+          noRegistrables={elegidos.length - registrables.length}
+          puc={catalogos.data?.puc ?? []}
+          terceros={catalogos.data?.terceros ?? []}
+          ocupado={enviando === `lote-${lista}`}
+          onPartida={(nota) =>
+            onPartidaLote(
+              lista,
+              elegidos.map((i) => clavePartida(i.partida)),
+              nota,
+            )
+          }
+          {...(tipo !== "libros" && registrables.length
+            ? {
+                onRegistrar: (f: FormRegistro) =>
+                  void onLote(
+                    etiqueta,
+                    lista,
+                    {
+                      tipo: tipo as LoteDetalle["tipo"],
+                      lineas: registrables.map((i) => i.linea!),
+                    },
+                    f,
+                  ),
+              }
+            : {})}
+        />
+      ) : null,
+    };
+  };
+  const itemBanco = (b: MovBanco): ItemLote => {
+    const partida = partidaDeBanco(b);
+    const clave = clavePartida(partida);
+    return {
+      clave,
+      partida,
+      linea: { clave, fecha: b.fecha, descripcion: b.descripcion, valor: b.valor },
+    };
+  };
   const accion = (
     etiqueta: string,
     tipo: "salida" | "entrada" | "diferencia" | "libros",
@@ -1003,12 +1199,25 @@ function Conciliacion() {
             type="month"
             value={periodo}
             onChange={(e) => {
+              // Cambiar de mes empieza una conciliación nueva.
               setPeriodo(e.target.value);
               setFuentes(null);
+              setAuxiliar(null);
+              setAnteriorSubida(new Map());
+              setExtractosManual({});
+              setExtractosPdf({});
+              setNotas({});
+              setMarcadas(new Set());
+              setSaldosLibros({});
+              setSaldoDeBalance(new Set());
+              setMovSiigo(null);
+              setDesde("");
+              setHasta("");
+              setSeleccion({});
             }}
             className="h-8 w-40"
           />
-          <Button size="sm" onClick={() => mFuentes.mutate()} disabled={mFuentes.isPending}>
+          <Button size="sm" onClick={() => mFuentes.mutate({})} disabled={mFuentes.isPending}>
             {mFuentes.isPending ? (
               <Loader2 className="mr-1 h-4 w-4 animate-spin" />
             ) : (
@@ -1580,6 +1789,11 @@ function Conciliacion() {
                 </div>
               ) : null}
               <Lista
+                {...propsLote(
+                  vista.etiqueta,
+                  "salida",
+                  vista.resultado.faltaEnLibros.filter((b) => b.valor < 0).map(itemBanco),
+                )}
                 titulo={`RP que faltan en Siigo — ${vista.etiqueta}`}
                 ayuda="Salidas del extracto sin registro en Siigo. Si el pago está en Egresos y pagos sin enviar, se indica su estado."
                 filas={vista.resultado.faltaEnLibros
@@ -1613,6 +1827,11 @@ function Conciliacion() {
                   )}
               />
               <Lista
+                {...propsLote(
+                  vista.etiqueta,
+                  "entrada",
+                  vista.resultado.faltaEnLibros.filter((b) => b.valor > 0).map(itemBanco),
+                )}
                 titulo={`Ingresos sin RC en Siigo — ${vista.etiqueta}`}
                 ayuda="Entradas del extracto sin recibo de caja en Siigo (ni en el auxiliar ni en la API)."
                 filas={vista.resultado.faltaEnLibros
@@ -1634,6 +1853,28 @@ function Conciliacion() {
                   )}
               />
               <Lista
+                {...propsLote(
+                  vista.etiqueta,
+                  "diferencia",
+                  vista.resultado.diferencias.map((d) => {
+                    const partida = partidaDeDiferencia(d);
+                    const a =
+                      d.libros.length && !d.pasarela ? ajusteDeDiferencia(d, vista.etiqueta) : null;
+                    return {
+                      clave: a?.clave ?? clavePartida(partida),
+                      partida,
+                      linea: a
+                        ? {
+                            clave: a.clave,
+                            fecha: a.fecha,
+                            descripcion: a.descripcion,
+                            valor: a.valor,
+                            origen: a.origen,
+                          }
+                        : null,
+                    };
+                  }),
+                )}
                 titulo={`Diferencias de valor (RC/RP vs banco) — ${vista.etiqueta}`}
                 ayuda="Cruzan por comprobante pero el valor no es el del banco: ajustar en Siigo (p. ej. RC por el bruto y abono neto de comisión)."
                 filas={vista.resultado.diferencias.map((d) => [
@@ -1667,6 +1908,14 @@ function Conciliacion() {
                 })}
               />
               <Lista
+                {...propsLote(
+                  vista.etiqueta,
+                  "libros",
+                  vista.resultado.sobraEnLibros.map((l) => {
+                    const partida = partidaDeLibro(l);
+                    return { clave: clavePartida(partida), partida, linea: null };
+                  }),
+                )}
                 titulo={`En Siigo y no en el extracto — ${vista.etiqueta}`}
                 ayuda="Partidas en tránsito (cheques, pagos registrados que el banco aún no refleja) o errores de registro."
                 filas={vista.resultado.sobraEnLibros.map((l) => [
@@ -1697,32 +1946,172 @@ function Lista({
   ayuda,
   filas,
   acciones,
+  seleccion,
+  lote,
 }: {
   titulo: string;
   ayuda: string;
   filas: string[][];
   /** Acciones por fila (registrar en Siigo o dejar como partida conciliatoria). */
   acciones?: React.ReactNode[];
+  /** Selección de filas para las acciones en lote (una clave por fila). */
+  seleccion?: {
+    claves: string[];
+    marcadas: Set<string>;
+    onCambiar: (claves: string[], marcar: boolean) => void;
+  };
+  /** Barra de acciones en lote de las filas marcadas. */
+  lote?: React.ReactNode;
 }) {
+  const todas =
+    !!seleccion?.claves.length && seleccion.claves.every((c) => seleccion.marcadas.has(c));
   return (
     <div className="rounded-lg border bg-card p-3 text-xs">
-      <div className="font-semibold">
-        {titulo} ({filas.length})
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="font-semibold">
+          {titulo} ({filas.length})
+        </span>
+        {seleccion && filas.length ? (
+          <label className="flex items-center gap-1 text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={todas}
+              onChange={(e) => seleccion.onCambiar(seleccion.claves, e.target.checked)}
+            />
+            Seleccionar todos
+          </label>
+        ) : null}
       </div>
       <div className="text-muted-foreground">{ayuda}</div>
+      {lote}
       {filas.length ? (
         <div className="mt-2 max-h-96 overflow-auto rounded border">
-          {filas.map((f, i) => (
-            <div key={`${f.join("|")}#${i}`} className="border-b px-2 py-1">
-              <div className="flex gap-2">
-                <span className="w-24">{f[0]}</span>
-                <span className="flex-1">{f[1]}</span>
-                <span className="w-48 text-right">{f[2]}</span>
-                <span className="w-56 text-muted-foreground">{f[3]}</span>
+          {filas.map((f, i) => {
+            const clave = seleccion?.claves[i];
+            return (
+              <div key={`${f.join("|")}#${i}`} className="border-b px-2 py-1">
+                <div className="flex gap-2">
+                  {seleccion && clave ? (
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={seleccion.marcadas.has(clave)}
+                      onChange={(e) => seleccion.onCambiar([clave], e.target.checked)}
+                    />
+                  ) : null}
+                  <span className="w-24">{f[0]}</span>
+                  <span className="flex-1">{f[1]}</span>
+                  <span className="w-48 text-right">{f[2]}</span>
+                  <span className="w-56 text-muted-foreground">{f[3]}</span>
+                </div>
+                {acciones?.[i] ?? null}
               </div>
-              {acciones?.[i] ?? null}
-            </div>
-          ))}
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Acciones en lote de las líneas marcadas de una lista: dejarlas como partida conciliatoria
+ * con una nota, o registrarlas en Siigo en UN documento con la misma cuenta y tercero.
+ */
+function LoteBar({
+  tipo,
+  n,
+  total,
+  noRegistrables,
+  puc,
+  terceros,
+  ocupado,
+  onPartida,
+  onRegistrar,
+}: {
+  tipo: "salida" | "entrada" | "diferencia" | "libros";
+  n: number;
+  total: number;
+  noRegistrables: number;
+  puc: PucOption[];
+  terceros: TerceroOption[];
+  ocupado: boolean;
+  onPartida: (nota: string) => void;
+  onRegistrar?: (f: FormRegistro) => void;
+}) {
+  const [nota, setNota] = useState("");
+  const [f, setF] = useState<FormRegistro>({
+    terceroNit: "",
+    terceroNombre: null,
+    cuenta: "",
+    descripcion: "",
+    enviar: true,
+  });
+  const documento =
+    tipo === "salida"
+      ? "un recibo de pago (RP) detallado: débito a la cuenta por cada movimiento y crédito al banco por el total"
+      : tipo === "entrada"
+        ? "un recibo de caja (RC) detallado: débito al banco por el total y crédito a la cuenta por cada movimiento"
+        : "un comprobante contable: banco contra la cuenta, un par de renglones por diferencia";
+  return (
+    <div className="mt-2 space-y-2 rounded border border-blue-200 bg-blue-50/60 p-2 dark:bg-blue-950/30">
+      <div className="font-medium">
+        {n} marcada(s) · {cop(total)}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          className="h-8 w-80"
+          placeholder="Nota (p. ej. consignaciones por identificar)"
+          value={nota}
+          onChange={(e) => setNota(e.target.value)}
+        />
+        <Button size="sm" variant="outline" className="h-8" onClick={() => onPartida(nota)}>
+          Dejar como partida conciliatoria
+        </Button>
+      </div>
+      {onRegistrar ? (
+        <div className="space-y-1">
+          <div className="text-muted-foreground">
+            Registrar en Siigo en {documento}, fechado el último día del mes.
+            {noRegistrables
+              ? ` ${noRegistrables} marcada(s) no se pueden registrar así y se omiten.`
+              : ""}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <TerceroCombobox
+              terceros={terceros}
+              value={f.terceroNit}
+              onChange={(nit, nombre) =>
+                setF((x) => ({ ...x, terceroNit: nit, terceroNombre: nombre }))
+              }
+            />
+            <AccountCombobox
+              accounts={puc}
+              value={f.cuenta}
+              onChange={(code) => setF((x) => ({ ...x, cuenta: code }))}
+              placeholder="Cuenta contable…"
+              className="h-8 w-72"
+            />
+            <Input
+              className="h-8 w-72"
+              placeholder="Descripción del documento"
+              value={f.descripcion}
+              onChange={(e) => setF((x) => ({ ...x, descripcion: e.target.value }))}
+            />
+            <Button
+              size="sm"
+              className="h-8"
+              disabled={ocupado || !f.terceroNit || !f.cuenta}
+              onClick={() => onRegistrar(f)}
+            >
+              {ocupado ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              ) : (
+                <Send className="mr-1 h-3 w-3" />
+              )}
+              Enviar en un solo documento
+            </Button>
+          </div>
         </div>
       ) : null}
     </div>
