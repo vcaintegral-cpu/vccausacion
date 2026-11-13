@@ -9,7 +9,10 @@ export const LED_LIGHTS: PerfilEmpresa = {
   nit: "900470166",
   dv: "4",
   carpeta: "led-lights",
-  modulos: {},
+  modulos: {
+    // Instrucción del 2026-11-13: piloto automático nocturno.
+    piloto: true,
+  },
   funciones: {
     // Instrucción del 2026-11-10: LED LIGHTS no usa ni causa el impoconsumo; su valor
     // se suma a la cuenta de gasto o costo relacionada con la compra.
@@ -40,6 +43,9 @@ export const LED_LIGHTS: PerfilEmpresa = {
     // (archivos de octubre 2026): un Excel por cuenta con «Reporte Conciliación» y la hoja
     // de trabajo «CONCILIACION <MES>» (columnas D y E).
     reporte_conciliacion_firma: true,
+    // Instrucción del 2026-11-13: trabajar solo desde las 7 p. m. toda la noche; enviar a
+    // Siigo lo que esté en verde, preguntar por correo lo demás y enviar el reporte al final.
+    piloto_automatico: true,
   },
   notas: [
     "Software contable: Siigo (comprobantes CE-1, RC-1, FC-1).",

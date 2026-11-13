@@ -2386,6 +2386,162 @@ export type Database = {
           },
         ]
       }
+      piloto_config: {
+        Row: {
+          activo: boolean
+          company_id: string
+          correo: string | null
+          created_at: string
+          hora_inicio: number
+          tope_valor: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          activo?: boolean
+          company_id: string
+          correo?: string | null
+          created_at?: string
+          hora_inicio?: number
+          tope_valor?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          activo?: boolean
+          company_id?: string
+          correo?: string | null
+          created_at?: string
+          hora_inicio?: number
+          tope_valor?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "piloto_config_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      piloto_decisiones: {
+        Row: {
+          aplicada_at: string | null
+          clave: string
+          company_id: string
+          created_at: string
+          ejecucion_id: string | null
+          estado: string
+          id: string
+          instruccion: string | null
+          notificada_at: string | null
+          opciones: Json
+          pregunta: string
+          referencia_id: string | null
+          respondida_at: string | null
+          respuesta: string | null
+          tipo: string
+          titulo: string
+          token: string
+          updated_at: string
+        }
+        Insert: {
+          aplicada_at?: string | null
+          clave: string
+          company_id: string
+          created_at?: string
+          ejecucion_id?: string | null
+          estado?: string
+          id?: string
+          instruccion?: string | null
+          notificada_at?: string | null
+          opciones?: Json
+          pregunta: string
+          referencia_id?: string | null
+          respondida_at?: string | null
+          respuesta?: string | null
+          tipo: string
+          titulo: string
+          token?: string
+          updated_at?: string
+        }
+        Update: {
+          aplicada_at?: string | null
+          clave?: string
+          company_id?: string
+          created_at?: string
+          ejecucion_id?: string | null
+          estado?: string
+          id?: string
+          instruccion?: string | null
+          notificada_at?: string | null
+          opciones?: Json
+          pregunta?: string
+          referencia_id?: string | null
+          respondida_at?: string | null
+          respuesta?: string | null
+          tipo?: string
+          titulo?: string
+          token?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "piloto_decisiones_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      piloto_ejecuciones: {
+        Row: {
+          company_id: string
+          created_at: string
+          estado: string
+          id: string
+          noche: string
+          pasos: Json
+          reporte_enviado_at: string | null
+          resumen: Json
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          estado?: string
+          id?: string
+          noche: string
+          pasos?: Json
+          reporte_enviado_at?: string | null
+          resumen?: Json
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          estado?: string
+          id?: string
+          noche?: string
+          pasos?: Json
+          reporte_enviado_at?: string | null
+          resumen?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "piloto_ejecuciones_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       processing_jobs: {
         Row: {
           ai_result: Json | null
