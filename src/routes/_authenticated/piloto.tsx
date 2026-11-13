@@ -52,7 +52,7 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
     activo: false,
     correo: "",
     tope_valor: "5000000",
-    hora_inicio: "19",
+    hora_inicio: "18",
   });
   useEffect(() => {
     const c = estado.data?.config;
@@ -183,6 +183,12 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
             Ejecutar un paso ahora
           </Button>
         </div>
+        {d && !d.alertasConfiguradas ? (
+          <div className="mt-2 text-amber-700">
+            Los errores no se están reportando para corrección automática: falta el secreto
+            GITHUB_ALERTAS_TOKEN (repositorio privado de alertas).
+          </div>
+        ) : null}
         {d && !d.correoConfigurado ? (
           <div className="mt-2 text-amber-700">
             El envío de correos no está configurado: falta el secreto RESEND_API_KEY en la

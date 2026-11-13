@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS public.piloto_config (
   activo boolean NOT NULL DEFAULT false,
   correo text,
   tope_valor numeric(18,2) NOT NULL DEFAULT 5000000,
-  hora_inicio integer NOT NULL DEFAULT 19 CHECK (hora_inicio BETWEEN 0 AND 23),
+  hora_inicio integer NOT NULL DEFAULT 18 CHECK (hora_inicio BETWEEN 0 AND 23),
   updated_by uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()

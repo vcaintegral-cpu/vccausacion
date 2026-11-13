@@ -36,7 +36,14 @@ export type PasoRegistro = {
   cifras?: Record<string, number>;
   /** Intentos fallidos (se reintenta en la siguiente llamada hasta 3 veces). */
   intentos?: number;
+  /** Caso abierto en el repositorio privado de alertas (número). */
+  alerta?: number;
 };
+
+/** Pasos para reintentar después de publicar una corrección: sin los de error ni el reporte. */
+export function pasosParaReintentar(pasos: PasoRegistro[]): PasoRegistro[] {
+  return pasos.filter((p) => p.estado !== "error" && p.id !== "reporte");
+}
 
 const COLOMBIA_MS = -5 * 3600 * 1000;
 

@@ -4,6 +4,7 @@ import {
   correoDecisionesHtml,
   enlaceRespuesta,
   nocheDe,
+  pasosParaReintentar,
   registrarPaso,
   siguientePaso,
   type PasoRegistro,
@@ -49,6 +50,10 @@ describe("pasos de la noche", () => {
     expect(siguientePaso(p)).toBe("reporte");
     p = registrarPaso(p, r("reporte", "hecho"));
     expect(siguientePaso(p)).toBeNull();
+    // Después de publicar una corrección: se reintenta lo que falló y se repite el reporte.
+    const re = pasosParaReintentar(p);
+    expect(re.map((x) => x.id)).not.toContain("drive");
+    expect(siguientePaso(re)).toBe("drive");
   });
 });
 

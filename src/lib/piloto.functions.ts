@@ -30,6 +30,8 @@ export type EstadoPiloto = {
     respondida_at: string | null;
   }>;
   correoConfigurado: boolean;
+  /** Casos de error al repositorio privado de alertas (secreto GITHUB_ALERTAS_TOKEN). */
+  alertasConfiguradas: boolean;
 };
 
 async function verificarEmpresa(
@@ -89,6 +91,7 @@ export const pilotoEstado = createServerFn({ method: "POST" })
       ejecuciones: (ej.data ?? []) as unknown as EstadoPiloto["ejecuciones"],
       decisiones: (dec.data ?? []) as unknown as EstadoPiloto["decisiones"],
       correoConfigurado: !!process.env["RESEND_API_KEY"],
+      alertasConfiguradas: !!process.env["GITHUB_ALERTAS_TOKEN"],
     };
   });
 

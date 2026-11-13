@@ -9,6 +9,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   PASOS,
+  pasosParaReintentar,
   correoDecisionesHtml,
   nocheDe,
   registrarPaso,
@@ -116,6 +117,96 @@ async function notificarDecisiones(
 }
 
 /**
+ * Ciclo de correcciones: (1) correcciones ya fusionadas por la revisión automática → una
+ * pregunta «Ya publiqué en Lovable» (sale por correo); (2) cuando la usuaria confirma, la
+ * última noche vuelve a «en curso» sin sus pasos con error, que se reintentan enseguida
+ * aunque sea de día, y al final se envía otra vez el reporte. Devuelve la noche a reintentar.
+ */
+async function cicloCorrecciones(db: Db, companyId: string): Promise<string | null> {
+  const { alertasConfiguradas, correccionesPorAvisar, agregarEtiqueta, comentar } =
+    await import("./alertas.server");
+  if (alertasConfiguradas()) {
+    try {
+      const listas = await correccionesPorAvisar();
+      if (listas.length) {
+        const clave = `publicar|${listas
+          .map((i) => i.number)
+          .sort((a, b) => a - b)
+          .join(",")}`;
+        await db.from("piloto_decisiones").upsert(
+          {
+            company_id: companyId,
+            clave,
+            tipo: "publicar",
+            titulo: "Correcciones listas para publicar",
+            pregunta: `Se corrigieron ${listas.length} error(es) del piloto automático y ya están en la aplicación: ${listas.map((i) => `«${i.title}»`).join("; ")}. Abra Lovable, pulse Publish → Update y luego confirme aquí para que el piloto reintente los pasos con error.`,
+            opciones: [{ id: "publicado", etiqueta: "Ya publiqué en Lovable" }] as never,
+          },
+          { onConflict: "company_id,clave", ignoreDuplicates: true },
+        );
+        for (const i of listas) await agregarEtiqueta(i.number, "aviso-enviado");
+      }
+    } catch {
+      // Las alertas no detienen el piloto.
+    }
+  }
+  const { data: confirmadas } = await db
+    .from("piloto_decisiones")
+    .select("id, clave")
+    .eq("company_id", companyId)
+    .eq("tipo", "publicar")
+    .eq("estado", "respondida")
+    .is("aplicada_at", null);
+  const lista = (confirmadas ?? []) as Array<{ id: string; clave: string }>;
+  if (lista.length) {
+    const { data: ultima } = await db
+      .from("piloto_ejecuciones")
+      .select("id, noche, pasos")
+      .eq("company_id", companyId)
+      .order("noche", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const u = ultima as { id: string; noche: string; pasos: PasoRegistro[] } | null;
+    if (u)
+      await db
+        .from("piloto_ejecuciones")
+        .update({
+          estado: "en_curso",
+          pasos: pasosParaReintentar(u.pasos ?? []) as never,
+          reporte_enviado_at: null,
+          resumen: { reintento: true } as never,
+        })
+        .eq("id", u.id);
+    await db
+      .from("piloto_decisiones")
+      .update({ estado: "aplicada", aplicada_at: new Date().toISOString() })
+      .in(
+        "id",
+        lista.map((d) => d.id),
+      );
+    if (alertasConfiguradas())
+      for (const d of lista)
+        for (const n of d.clave.replace("publicar|", "").split(",").map(Number))
+          if (Number.isFinite(n))
+            await comentar(
+              n,
+              "La usuaria confirmó la publicación; el piloto reintenta los pasos con error.",
+            ).catch(() => undefined);
+  }
+  // Reintento en curso (aunque sea de día).
+  const { data: enCurso } = await db
+    .from("piloto_ejecuciones")
+    .select("noche, resumen")
+    .eq("company_id", companyId)
+    .eq("estado", "en_curso")
+    .order("noche", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const e = enCurso as { noche: string; resumen: { reintento?: boolean } | null } | null;
+  return e?.resumen?.reintento ? e.noche : null;
+}
+
+/**
  * Avanza el piloto de las empresas activas. `forzar`: ejecuta aunque sea de día (botón
  * «Ejecutar ahora»), con la noche de hoy.
  */
@@ -146,7 +237,10 @@ export async function avanzarPiloto(
       .single();
     const emp = empresa as { name: string; nit: string | null } | null;
     if (!emp || !funcionActiva(emp.nit, "piloto_automatico")) continue;
-    const noche = opciones.forzar ? horaColombia(ahora).fecha : nocheDe(ahora, cfg.hora_inicio);
+    const reintento = await cicloCorrecciones(db, cfg.company_id);
+    const noche = opciones.forzar
+      ? horaColombia(ahora).fecha
+      : (nocheDe(ahora, cfg.hora_inicio) ?? reintento);
     if (!noche) {
       salida.push({
         companyId: cfg.company_id,
@@ -228,7 +322,32 @@ export async function avanzarPiloto(
         detalle: e instanceof Error ? e.message.slice(0, 500) : String(e),
       };
     }
-    const nuevos = registrarPaso(pasos, registro);
+    let nuevos = registrarPaso(pasos, registro);
+    // Tercer intento fallido: caso en el repositorio privado de alertas para corregirlo.
+    const final = nuevos.find((x) => x.id === paso);
+    if (final?.estado === "error" && (final.intentos ?? 0) >= 3 && !final.alerta) {
+      const { alertasConfiguradas, crearAlerta } = await import("./alertas.server");
+      if (alertasConfiguradas())
+        try {
+          const n = await crearAlerta({
+            titulo: `[${emp.name}] ${PASOS.find((x) => x.id === paso)?.nombre}: ${final.detalle.slice(0, 90)}`,
+            cuerpo: [
+              `**Empresa:** ${emp.name} (${emp.nit ?? "sin NIT"})`,
+              `**Noche:** ${noche}`,
+              `**Paso:** ${paso} — ${PASOS.find((x) => x.id === paso)?.nombre}`,
+              `**Intentos:** ${final.intentos}`,
+              "",
+              "**Error:**",
+              "```",
+              final.detalle,
+              "```",
+            ].join("\n"),
+          });
+          nuevos = nuevos.map((x) => (x.id === paso ? { ...x, alerta: n } : x));
+        } catch {
+          // Si GitHub no responde, el error queda en la memoria y en el reporte.
+        }
+    }
     const terminada = siguientePaso(nuevos) == null;
     await db
       .from("piloto_ejecuciones")
