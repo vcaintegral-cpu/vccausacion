@@ -57,6 +57,7 @@ describe("alcance global vs. empresa", () => {
       expect(dif).toEqual(
         p.nit === "900470166"
           ? [
+              ["módulo", "piloto", true],
               ["función", "impoconsumo_al_gasto", true],
               ["función", "productos_inventario", true],
               ["función", "cargos_en_items", true],
@@ -65,13 +66,14 @@ describe("alcance global vs. empresa", () => {
               ["función", "compras_por_pagar", true],
               ["función", "pasarelas_pago", true],
               ["función", "reporte_conciliacion_firma", true],
+              ["función", "piloto_automatico", true],
             ]
           : [],
       );
     }
     for (const modulo of Object.keys(MODULOS) as Array<keyof typeof MODULOS>) {
-      expect(moduloActivo("900470166", modulo)).toBe(MODULOS_POR_DEFECTO[modulo]);
-      expect(moduloActivo("999999999", modulo)).toBe(true);
+      expect(moduloActivo("900470166", modulo)).toBe(modulo === "piloto" ? true : MODULOS_POR_DEFECTO[modulo]);
+      expect(moduloActivo("999999999", modulo)).toBe(MODULOS_POR_DEFECTO[modulo]);
     }
   });
 

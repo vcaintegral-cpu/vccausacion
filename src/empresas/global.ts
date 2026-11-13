@@ -20,6 +20,8 @@ export const MODULOS_POR_DEFECTO: Record<ModuloId, boolean> = {
   fuentes: true,
   egresos: true,
   conciliacion: true,
+  // Solo empresas con la función piloto_automatico lo encienden en su perfil.
+  piloto: false,
   integraciones: true,
   administracion: true,
   empresas: true,
@@ -66,6 +68,12 @@ export const FUNCIONES = {
       "Lee el reporte mensual de pagos con hoja «Consolidado» (FECHA, TERCERO, VALOR, CUENTA, RELACIÓN, APLICACIÓN, OBSERVACIONES) desde la carpeta de egresos o cargado a mano, para proponer los recibos de pago",
     porDefecto: false,
     agregada: "2026-11-11",
+  },
+  piloto_automatico: {
+    descripcion:
+      "Piloto automático nocturno: desde la hora de inicio revisa la carpeta de Drive, causa y envía a Siigo lo que está en verde, sigue con egresos y conciliación, guarda la memoria del día, pregunta por correo lo que no puede decidir solo y envía el reporte al terminar",
+    porDefecto: false,
+    agregada: "2026-11-13",
   },
   reporte_conciliacion_firma: {
     descripcion:

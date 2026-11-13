@@ -29,9 +29,12 @@ import { Route as AuthenticatedFuentesRouteImport } from './routes/_authenticate
 import { Route as AuthenticatedIntegracionesRouteImport } from './routes/_authenticated/integraciones'
 import { Route as AuthenticatedPanelRouteImport } from './routes/_authenticated/panel'
 import { Route as AuthenticatedPendientesSiigoRouteImport } from './routes/_authenticated/pendientes-siigo'
+import { Route as AuthenticatedPilotoRouteImport } from './routes/_authenticated/piloto'
 import { Route as AuthenticatedRevisarRouteImport } from './routes/_authenticated/revisar'
 import { Route as ApiCronDocumentSyncRouteImport } from './routes/api/cron/document-sync'
+import { Route as ApiCronPilotoRouteImport } from './routes/api/cron/piloto'
 import { Route as ApiOauthCallbackRouteImport } from './routes/api/oauth/callback'
+import { Route as ApiPilotoDecisionRouteImport } from './routes/api/piloto/decision'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -137,6 +140,11 @@ const AuthenticatedPendientesSiigoRoute =
     path: '/pendientes-siigo',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedPilotoRoute = AuthenticatedPilotoRouteImport.update({
+  id: '/piloto',
+  path: '/piloto',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedRevisarRoute = AuthenticatedRevisarRouteImport.update({
   id: '/revisar',
   path: '/revisar',
@@ -147,9 +155,19 @@ const ApiCronDocumentSyncRoute = ApiCronDocumentSyncRouteImport.update({
   path: '/api/cron/document-sync',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCronPilotoRoute = ApiCronPilotoRouteImport.update({
+  id: '/api/cron/piloto',
+  path: '/api/cron/piloto',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiOauthCallbackRoute = ApiOauthCallbackRouteImport.update({
   id: '/api/oauth/callback',
   path: '/api/oauth/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPilotoDecisionRoute = ApiPilotoDecisionRouteImport.update({
+  id: '/api/piloto/decision',
+  path: '/api/piloto/decision',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -173,9 +191,12 @@ export interface FileRoutesByFullPath {
   '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
   '/pendientes-siigo': typeof AuthenticatedPendientesSiigoRoute
+  '/piloto': typeof AuthenticatedPilotoRoute
   '/revisar': typeof AuthenticatedRevisarRoute
   '/api/cron/document-sync': typeof ApiCronDocumentSyncRoute
+  '/api/cron/piloto': typeof ApiCronPilotoRoute
   '/api/oauth/callback': typeof ApiOauthCallbackRoute
+  '/api/piloto/decision': typeof ApiPilotoDecisionRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -197,9 +218,12 @@ export interface FileRoutesByTo {
   '/integraciones': typeof AuthenticatedIntegracionesRoute
   '/panel': typeof AuthenticatedPanelRoute
   '/pendientes-siigo': typeof AuthenticatedPendientesSiigoRoute
+  '/piloto': typeof AuthenticatedPilotoRoute
   '/revisar': typeof AuthenticatedRevisarRoute
   '/api/cron/document-sync': typeof ApiCronDocumentSyncRoute
+  '/api/cron/piloto': typeof ApiCronPilotoRoute
   '/api/oauth/callback': typeof ApiOauthCallbackRoute
+  '/api/piloto/decision': typeof ApiPilotoDecisionRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -223,9 +247,12 @@ export interface FileRoutesById {
   '/_authenticated/integraciones': typeof AuthenticatedIntegracionesRoute
   '/_authenticated/panel': typeof AuthenticatedPanelRoute
   '/_authenticated/pendientes-siigo': typeof AuthenticatedPendientesSiigoRoute
+  '/_authenticated/piloto': typeof AuthenticatedPilotoRoute
   '/_authenticated/revisar': typeof AuthenticatedRevisarRoute
   '/api/cron/document-sync': typeof ApiCronDocumentSyncRoute
+  '/api/cron/piloto': typeof ApiCronPilotoRoute
   '/api/oauth/callback': typeof ApiOauthCallbackRoute
+  '/api/piloto/decision': typeof ApiPilotoDecisionRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -249,9 +276,12 @@ export interface FileRouteTypes {
     | '/integraciones'
     | '/panel'
     | '/pendientes-siigo'
+    | '/piloto'
     | '/revisar'
     | '/api/cron/document-sync'
+    | '/api/cron/piloto'
     | '/api/oauth/callback'
+    | '/api/piloto/decision'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -273,9 +303,12 @@ export interface FileRouteTypes {
     | '/integraciones'
     | '/panel'
     | '/pendientes-siigo'
+    | '/piloto'
     | '/revisar'
     | '/api/cron/document-sync'
+    | '/api/cron/piloto'
     | '/api/oauth/callback'
+    | '/api/piloto/decision'
   id:
     | '__root__'
     | '/'
@@ -298,9 +331,12 @@ export interface FileRouteTypes {
     | '/_authenticated/integraciones'
     | '/_authenticated/panel'
     | '/_authenticated/pendientes-siigo'
+    | '/_authenticated/piloto'
     | '/_authenticated/revisar'
     | '/api/cron/document-sync'
+    | '/api/cron/piloto'
     | '/api/oauth/callback'
+    | '/api/piloto/decision'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -311,7 +347,9 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   TermsRoute: typeof TermsRoute
   ApiCronDocumentSyncRoute: typeof ApiCronDocumentSyncRoute
+  ApiCronPilotoRoute: typeof ApiCronPilotoRoute
   ApiOauthCallbackRoute: typeof ApiOauthCallbackRoute
+  ApiPilotoDecisionRoute: typeof ApiPilotoDecisionRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -456,6 +494,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedPendientesSiigoRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/piloto': {
+      id: '/_authenticated/piloto'
+      path: '/piloto'
+      fullPath: '/piloto'
+      preLoaderRoute: typeof AuthenticatedPilotoRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/revisar': {
       id: '/_authenticated/revisar'
       path: '/revisar'
@@ -470,11 +515,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCronDocumentSyncRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/cron/piloto': {
+      id: '/api/cron/piloto'
+      path: '/api/cron/piloto'
+      fullPath: '/api/cron/piloto'
+      preLoaderRoute: typeof ApiCronPilotoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/oauth/callback': {
       id: '/api/oauth/callback'
       path: '/api/oauth/callback'
       fullPath: '/api/oauth/callback'
       preLoaderRoute: typeof ApiOauthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/piloto/decision': {
+      id: '/api/piloto/decision'
+      path: '/api/piloto/decision'
+      fullPath: '/api/piloto/decision'
+      preLoaderRoute: typeof ApiPilotoDecisionRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -495,6 +554,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedIntegracionesRoute: typeof AuthenticatedIntegracionesRoute
   AuthenticatedPanelRoute: typeof AuthenticatedPanelRoute
   AuthenticatedPendientesSiigoRoute: typeof AuthenticatedPendientesSiigoRoute
+  AuthenticatedPilotoRoute: typeof AuthenticatedPilotoRoute
   AuthenticatedRevisarRoute: typeof AuthenticatedRevisarRoute
 }
 
@@ -513,6 +573,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedIntegracionesRoute: AuthenticatedIntegracionesRoute,
   AuthenticatedPanelRoute: AuthenticatedPanelRoute,
   AuthenticatedPendientesSiigoRoute: AuthenticatedPendientesSiigoRoute,
+  AuthenticatedPilotoRoute: AuthenticatedPilotoRoute,
   AuthenticatedRevisarRoute: AuthenticatedRevisarRoute,
 }
 
@@ -527,7 +588,9 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   TermsRoute: TermsRoute,
   ApiCronDocumentSyncRoute: ApiCronDocumentSyncRoute,
+  ApiCronPilotoRoute: ApiCronPilotoRoute,
   ApiOauthCallbackRoute: ApiOauthCallbackRoute,
+  ApiPilotoDecisionRoute: ApiPilotoDecisionRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

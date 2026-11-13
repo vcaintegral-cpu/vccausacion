@@ -16,6 +16,7 @@ export const MODULOS = {
   documentos: { nombre: "Documentos", ruta: "/documentos" },
   egresos: { nombre: "Egresos y pagos", ruta: "/egresos" },
   conciliacion: { nombre: "Conciliación bancaria", ruta: "/conciliacion" },
+  piloto: { nombre: "Piloto automático", ruta: "/piloto" },
   aprendizaje: { nombre: "Aprendizaje contable", ruta: "/aprendizaje" },
   fuentes: { nombre: "Fuentes de documentos", ruta: "/fuentes" },
   integraciones: { nombre: "Integraciones", ruta: "/integraciones" },
