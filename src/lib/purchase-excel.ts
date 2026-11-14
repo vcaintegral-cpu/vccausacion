@@ -24,6 +24,11 @@ export type PurchaseLine = { description: string; code: string; quantity: number
 export type PurchaseDocument = { rowNumber: number; kind: 'purchase' | 'equivalent' | 'credit_note'; type: string; header: PurchaseHeader; lines: PurchaseLine[]; naturalPerson: boolean; period: string; rawHeader: Record<string, string | number>; rawLines: Record<string, string | number>[] };
 export type PurchaseChoices = { accounts: string[]; lineCostCenters?: string[] | undefined; costCenter: string; payableAccount: string; affectedInvoiceId: string; retentionSource: Partial<Record<RetKind, 'xml' | 'calculated' | undefined>>; aiuBase?: number | undefined; aiuReviewed?: boolean | undefined };
 export const normalizeText = (s: unknown) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+/** «Factura electrónica» y «Factura de contingencia facturador» (misma factura del proveedor, emitida en contingencia). */
+export const esFacturaDeCompra = (tipo: unknown) => {
+  const t = normalizeText(tipo);
+  return t === 'factura electronica' || t === 'factura de contingencia facturador';
+};
 export const normalizeNit = (s: unknown) => String(s ?? '').split('-')[0]?.replace(/\D/g, '') ?? '';
 export function nitDV(nit: string) {
  const weights = [71,67,59,53,47,43,41,37,29,23,19,17,13,7,3];
@@ -58,7 +63,7 @@ export function parsePurchaseWorkbook(buffer: ArrayBuffer, companyNit: string): 
  const seen=new Set<string>();
  return docs.map(({row:r,rowNumber})=>{
   const t=(key:string)=>String(r[key]??'').trim();const n=(key:string)=>abs(r[key]);const type=t('TIPO DOC EMITIDO');
-  const kind=normalizeText(type)==='60'?'equivalent':normalizeText(type)==='nota de credito electronica'?'credit_note':normalizeText(type)==='factura electronica'?'purchase':null;
+  const kind=normalizeText(type)==='60'?'equivalent':normalizeText(type)==='nota de credito electronica'?'credit_note':esFacturaDeCompra(type)?'purchase':null;
   if(!kind)throw new Error(`Fila ${rowNumber}: tipo de documento no soportado (${type}).`);
   // El Procesador a veces no lee el comprador del XML (celda vacía): el reporte RECIBIDOS
   // es la lista de documentos recibidos por la empresa, así que se toma su NIT y se anota.
