@@ -1110,6 +1110,7 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
       </Toolbar>
       {progreso ? <p className="rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm text-muted-foreground">{progreso}</p> : null}
       <ImportDetailPanel detail={detail} />
+      {excelSiigo ? <ImpuestosExcelSiigoPanel companyId={companyId} /> : null}
 
       <form onSubmit={crear} className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-4">
         <div className="w-32 space-y-1.5"><Label className="text-xs">Tipo</Label><Input value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} /></div>
