@@ -54,7 +54,7 @@ function sheetRows(wb: XLSX.WorkBook, name: string) {
  return matrix.slice(3).map((values,i)=>({rowNumber:i+4,row:Object.fromEntries(headers.map((h,j)=>[h,values[j]??''])) as Row})).filter(x=>String(x.row['TIPO DOC EMITIDO']??'').trim());
 }
 /** Fila del RECIBIDOS con un tipo de documento que el lector no sabe causar: no se procesa, se informa. */
-export type DocumentoOmitido = { rowNumber: number; type: string; provider: string; number: string; total: number };
+export type DocumentoOmitido = { rowNumber: number; type: string; provider: string; number: string; total: number; motivo: string };
 /** Lee el Excel: devuelve los documentos de tipo conocido y, aparte, los de tipo desconocido (sin rechazar el archivo). */
 export function parsePurchaseWorkbookDetailed(buffer: ArrayBuffer, companyNit: string): { docs: PurchaseDocument[]; omitidos: DocumentoOmitido[] } {
  const omitidos: DocumentoOmitido[] = [];
@@ -63,7 +63,7 @@ export function parsePurchaseWorkbookDetailed(buffer: ArrayBuffer, companyNit: s
 }
 /** Texto para avisar a la usuaria de los documentos omitidos. */
 export const textoOmitidos = (o: DocumentoOmitido[]) =>
- o.map((x) => `fila ${x.rowNumber} · tipo «${x.type}» · ${x.provider || 'sin proveedor'} · ${x.number || 'sin número'} · $${x.total}`).join('; ');
+ o.map((x) => `fila ${x.rowNumber} · ${x.motivo} · tipo «${x.type}» · ${x.provider || 'sin proveedor'} · ${x.number || 'sin número'} · $${x.total}`).join('; ');
 export function parsePurchaseWorkbook(buffer: ArrayBuffer, companyNit: string): PurchaseDocument[] {
  return parsePurchaseWorkbookDetailed(buffer, companyNit).docs;
 }
@@ -74,18 +74,24 @@ function parseDocs(buffer: ArrayBuffer, companyNit: string, omitidos: DocumentoO
  const match=periodText.match(/(\d{2})-(\d{2})-(\d{4})/);const period=match?`${match[3]}-${match[2]}`:'';
  const join=(r:Row)=>`${String(r['NUMERO FACTURA COMPLETO']).trim()}|${String(r['CUFE']).trim().toLowerCase()}`;
  const index=new Map<string,Row[]>();for(const {row} of details){const k=join(row);index.set(k,[...(index.get(k)??[]),row]);}
- const seen=new Set<string>();
+ // Mismo documento (número + CUFE) en varias filas: se conserva la más completa (p. ej. la fila que
+ // quedó vacía porque la DIAN no entregó el XML y la que se completó después) y las demás se informan.
+ const llenas=(r:Row)=>Object.values(r).filter(v=>String(v??'').trim()!=='').length;
+ const mejor=new Map<string,number>();const grupos=new Map<string,{row:Row;rowNumber:number}[]>();
+ for(const x of docs){const k=join(x.row);grupos.set(k,[...(grupos.get(k)??[]),x]);}
+ for(const [k,g] of grupos){if(g.length>1)mejor.set(k,g.reduce((a,b)=>llenas(b.row)>llenas(a.row)?b:a).rowNumber);}
  return docs.map(({row:r,rowNumber})=>{
   const t=(key:string)=>String(r[key]??'').trim();const n=(key:string)=>abs(r[key]);const type=t('TIPO DOC EMITIDO');
   const kind=normalizeText(type)==='60'?'equivalent':normalizeText(type)==='nota de credito electronica'?'credit_note':esFacturaDeCompra(type)?'purchase':null;
-  if(!kind){let total=0;try{total=n('TOTAL FACTURA');}catch{total=0;}omitidos.push({rowNumber,type,provider:t('NOMBRE EMISOR')||t('NIT EMISOR'),number:t('NUMERO FACTURA COMPLETO'),total});return null;}
+  if(!kind){let total=0;try{total=n('TOTAL FACTURA');}catch{total=0;}omitidos.push({rowNumber,type,provider:t('RAZON SOCIAL EMISOR')||t('NIT EMISOR'),number:t('NUMERO FACTURA COMPLETO'),total,motivo:'tipo de documento desconocido'});return null;}
   // El Procesador a veces no lee el comprador del XML (celda vacía): el reporte RECIBIDOS
   // es la lista de documentos recibidos por la empresa, así que se toma su NIT y se anota.
   // Un comprador presente y distinto sigue rechazando el archivo (protege de cargar ENVIADOS).
   const compradorFila=t('NIT COMPRADOR');
   if(compradorFila&&!mismoNitEmpresa(compradorFila,companyNit))throw new Error(`Fila ${rowNumber}: comprador diferente a la empresa activa. Use el reporte RECIBIDOS, no ENVIADOS.`);
   const notaComprador=compradorFila?'':'NIT del comprador vacío en el reporte RECIBIDOS: se tomó el de la empresa.';
-  if(seen.has(join(r)))throw new Error(`Fila ${rowNumber}: documento duplicado dentro del Excel.`);seen.add(join(r));
+  const ganadora=mejor.get(join(r));
+  if(ganadora!==undefined&&ganadora!==rowNumber){let total=0;try{total=n('TOTAL FACTURA');}catch{total=0;}omitidos.push({rowNumber,type,provider:t('RAZON SOCIAL EMISOR')||t('NIT EMISOR'),number:t('NUMERO FACTURA COMPLETO'),total,motivo:`repetido: se usa la fila ${ganadora}, que está más completa`});return null;}
   const rawLines=index.get(join(r))??[];
   const lines=rawLines.map(l=>{const quantity=abs(l['CANTIDAD'])||1;const subtotal=abs(l['SUBTOTAL DE LA FACTURA']);const discount=abs(l['DESCUENTO']);const iva=abs(l['IVA']);const impoconsumo=abs(l['INC']);const surcharge=abs(l['RECARGO']);return {description:String(l['DESCRIPCION']??''),code:String(l['CODIGO']??''),quantity,unit_value:subtotal/quantity,subtotal,discount,surcharge,iva,ivaBase:abs(l['BASE IVA']),ivaRate:abs(l['% IVA']),impoconsumo,total:cents(subtotal+surcharge+iva+impoconsumo)};});
   return {rowNumber,kind,type,period,naturalPerson:normalizeText(t('TIPO CONTRIBUYENTE EMISOR')).includes('natural'),rawHeader:r,rawLines,lines,header:{prefix:t('PREFIJO'),number:t('NUMERO DE FACTURA'),issue_date:date(r['FECHA DE FACTURA']),due_date:date(r['FECHA DE VENCIMIENTO']),provider_nit:normalizeNit(t('NIT EMISOR')),provider_name:t('RAZON SOCIAL EMISOR'),provider_address:t('DIRECCION EMISOR'),provider_city:t('CIUDAD EMISOR'),provider_phone:t('TELEFONO EMISOR'),provider_email:t('CORREO EMISOR'),buyer_nit:compradorFila?normalizeNit(compradorFila):normalizeNit(companyNit),buyer_name:t('NOMBRE COMPRADOR'),cufe:t('CUFE'),payment_form:t('FORMA DE PAGO'),payment_method:t('MEDIO DE PAGO'),currency:t('MONEDA')||'COP',notes:[t('NOTA'),normalizeText(t('TIPO DE OPERACION'))==='mandatos'?'Mandato':'',notaComprador].filter(Boolean).join('\n'),subtotal:abs(r['SUBTOTAL FACTURA'] ?? r['SUBTOTAL DE LA FACTURA']),discount:n('DESCUENTO GLOBAL'),iva:n('IVA'),impoconsumo:n('INC'),total:n('TOTAL FACTURA'),advances:n('ANTICIPOS'),surcharge:n('RECARGO GLOBAL'),retefuente:n('RETE RENTA'),reteiva:n('RETE IVA'),reteica:n('RETE ICA')}};
