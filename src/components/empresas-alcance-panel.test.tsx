@@ -8,6 +8,7 @@ vi.mock("@/components/app-shell", () => ({
       { id: "1", name: "LED LIGHTS S.A.S.", nit: "900.470.166-4" },
       { id: "2", name: "CORPORACION BALLET FOLCLORICO DE ANTIOQUIA", nit: "800212838" },
       { id: "3", name: "EMPRESA NUEVA S.A.S.", nit: "901426172" },
+      { id: "4", name: "SOLUCIONES Y DISEÑOS", nit: "900.088.704-1" },
     ],
   }),
 }));
@@ -18,8 +19,8 @@ describe("Empresas y alcance", () => {
   it("lista cada empresa con su alcance: perfil específico o solo núcleo global", () => {
     const html = renderToString(<EmpresasAlcancePanel />).replace(/<!-- -->/g, "");
     expect(html).toContain("Empresas registradas");
-    expect(html).toMatch(/Empresas registradas<\/p><p[^>]*>3</);
-    expect(html).toMatch(/Con perfil específico<\/p><p[^>]*>2</);
+    expect(html).toMatch(/Empresas registradas<\/p><p[^>]*>4</);
+    expect(html).toMatch(/Con perfil específico<\/p><p[^>]*>3</);
     expect(html).toContain("Perfil específico · led-lights");
     expect(html).toContain("Perfil específico · ballet");
     expect(html).toContain("EMPRESA NUEVA S.A.S.");

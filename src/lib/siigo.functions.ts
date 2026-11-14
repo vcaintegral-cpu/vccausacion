@@ -579,6 +579,18 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
       })(),
     );
 
+    // Empresas con el Excel de impuestos de Siigo como fuente (función «impuestos_excel_siigo»):
+    // la sincronización solo trae identificadores, tarifa y estado; NUNCA deduce cuentas.
+    const { data: emp } = await context.supabase
+      .from("companies")
+      .select("nit")
+      .eq("id", data.companyId)
+      .single();
+    const soloExcel = (await import("@/empresas/registro")).funcionActiva(
+      (emp as { nit: string | null } | null)?.nit,
+      "impuestos_excel_siigo",
+    );
+
     const readAccount = (v: Tax["account"]): { code: string | null; name: string | null } => {
       if (v == null) return { code: null, name: null };
       if (typeof v === "object") {
@@ -592,6 +604,7 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
     };
 
     const resolveAccount = (t: Tax): { code: string | null; name: string | null } => {
+      if (soloExcel) return { code: null, name: null };
       for (const candidate of [t.account, t.accounting_account, t.account_code, t.account_id]) {
         const parsed = readAccount(candidate as Tax["account"]);
         if (parsed.code || parsed.name) {
@@ -652,7 +665,7 @@ export const siigoImportTaxes = createServerFn({ method: "POST" })
     // Sin coincidencia clara se conserva la cuenta ya guardada solo si es del grupo del
     // impuesto (2408 IVA, 2365/2367/2368 retenciones); una de otro grupo (p. ej. 621008) se quita.
     for (const r of rows) {
-      if (r.account_code) continue;
+      if (r.account_code || soloExcel) continue;
       const previa = (existing ?? []).find(
         (e) => e.kind === r.kind && e.name === r.name,
       )?.account_code;

@@ -19,10 +19,11 @@ describe("registro de empresas", () => {
     expect(validarRegistro()).toEqual([]);
   });
 
-  it("registra LED LIGHTS y BALLET con su DV DIAN", () => {
+  it("registra LED LIGHTS, BALLET y SOLUCIONES Y DISEÑOS con su DV DIAN", () => {
     expect(PERFILES.map((p) => [p.nombre, `${p.nit}-${p.dv}`])).toEqual([
       ["LED LIGHTS S.A.S.", "900470166-4"],
       ["CORPORACIÓN BALLET FOLCLÓRICO DE ANTIOQUIA", "800212838-7"],
+      ["SOLUCIONES Y DISEÑOS", "900088704-1"],
     ]);
   });
 
@@ -51,7 +52,7 @@ describe("registro de empresas", () => {
 });
 
 describe("alcance global vs. empresa", () => {
-  it("solo LED LIGHTS se aparta del núcleo global: impoconsumo al gasto y productos de inventario", () => {
+  it("solo LED LIGHTS y SOLUCIONES Y DISEÑOS se apartan del núcleo global", () => {
     for (const p of PERFILES) {
       const dif = diferenciasConGlobal(p).map((d) => [d.tipo, d.clave, d.empresa]);
       expect(dif).toEqual(
@@ -68,11 +69,15 @@ describe("alcance global vs. empresa", () => {
               ["función", "reporte_conciliacion_firma", true],
               ["función", "piloto_automatico", true],
             ]
-          : [],
+          : p.nit === "900088704"
+            ? [["función", "impuestos_excel_siigo", true]]
+            : [],
       );
     }
     for (const modulo of Object.keys(MODULOS) as Array<keyof typeof MODULOS>) {
-      expect(moduloActivo("900470166", modulo)).toBe(modulo === "piloto" ? true : MODULOS_POR_DEFECTO[modulo]);
+      expect(moduloActivo("900470166", modulo)).toBe(
+        modulo === "piloto" ? true : MODULOS_POR_DEFECTO[modulo],
+      );
       expect(moduloActivo("999999999", modulo)).toBe(MODULOS_POR_DEFECTO[modulo]);
     }
   });
