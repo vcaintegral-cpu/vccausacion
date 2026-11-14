@@ -22,6 +22,8 @@ import { clearProviderRulesCache } from "@/lib/provider-rules";
 import { compareHistory, readRawHistory, type HistoryValidation, type RawHistoryFile } from "@/lib/history-raw";
 import { fetchAllKeys, runReliableImport, sameImportValues, type ImportDetail, type ImportIssue } from "@/lib/import-system";
 import { ImportDetailPanel } from "@/components/import-detail";
+import { ImpuestosExcelSiigoPanel } from "@/components/impuestos-excel-siigo-panel";
+import { usePerfilActivo } from "@/empresas/use-perfil";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -956,6 +958,8 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const { data: rows } = useTable("tax_rates", companyId, "kind");
   const { data: cuentas } = useTable("puc_accounts", companyId, "code");
+  const { funcion } = usePerfilActivo();
+  const excelSiigo = funcion("impuestos_excel_siigo");
   const [busy, setBusy] = useState<string | null>(null);
   const [form, setForm] = useState({ kind: "iva", name: "", rate: "", min_base: "", account_code: "" });
   const [progreso, setProgreso] = useState<string | null>(null);
@@ -1099,7 +1103,7 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
         <Button onClick={sincronizar} disabled={busy !== null}>
           <RefreshCw className={`size-4 ${busy === "siigo" ? "animate-spin" : ""}`} /> Sincronizar desde Siigo
         </Button>
-        <FileButton label="Importar Excel" onFile={importar} busy={busy !== null} />
+        {excelSiigo ? null : <FileButton label="Importar Excel" onFile={importar} busy={busy !== null} />}
         <Button variant="outline" onClick={eliminarSiigo} disabled={busy !== null}>
           <Trash2 className="size-4" /> Borrar importados de Siigo
         </Button>

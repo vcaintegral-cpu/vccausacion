@@ -62,3 +62,5 @@ Mapa completo: `docs/ARQUITECTURA.md`. Perfiles: `src/empresas/README.md`.
 6. Indicar el alcance elegido en el commit y en la solicitud de cambio
    ("Alcance: todas las empresas" / "Alcance: LED LIGHTS (900.470.166-4)").
 7. Mantener actualizada la tabla de empresas con perfil en `docs/ARQUITECTURA.md`.
+
+- Impuestos desde el Excel de Siigo (función impuestos_excel_siigo, SOLUCIONES Y DISEÑOS; src/lib/impuestos-siigo-excel.ts): «Hoja1» con encabezados exactos; cada cuenta se guarda como TEXTO tal como viene (tax_rates.account_sales / account_code = compras / account_sales_return / account_purchase_return, excel_code), sin completar, recortar ni reemplazar. Se valida contra puc_accounts antes de guardar (errores bloquean; advertencias exigen confirmación), se lee lo guardado y se compara cuenta por cuenta. En esas empresas la sincronización con Siigo no deduce cuentas (source excel_siigo queda protegido).

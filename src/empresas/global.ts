@@ -69,6 +69,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-11",
   },
+  impuestos_excel_siigo: {
+    descripcion:
+      "Impuestos desde el reporte en Excel de Siigo: conserva exactas las cuatro cuentas de cada impuesto (ventas, compras, devolución en ventas y en compras), las valida contra el catálogo de cuentas antes de guardar y la sincronización con Siigo deja de deducir cuentas",
+    porDefecto: false,
+    agregada: "2026-11-14",
+  },
   piloto_automatico: {
     descripcion:
       "Piloto automático nocturno: desde la hora de inicio revisa la carpeta de Drive, causa y envía a Siigo lo que está en verde, sigue con egresos y conciliación, guarda la memoria del día, pregunta por correo lo que no puede decidir solo y envía el reporte al terminar",

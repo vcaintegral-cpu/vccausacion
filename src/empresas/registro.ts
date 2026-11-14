@@ -9,10 +9,11 @@
 import { BALLET } from "@/empresas/ballet/perfil";
 import { FUNCIONES, MODULOS_POR_DEFECTO, type FuncionId } from "@/empresas/global";
 import { LED_LIGHTS } from "@/empresas/led-lights/perfil";
+import { SOLUCIONES_Y_DISENOS } from "@/empresas/soluciones-y-disenos/perfil";
 import { MODULOS, MODULOS_PROTEGIDOS, type ModuloId, type PerfilEmpresa } from "@/empresas/tipos";
 
 /** Empresas con perfil propio. Una empresa nueva se agrega aquí solo cuando recibe un cambio específico. */
-export const PERFILES: readonly PerfilEmpresa[] = [LED_LIGHTS, BALLET];
+export const PERFILES: readonly PerfilEmpresa[] = [LED_LIGHTS, BALLET, SOLUCIONES_Y_DISENOS];
 
 /** Dígito de verificación DIAN de un NIT. */
 export function digitoVerificacion(nit: string): string {

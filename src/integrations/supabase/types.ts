@@ -3379,9 +3379,13 @@ export type Database = {
       tax_rates: {
         Row: {
           account_code: string | null
+          account_purchase_return: string | null
+          account_sales: string | null
+          account_sales_return: string | null
           active: boolean
           company_id: string
           created_at: string
+          excel_code: string | null
           id: string
           kind: string
           min_base: number
@@ -3396,9 +3400,13 @@ export type Database = {
         }
         Insert: {
           account_code?: string | null
+          account_purchase_return?: string | null
+          account_sales?: string | null
+          account_sales_return?: string | null
           active?: boolean
           company_id: string
           created_at?: string
+          excel_code?: string | null
           id?: string
           kind: string
           min_base?: number
@@ -3413,9 +3421,13 @@ export type Database = {
         }
         Update: {
           account_code?: string | null
+          account_purchase_return?: string | null
+          account_sales?: string | null
+          account_sales_return?: string | null
           active?: boolean
           company_id?: string
           created_at?: string
+          excel_code?: string | null
           id?: string
           kind?: string
           min_base?: number
