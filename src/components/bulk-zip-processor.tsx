@@ -32,7 +32,7 @@ import { cop, fechaHora } from "@/lib/format";
 import { codigoTecnico, mensajeAmigable } from "@/lib/bulk-messages";
 import { diagnoseItem, type BulkDiagnosis } from "@/lib/bulk-diagnostics";
 import { readZipContents, type BulkConfig } from "@/lib/bulk-invoices";
-import { parsePurchaseWorkbook } from "@/lib/purchase-excel";
+import { parsePurchaseWorkbookDetailed, textoOmitidos } from "@/lib/purchase-excel";
 import { excelDocKey, excelDocLabel } from "@/lib/excel-invoice-adapter";
 import {
   cargaDeteniendose,
@@ -199,7 +199,13 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       const { data: empresa } = await supabase.from("companies").select("nit").eq("id", companyId).maybeSingle();
       let docs;
       try {
-        docs = parsePurchaseWorkbook(await excel.arrayBuffer(), empresa?.nit ?? "");
+        const lectura = parsePurchaseWorkbookDetailed(await excel.arrayBuffer(), empresa?.nit ?? "");
+        docs = lectura.docs;
+        if (lectura.omitidos.length)
+          toast.warning(
+            `${lectura.omitidos.length} documento(s) de un tipo que el sistema no sabe causar NO se procesaron: ${textoOmitidos(lectura.omitidos)}`,
+            { duration: 30000 },
+          );
       } catch (error) {
         const message = error instanceof Error ? error.message : "No fue posible leer el Excel.";
         throw new Error(/comprador diferente/i.test(message) ? "El archivo no corresponde a la empresa seleccionada" : message);

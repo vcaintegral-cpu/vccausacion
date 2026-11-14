@@ -53,7 +53,21 @@ function sheetRows(wb: XLSX.WorkBook, name: string) {
  for(const field of ['TIPO DOC EMITIDO','NUMERO FACTURA COMPLETO','CUFE'])if(!headers.includes(field))throw new Error(`${name}: falta ${field} en la fila 3.`);
  return matrix.slice(3).map((values,i)=>({rowNumber:i+4,row:Object.fromEntries(headers.map((h,j)=>[h,values[j]??''])) as Row})).filter(x=>String(x.row['TIPO DOC EMITIDO']??'').trim());
 }
+/** Fila del RECIBIDOS con un tipo de documento que el lector no sabe causar: no se procesa, se informa. */
+export type DocumentoOmitido = { rowNumber: number; type: string; provider: string; number: string; total: number };
+/** Lee el Excel: devuelve los documentos de tipo conocido y, aparte, los de tipo desconocido (sin rechazar el archivo). */
+export function parsePurchaseWorkbookDetailed(buffer: ArrayBuffer, companyNit: string): { docs: PurchaseDocument[]; omitidos: DocumentoOmitido[] } {
+ const omitidos: DocumentoOmitido[] = [];
+ const docs = parseDocs(buffer, companyNit, omitidos);
+ return { docs, omitidos };
+}
+/** Texto para avisar a la usuaria de los documentos omitidos. */
+export const textoOmitidos = (o: DocumentoOmitido[]) =>
+ o.map((x) => `fila ${x.rowNumber} · tipo «${x.type}» · ${x.provider || 'sin proveedor'} · ${x.number || 'sin número'} · $${x.total}`).join('; ');
 export function parsePurchaseWorkbook(buffer: ArrayBuffer, companyNit: string): PurchaseDocument[] {
+ return parsePurchaseWorkbookDetailed(buffer, companyNit).docs;
+}
+function parseDocs(buffer: ArrayBuffer, companyNit: string, omitidos: DocumentoOmitido[]): PurchaseDocument[] {
  const wb=XLSX.read(buffer,{type:'array',cellDates:false});
  const docs=sheetRows(wb,'DOCUMENTOS');const details=sheetRows(wb,'DETALLE DE FACTURA');
  const sheet=wb.Sheets['DOCUMENTOS'];const periodText=sheet?String(sheet['B2']?.v??''):'';
@@ -64,7 +78,7 @@ export function parsePurchaseWorkbook(buffer: ArrayBuffer, companyNit: string): 
  return docs.map(({row:r,rowNumber})=>{
   const t=(key:string)=>String(r[key]??'').trim();const n=(key:string)=>abs(r[key]);const type=t('TIPO DOC EMITIDO');
   const kind=normalizeText(type)==='60'?'equivalent':normalizeText(type)==='nota de credito electronica'?'credit_note':esFacturaDeCompra(type)?'purchase':null;
-  if(!kind)throw new Error(`Fila ${rowNumber}: tipo de documento no soportado (${type}).`);
+  if(!kind){let total=0;try{total=n('TOTAL FACTURA');}catch{total=0;}omitidos.push({rowNumber,type,provider:t('NOMBRE EMISOR')||t('NIT EMISOR'),number:t('NUMERO FACTURA COMPLETO'),total});return null;}
   // El Procesador a veces no lee el comprador del XML (celda vacía): el reporte RECIBIDOS
   // es la lista de documentos recibidos por la empresa, así que se toma su NIT y se anota.
   // Un comprador presente y distinto sigue rechazando el archivo (protege de cargar ENVIADOS).
@@ -75,7 +89,7 @@ export function parsePurchaseWorkbook(buffer: ArrayBuffer, companyNit: string): 
   const rawLines=index.get(join(r))??[];
   const lines=rawLines.map(l=>{const quantity=abs(l['CANTIDAD'])||1;const subtotal=abs(l['SUBTOTAL DE LA FACTURA']);const discount=abs(l['DESCUENTO']);const iva=abs(l['IVA']);const impoconsumo=abs(l['INC']);const surcharge=abs(l['RECARGO']);return {description:String(l['DESCRIPCION']??''),code:String(l['CODIGO']??''),quantity,unit_value:subtotal/quantity,subtotal,discount,surcharge,iva,ivaBase:abs(l['BASE IVA']),ivaRate:abs(l['% IVA']),impoconsumo,total:cents(subtotal+surcharge+iva+impoconsumo)};});
   return {rowNumber,kind,type,period,naturalPerson:normalizeText(t('TIPO CONTRIBUYENTE EMISOR')).includes('natural'),rawHeader:r,rawLines,lines,header:{prefix:t('PREFIJO'),number:t('NUMERO DE FACTURA'),issue_date:date(r['FECHA DE FACTURA']),due_date:date(r['FECHA DE VENCIMIENTO']),provider_nit:normalizeNit(t('NIT EMISOR')),provider_name:t('RAZON SOCIAL EMISOR'),provider_address:t('DIRECCION EMISOR'),provider_city:t('CIUDAD EMISOR'),provider_phone:t('TELEFONO EMISOR'),provider_email:t('CORREO EMISOR'),buyer_nit:compradorFila?normalizeNit(compradorFila):normalizeNit(companyNit),buyer_name:t('NOMBRE COMPRADOR'),cufe:t('CUFE'),payment_form:t('FORMA DE PAGO'),payment_method:t('MEDIO DE PAGO'),currency:t('MONEDA')||'COP',notes:[t('NOTA'),normalizeText(t('TIPO DE OPERACION'))==='mandatos'?'Mandato':'',notaComprador].filter(Boolean).join('\n'),subtotal:abs(r['SUBTOTAL FACTURA'] ?? r['SUBTOTAL DE LA FACTURA']),discount:n('DESCUENTO GLOBAL'),iva:n('IVA'),impoconsumo:n('INC'),total:n('TOTAL FACTURA'),advances:n('ANTICIPOS'),surcharge:n('RECARGO GLOBAL'),retefuente:n('RETE RENTA'),reteiva:n('RETE IVA'),reteica:n('RETE ICA')}};
- });
+ }).filter((d): d is PurchaseDocument => d !== null);
 }
 export function documentAlerts(doc: PurchaseDocument) {
  const errors:string[]=[];const warnings:string[]=[];const h=doc.header;
