@@ -253,6 +253,13 @@
       "when": 1794696746362,
       "tag": "0035_impuestos_cuentas_por_funcion",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794698908191,
+      "tag": "0036_impuestos_cuentas_por_funcion",
+      "breakpoints": true
     }
   ]
 }

@@ -2421,7 +2421,7 @@ export type Database = {
           {
             foreignKeyName: "piloto_config_company_id_fkey"
             columns: ["company_id"]
-            isOneToOne: false
+            isOneToOne: true
             referencedRelation: "companies"
             referencedColumns: ["id"]
           },
@@ -2494,6 +2494,13 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "piloto_decisiones_ejecucion_id_fkey"
+            columns: ["ejecucion_id"]
+            isOneToOne: false
+            referencedRelation: "piloto_ejecuciones"
             referencedColumns: ["id"]
           },
         ]
