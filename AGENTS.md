@@ -64,3 +64,5 @@ Mapa completo: `docs/ARQUITECTURA.md`. Perfiles: `src/empresas/README.md`.
 7. Mantener actualizada la tabla de empresas con perfil en `docs/ARQUITECTURA.md`.
 
 - Impuestos desde el Excel de Siigo (función impuestos_excel_siigo, SOLUCIONES Y DISEÑOS; src/lib/impuestos-siigo-excel.ts): «Hoja1» con encabezados exactos; cada cuenta se guarda como TEXTO tal como viene (tax_rates.account_sales / account_code = compras / account_sales_return / account_purchase_return, excel_code), sin completar, recortar ni reemplazar. Se valida contra puc_accounts antes de guardar (errores bloquean; advertencias exigen confirmación), se lee lo guardado y se compara cuenta por cuenta. En esas empresas la sincronización con Siigo no deduce cuentas (source excel_siigo queda protegido).
+
+- RECIBIDOS: «Factura de contingencia facturador» se lee como factura de compra normal (kind purchase, tipo original conservado); un tipo desconocido sigue rechazando el archivo con la fila (src/lib/purchase-excel.ts, esFacturaDeCompra). Alcance: todas las empresas.
