@@ -19,7 +19,7 @@ import { invalidateBulkDeps, loadDeps } from "@/lib/bulk-runner";
 import { recalcularBorradoresEmpresa } from "@/lib/bulk-invoices";
 import { clearHistoryCache } from "@/lib/causacion-engine";
 import { clearProviderRulesCache } from "@/lib/provider-rules";
-import { compareHistory, readRawHistory, type HistoryValidation, type RawHistoryFile } from "@/lib/history-raw";
+import { compareHistory, readRawHistory, separarMovimientos, type HistoryValidation, type RawHistoryFile } from "@/lib/history-raw";
 import { fetchAllKeys, runReliableImport, sameImportValues, type ImportDetail, type ImportIssue } from "@/lib/import-system";
 import { ImportDetailPanel } from "@/components/import-detail";
 import { ImpuestosExcelSiigoPanel } from "@/components/impuestos-excel-siigo-panel";
@@ -1172,6 +1172,7 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
 
 export function HistoryPanel({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
+  const soloMovimientos = usePerfilActivo().funcion("historial_solo_movimientos");
   const [busy, setBusy] = useState(false);
   const [informe, setInforme] = useState<InformeAnalisis | null>(null);
   const [recalculados, setRecalculados] = useState<{ total: number; ok: number; fallidas: Array<{ id: string; message: string }> } | null>(null);
@@ -1294,6 +1295,16 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
       setValidacion(null);
       // ---------- CAPA 1: historial ORIGINAL, fiel al Excel ----------
       const original = await readRawHistory(file);
+      if (soloMovimientos) {
+        // Solo movimientos reales: los títulos de tercero y los saldos iniciales sin movimiento no son
+        // movimientos (los de tercero traen subtotales que duplicarían los valores).
+        const sep = separarMovimientos(original.rows);
+        original.rows = sep.movimientos;
+        toast.info(
+          `${fmt(sep.movimientos.length)} movimientos reales. Se descartaron ${fmt(sep.saldosIniciales)} saldos iniciales sin movimiento y ${fmt(sep.titulos)} títulos de tercero.`,
+          { duration: 20000 },
+        );
+      }
       if (original.rows.length === 0) {
         throw new Error("No se encontraron filas de movimiento en el archivo.");
       }
@@ -1321,6 +1332,8 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
       }
       // Movimientos sin fecha de un archivo con el mismo nombre (cargas anteriores del mismo reporte).
       await supabase.from("accounting_history").delete().eq("company_id", companyId).eq("file_name", original.fileName).is("entry_date_text", null);
+      // Cargas anteriores guardaron como «movimientos» títulos y saldos iniciales sin fecha ni comprobante.
+      if (soloMovimientos) await supabase.from("accounting_history").delete().eq("company_id", companyId).is("entry_date_text", null);
 
       const rawPayload = original.rows.map((r) => ({
         company_id: companyId,
