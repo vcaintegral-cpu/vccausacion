@@ -50,6 +50,7 @@ import { PaymentReceiptDialog, type FacturaPagable } from "@/components/payment-
 import { ESTADO_PAGO_LABEL, saldoPendiente, type EstadoPago } from "@/lib/payments";
 import { roundCOP } from "@/lib/money";
 import { recalcularCuentasBorrador } from "@/lib/bulk-invoices";
+import { asignarCuentaGasto } from "@/lib/asignar-cuenta-gasto";
 import { isValidExpenseAccount, isValidPurchaseAccount } from "@/lib/provider-rules";
 import { usePerfilActivo } from "@/empresas/use-perfil";
 import { loadDeps, invalidateBulkDeps } from "@/lib/bulk-runner";
@@ -146,6 +147,9 @@ function Borradores() {
   const sync = useServerFn(siigoSyncInvoice);
   // Función por empresa: compras de inventario con cuentas 14 (p. ej. LED LIGHTS).
   const inventario = usePerfilActivo().funcion("productos_inventario");
+  // Función por empresa: elegir la cuenta de gasto/costo pendiente, por factura o en lote.
+  const cuentaEnBorradores = usePerfilActivo().funcion("cuenta_gasto_en_borradores");
+  const [cuentaMasiva, setCuentaMasiva] = useState<{ code: string; name: string | null } | null>(null);
 
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [q, setQ] = useState("");
@@ -288,6 +292,7 @@ function Borradores() {
   const puc = pucQuery.data?.puc ?? [];
   // Solo cuentas por pagar (grupos 22 y 23) para el selector de CxP.
   const cuentasPagar = useMemo(() => puc.filter((p) => isPayableCode(p.code)), [puc]);
+  const cuentasGasto = useMemo(() => puc.filter((p) => isValidPurchaseAccount(p.code, inventario)), [puc, inventario]);
   const formasPago = usePaymentTypes(companyId).data ?? [];
 
 
@@ -676,6 +681,47 @@ function Borradores() {
     if (out.length - ok) toast.error(`${out.length - ok} factura(s) no se pudieron recalcular.`);
   }
 
+  /** Asigna la cuenta de gasto/costo a los renglones pendientes de las facturas indicadas (una o varias). */
+  async function asignarCuenta(objetivo: DraftInvoice[], cuenta: { code: string; name: string | null }) {
+    if (busy || !companyId) return;
+    const borradores = objetivo.filter((r) => r.status === "borrador" || r.status === "error");
+    if (borradores.length === 0) {
+      toast.error("Selecciona facturas en borrador para asignarles la cuenta.");
+      return;
+    }
+    setBusy("aprobar");
+    setAvance({ hechas: 0, total: borradores.length });
+    const out: ResultadoFactura[] = [];
+    try {
+      invalidateBulkDeps(companyId);
+      const { config } = await loadDeps(companyId);
+      for (let offset = 0; offset < borradores.length; offset += 5) {
+        await Promise.all(
+          borradores.slice(offset, offset + 5).map(async (inv) => {
+            const etiqueta = etiquetaFactura(inv);
+            try {
+              const r = await asignarCuentaGasto(inv.id, cuenta, config, { inventario });
+              out.push({ id: inv.id, etiqueta, ok: r.ok, message: r.message });
+            } catch (err) {
+              out.push({ id: inv.id, etiqueta, ok: false, message: err instanceof Error ? err.message : "Error inesperado." });
+            } finally {
+              setAvance((p) => (p ? { ...p, hechas: p.hechas + 1 } : p));
+            }
+          }),
+        );
+      }
+    } finally {
+      setBusy(null);
+      setAvance(null);
+      setResultados(out);
+      await queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+      await queryClient.invalidateQueries({ queryKey: ["invoices", companyId] });
+    }
+    const ok = out.filter((r) => r.ok).length;
+    if (ok) toast.success(`Cuenta ${cuenta.code} asignada en ${ok} factura(s).`);
+    if (out.length - ok) toast.error(`${out.length - ok} factura(s) no se pudieron actualizar. Revisa el detalle.`);
+  }
+
   async function conciliarFuente() {
     try {
       const ids = seleccionadas.map(i => i.id);
@@ -713,6 +759,25 @@ function Borradores() {
           >
             <RefreshCw className="size-4" /> Recalcular cuentas ({seleccionadas.filter((r) => r.status === "borrador" || r.status === "error").length})
           </Button>
+          {cuentaEnBorradores ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card px-2 py-1">
+              <AccountCombobox
+                accounts={cuentasGasto}
+                value={cuentaMasiva?.code ?? ""}
+                onChange={(code, name) => setCuentaMasiva({ code, name })}
+                placeholder="Cuenta de gasto/costo…"
+                className="min-w-[220px]"
+              />
+              <Button
+                variant="outline"
+                disabled={!!busy || !cuentaMasiva || seleccionadas.filter((r) => r.status === "borrador" || r.status === "error").length === 0}
+                onClick={() => cuentaMasiva && void asignarCuenta(seleccionadas, cuentaMasiva)}
+                title="Pone esta cuenta en los renglones pendientes de cuenta de las facturas seleccionadas; no cambia los que ya tienen una cuenta válida"
+              >
+                Asignar a seleccionadas ({seleccionadas.filter((r) => r.status === "borrador" || r.status === "error").length})
+              </Button>
+            </div>
+          ) : null}
           <Button
             variant="destructive"
             onClick={() => setBorrarOpen(true)}
@@ -911,7 +976,18 @@ function Borradores() {
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.subtotal)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.iva)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">{cop(r.total)}</td>
-                  <td className="px-3 py-2"><Cuentas items={acc?.gastos} nombres={pucNames} expense decisions={r.raw_extraction} inventario={inventario} /></td>
+                  <td className="px-3 py-2">
+                    <Cuentas items={acc?.gastos} nombres={pucNames} expense decisions={r.raw_extraction} inventario={inventario} />
+                    {cuentaEnBorradores && (e === "borrador" || e === "error") && ((acc?.gastos ?? []).length === 0 || (acc?.gastos ?? []).some((c) => !isValidPurchaseAccount(c.code, inventario))) ? (
+                      <AccountCombobox
+                        accounts={cuentasGasto}
+                        value=""
+                        onChange={(code, name) => void asignarCuenta([r], { code, name })}
+                        placeholder="Asignar cuenta…"
+                        className="mt-1 min-w-[190px]"
+                      />
+                    ) : null}
+                  </td>
                   <td className="px-3 py-2"><Cuentas items={acc?.ivas} nombres={pucNames} /></td>
                   <td className="px-3 py-2"><Cuentas items={acc?.retefuente} nombres={pucNames} /></td>
                   <td className="px-3 py-2"><Cuentas items={acc?.reteiva} nombres={pucNames} /></td>

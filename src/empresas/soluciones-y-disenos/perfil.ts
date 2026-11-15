@@ -18,6 +18,7 @@ export const SOLUCIONES_Y_DISENOS: PerfilEmpresa = {
     producto_del_historial: true,
     historial_api_siigo: true,
     causar_con_motor_masivo: true,
+    cuenta_gasto_en_borradores: true,
   },
   notas: [
     "Los impuestos se importan del reporte en Excel de Siigo (impuestos.xlsx, Hoja1): se conservan las cuatro cuentas de cada impuesto tal como están en el archivo.",

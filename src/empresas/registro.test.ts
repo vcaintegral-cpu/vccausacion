@@ -78,6 +78,7 @@ describe("alcance global vs. empresa", () => {
                 ["función", "producto_del_historial", true],
                 ["función", "historial_api_siigo", true],
                 ["función", "causar_con_motor_masivo", true],
+                ["función", "cuenta_gasto_en_borradores", true],
               ]
             : [],
       );
