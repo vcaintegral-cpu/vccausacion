@@ -176,6 +176,12 @@ describe("precedente por proveedor", () => {
     expect(cuentaGastoHistorica(ferr, "2 AEROSOLES negro mate", isValidExpenseAccount)?.cuenta).toBe("51451001");
     // Sin palabras en común, la cuenta que usa en casi todas sus compras.
     expect(cuentaGastoHistorica(ferr, "Varsol", isValidExpenseAccount)?.cuenta).toBe("51451001");
+    // Se distingue la coincidencia por concepto de la cuenta dominante sin coincidencia (confianza).
+    expect(cuentaGastoHistorica(ferr, "2 AEROSOLES negro mate", isValidExpenseAccount)?.porConcepto).toBe(true);
+    const dominante = cuentaGastoHistorica(ferr, "Varsol", isValidExpenseAccount);
+    expect(dominante?.porConcepto).toBe(false);
+    expect(dominante?.veces).toBeGreaterThan(0);
+    expect(dominante?.compras).toBeGreaterThanOrEqual(dominante?.veces ?? 0);
     // Inventario (14) no es cuenta de gasto/costo de la causación: no se asigna.
     expect(cuentaGastoHistorica(perfiles.get("900000001")!, "Bala de piso", isValidExpenseAccount)).toBeNull();
   });

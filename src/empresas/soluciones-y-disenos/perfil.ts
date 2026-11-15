@@ -10,7 +10,7 @@ export const SOLUCIONES_Y_DISENOS: PerfilEmpresa = {
   dv: "1",
   carpeta: "soluciones-y-disenos",
   modulos: {},
-  funciones: { impuestos_excel_siigo: true, historial_solo_movimientos: true },
+  funciones: { impuestos_excel_siigo: true, historial_solo_movimientos: true, historial_confianza_concepto: true },
   notas: [
     "Los impuestos se importan del reporte en Excel de Siigo (impuestos.xlsx, Hoja1): se conservan las cuatro cuentas de cada impuesto tal como están en el archivo.",
   ],

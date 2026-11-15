@@ -73,6 +73,7 @@ describe("alcance global vs. empresa", () => {
             ? [
                 ["función", "impuestos_excel_siigo", true],
                 ["función", "historial_solo_movimientos", true],
+                ["función", "historial_confianza_concepto", true],
               ]
             : [],
       );

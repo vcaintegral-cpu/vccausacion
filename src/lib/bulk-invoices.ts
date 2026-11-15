@@ -477,6 +477,7 @@ export async function computeDraftAccounting(params: {
   // descripción, o la que usa en casi todas sus compras) para renglones sin cuenta o
   // resueltos solo por descripciones de OTROS proveedores. Nunca reemplaza una regla.
   if (perfilHistorico) {
+    const confianzaPorConcepto = funcionActiva(await nitDeEmpresa(companyId, config), "historial_confianza_concepto");
     const valida = (c: string) =>
       isValidExpenseAccount(c) && (config.accounts.length === 0 || resolveOperationalAccount(config.accounts, c).valid);
     lines.forEach((l, i) => {
@@ -487,7 +488,20 @@ export async function computeDraftAccounting(params: {
       const op = config.accounts.length ? resolveOperationalAccount(config.accounts, h.cuenta) : null;
       const code = op?.operationalAccount ?? h.cuenta;
       lines[i] = { ...l, account_code: code, account_name: op?.operational?.name ?? h.nombre };
-      decisions[i] = { code, name: lines[i]!.account_name ?? "", origin: "HISTORIAL", reason: h.motivo, confidence: "ALTA", score: 0.9, error: null };
+      // Con la función de la empresa, solo hay confianza ALTA si el concepto coincide con compras
+      // anteriores; la cuenta dominante del proveedor sin coincidencia de concepto pide validación.
+      const debil = confianzaPorConcepto && !h.porConcepto;
+      decisions[i] = {
+        code,
+        name: lines[i]!.account_name ?? "",
+        origin: "HISTORIAL",
+        reason: debil
+          ? `Historial Siigo: el proveedor usó ${h.cuenta} en ${h.veces} de ${h.compras} compras, pero el concepto de este renglón no coincide con ninguna anterior. VALIDAR la cuenta.`
+          : h.motivo,
+        confidence: debil ? "MEDIA" : "ALTA",
+        score: debil ? 0.6 : 0.9,
+        error: null,
+      };
     });
   }
   // Inventario (función por empresa "productos_inventario"): renglones de proveedores que
