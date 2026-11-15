@@ -23,6 +23,7 @@ import { compareHistory, readRawHistory, separarMovimientos, type HistoryValidat
 import { fetchAllKeys, runReliableImport, sameImportValues, type ImportDetail, type ImportIssue } from "@/lib/import-system";
 import { ImportDetailPanel } from "@/components/import-detail";
 import { ImpuestosExcelSiigoPanel } from "@/components/impuestos-excel-siigo-panel";
+import { HistorialApiSiigoPanel } from "@/components/historial-api-siigo-panel";
 import { usePerfilActivo } from "@/empresas/use-perfil";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1173,6 +1174,7 @@ function TaxesPanelInner({ companyId }: { companyId: string }) {
 export function HistoryPanel({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const soloMovimientos = usePerfilActivo().funcion("historial_solo_movimientos");
+  const apiSiigo = usePerfilActivo().funcion("historial_api_siigo");
   const [busy, setBusy] = useState(false);
   const [informe, setInforme] = useState<InformeAnalisis | null>(null);
   const [recalculados, setRecalculados] = useState<{ total: number; ok: number; fallidas: Array<{ id: string; message: string }> } | null>(null);
@@ -1419,6 +1421,7 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
 
   return (
     <div className="space-y-4">
+      {apiSiigo ? <HistorialApiSiigoPanel companyId={companyId} /> : null}
       <div className="rounded-lg border border-border bg-card p-4">
         <h3 className="text-sm font-semibold">Importar historial contable de Siigo</h3>
         <p className="mt-1 text-sm text-muted-foreground">
