@@ -100,6 +100,7 @@ function Facturas() {
   useEffect(() => { setTipoError(""); }, [estado]);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [lote, setLote] = useState<null | "retry" | "check">(null);
+  const [eliminando, setEliminando] = useState(false);
   const [resultados, setResultados] = useState<{ id: string; etiqueta: string; ok: boolean; message: string }[] | null>(null);
   const recovery = useSiigoRecovery();
   const release = useServerFn(siigoReleaseInterrupted);
@@ -218,6 +219,42 @@ function Facturas() {
   const paraConsultar = seleccionadas.filter((r) => siigoErrorKind(r) === "creado_diferencia");
   const refrescar = () => queryClient.invalidateQueries({ queryKey: ["invoices", companyId] });
 
+  /** Elimina de una vez las marcadas. Las que ya existen en Siigo nunca se borran (igual que la papelera de cada fila). */
+  async function eliminarSeleccionadas() {
+    if (eliminando) return;
+    const protegidas = seleccionadas.filter((r) => r.siigo_id || r.siigo_number);
+    const borrables = seleccionadas.filter((r) => !(r.siigo_id || r.siigo_number));
+    if (borrables.length === 0) {
+      toast.error("Las seleccionadas existen en Siigo: anúlelas allá antes de eliminarlas aquí.");
+      return;
+    }
+    const aviso = protegidas.length
+      ? `\n\n${protegidas.length} seleccionada(s) existen en Siigo y NO se eliminarán.`
+      : "";
+    if (!window.confirm(`¿Eliminar ${borrables.length} comprobante(s)? Esta acción no se puede deshacer.${aviso}`)) return;
+    setEliminando(true);
+    let eliminadas = 0;
+    try {
+      for (let i = 0; i < borrables.length; i += 50) {
+        const ids = borrables.slice(i, i + 50).map((r) => r.id);
+        const a = await supabase.from("journal_lines").delete().in("invoice_id", ids);
+        if (a.error) throw new Error(a.error.message);
+        const b = await supabase.from("invoice_lines").delete().in("invoice_id", ids);
+        if (b.error) throw new Error(b.error.message);
+        const c = await supabase.from("invoices").delete().in("id", ids);
+        if (c.error) throw new Error(c.error.message);
+        eliminadas += ids.length;
+      }
+      toast.success(`${eliminadas} comprobante(s) eliminado(s).`);
+    } catch (e) {
+      toast.error(`Se eliminaron ${eliminadas} de ${borrables.length}. ${e instanceof Error ? e.message : "Error inesperado."}`);
+    } finally {
+      setEliminando(false);
+      setSel({});
+      await refrescar();
+    }
+  }
+
   async function enLote(tipo: "retry" | "check") {
     const objetivo = tipo === "retry" ? paraReintentar : paraConsultar;
     if (lote || objetivo.length === 0) return;
@@ -284,6 +321,16 @@ function Facturas() {
               {lote === "check" ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} Consultar Siigo de nuevo ({paraConsultar.length})
             </Button>
           </div>
+        </div>
+      )}
+
+      {seleccionadas.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3 text-xs">
+          <span className="font-medium">{seleccionadas.length} seleccionada(s)</span>
+          <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => void eliminarSeleccionadas()} disabled={eliminando || !!lote}>
+            {eliminando ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />} Eliminar seleccionadas ({seleccionadas.length})
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSel({})} disabled={eliminando}>Quitar selección</Button>
         </div>
       )}
 
