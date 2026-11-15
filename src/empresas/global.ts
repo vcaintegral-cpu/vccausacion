@@ -87,6 +87,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-15",
   },
+  iva_de_costo_historial: {
+    descripcion:
+      "El histórico de compras reconoce como IVA los débitos a las cuentas de IVA de compras de la empresa que no son 2408 (p. ej. «IVA de costo» 621008), para aprender el IVA real del proveedor y no tratarlo como un gasto del renglón",
+    porDefecto: false,
+    agregada: "2026-11-15",
+  },
   piloto_automatico: {
     descripcion:
       "Piloto automático nocturno: desde la hora de inicio revisa la carpeta de Drive, causa y envía a Siigo lo que está en verde, sigue con egresos y conciliación, guarda la memoria del día, pregunta por correo lo que no puede decidir solo y envía el reporte al terminar",

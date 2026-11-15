@@ -1,9 +1,11 @@
 // Lectura del precedente tributario desde la base (sesión del usuario, RLS por empresa).
+import { funcionActiva } from "@/empresas/registro";
 import { supabase } from "@/integrations/supabase/client";
 import {
   aprenderPerfiles,
   reconstruirCompras,
   type CompraHistorica,
+  type OpcionesReconstruccion,
   type MovimientoAux,
   type PerfilHistorico,
 } from "@/lib/auxiliar-historico";
@@ -51,6 +53,31 @@ export function invalidarPrecedentes(companyId?: string) {
   }
 }
 
+/**
+ * Función por empresa «iva_de_costo_historial»: cuentas de IVA de compras fuera de la 2408 (las que
+ * los impuestos de IVA de la empresa tienen como cuenta de compras, p. ej. 621008 «IVA de costo»).
+ * Sin la función (o sin impuestos así) devuelve un conjunto vacío y nada cambia.
+ */
+export async function opcionesDeReconstruccion(companyId: string): Promise<OpcionesReconstruccion> {
+  try {
+    const { data: emp } = await supabase.from("companies").select("nit").eq("id", companyId).maybeSingle();
+    if (!funcionActiva((emp as { nit: string | null } | null)?.nit, "iva_de_costo_historial")) return {};
+    const { data: taxes } = await supabase
+      .from("tax_rates")
+      .select("account_code")
+      .eq("company_id", companyId)
+      .eq("kind", "iva");
+    const cuentas = new Set(
+      ((taxes ?? []) as Array<{ account_code: string | null }>)
+        .map((t) => String(t.account_code ?? "").trim())
+        .filter((c) => /^\d{4,}$/.test(c) && !c.startsWith("2408")),
+    );
+    return cuentas.size ? { cuentasIva: cuentas } : {};
+  } catch {
+    return {};
+  }
+}
+
 export type HistorialCompras = { compras: CompraHistorica[]; perfiles: Map<string, PerfilHistorico> };
 const historialCache = new Map<string, { hasta: number; promesa: Promise<HistorialCompras> }>();
 
@@ -73,7 +100,7 @@ export function cargarHistorialCompras(companyId: string): Promise<HistorialComp
         .order("id")
         .range(d, h),
     ).catch(() => [] as MovimientoAux[]);
-    const compras = reconstruirCompras(movs);
+    const compras = reconstruirCompras(movs, await opcionesDeReconstruccion(companyId));
     return { compras, perfiles: aprenderPerfiles(compras) };
   })();
   historialCache.set(companyId, { hasta: Date.now() + VIGENCIA_MS, promesa });

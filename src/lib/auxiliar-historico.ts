@@ -153,7 +153,15 @@ export type CompraHistorica = {
 const esClaseGasto = (c: string) => /^(5|6|7|14|15|16|17)/.test(c);
 
 /** Une los movimientos de cada comprobante de compra en un documento completo. */
-export function reconstruirCompras(movs: MovimientoAux[]): CompraHistorica[] {
+export type OpcionesReconstruccion = {
+  /**
+   * Cuentas que la empresa usa como IVA de compras fuera de la 2408 (p. ej. «IVA de costo» 621008):
+   * un débito a esas cuentas es IVA, no un gasto del renglón.
+   */
+  cuentasIva?: ReadonlySet<string>;
+};
+
+export function reconstruirCompras(movs: MovimientoAux[], opciones: OpcionesReconstruccion = {}): CompraHistorica[] {
   const grupos = new Map<string, MovimientoAux[]>();
   for (const m of movs) {
     if (!esComprobanteDeCompra(m.voucher)) continue;
@@ -210,7 +218,7 @@ export function reconstruirCompras(movs: MovimientoAux[]): CompraHistorica[] {
         tarifa: tarifaDeTexto(nombre, l.description, l.detail),
         concepto: String(l.description ?? nombre).trim(),
       });
-      if (/^2408/.test(cuenta)) compra.iva.push(impuesto());
+      if (/^2408/.test(cuenta) || (neto > 0 && opciones.cuentasIva?.has(cuenta))) compra.iva.push(impuesto());
       else if (/^2365/.test(cuenta)) compra.retenciones.retefuente.push(impuesto());
       else if (/^2367/.test(cuenta)) compra.retenciones.reteiva.push(impuesto());
       else if (/^2368/.test(cuenta)) compra.retenciones.reteica.push(impuesto());
@@ -263,7 +271,7 @@ export function cuadraTarifa(base: number | null, tarifa: number | null, valor: 
   return Math.abs(esperado - valor) <= Math.max(1, valor * 0.005);
 }
 
-export function analizarAuxiliar(movs: MovimientoAux[]): { compras: CompraHistorica[]; informe: InformeAnalisis } {
+export function analizarAuxiliar(movs: MovimientoAux[], opciones: OpcionesReconstruccion = {}): { compras: CompraHistorica[]; informe: InformeAnalisis } {
   const novedades: Novedad[] = [];
   // Pasada 1: lectura.
   let leidos = 0;
@@ -279,7 +287,7 @@ export function analizarAuxiliar(movs: MovimientoAux[]): { compras: CompraHistor
   const deCompra = movs.filter((m) => esComprobanteDeCompra(m.voucher));
 
   // Pasada 2: reconstrucción y cuadre.
-  const compras = reconstruirCompras(deCompra);
+  const compras = reconstruirCompras(deCompra, opciones);
   let cuadran = 0;
   for (const c of compras) {
     if (Math.abs(c.debitos - c.creditos) <= 1) cuadran += 1;

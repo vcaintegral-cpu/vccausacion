@@ -14,7 +14,7 @@ import {
 import { downloadSheet, num, pick, readSheet, readSheetIndexed } from "@/lib/spreadsheet";
 import { compareCodes, parsePucSheet, type PucRowError } from "@/lib/puc-import";
 import { analizarAuxiliar, fechaISO, fechasDelRango, rangoDelPeriodo, type InformeAnalisis } from "@/lib/auxiliar-historico";
-import { invalidarPrecedentes } from "@/lib/precedente-tributario.data";
+import { invalidarPrecedentes, opcionesDeReconstruccion } from "@/lib/precedente-tributario.data";
 import { invalidateBulkDeps, loadDeps } from "@/lib/bulk-runner";
 import { recalcularBorradoresEmpresa } from "@/lib/bulk-invoices";
 import { clearHistoryCache } from "@/lib/causacion-engine";
@@ -1390,7 +1390,7 @@ export function HistoryPanel({ companyId }: { companyId: string }) {
       // Lectura → reconstrucción y cuadre de cada compra → IVA (base × tarifa) →
       // retenciones (concepto, base × tarifa) → precedente por proveedor.
       setProgreso("Analizando el auxiliar: reconstruyendo compras y verificando impuestos…");
-      const { informe: inf } = analizarAuxiliar(original.rows);
+      const { informe: inf } = analizarAuxiliar(original.rows, await opcionesDeReconstruccion(companyId));
       setInforme(inf);
       // El precedente nuevo se usa de inmediato: se olvidan los datos guardados en memoria.
       invalidarPrecedentes(companyId);
