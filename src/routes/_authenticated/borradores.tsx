@@ -682,7 +682,7 @@ function Borradores() {
   }
 
   /** Asigna la cuenta de gasto/costo a los renglones pendientes de las facturas indicadas (una o varias). */
-  async function asignarCuenta(objetivo: DraftInvoice[], cuenta: { code: string; name: string | null }) {
+  async function asignarCuenta(objetivo: DraftInvoice[], cuenta: { code: string; name: string | null }, explicita = false) {
     if (busy || !companyId) return;
     const borradores = objetivo.filter((r) => r.status === "borrador" || r.status === "error");
     if (borradores.length === 0) {
@@ -700,7 +700,7 @@ function Borradores() {
           borradores.slice(offset, offset + 5).map(async (inv) => {
             const etiqueta = etiquetaFactura(inv);
             try {
-              const r = await asignarCuentaGasto(inv.id, cuenta, config, { inventario });
+              const r = await asignarCuentaGasto(inv.id, cuenta, config, { inventario, siNingunoTodos: explicita });
               out.push({ id: inv.id, etiqueta, ok: r.ok, message: r.message });
             } catch (err) {
               out.push({ id: inv.id, etiqueta, ok: false, message: err instanceof Error ? err.message : "Error inesperado." });
@@ -982,7 +982,7 @@ function Borradores() {
                       <AccountCombobox
                         accounts={cuentasGasto}
                         value=""
-                        onChange={(code, name) => void asignarCuenta([r], { code, name })}
+                        onChange={(code, name) => void asignarCuenta([r], { code, name }, true)}
                         placeholder="Asignar cuenta…"
                         className="mt-1 min-w-[190px]"
                       />

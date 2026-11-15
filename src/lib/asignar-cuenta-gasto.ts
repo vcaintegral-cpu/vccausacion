@@ -15,7 +15,7 @@ export async function asignarCuentaGasto(
   invoiceId: string,
   cuenta: { code: string; name: string | null },
   config: BulkConfig,
-  opciones: { inventario?: boolean; todos?: boolean } = {},
+  opciones: { inventario?: boolean; todos?: boolean; siNingunoTodos?: boolean } = {},
 ): Promise<ResultadoAsignacion> {
   const code = cuenta.code.trim();
   if (!isValidPurchaseAccount(code, !!opciones.inventario))
@@ -56,17 +56,35 @@ export async function asignarCuentaGasto(
 
   const { data: lineas } = await supabase
     .from("invoice_lines")
-    .select("position, account_code")
+    .select("position, account_code, account_name")
     .eq("invoice_id", invoiceId)
     .order("position");
-  const actual = new Map<number, string>(
-    (lineas ?? []).map((l) => [Number(l.position), String(l.account_code ?? "").trim()]),
+  // Cuentas de IVA de la empresa (p. ej. 621008 «IVA de costo»): como gasto del renglón no sirven, y la
+  // pantalla de Borradores las cuenta como IVA y muestra el renglón como «Pendiente de cuenta».
+  const cuentasIva = new Set(
+    ((config?.taxes ?? []) as Array<{ kind?: string | null; account_code?: string | null }>)
+      .filter((t) => String(t.kind ?? "").toLowerCase() === "iva")
+      .map((t) => String(t.account_code ?? "").trim())
+      .filter(Boolean),
   );
+  const actual = new Map<number, string>();
+  (lineas ?? []).forEach((l) => {
+    const c = String(l.account_code ?? "").trim();
+    const comoIva = cuentasIva.has(c) || /\biva\b/i.test(String(l.account_name ?? ""));
+    // Una cuenta que cuenta como IVA es una cuenta de gasto pendiente.
+    actual.set(Number(l.position), comoIva ? "" : c);
+  });
   const decisiones = { ...((raw["account_decisions"] ?? {}) as Record<string, unknown>) };
   let renglones = 0;
+  // Elección explícita sobre una factura que la pantalla marca como pendiente: si no se detecta ningún
+  // renglón pendiente, se aplica a todos para no quedarse sin hacer nada.
+  const hayPendientes = ia.lines.some(
+    (_, i) => !isValidPurchaseAccount(actual.get(i) ?? "", !!opciones.inventario),
+  );
+  const todos = !!opciones.todos || (!!opciones.siNingunoTodos && !hayPendientes);
   ia.lines.forEach((_, i) => {
     const pendiente = !isValidPurchaseAccount(actual.get(i) ?? "", !!opciones.inventario);
-    if (!opciones.todos && !pendiente) return;
+    if (!todos && !pendiente) return;
     decisiones[String(i)] = {
       code,
       name: cuenta.name,

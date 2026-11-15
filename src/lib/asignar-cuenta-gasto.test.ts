@@ -10,9 +10,9 @@ const estado = vi.hoisted(() => ({
     },
   } as Record<string, unknown>,
   lineas: [
-    { position: 0, account_code: "621020" },
-    { position: 1, account_code: "" },
-    { position: 2, account_code: "130505" },
+    { position: 0, account_code: "621020", account_name: "Maderas" },
+    { position: 1, account_code: "", account_name: null },
+    { position: 2, account_code: "130505", account_name: "Clientes" },
   ],
   actualizado: null as unknown,
 }));
@@ -72,5 +72,38 @@ describe("asignar cuenta de gasto en borradores", () => {
     const r = await asignarCuentaGasto("f1", { code: "220505", name: null }, {} as never);
     expect(r.ok).toBe(false);
     expect(estado.actualizado).toBeNull();
+  });
+
+  it("una cuenta de IVA de costo puesta como gasto cuenta como pendiente", async () => {
+    estado.lineas = [
+      { position: 0, account_code: "621008", account_name: "IVA de Costo" },
+      { position: 1, account_code: "621020", account_name: "Maderas" },
+    ];
+    estado.inv = { id: "f1", status: "borrador", raw_extraction: { ia: { lines: [{}, {}] } } };
+    const r = await asignarCuentaGasto("f1", { code: "621033", name: "Ferretería" }, {
+      taxes: [{ kind: "iva", account_code: "621008" }],
+    } as never);
+    expect(r.renglones).toBe(1);
+    const dec = (
+      estado.actualizado as {
+        raw_extraction: { account_decisions: Record<string, { code: string }> };
+      }
+    ).raw_extraction.account_decisions;
+    expect(dec["0"]?.code).toBe("621033");
+    expect(dec["1"]).toBeUndefined();
+  });
+
+  it("elección explícita sobre una factura sin pendientes detectados: se aplica a todos los renglones", async () => {
+    estado.lineas = [
+      { position: 0, account_code: "621020", account_name: "Maderas" },
+      { position: 1, account_code: "621020", account_name: "Maderas" },
+    ];
+    estado.inv = { id: "f1", status: "borrador", raw_extraction: { ia: { lines: [{}, {}] } } };
+    const sin = await asignarCuentaGasto("f1", { code: "621033", name: null }, {} as never);
+    expect(sin.renglones).toBe(0);
+    const explicita = await asignarCuentaGasto("f1", { code: "621033", name: null }, {} as never, {
+      siNingunoTodos: true,
+    });
+    expect(explicita.renglones).toBe(2);
   });
 });
