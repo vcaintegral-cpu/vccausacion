@@ -111,6 +111,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-15",
   },
+  cuenta_gasto_en_borradores: {
+    descripcion:
+      "Borradores: permite elegir la cuenta de gasto/costo de los renglones pendientes de cuenta de una factura y aplicarla a varias facturas seleccionadas de una vez; la cuenta queda como decisión manual que el recálculo no reemplaza",
+    porDefecto: false,
+    agregada: "2026-11-15",
+  },
   piloto_automatico: {
     descripcion:
       "Piloto automático nocturno: desde la hora de inicio revisa la carpeta de Drive, causa y envía a Siigo lo que está en verde, sigue con egresos y conciliación, guarda la memoria del día, pregunta por correo lo que no puede decidir solo y envía el reporte al terminar",
