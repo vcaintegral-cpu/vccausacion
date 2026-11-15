@@ -85,6 +85,33 @@ function exactNumber(raw: unknown, text: string): number | null {
   return negative ? -Math.abs(n) : n;
 }
 
+/**
+ * ¿La fila es un movimiento contable real? Debe traer comprobante, fecha y cuenta. Las demás filas
+ * del reporte por tercero son títulos («Nombre del tercero: …») o el saldo inicial de un tercero sin
+ * movimientos en el periodo: no son movimientos y NO deben guardarse como tales (sus totales
+ * duplicarían los valores).
+ */
+export function esMovimientoReal(r: Pick<RawHistoryRow, "voucher" | "entry_date_text" | "account_code">): boolean {
+  return !!(r.voucher?.trim() && r.entry_date_text?.trim() && r.account_code?.trim());
+}
+
+/** Separa los movimientos reales del resto de filas del reporte, con las cifras para informar. */
+export function separarMovimientos(rows: RawHistoryRow[]): {
+  movimientos: RawHistoryRow[];
+  titulos: number;
+  saldosIniciales: number;
+} {
+  const movimientos: RawHistoryRow[] = [];
+  let titulos = 0;
+  let saldosIniciales = 0;
+  for (const r of rows) {
+    if (esMovimientoReal(r)) movimientos.push(r);
+    else if (Object.values(r.original_row_data).some((v) => /^(Nombre del tercero|Cuenta contable):/i.test(v.trim()))) titulos += 1;
+    else saldosIniciales += 1;
+  }
+  return { movimientos, titulos, saldosIniciales };
+}
+
 const blank = (value: string) => (value.trim() === "" ? null : value);
 
 /** Lee el archivo completo conservando los datos originales de cada fila. */

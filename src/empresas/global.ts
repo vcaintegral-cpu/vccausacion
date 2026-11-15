@@ -75,6 +75,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-14",
   },
+  historial_solo_movimientos: {
+    descripcion:
+      "Historial contable: al importar el auxiliar de Siigo solo se guardan los movimientos reales (con comprobante, fecha y cuenta); los títulos de tercero y los saldos iniciales sin movimiento se descartan e informan, para que no se muestren ni sumen como movimientos",
+    porDefecto: false,
+    agregada: "2026-11-15",
+  },
   piloto_automatico: {
     descripcion:
       "Piloto automático nocturno: desde la hora de inicio revisa la carpeta de Drive, causa y envía a Siigo lo que está en verde, sigue con egresos y conciliación, guarda la memoria del día, pregunta por correo lo que no puede decidir solo y envía el reporte al terminar",

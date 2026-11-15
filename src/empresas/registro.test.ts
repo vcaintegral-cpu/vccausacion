@@ -70,7 +70,10 @@ describe("alcance global vs. empresa", () => {
               ["función", "piloto_automatico", true],
             ]
           : p.nit === "900088704"
-            ? [["función", "impuestos_excel_siigo", true]]
+            ? [
+                ["función", "impuestos_excel_siigo", true],
+                ["función", "historial_solo_movimientos", true],
+              ]
             : [],
       );
     }
