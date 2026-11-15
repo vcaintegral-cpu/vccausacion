@@ -51,6 +51,7 @@ import { ESTADO_PAGO_LABEL, saldoPendiente, type EstadoPago } from "@/lib/paymen
 import { roundCOP } from "@/lib/money";
 import { recalcularCuentasBorrador } from "@/lib/bulk-invoices";
 import { asignarCuentaGasto } from "@/lib/asignar-cuenta-gasto";
+import { partitionSelectableAccounts } from "@/lib/puc-hierarchy";
 import { isValidExpenseAccount, isValidPurchaseAccount } from "@/lib/provider-rules";
 import { usePerfilActivo } from "@/empresas/use-perfil";
 import { loadDeps, invalidateBulkDeps } from "@/lib/bulk-runner";
@@ -292,7 +293,11 @@ function Borradores() {
   const puc = pucQuery.data?.puc ?? [];
   // Solo cuentas por pagar (grupos 22 y 23) para el selector de CxP.
   const cuentasPagar = useMemo(() => puc.filter((p) => isPayableCode(p.code)), [puc]);
-  const cuentasGasto = useMemo(() => puc.filter((p) => isValidPurchaseAccount(p.code, inventario)), [puc, inventario]);
+  // Solo cuentas de movimiento (auxiliares activas): sin clase, grupo, cuenta ni subcuenta padre.
+  const cuentasGasto = useMemo(
+    () => partitionSelectableAccounts(puc).mov.filter((p) => isValidPurchaseAccount(p.code, inventario)),
+    [puc, inventario],
+  );
   const formasPago = usePaymentTypes(companyId).data ?? [];
 
 
