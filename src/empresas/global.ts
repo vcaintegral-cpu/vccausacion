@@ -81,6 +81,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-15",
   },
+  historial_confianza_concepto: {
+    descripcion:
+      "Causación con historial del proveedor: la cuenta se marca con confianza ALTA solo si el concepto del renglón coincide con compras anteriores; si solo es la cuenta dominante del proveedor se marca MEDIA y se pide validar, indicando cuántas veces se usó",
+    porDefecto: false,
+    agregada: "2026-11-15",
+  },
   piloto_automatico: {
     descripcion:
       "Piloto automático nocturno: desde la hora de inicio revisa la carpeta de Drive, causa y envía a Siigo lo que está en verde, sigue con egresos y conciliación, guarda la memoria del día, pregunta por correo lo que no puede decidir solo y envía el reporte al terminar",

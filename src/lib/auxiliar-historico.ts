@@ -483,7 +483,15 @@ export function cuentaGastoHistorica(
   perfil: PerfilHistorico | null,
   descripcion: string,
   valida: (cuenta: string) => boolean,
-): { cuenta: string; nombre: string; motivo: string } | null {
+): {
+  cuenta: string;
+  nombre: string;
+  motivo: string;
+  /** true: la descripción coincide con conceptos de compras anteriores; false: solo es la cuenta dominante del proveedor. */
+  porConcepto: boolean;
+  veces: number;
+  compras: number;
+} | null {
   if (!perfil) return null;
   const candidatas = perfil.gastos.filter((g) => valida(g.cuenta));
   if (!candidatas.length) return null;
@@ -494,10 +502,10 @@ export function cuentaGastoHistorica(
     if (p > 0 && (!mejor || p > mejor.p || (p === mejor.p && g.veces > mejor.g.veces))) mejor = { g, p };
   }
   if (mejor)
-    return { cuenta: mejor.g.cuenta, nombre: mejor.g.nombre, motivo: `Historial Siigo: ${mejor.g.veces} compra(s) del proveedor con descripción similar.` };
+    return { cuenta: mejor.g.cuenta, nombre: mejor.g.nombre, motivo: `Historial Siigo: ${mejor.g.veces} compra(s) del proveedor con descripción similar.`, porConcepto: true, veces: mejor.g.veces, compras: perfil.compras };
   const top = candidatas[0]!;
   const totalCompras = Math.max(1, perfil.compras);
   if (top.veces / totalCompras >= 0.8)
-    return { cuenta: top.cuenta, nombre: top.nombre, motivo: `Historial Siigo: cuenta usada en ${top.veces} de ${perfil.compras} compra(s) del proveedor.` };
+    return { cuenta: top.cuenta, nombre: top.nombre, motivo: `Historial Siigo: cuenta usada en ${top.veces} de ${perfil.compras} compra(s) del proveedor.`, porConcepto: false, veces: top.veces, compras: perfil.compras };
   return null;
 }
