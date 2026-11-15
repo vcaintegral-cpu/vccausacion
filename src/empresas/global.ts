@@ -99,6 +99,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-15",
   },
+  historial_api_siigo: {
+    descripcion:
+      "Historial contable desde la API de Siigo: muestra qué datos entrega la API de compras de la empresa (renglones, cuentas, impuestos, centro de costo) para construir la sincronización del histórico sin subir el Excel cada vez",
+    porDefecto: false,
+    agregada: "2026-11-15",
+  },
   piloto_automatico: {
     descripcion:
       "Piloto automático nocturno: desde la hora de inicio revisa la carpeta de Drive, causa y envía a Siigo lo que está en verde, sigue con egresos y conciliación, guarda la memoria del día, pregunta por correo lo que no puede decidir solo y envía el reporte al terminar",
