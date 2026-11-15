@@ -105,6 +105,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-15",
   },
+  causar_con_motor_masivo: {
+    descripcion:
+      "Causar factura con un solo PDF usa el mismo motor de la carga masiva (histórico del proveedor, producto del historial, confianza e IVA por precedente) en lugar de la búsqueda de IVA por tarifa del motor individual",
+    porDefecto: false,
+    agregada: "2026-11-15",
+  },
   piloto_automatico: {
     descripcion:
       "Piloto automático nocturno: desde la hora de inicio revisa la carpeta de Drive, causa y envía a Siigo lo que está en verde, sigue con egresos y conciliación, guarda la memoria del día, pregunta por correo lo que no puede decidir solo y envía el reporte al terminar",
