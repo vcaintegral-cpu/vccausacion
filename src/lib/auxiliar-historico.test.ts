@@ -644,4 +644,29 @@ describe("precedente por proveedor", () => {
     expect(con.iva.map((i) => [i.cuenta, i.valor, i.tarifa])).toEqual([["621008", 19000, 19]]);
     expect(con.gastos.map((g) => g.cuenta)).toEqual(["621020"]);
   });
+
+  it("el perfil guarda la descripción habitual de cada cuenta de gasto (nombre del producto)", () => {
+    const mov = (voucher: string, cuenta: string, debit: number, credit: number, desc: string) => ({
+      account_code: cuenta,
+      account_name: cuenta === "621020" ? "Maderas" : "Proveedores",
+      provider_nit: "900000009",
+      provider_name: "Proveedor de prueba",
+      voucher,
+      entry_date_text: "05/01/2026",
+      description: desc,
+      detail: null,
+      cost_center: null,
+      debit,
+      credit,
+    });
+    const movs = [
+      mov("FC-1-1", "22050501", 0, 100, "Proveedores"),
+      mov("FC-1-1", "621020", 100, 0, "Maderas"),
+      mov("FC-1-2", "22050501", 0, 50, "Proveedores"),
+      mov("FC-1-2", "621020", 50, 0, "Maderas"),
+    ];
+    const perfil = aprenderPerfiles(reconstruirCompras(movs)).get("900000009")!;
+    expect(perfil.gastos[0]?.descripciones).toEqual({ Maderas: 2 });
+    expect(cuentaGastoHistorica(perfil, "CANTO PVC", () => true)?.descripcion).toBe("Maderas");
+  });
 });

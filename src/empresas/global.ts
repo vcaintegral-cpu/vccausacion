@@ -93,6 +93,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-15",
   },
+  producto_del_historial: {
+    descripcion:
+      "Causación con historial del proveedor: si el proveedor suele causar la cuenta con el nombre de un producto del catálogo (en Siigo la descripción del renglón es el producto), el renglón se propone con ese producto, en confianza media para validar, conservando la descripción original en el motivo",
+    porDefecto: false,
+    agregada: "2026-11-15",
+  },
   piloto_automatico: {
     descripcion:
       "Piloto automático nocturno: desde la hora de inicio revisa la carpeta de Drive, causa y envía a Siigo lo que está en verde, sigue con egresos y conciliación, guarda la memoria del día, pregunta por correo lo que no puede decidir solo y envía el reporte al terminar",
