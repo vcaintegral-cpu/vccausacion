@@ -147,6 +147,20 @@ function RootComponent() {
     return () => data.subscription.unsubscribe();
   }, [router, queryClient]);
 
+  // Tras una nueva publicación, archivos viejos en caché fallan al cargar: recargar una sola vez.
+  useEffect(() => {
+    const onPreloadError = (e: Event) => {
+      const key = "vite-preload-reload";
+      const last = Number(sessionStorage.getItem(key) || 0);
+      if (Date.now() - last < 30000) return;
+      sessionStorage.setItem(key, String(Date.now()));
+      e.preventDefault();
+      window.location.reload();
+    };
+    window.addEventListener("vite:preloadError", onPreloadError);
+    return () => window.removeEventListener("vite:preloadError", onPreloadError);
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
