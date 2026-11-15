@@ -863,8 +863,41 @@ function Causar() {
         const tax = findSourceIvaTax(impuestosIva as unknown as TaxRecord[], line);
         if (tax) selectedTaxes[i] = { iva: tax.id };
       });
+      let decisionesFinal = motor.decisions;
+      // Función «causar_con_motor_masivo» (Soluciones y Diseños): el PDF individual usa el mismo motor
+      // de la carga masiva (histórico del proveedor, producto, confianza y IVA por precedente) en lugar
+      // de la búsqueda de IVA por tarifa. Si falla, se conserva el resultado del motor anterior.
+      if (companyId && perfilActivo.funcion("causar_con_motor_masivo")) {
+        try {
+          const [{ loadDeps }, { computeDraftAccounting }] = await Promise.all([
+            import("@/lib/bulk-runner"),
+            import("@/lib/bulk-invoices"),
+          ]);
+          const { config: cfgMasivo } = await loadDeps(companyId);
+          const draft = await computeDraftAccounting({ companyId, config: cfgMasivo, header: rest, extracted });
+          setLines(
+            motor.lines.map((l, i) => {
+              const d = draft.lines[i];
+              if (!d) return l;
+              const nueva: Line = { ...l };
+              if (d.account_code != null) nueva.account_code = d.account_code;
+              if (d.account_name != null) nueva.account_name = d.account_name;
+              if (d.item_type) nueva.item_type = d.item_type;
+              if (d.code) nueva.code = d.code;
+              if (d.description) nueva.description = d.description;
+              return nueva;
+            }),
+          );
+          draft.ivaPorLinea.forEach((e, i) => {
+            if (e?.tax) selectedTaxes[i] = { iva: String(e.tax.id) };
+          });
+          decisionesFinal = draft.decisions;
+        } catch (e) {
+          console.warn("[causar] motor masivo no disponible, se usa el motor anterior:", e);
+        }
+      }
       setLineTax(selectedTaxes);
-      setDecisiones(motor.decisions);
+      setDecisiones(decisionesFinal);
       setPasswordOpen(false);
       setPdfPassword("");
       setPasswordError("");
