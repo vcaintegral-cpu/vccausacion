@@ -364,7 +364,7 @@ export type PerfilHistorico = {
   nombre: string;
   compras: number;
   ultima: string | null;
-  gastos: Array<UsoCuenta & { palabras: string[] }>;
+  gastos: Array<UsoCuenta & { palabras: string[]; descripciones: Record<string, number> }>;
   centros: Array<{ centro: string; veces: number }>;
   iva: Array<UsoCuenta & { tarifa: number | null }>;
   retenciones: Record<RetencionKind, UsoRetencion[]>;
@@ -436,7 +436,11 @@ export function aprenderPerfiles(compras: CompraHistorica[]): Map<string, Perfil
     const porCuenta = new Map<string, RenglonGasto[]>();
     for (const g of c.gastos) porCuenta.set(g.cuenta, [...(porCuenta.get(g.cuenta) ?? []), g]);
     for (const [cuenta, gs] of porCuenta) {
-      const u = sumar(p.gastos, { cuenta, nombre: gs[0]!.nombre, valor: gs.reduce((s, g) => s + g.valor, 0) }, c.fecha, { palabras: [] }, () => true);
+      const u = sumar(p.gastos, { cuenta, nombre: gs[0]!.nombre, valor: gs.reduce((s, g) => s + g.valor, 0) }, c.fecha, { palabras: [], descripciones: {} }, () => true);
+      for (const g of gs) {
+        const d = g.descripcion.trim();
+        if (d) u.descripciones[d] = (u.descripciones[d] ?? 0) + 1;
+      }
       u.palabras = [...new Set([...u.palabras, ...gs.flatMap((g) => palabrasClave(g.descripcion))])].slice(0, 60);
     }
     for (const centro of new Set(c.gastos.map((g) => g.centro).filter((x): x is string => !!x))) {
@@ -487,6 +491,10 @@ export function perfilDe(perfiles: Map<string, PerfilHistorico> | null | undefin
  * palabras comparte con la descripción; si ninguna coincide y el proveedor usa una
  * sola cuenta en la mayoría de sus compras (≥ 80 %), esa.
  */
+/** Descripción más frecuente con que se causó la cuenta (null si no hay). */
+const descripcionHabitual = (g: { descripciones?: Record<string, number> }): string | null =>
+  Object.entries(g.descripciones ?? {}).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
 export function cuentaGastoHistorica(
   perfil: PerfilHistorico | null,
   descripcion: string,
@@ -499,6 +507,8 @@ export function cuentaGastoHistorica(
   porConcepto: boolean;
   veces: number;
   compras: number;
+  /** Descripción con que el proveedor suele causar esa cuenta en Siigo (en Siigo suele ser el nombre del producto). */
+  descripcion: string | null;
 } | null {
   if (!perfil) return null;
   const candidatas = perfil.gastos.filter((g) => valida(g.cuenta));
@@ -510,10 +520,10 @@ export function cuentaGastoHistorica(
     if (p > 0 && (!mejor || p > mejor.p || (p === mejor.p && g.veces > mejor.g.veces))) mejor = { g, p };
   }
   if (mejor)
-    return { cuenta: mejor.g.cuenta, nombre: mejor.g.nombre, motivo: `Historial Siigo: ${mejor.g.veces} compra(s) del proveedor con descripción similar.`, porConcepto: true, veces: mejor.g.veces, compras: perfil.compras };
+    return { cuenta: mejor.g.cuenta, nombre: mejor.g.nombre, motivo: `Historial Siigo: ${mejor.g.veces} compra(s) del proveedor con descripción similar.`, porConcepto: true, veces: mejor.g.veces, compras: perfil.compras, descripcion: descripcionHabitual(mejor.g) };
   const top = candidatas[0]!;
   const totalCompras = Math.max(1, perfil.compras);
   if (top.veces / totalCompras >= 0.8)
-    return { cuenta: top.cuenta, nombre: top.nombre, motivo: `Historial Siigo: cuenta usada en ${top.veces} de ${perfil.compras} compra(s) del proveedor.`, porConcepto: false, veces: top.veces, compras: perfil.compras };
+    return { cuenta: top.cuenta, nombre: top.nombre, motivo: `Historial Siigo: cuenta usada en ${top.veces} de ${perfil.compras} compra(s) del proveedor.`, porConcepto: false, veces: top.veces, compras: perfil.compras, descripcion: descripcionHabitual(top) };
   return null;
 }
