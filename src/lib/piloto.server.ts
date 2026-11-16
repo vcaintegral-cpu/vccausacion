@@ -37,6 +37,7 @@ async function ejecutarPaso(
   paso: PasoId,
   previo?: PasoRegistro,
   mes?: string,
+  envio?: { tope: number; enviar: boolean },
 ): Promise<Omit<PasoRegistro, "inicio" | "fin">> {
   if (paso === "drive") {
     const { revisarFuente } = await import("./document-sources.server");
@@ -105,6 +106,73 @@ async function ejecutarPaso(
           ? `; quedan ${r.pendientes} del Excel y ${r.pdfPendientes} PDF`
           : "; la cola quedó vacía"
       }`,
+      cifras,
+    };
+  }
+  if (paso === "siigo_compras") {
+    const { rangoDelMes, etiquetaMes } = await import("./piloto");
+    if (!mes) throw new Error("No hay mes de trabajo para enviar a Siigo.");
+    const { enviarVerdesASiigo } = await import("./piloto-siigo.server");
+    const enviar = envio?.enviar === true;
+    const r = await enviarVerdesASiigo(db, companyId, {
+      mes: rangoDelMes(mes),
+      tope: envio?.tope ?? 5_000_000,
+      enviar,
+      limite: 2,
+    });
+    const antes = previo?.cifras ?? {};
+    const cifras = {
+      evaluadas: r.candidatas,
+      verdes: r.verdes,
+      por_revisar: r.porRevisar.length,
+      enviadas: (antes["enviadas"] ?? 0) + r.enviadas,
+      con_error: (antes["con_error"] ?? 0) + r.conError,
+      verdes_pendientes: r.verdesPendientes,
+    };
+    // Motivos agrupados (los más frecuentes), para que el reporte diga POR QUÉ no se envió.
+    const frecuencia = new Map<string, number>();
+    for (const x of r.porRevisar)
+      for (const m of x.motivos)
+        frecuencia.set(m.slice(0, 90), (frecuencia.get(m.slice(0, 90)) ?? 0) + 1);
+    const motivos = [...frecuencia]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([m, n]) => `${n}× ${m}`)
+      .join("; ");
+    const mesTxt = etiquetaMes(mes);
+    if (!enviar)
+      return {
+        id: paso,
+        estado: "hecho",
+        detalle: `MODO PRUEBA (no se envió nada a Siigo): de ${r.candidatas} borrador(es) de ${mesTxt}, ${r.verdes} están en verde y se enviarían; ${r.porRevisar.length} por revisar${motivos ? ` — ${motivos}` : ""}. Active «Enviar a Siigo lo que quede en verde» en Piloto automático para enviarlas.`,
+        cifras,
+      };
+    // Si hay verdes pendientes pero esta pasada no envió nada ni falló, algo no avanza.
+    if (r.verdesPendientes > 0 && r.enviadas === 0 && r.conError === 0)
+      return {
+        id: paso,
+        estado: "error",
+        detalle: `El envío a Siigo no avanza: ${r.verdesPendientes} en verde sin enviar`,
+        cifras,
+      };
+    // Si TODAS las de esta pasada fallaron de forma inesperada, es un error del paso (se reintenta y se reporta).
+    if (
+      r.enviadas === 0 &&
+      r.conError > 0 &&
+      r.primerError &&
+      r.verdes > 0 &&
+      r.verdesPendientes === Math.max(0, r.verdes - r.conError)
+    )
+      return {
+        id: paso,
+        estado: "error",
+        detalle: `Falló el envío a Siigo: ${r.primerError}`,
+        cifras,
+      };
+    return {
+      id: paso,
+      estado: r.verdesPendientes > 0 ? "pendiente" : "hecho",
+      detalle: `Enviadas ${cifras.enviadas} a Siigo esta noche (${cifras.con_error} con error); ${r.porRevisar.length} por revisar${motivos ? ` — ${motivos}` : ""}${r.verdesPendientes > 0 ? `; quedan ${r.verdesPendientes} en verde` : ""}`,
       cifras,
     };
   }
@@ -362,6 +430,8 @@ export async function avanzarPiloto(
     correo: string | null;
     hora_inicio: number;
     mes_trabajo?: string | null;
+    tope_valor?: number | string | null;
+    enviar_a_siigo?: boolean | null;
   }>) {
     const { data: empresa } = await db
       .from("companies")
@@ -453,6 +523,7 @@ export async function avanzarPiloto(
           paso,
           pasos.find((x) => x.id === paso),
           mes,
+          { tope: Number(cfg.tope_valor ?? 5_000_000), enviar: cfg.enviar_a_siigo === true },
         );
         registro = { ...r, inicio, fin: new Date().toISOString() };
       }
