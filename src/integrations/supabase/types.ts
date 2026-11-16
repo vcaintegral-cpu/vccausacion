@@ -2393,7 +2393,6 @@ export type Database = {
           correo: string | null
           created_at: string
           hora_inicio: number
-          mes_trabajo: string | null
           tope_valor: number
           updated_at: string
           updated_by: string | null
@@ -2404,7 +2403,6 @@ export type Database = {
           correo?: string | null
           created_at?: string
           hora_inicio?: number
-          mes_trabajo?: string | null
           tope_valor?: number
           updated_at?: string
           updated_by?: string | null
@@ -2415,7 +2413,6 @@ export type Database = {
           correo?: string | null
           created_at?: string
           hora_inicio?: number
-          mes_trabajo?: string | null
           tope_valor?: number
           updated_at?: string
           updated_by?: string | null
