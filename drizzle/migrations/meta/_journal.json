@@ -274,6 +274,13 @@
       "when": 1794850515316,
       "tag": "0038_piloto_mes_de_trabajo",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1794851117246,
+      "tag": "0039_0038_piloto_mes_de_trabajo",
+      "breakpoints": true
     }
   ]
 }
