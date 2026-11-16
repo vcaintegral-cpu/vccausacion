@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { procesarGastosBancarios } from "./piloto-gastos.server";
 
 // Cliente falso: la consulta devuelve las filas dadas (datos ficticios).
@@ -53,5 +53,44 @@ describe("procesarGastosBancarios", () => {
       cierre: false,
     });
     expect(r.grupos).toEqual([]);
+  });
+});
+
+describe("verificación con el extracto", () => {
+  it("el grupo cuadra solo si los cargos del extracto suman el RP", async () => {
+    vi.resetModules();
+    vi.doMock("./conciliacion.functions", () => ({
+      conciliacionFuentesCore: async () => ({
+        pdfs: [{ etiqueta: "DAVIVIENDA" }],
+        cuentas: [
+          {
+            etiqueta: "CORRIENTE",
+            movimientos: [
+              { valor: -1000, descripcion: "COMISION SERVICIO" },
+              { valor: -500, descripcion: "GRAVAMEN 4X1000" },
+              { valor: 300, descripcion: "RENDIMIENTOS FINANCIEROS" },
+              { valor: -99999, descripcion: "PAGO PROVEEDOR" },
+            ],
+          },
+          { etiqueta: "DAVIVIENDA", movimientos: [] },
+        ],
+      }),
+    }));
+    const { procesarGastosBancarios: proc } = await import("./piloto-gastos.server");
+    const r = await proc(
+      dbCon([
+        fila("1", "bancario|CORRIENTE", "listo", 1000),
+        fila("2", "bancario|CORRIENTE", "listo", 500),
+        fila("3", "bancario|DAVIVIENDA", "listo", 700),
+      ]),
+      "c1",
+      { periodo: "2026-11", tope: 5_000_000, enviar: false, cierre: true },
+    );
+    const cte = r.grupos.find((g) => g.banco === "CORRIENTE")!;
+    expect(cte.extracto.cuadra).toBe(true);
+    expect(cte.extracto.rendimientos).toBe(300);
+    const dav = r.grupos.find((g) => g.banco === "DAVIVIENDA")!;
+    expect(dav.extracto.cuadra).toBe(false);
+    expect(dav.extracto.nota).toContain("PDF");
   });
 });

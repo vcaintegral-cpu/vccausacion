@@ -18,6 +18,21 @@ export type GrupoBancario = {
   faltante: string | null;
   /** Ya tiene RP en Siigo. */
   enviado: boolean;
+  /** Comprobación contra el extracto del mes (carpeta «extractos»). */
+  extracto: VerificacionExtracto;
+};
+
+export type VerificacionExtracto = {
+  /** El servidor pudo leer el extracto de esta cuenta (los PDF se leen en el navegador). */
+  disponible: boolean;
+  /** Cargos de gastos bancarios, 4x1000 e IVA que trae el extracto (valor absoluto). */
+  valorExtracto: number;
+  movimientosExtracto: number;
+  /** El valor del extracto coincide con el del RP (±$1). */
+  cuadra: boolean;
+  /** Rendimientos financieros que trae el extracto (informativo, no se usa para enviar). */
+  rendimientos: number;
+  nota: string | null;
 };
 
 export type ResultadoGastos = {
@@ -35,6 +50,74 @@ type Fila = {
   motivos: string[] | null;
   siigo_id: string | null;
 };
+
+const clave = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().trim();
+
+const RENDIMIENTO = /RENDIMIENTO|INTERESES? (GANADOS?|AHORROS?|ABONO)|ABONO INTERESES/;
+
+const sinExtracto = (nota: string | null): VerificacionExtracto => ({
+  disponible: false,
+  valorExtracto: 0,
+  movimientosExtracto: 0,
+  cuadra: false,
+  rendimientos: 0,
+  nota,
+});
+
+/** Compara, por cuenta, los gastos bancarios del extracto del mes con los del RP único. */
+async function verificarConExtractos(
+  db: Db,
+  companyId: string,
+  periodo: string,
+  totales: Map<string, number>,
+): Promise<Map<string, VerificacionExtracto>> {
+  const salida = new Map<string, VerificacionExtracto>();
+  try {
+    const [{ conciliacionFuentesCore }, { esGastoBancario }] = await Promise.all([
+      import("./conciliacion.functions"),
+      import("./conciliacion"),
+    ]);
+    const fuentes = await conciliacionFuentesCore(db, { companyId, periodo });
+    const pdfs = new Set(fuentes.pdfs.map((x) => clave(x.etiqueta)));
+    for (const [banco, esperado] of totales) {
+      const c = fuentes.cuentas.find((x) => clave(x.etiqueta) === banco);
+      if (!c || !c.movimientos.length) {
+        salida.set(
+          banco,
+          sinExtracto(
+            pdfs.has(banco)
+              ? "extracto en PDF: se verifica desde la pantalla de Conciliación"
+              : "sin extracto del mes en la carpeta «extractos»",
+          ),
+        );
+        continue;
+      }
+      const cargos = c.movimientos.filter((m) => m.valor < 0 && esGastoBancario(m.descripcion));
+      const valorExtracto = Math.round(cargos.reduce((t, m) => t - m.valor, 0));
+      const rendimientos = Math.round(
+        c.movimientos
+          .filter((m) => m.valor > 0 && RENDIMIENTO.test(clave(m.descripcion)))
+          .reduce((t, m) => t + m.valor, 0),
+      );
+      const cuadra = cargos.length > 0 && Math.abs(valorExtracto - esperado) <= 1;
+      salida.set(banco, {
+        disponible: true,
+        valorExtracto,
+        movimientosExtracto: cargos.length,
+        cuadra,
+        rendimientos,
+        nota: cuadra
+          ? null
+          : `el extracto trae $${valorExtracto.toLocaleString("es-CO")} en ${cargos.length} cargos y el RP suma $${esperado.toLocaleString("es-CO")}`,
+      });
+    }
+  } catch (e) {
+    const msg = (e instanceof Error ? e.message : String(e)).slice(0, 120);
+    for (const banco of totales.keys())
+      salida.set(banco, sinExtracto(`no se pudo leer el extracto (${msg})`));
+  }
+  return salida;
+}
 
 export async function procesarGastosBancarios(
   db: Db,
@@ -55,6 +138,13 @@ export async function procesarGastosBancarios(
     if (g) porGrupo.set(g, [...(porGrupo.get(g) ?? []), f]);
   }
   const res: ResultadoGastos = { grupos: [], enviados: 0, conError: 0, mensajes: [] };
+  const bancoDe = (grupo: string) => clave(grupo.replace(/^bancario\|/, ""));
+  const totales = new Map<string, number>();
+  for (const [grupo, lista] of porGrupo)
+    totales.set(bancoDe(grupo), Math.round(lista.reduce((t, f) => t + Number(f.valor || 0), 0)));
+  const extractos = totales.size
+    ? await verificarConExtractos(db, companyId, op.periodo, totales)
+    : new Map<string, VerificacionExtracto>();
   for (const [grupo, lista] of porGrupo) {
     const pendientes = lista.filter((f) => !f.siigo_id);
     const listos = pendientes.filter((f) => f.estado === "listo" || f.estado === "aprobado");
@@ -71,6 +161,7 @@ export async function procesarGastosBancarios(
       listos: listos.length,
       faltante,
       enviado: pendientes.length === 0,
+      extracto: extractos.get(bancoDe(grupo)) ?? sinExtracto(null),
     });
   }
   if (!op.enviar || !op.cierre) return res;
@@ -82,6 +173,12 @@ export async function procesarGastosBancarios(
     if (g.listos !== pendientes || g.faltante) {
       res.mensajes.push(
         `${g.banco}: no se envió, el grupo no está completo (${g.faltante ?? "faltan movimientos por completar"}).`,
+      );
+      continue;
+    }
+    if (!g.extracto.cuadra) {
+      res.mensajes.push(
+        `${g.banco}: no se envió, falta verificarlo con el extracto (${g.extracto.nota ?? "no coincide"}).`,
       );
       continue;
     }
