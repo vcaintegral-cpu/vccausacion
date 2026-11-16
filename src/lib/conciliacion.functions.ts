@@ -297,11 +297,14 @@ export async function conciliacionFuentesCore(
             : lectores.leerHojaBanco(
                 wb,
                 new RegExp(
-                  N(c.etiqueta)
-                    .split(" ")
-                    .filter((w) => w.length >= 4)
-                    .map((w) => w.replace(/S$/, ""))
-                    .join("|") || "^$",
+                  [
+                    ...N(c.etiqueta)
+                      .split(" ")
+                      .filter((w) => w.length >= 4)
+                      .map((w) => w.replace(/S$/, "")),
+                    // Hoja abreviada: «Cte. (W)» es la cuenta corriente.
+                    ...(/CORRIENTE/.test(N(c.etiqueta)) ? ["\\bCTE\\b"] : []),
+                  ].join("|") || "^$",
                   "i",
                 ),
                 N(c.etiqueta).slice(0, 3),
