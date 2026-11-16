@@ -176,6 +176,60 @@ async function ejecutarPaso(
       cifras,
     };
   }
+  if (paso === "egresos") {
+    const { etiquetaMes } = await import("./piloto");
+    if (!mes) throw new Error("No hay mes de trabajo para los egresos.");
+    const { procesarEgresos } = await import("./piloto-egresos.server");
+    const enviar = envio?.enviar === true;
+    const antes = previo?.cifras ?? {};
+    const r = await procesarEgresos(db, companyId, {
+      periodo: mes.slice(0, 7),
+      tope: envio?.tope ?? 5_000_000,
+      enviar,
+      // Las CxP de Siigo se leen y el mes se vuelve a proponer una sola vez por noche.
+      preparar: !antes["preparado"],
+      limite: 2,
+    });
+    const cifras = {
+      preparado: 1,
+      evaluados: r.evaluados,
+      verdes: r.verdes,
+      por_revisar: r.porRevisar.length,
+      enviados: (antes["enviados"] ?? 0) + r.enviados,
+      con_error: (antes["con_error"] ?? 0) + r.conError,
+      verdes_pendientes: r.verdesPendientes,
+    };
+    const frecuencia = new Map<string, number>();
+    for (const x of r.porRevisar)
+      for (const m of x.motivos)
+        frecuencia.set(m.slice(0, 90), (frecuencia.get(m.slice(0, 90)) ?? 0) + 1);
+    const motivos = [...frecuencia]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([m, n]) => `${n}× ${m}`)
+      .join("; ");
+    const mesTxt = etiquetaMes(mes);
+    if (!enviar)
+      return {
+        id: paso,
+        estado: "hecho",
+        detalle: `MODO PRUEBA (no se creó ningún recibo en Siigo): de ${r.evaluados} pago(s) de ${mesTxt}, ${r.verdes} están en verde y se enviarían; ${r.porRevisar.length} por revisar${motivos ? ` — ${motivos}` : ""}.`,
+        cifras,
+      };
+    if (r.verdesPendientes > 0 && r.enviados === 0 && r.conError === 0)
+      return {
+        id: paso,
+        estado: "error",
+        detalle: `Los egresos no avanzan: ${r.verdesPendientes} en verde sin enviar`,
+        cifras,
+      };
+    return {
+      id: paso,
+      estado: r.verdesPendientes > 0 ? "pendiente" : "hecho",
+      detalle: `Recibos de pago enviados ${cifras.enviados} esta noche (${cifras.con_error} con error); ${r.porRevisar.length} por revisar${motivos ? ` — ${motivos}` : ""}${r.verdesPendientes > 0 ? `; quedan ${r.verdesPendientes} en verde` : ""}`,
+      cifras,
+    };
+  }
   if (paso === "reporte") return { id: paso, estado: "hecho", detalle: "Reporte enviado." };
   return {
     id: paso,

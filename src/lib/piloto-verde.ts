@@ -37,3 +37,56 @@ export function motivosNoVerde(e: EntradaVerde): string[] {
 }
 
 export { alertasBorrador };
+
+// ---------------------------------------------------------------------------
+// Egresos / recibos de pago (RP)
+// ---------------------------------------------------------------------------
+export type EntradaVerdeEgreso = {
+  estado: string;
+  siigoId: string | null;
+  /** Propuesta guardada del egreso (tipo, facturas, forma de pago, ajustes…). */
+  propuesta: {
+    tipo?: string;
+    listo?: boolean;
+    motivos?: string[];
+    items?: unknown[];
+    paymentTypeId?: string | null;
+    grupo?: string | null;
+    ajuste?: unknown;
+    anticipo?: unknown;
+    lineas?: unknown[] | null;
+  } | null;
+  motivos: string[];
+  valor: number;
+  tope: number;
+};
+
+/**
+ * Motivos por los que un pago NO se envía solo a Siigo (lista vacía = verde). Solo es verde el pago de
+ * facturas completo, de una forma de pago conocida, sin ajustes, anticipos ni líneas adicionales; todo lo
+ * demás (abonos, anticipos, pagos detallados, gastos bancarios) lo decide la usuaria.
+ */
+export function motivosNoVerdeEgreso(e: EntradaVerdeEgreso): string[] {
+  const m: string[] = [];
+  const p = e.propuesta;
+  if (e.siigoId) m.push("Ya está en Siigo.");
+  if (!["listo", "aprobado"].includes(e.estado))
+    m.push(e.motivos[0] ?? "La propuesta no está completa: revísela en Egresos.");
+  if (!p) return [...m, "Sin propuesta."];
+  if (p.listo !== true) m.push(p.motivos?.[0] ?? e.motivos[0] ?? "La propuesta no está completa.");
+  if (p.tipo !== "pago_facturas")
+    m.push(
+      `Solo se envían solos los pagos de facturas completos; este es de tipo «${p.tipo ?? "desconocido"}».`,
+    );
+  if (p.grupo) m.push("Gasto bancario: va en el RP único del banco del mes.");
+  if (p.ajuste || p.anticipo || (p.lineas?.length ?? 0) > 0)
+    m.push("Tiene ajuste al peso, anticipo o líneas adicionales: revíselo.");
+  if (!p.items?.length) m.push("No hay facturas a las que aplicar el pago.");
+  if (!p.paymentTypeId) m.push("Falta la forma de pago de Siigo.");
+  if (!(e.valor > 0)) m.push("Valor inválido.");
+  else if (e.valor > e.tope)
+    m.push(
+      `Supera el tope de aprobación automática (${Math.round(e.tope).toLocaleString("es-CO")}).`,
+    );
+  return [...new Set(m)];
+}
