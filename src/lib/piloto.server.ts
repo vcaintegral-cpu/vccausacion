@@ -259,6 +259,10 @@ async function ejecutarPaso(
         cifras[`${proposito}_egresos`] = r.egresosRecibidos;
         quedan += r.pendientesProximaEjecucion;
         avisos.push(...r.advertencias.map((a) => `${proposito}: ${a}`));
+        if (proposito === "compras")
+          partes.push(
+            `Drive listó (${proposito}): ${r.resumenArchivos.length ? r.resumenArchivos.join("; ") : "ningún archivo"}`,
+          );
         partes.push(
           proposito === "compras"
             ? `Facturas ${mes ? etiquetaMes(mes) : ""}: ${r.facturasEncoladas} PDF y ${r.documentosExcel} Excel nuevos en la cola${r.pendientesProximaEjecucion ? ` (${r.pendientesProximaEjecucion} quedan para la siguiente pasada)` : ""}`

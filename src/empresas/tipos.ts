@@ -55,6 +55,11 @@ export type PerfilEmpresa = {
   modulos?: Partial<Record<ModuloId, boolean>>;
   /** Funciones apagadas o encendidas solo para esta empresa (lo que no aparece usa el valor global). */
   funciones?: Record<string, boolean>;
+  /**
+   * Cuenta de débito por defecto de los egresos sin factura, por concepto (p. ej. gasto_bancario,
+   * 4x1000, iva_bancario). Una regla enseñada en pantalla siempre manda; esto va antes del precedente.
+   */
+  cuentasEgresosPorConcepto?: Record<string, string>;
   /** Notas de contexto: software contable, particularidades, decisiones tomadas en el chat. */
   notas: string[];
 };

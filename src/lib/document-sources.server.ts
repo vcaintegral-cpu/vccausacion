@@ -31,6 +31,7 @@ async function ejecutar(
       periodos: [],
       modo: "por_mes",
       encontrados: 0,
+      resumenArchivos: [],
       facturasEncoladas: 0,
       documentosExcel: 0,
       egresosRecibidos: 0,

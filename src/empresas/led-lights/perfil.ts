@@ -13,6 +13,11 @@ export const LED_LIGHTS: PerfilEmpresa = {
     // Instrucción del 2026-11-13: piloto automático nocturno.
     piloto: true,
   },
+  // Instrucción del 2026-11-16: cuentas de los RP mensuales de gastos bancarios.
+  cuentasEgresosPorConcepto: {
+    gasto_bancario: "53050501",
+    "4x1000": "530530",
+  },
   funciones: {
     // Instrucción del 2026-11-10: LED LIGHTS no usa ni causa el impoconsumo; su valor
     // se suma a la cuenta de gasto o costo relacionada con la compra.
