@@ -3,6 +3,7 @@
 //     el lector del reporte mensual, sus hojas de bancos y efectivo), RP enviados desde la
 //     herramienta, RC de la API de Siigo y la conciliación guardada del mes anterior.
 //   conciliacionGuardar: guarda el resultado por cuenta (partidas al corte) para el mes siguiente.
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServerFn } from "@tanstack/react-start";
 
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -168,668 +169,673 @@ export const conciliacionFuentes = createServerFn({ method: "POST" })
       throw new Error("Empresa y mes requeridos.");
     return input;
   })
-  .handler(async ({ data, context }): Promise<FuentesConciliacion> => {
-    const db = context.supabase;
-    // Pertenencia a la empresa (RLS).
-    const { data: empresa, error } = await db
-      .from("companies")
-      .select("id, nit")
-      .eq("id", data.companyId)
-      .single();
-    if (error || !empresa) throw new Error("Empresa no encontrada.");
-    const advertencias: string[] = [];
-    const [anio, mes] = data.periodo.split("-").map(Number) as [number, number];
-    const fin = new Date(Date.UTC(anio, mes, 0)).toISOString().slice(0, 10);
-    const { etiquetaPeriodo } = await import("./drive-sync");
-    const etiqueta = etiquetaPeriodo({ anio, mes });
+  .handler(async ({ data, context }): Promise<FuentesConciliacion> =>
+    conciliacionFuentesCore(context.supabase as unknown as SupabaseClient, data),
+  );
 
-    // Cuentas a conciliar: los orígenes de pago con su cuenta de banco/caja.
-    const { data: reglas } = await db
-      .from("egreso_reglas")
-      .select("patron, cuenta_banco, payment_type_id")
-      .eq("company_id", data.companyId)
-      .eq("clase", "banco");
-    const cuentas: CuentaConciliable[] = (
-      (reglas ?? []) as Array<{ patron: string; cuenta_banco: string | null }>
-    ).map((r) => ({
-      etiqueta: r.patron,
-      cuentaContable: r.cuenta_banco,
-      paymentTypeId: (r as { payment_type_id?: string | null }).payment_type_id ?? null,
-      fuente: null,
-      movimientos: [],
-      saldoInicial: null,
-      saldoFinal: null,
-      advertencias: [],
-    }));
-    if (!cuentas.length)
-      advertencias.push(
-        "No hay cuentas configuradas: asigna en Egresos y pagos la forma de pago y la cuenta de banco/caja de cada origen.",
-      );
+/** Fuentes de la conciliación del mes (misma lógica de la pantalla; la usa también el piloto automático). */
+export async function conciliacionFuentesCore(
+  db: SupabaseClient,
+  data: { companyId: string; periodo: string },
+): Promise<FuentesConciliacion> {
+  // Pertenencia a la empresa (RLS).
+  const { data: empresa, error } = await db
+    .from("companies")
+    .select("id, nit")
+    .eq("id", data.companyId)
+    .single();
+  if (error || !empresa) throw new Error("Empresa no encontrada.");
+  const advertencias: string[] = [];
+  const [anio, mes] = data.periodo.split("-").map(Number) as [number, number];
+  const fin = new Date(Date.UTC(anio, mes, 0)).toISOString().slice(0, 10);
+  const { etiquetaPeriodo } = await import("./drive-sync");
+  const etiqueta = etiquetaPeriodo({ anio, mes });
 
-    // Extractos del mes en la bandeja de egresos.
-    const { data: docs } = await db
-      .from("payment_documents")
-      .select("id, kind, file_name, storage_path, created_at")
-      .eq("company_id", data.companyId)
-      .eq("period", etiqueta)
-      .in("kind", ["extracto", "relacion_pagos"])
-      .order("created_at", { ascending: false });
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const bajar = async (ruta: string) => {
-      const { data: blob, error: e } = await supabaseAdmin.storage.from("facturas").download(ruta);
-      if (e || !blob) throw new Error(e?.message ?? "No se pudo leer el archivo.");
-      return new Uint8Array(await blob.arrayBuffer());
-    };
-    const lectores = await import("./lectores-extracto");
-    const lista = (docs ?? []) as Array<{ kind: string; file_name: string; storage_path: string }>;
-    for (const c of cuentas) {
-      const doc = lista.find(
-        (d) =>
-          d.kind === "extracto" &&
-          /\.(xlsx|xls)$/i.test(d.file_name) &&
-          coincideEtiqueta(c.etiqueta, d.file_name),
+  // Cuentas a conciliar: los orígenes de pago con su cuenta de banco/caja.
+  const { data: reglas } = await db
+    .from("egreso_reglas")
+    .select("patron, cuenta_banco, payment_type_id")
+    .eq("company_id", data.companyId)
+    .eq("clase", "banco");
+  const cuentas: CuentaConciliable[] = (
+    (reglas ?? []) as Array<{ patron: string; cuenta_banco: string | null }>
+  ).map((r) => ({
+    etiqueta: r.patron,
+    cuentaContable: r.cuenta_banco,
+    paymentTypeId: (r as { payment_type_id?: string | null }).payment_type_id ?? null,
+    fuente: null,
+    movimientos: [],
+    saldoInicial: null,
+    saldoFinal: null,
+    advertencias: [],
+  }));
+  if (!cuentas.length)
+    advertencias.push(
+      "No hay cuentas configuradas: asigna en Egresos y pagos la forma de pago y la cuenta de banco/caja de cada origen.",
+    );
+
+  // Extractos del mes en la bandeja de egresos.
+  const { data: docs } = await db
+    .from("payment_documents")
+    .select("id, kind, file_name, storage_path, created_at")
+    .eq("company_id", data.companyId)
+    .eq("period", etiqueta)
+    .in("kind", ["extracto", "relacion_pagos"])
+    .order("created_at", { ascending: false });
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const bajar = async (ruta: string) => {
+    const { data: blob, error: e } = await supabaseAdmin.storage.from("facturas").download(ruta);
+    if (e || !blob) throw new Error(e?.message ?? "No se pudo leer el archivo.");
+    return new Uint8Array(await blob.arrayBuffer());
+  };
+  const lectores = await import("./lectores-extracto");
+  const lista = (docs ?? []) as Array<{ kind: string; file_name: string; storage_path: string }>;
+  for (const c of cuentas) {
+    const doc = lista.find(
+      (d) =>
+        d.kind === "extracto" &&
+        /\.(xlsx|xls)$/i.test(d.file_name) &&
+        coincideEtiqueta(c.etiqueta, d.file_name),
+    );
+    if (!doc) continue;
+    try {
+      const ext = lectores.leerExtractoBancolombia(
+        await bajar(doc.storage_path),
+        N(c.etiqueta).slice(0, 3),
       );
-      if (!doc) continue;
-      try {
-        const ext = lectores.leerExtractoBancolombia(
-          await bajar(doc.storage_path),
-          N(c.etiqueta).slice(0, 3),
-        );
-        const usable = ext.movimientos.length
-          ? ext
-          : lectores.leerExtractoGenerico(await bajar(doc.storage_path), N(c.etiqueta).slice(0, 3));
-        Object.assign(c, {
-          fuente: doc.file_name,
-          movimientos: usable.movimientos,
-          saldoInicial: ext.saldoInicial,
-          saldoFinal: ext.saldoFinal,
-          advertencias: usable.advertencias,
-        });
-      } catch (e) {
-        c.advertencias.push(`${doc.file_name}: ${e instanceof Error ? e.message : String(e)}`);
-      }
+      const usable = ext.movimientos.length
+        ? ext
+        : lectores.leerExtractoGenerico(await bajar(doc.storage_path), N(c.etiqueta).slice(0, 3));
+      Object.assign(c, {
+        fuente: doc.file_name,
+        movimientos: usable.movimientos,
+        saldoInicial: ext.saldoInicial,
+        saldoFinal: ext.saldoFinal,
+        advertencias: usable.advertencias,
+      });
+    } catch (e) {
+      c.advertencias.push(`${doc.file_name}: ${e instanceof Error ? e.message : String(e)}`);
     }
-    // Extractos en PDF (p. ej. Davivienda): se leen en el navegador; si la cuenta también
-    // tiene la hoja del reporte mensual, se comparan (movimientos no reportados).
-    const pdfs: FuentesConciliacion["pdfs"] = [];
-    for (const c of cuentas) {
-      const doc = lista.find(
-        (d) =>
-          d.kind === "extracto" &&
-          /\.pdf$/i.test(d.file_name) &&
-          coincideEtiqueta(c.etiqueta, d.file_name),
-      );
-      if (!doc) continue;
-      try {
-        const bytes = await bajar(doc.storage_path);
-        if (bytes.length > 8 * 1024 * 1024) {
-          c.advertencias.push(`${doc.file_name}: el PDF es muy grande; cárgalo a mano.`);
-          continue;
+  }
+  // Extractos en PDF (p. ej. Davivienda): se leen en el navegador; si la cuenta también
+  // tiene la hoja del reporte mensual, se comparan (movimientos no reportados).
+  const pdfs: FuentesConciliacion["pdfs"] = [];
+  for (const c of cuentas) {
+    const doc = lista.find(
+      (d) =>
+        d.kind === "extracto" &&
+        /\.pdf$/i.test(d.file_name) &&
+        coincideEtiqueta(c.etiqueta, d.file_name),
+    );
+    if (!doc) continue;
+    try {
+      const bytes = await bajar(doc.storage_path);
+      if (bytes.length > 8 * 1024 * 1024) {
+        c.advertencias.push(`${doc.file_name}: el PDF es muy grande; cárgalo a mano.`);
+        continue;
+      }
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000)
+        bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      pdfs.push({ etiqueta: c.etiqueta, nombre: doc.file_name, base64: btoa(bin) });
+    } catch (e) {
+      c.advertencias.push(`${doc.file_name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  // Reporte mensual de pagos (empresas con ese lector): hojas de bancos sin extracto en
+  // Excel y hoja de efectivo; su hoja Consolidado cita los comprobantes de cada movimiento.
+  const { funcionActiva } = await import("@/empresas/registro");
+  const relacion = lista.find((d) => d.kind === "relacion_pagos");
+  if (relacion && funcionActiva(empresa.nit, "lector_consolidado_pagos")) {
+    try {
+      const wb = lectores.libro(await bajar(relacion.storage_path));
+      const relaciones = lectores.relacionesConsolidado(wb);
+      for (const c of cuentas) {
+        if (!c.movimientos.length) {
+          const hoja = /EFECTIVO|CAJA/.test(N(c.etiqueta))
+            ? lectores.leerHojaEfectivo(wb, "caja")
+            : lectores.leerHojaBanco(
+                wb,
+                new RegExp(
+                  N(c.etiqueta)
+                    .split(" ")
+                    .filter((w) => w.length >= 4)
+                    .map((w) => w.replace(/S$/, ""))
+                    .join("|") || "^$",
+                  "i",
+                ),
+                N(c.etiqueta).slice(0, 3),
+              );
+          if (hoja?.movimientos.length)
+            Object.assign(c, {
+              fuente: `${relacion.file_name} (hoja de ${c.etiqueta})`,
+              movimientos: hoja.movimientos,
+              saldoInicial: hoja.saldoInicial,
+              saldoFinal: hoja.saldoFinal,
+            });
         }
-        let bin = "";
-        for (let i = 0; i < bytes.length; i += 0x8000)
-          bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-        pdfs.push({ etiqueta: c.etiqueta, nombre: doc.file_name, base64: btoa(bin) });
-      } catch (e) {
-        c.advertencias.push(`${doc.file_name}: ${e instanceof Error ? e.message : String(e)}`);
+        c.movimientos = lectores.citarRelaciones(c.movimientos, relaciones, c.etiqueta);
       }
+    } catch (e) {
+      advertencias.push(`Reporte mensual de pagos: ${e instanceof Error ? e.message : String(e)}`);
     }
-    // Reporte mensual de pagos (empresas con ese lector): hojas de bancos sin extracto en
-    // Excel y hoja de efectivo; su hoja Consolidado cita los comprobantes de cada movimiento.
-    const { funcionActiva } = await import("@/empresas/registro");
-    const relacion = lista.find((d) => d.kind === "relacion_pagos");
-    if (relacion && funcionActiva(empresa.nit, "lector_consolidado_pagos")) {
+  }
+  for (const c of cuentas)
+    if (!c.movimientos.length && !pdfs.some((p) => p.etiqueta === c.etiqueta))
+      c.advertencias.push(
+        `No se encontró el extracto de ${c.etiqueta} de ${etiqueta}: cárgalo a mano.`,
+      );
+
+  // RP enviados y pagos aún sin RP (módulo de egresos).
+  const { data: egresos } = await db
+    .from("egresos")
+    .select(
+      "id, fecha, valor, cuenta_etiqueta, descripcion, tercero_nombre, tercero_nit, siigo_nombre, estado, propuesta, tipo, origen, clave",
+    )
+    .eq("company_id", data.companyId)
+    .eq("period", data.periodo);
+  const rpEnviados: FuentesConciliacion["rpEnviados"] = [];
+  const egresosPendientes: FuentesConciliacion["egresosPendientes"] = [];
+  for (const e of (egresos ?? []) as Array<{
+    id: string;
+    fecha: string;
+    valor: number;
+    cuenta_etiqueta: string | null;
+    descripcion: string | null;
+    tercero_nombre: string | null;
+    tercero_nit: string | null;
+    siigo_nombre: string | null;
+    estado: string;
+    propuesta: { grupo?: string | null } | null;
+    tipo: string;
+    origen: string;
+    clave: string;
+  }>) {
+    if (e.tipo === "omitir") continue;
+    const pasarela = e.origen === "pasarela" ? (e.clave.split("|")[1] ?? null) : null;
+    if (e.siigo_nombre)
+      rpEnviados.push({
+        id: `rp-${e.id}`,
+        egresoId: e.id,
+        fecha: String(e.fecha).slice(0, 10),
+        comprobante: e.siigo_nombre.split(" + ")[0]!.trim(),
+        tercero: e.tercero_nombre,
+        terceroNit: e.tercero_nit,
+        descripcion: e.descripcion,
+        valor: -Number(e.valor),
+        origen: "herramienta",
+        cuenta: e.cuenta_etiqueta,
+        grupo: e.propuesta?.grupo ?? null,
+        pasarela,
+      });
+    else
+      egresosPendientes.push({
+        id: e.id,
+        fecha: String(e.fecha).slice(0, 10),
+        valor: Number(e.valor),
+        cuenta: e.cuenta_etiqueta,
+        descripcion: e.descripcion,
+        estado: e.estado,
+      });
+  }
+
+  // RC de la API de Siigo del mes (la cuenta se identifica por la forma de pago).
+  const rcApi: FuentesConciliacion["rcApi"] = [];
+  try {
+    const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+    await siigoUseCompany(data.companyId);
+    const { cuentaDePago, nombresFormasPago } = await import("./siigo-movimiento.server");
+    const nombres = await nombresFormasPago();
+    for (const c of cuentas)
+      c.formaPagoNombre = c.paymentTypeId ? (nombres.get(String(c.paymentTypeId)) ?? null) : null;
+    const cuentasMov = cuentas
+      .filter((c) => c.cuentaContable)
+      .map((c) => ({
+        etiqueta: c.etiqueta,
+        cuentaContable: String(c.cuentaContable),
+        paymentTypeId: c.paymentTypeId,
+        formaPagoNombre: c.formaPagoNombre ?? null,
+      }));
+    type Rc = {
+      id?: string;
+      name?: string;
+      date?: string;
+      customer?: { identification?: string };
+      payment?: { id?: number; name?: string; value?: number };
+      payments?: Array<{ id?: number; name?: string; value?: number }>;
+      items?: Array<{
+        account?: { code?: string | number; movement?: string };
+        value?: number;
+        description?: string;
+      }>;
+    };
+    for (let page = 1; page <= 10; page++) {
+      const r = await siigoGet<{ results?: Rc[] } | Rc[]>(
+        `/v1/vouchers?created_start=${data.periodo}-01&page=${page}&page_size=100`,
+      );
+      const l = Array.isArray(r) ? r : (r.results ?? []);
+      for (const v of l) {
+        const f = String(v.date ?? "").slice(0, 10);
+        if (!f || f < `${data.periodo}-01` || f > fin) continue;
+        // RC detallado: renglones con la cuenta del banco/caja.
+        for (const [i, it] of (v.items ?? []).entries()) {
+          const code = String(it.account?.code ?? "").trim();
+          const c = cuentasMov.find((x) => x.cuentaContable === code);
+          if (!c) continue;
+          const debito = /^D/i.test(String(it.account?.movement ?? ""));
+          rcApi.push({
+            id: `rc-${v.id}-i${i}`,
+            fecha: f,
+            comprobante: String(v.name ?? v.id),
+            tercero: v.customer?.identification ?? null,
+            terceroNit: v.customer?.identification ?? null,
+            descripcion: it.description ?? null,
+            valor: (debito ? 1 : -1) * Number(it.value ?? 0),
+            origen: "api",
+            cuenta: c.etiqueta,
+            formaPago: null,
+          });
+        }
+        for (const p of v.payments ?? (v.payment ? [v.payment] : [])) {
+          const cuenta = cuentaDePago(p, cuentasMov)?.etiqueta ?? null;
+          rcApi.push({
+            id: `rc-${v.id}-${p.id}`,
+            fecha: f,
+            comprobante: String(v.name ?? v.id),
+            tercero: v.customer?.identification ?? null,
+            terceroNit: v.customer?.identification ?? null,
+            descripcion: p.name ?? null,
+            valor: Number(p.value ?? 0),
+            origen: "api",
+            cuenta,
+            formaPago: p.name ?? null,
+          });
+        }
+      }
+      if (l.length < 100) break;
+    }
+  } catch (e) {
+    advertencias.push(
+      `No se pudieron leer los recibos de caja de Siigo: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+
+  // Registros con fecha anterior al mes creados desde el inicio del mes (partidas del corte
+  // anterior que se registraron después, con su fecha original).
+  let librosAnteriores: LineaAuxiliar[] = [];
+  try {
+    const conCuenta = cuentas
+      .filter((c) => c.cuentaContable)
+      .map((c) => ({
+        etiqueta: c.etiqueta,
+        cuentaContable: String(c.cuentaContable),
+        paymentTypeId: c.paymentTypeId,
+        formaPagoNombre: c.formaPagoNombre ?? null,
+      }));
+    if (conCuenta.length) {
+      const { movimientoDesdeApi } = await import("./siigo-movimiento.server");
+      const r = await movimientoDesdeApi({
+        desde: "2000-01-01",
+        hasta: new Date(Date.UTC(anio, mes - 1, 0)).toISOString().slice(0, 10),
+        creadoDesde: `${data.periodo}-01`,
+        cuentas: conCuenta,
+        maxPaginas: 5,
+      });
+      librosAnteriores = r.filas;
+    }
+  } catch (e) {
+    advertencias.push(
+      `No se pudieron leer de Siigo los registros con fecha de meses anteriores: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+
+  // Conciliación guardada del mes anterior.
+  const { data: previas } = await db
+    .from("conciliaciones_bancarias")
+    .select("cuenta_etiqueta, partidas, saldo_libros_final, saldo_extracto_final")
+    .eq("company_id", data.companyId)
+    .eq("periodo", mesAnterior(data.periodo));
+  const anterior = (
+    (previas ?? []) as Array<{
+      cuenta_etiqueta: string;
+      partidas: unknown;
+      saldo_libros_final: number | null;
+      saldo_extracto_final: number | null;
+    }>
+  ).map((p) => ({
+    cuenta: p.cuenta_etiqueta,
+    partidas: (p.partidas ?? []) as PartidaConciliatoria[],
+    saldoLibrosFinal: p.saldo_libros_final != null ? Number(p.saldo_libros_final) : null,
+    saldoExtractoFinal: p.saldo_extracto_final != null ? Number(p.saldo_extracto_final) : null,
+  }));
+
+  // Pasarelas de pago: hojas de la plataforma del reporte del mes y del mes anterior (cobros
+  // del final del mes anterior que se abonan en este mes).
+  const pasarelas: FuentesConciliacion["pasarelas"] = [];
+  if (funcionActiva(empresa.nit, "pasarelas_pago")) {
+    const { leerHojaPasarela } = await import("./pasarelas");
+    const [aA, mA] = mesAnterior(data.periodo).split("-").map(Number) as [number, number];
+    const { data: docsAnt } = await db
+      .from("payment_documents")
+      .select("file_name, storage_path, created_at")
+      .eq("company_id", data.companyId)
+      .eq("period", etiquetaPeriodo({ anio: aA, mes: mA }))
+      .eq("kind", "relacion_pagos")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const reportes = [
+      { periodo: data.periodo, doc: relacion },
+      { periodo: mesAnterior(data.periodo), doc: (docsAnt ?? [])[0] },
+    ];
+    const porPlataforma = new Map<string, FuentesConciliacion["pasarelas"][number]>();
+    for (const rep of reportes) {
+      if (!rep.doc) {
+        if (rep.periodo !== data.periodo)
+          advertencias.push(
+            "No está el reporte de pagos del mes anterior: los abonos de inicio de mes por cobros del mes anterior quedan sin identificar.",
+          );
+        continue;
+      }
       try {
-        const wb = lectores.libro(await bajar(relacion.storage_path));
-        const relaciones = lectores.relacionesConsolidado(wb);
-        for (const c of cuentas) {
-          if (!c.movimientos.length) {
-            const hoja = /EFECTIVO|CAJA/.test(N(c.etiqueta))
-              ? lectores.leerHojaEfectivo(wb, "caja")
-              : lectores.leerHojaBanco(
-                  wb,
-                  new RegExp(
-                    N(c.etiqueta)
-                      .split(" ")
-                      .filter((w) => w.length >= 4)
-                      .map((w) => w.replace(/S$/, ""))
-                      .join("|") || "^$",
-                    "i",
-                  ),
-                  N(c.etiqueta).slice(0, 3),
-                );
-            if (hoja?.movimientos.length)
-              Object.assign(c, {
-                fuente: `${relacion.file_name} (hoja de ${c.etiqueta})`,
-                movimientos: hoja.movimientos,
-                saldoInicial: hoja.saldoInicial,
-                saldoFinal: hoja.saldoFinal,
-              });
-          }
-          c.movimientos = lectores.citarRelaciones(c.movimientos, relaciones, c.etiqueta);
+        const wb = lectores.libro(await bajar(rep.doc.storage_path));
+        for (const hoja of wb.SheetNames) {
+          if (/consolidado|efectivo|novedad/i.test(hoja)) continue;
+          const plataforma = hoja.trim().toUpperCase();
+          const r = leerHojaPasarela(wb.Sheets[hoja]!, plataforma, rep.periodo);
+          if (!r.transacciones.length) continue;
+          const p = porPlataforma.get(plataforma) ?? {
+            plataforma,
+            transacciones: [],
+            advertencias: [],
+            terceroNit: null,
+            terceroNombre: null,
+            facturas: [],
+            rp: [],
+          };
+          p.transacciones.push(...r.transacciones);
+          if (rep.periodo === data.periodo) p.advertencias.push(...r.advertencias);
+          porPlataforma.set(plataforma, p);
         }
       } catch (e) {
         advertencias.push(
-          `Reporte mensual de pagos: ${e instanceof Error ? e.message : String(e)}`,
+          `Pasarelas (${rep.periodo}): ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     }
-    for (const c of cuentas)
-      if (!c.movimientos.length && !pdfs.some((p) => p.etiqueta === c.etiqueta))
-        c.advertencias.push(
-          `No se encontró el extracto de ${c.etiqueta} de ${etiqueta}: cárgalo a mano.`,
-        );
-
-    // RP enviados y pagos aún sin RP (módulo de egresos).
-    const { data: egresos } = await db
-      .from("egresos")
-      .select(
-        "id, fecha, valor, cuenta_etiqueta, descripcion, tercero_nombre, tercero_nit, siigo_nombre, estado, propuesta, tipo, origen, clave",
-      )
-      .eq("company_id", data.companyId)
-      .eq("period", data.periodo);
-    const rpEnviados: FuentesConciliacion["rpEnviados"] = [];
-    const egresosPendientes: FuentesConciliacion["egresosPendientes"] = [];
-    for (const e of (egresos ?? []) as Array<{
-      id: string;
-      fecha: string;
-      valor: number;
-      cuenta_etiqueta: string | null;
-      descripcion: string | null;
-      tercero_nombre: string | null;
-      tercero_nit: string | null;
-      siigo_nombre: string | null;
-      estado: string;
-      propuesta: { grupo?: string | null } | null;
-      tipo: string;
-      origen: string;
-      clave: string;
-    }>) {
-      if (e.tipo === "omitir") continue;
-      const pasarela = e.origen === "pasarela" ? (e.clave.split("|")[1] ?? null) : null;
-      if (e.siigo_nombre)
-        rpEnviados.push({
-          id: `rp-${e.id}`,
-          egresoId: e.id,
-          fecha: String(e.fecha).slice(0, 10),
-          comprobante: e.siigo_nombre.split(" + ")[0]!.trim(),
-          tercero: e.tercero_nombre,
-          terceroNit: e.tercero_nit,
-          descripcion: e.descripcion,
-          valor: -Number(e.valor),
-          origen: "herramienta",
-          cuenta: e.cuenta_etiqueta,
-          grupo: e.propuesta?.grupo ?? null,
-          pasarela,
-        });
-      else
-        egresosPendientes.push({
-          id: e.id,
-          fecha: String(e.fecha).slice(0, 10),
-          valor: Number(e.valor),
-          cuenta: e.cuenta_etiqueta,
-          descripcion: e.descripcion,
-          estado: e.estado,
-        });
-    }
-
-    // RC de la API de Siigo del mes (la cuenta se identifica por la forma de pago).
-    const rcApi: FuentesConciliacion["rcApi"] = [];
-    try {
-      const { siigoGet, siigoUseCompany } = await import("./siigo.server");
-      await siigoUseCompany(data.companyId);
-      const { cuentaDePago, nombresFormasPago } = await import("./siigo-movimiento.server");
-      const nombres = await nombresFormasPago();
-      for (const c of cuentas)
-        c.formaPagoNombre = c.paymentTypeId ? (nombres.get(String(c.paymentTypeId)) ?? null) : null;
-      const cuentasMov = cuentas
-        .filter((c) => c.cuentaContable)
-        .map((c) => ({
-          etiqueta: c.etiqueta,
-          cuentaContable: String(c.cuentaContable),
-          paymentTypeId: c.paymentTypeId,
-          formaPagoNombre: c.formaPagoNombre ?? null,
-        }));
-      type Rc = {
-        id?: string;
-        name?: string;
-        date?: string;
-        customer?: { identification?: string };
-        payment?: { id?: number; name?: string; value?: number };
-        payments?: Array<{ id?: number; name?: string; value?: number }>;
-        items?: Array<{
-          account?: { code?: string | number; movement?: string };
-          value?: number;
-          description?: string;
-        }>;
-      };
-      for (let page = 1; page <= 10; page++) {
-        const r = await siigoGet<{ results?: Rc[] } | Rc[]>(
-          `/v1/vouchers?created_start=${data.periodo}-01&page=${page}&page_size=100`,
-        );
-        const l = Array.isArray(r) ? r : (r.results ?? []);
-        for (const v of l) {
-          const f = String(v.date ?? "").slice(0, 10);
-          if (!f || f < `${data.periodo}-01` || f > fin) continue;
-          // RC detallado: renglones con la cuenta del banco/caja.
-          for (const [i, it] of (v.items ?? []).entries()) {
-            const code = String(it.account?.code ?? "").trim();
-            const c = cuentasMov.find((x) => x.cuentaContable === code);
-            if (!c) continue;
-            const debito = /^D/i.test(String(it.account?.movement ?? ""));
-            rcApi.push({
-              id: `rc-${v.id}-i${i}`,
-              fecha: f,
-              comprobante: String(v.name ?? v.id),
-              tercero: v.customer?.identification ?? null,
-              terceroNit: v.customer?.identification ?? null,
-              descripcion: it.description ?? null,
-              valor: (debito ? 1 : -1) * Number(it.value ?? 0),
-              origen: "api",
-              cuenta: c.etiqueta,
-              formaPago: null,
-            });
-          }
-          for (const p of v.payments ?? (v.payment ? [v.payment] : [])) {
-            const cuenta = cuentaDePago(p, cuentasMov)?.etiqueta ?? null;
-            rcApi.push({
-              id: `rc-${v.id}-${p.id}`,
-              fecha: f,
-              comprobante: String(v.name ?? v.id),
-              tercero: v.customer?.identification ?? null,
-              terceroNit: v.customer?.identification ?? null,
-              descripcion: p.name ?? null,
-              valor: Number(p.value ?? 0),
-              origen: "api",
-              cuenta,
-              formaPago: p.name ?? null,
-            });
-          }
-        }
-        if (l.length < 100) break;
-      }
-    } catch (e) {
-      advertencias.push(
-        `No se pudieron leer los recibos de caja de Siigo: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-
-    // Registros con fecha anterior al mes creados desde el inicio del mes (partidas del corte
-    // anterior que se registraron después, con su fecha original).
-    let librosAnteriores: LineaAuxiliar[] = [];
-    try {
-      const conCuenta = cuentas
-        .filter((c) => c.cuentaContable)
-        .map((c) => ({
-          etiqueta: c.etiqueta,
-          cuentaContable: String(c.cuentaContable),
-          paymentTypeId: c.paymentTypeId,
-          formaPagoNombre: c.formaPagoNombre ?? null,
-        }));
-      if (conCuenta.length) {
-        const { movimientoDesdeApi } = await import("./siigo-movimiento.server");
-        const r = await movimientoDesdeApi({
-          desde: "2000-01-01",
-          hasta: new Date(Date.UTC(anio, mes - 1, 0)).toISOString().slice(0, 10),
-          creadoDesde: `${data.periodo}-01`,
-          cuentas: conCuenta,
-          maxPaginas: 5,
-        });
-        librosAnteriores = r.filas;
-      }
-    } catch (e) {
-      advertencias.push(
-        `No se pudieron leer de Siigo los registros con fecha de meses anteriores: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-
-    // Conciliación guardada del mes anterior.
-    const { data: previas } = await db
-      .from("conciliaciones_bancarias")
-      .select("cuenta_etiqueta, partidas, saldo_libros_final, saldo_extracto_final")
-      .eq("company_id", data.companyId)
-      .eq("periodo", mesAnterior(data.periodo));
-    const anterior = (
-      (previas ?? []) as Array<{
-        cuenta_etiqueta: string;
-        partidas: unknown;
-        saldo_libros_final: number | null;
-        saldo_extracto_final: number | null;
-      }>
-    ).map((p) => ({
-      cuenta: p.cuenta_etiqueta,
-      partidas: (p.partidas ?? []) as PartidaConciliatoria[],
-      saldoLibrosFinal: p.saldo_libros_final != null ? Number(p.saldo_libros_final) : null,
-      saldoExtractoFinal: p.saldo_extracto_final != null ? Number(p.saldo_extracto_final) : null,
-    }));
-
-    // Pasarelas de pago: hojas de la plataforma del reporte del mes y del mes anterior (cobros
-    // del final del mes anterior que se abonan en este mes).
-    const pasarelas: FuentesConciliacion["pasarelas"] = [];
-    if (funcionActiva(empresa.nit, "pasarelas_pago")) {
-      const { leerHojaPasarela } = await import("./pasarelas");
-      const [aA, mA] = mesAnterior(data.periodo).split("-").map(Number) as [number, number];
-      const { data: docsAnt } = await db
-        .from("payment_documents")
-        .select("file_name, storage_path, created_at")
-        .eq("company_id", data.companyId)
-        .eq("period", etiquetaPeriodo({ anio: aA, mes: mA }))
-        .eq("kind", "relacion_pagos")
-        .order("created_at", { ascending: false })
-        .limit(1);
-      const reportes = [
-        { periodo: data.periodo, doc: relacion },
-        { periodo: mesAnterior(data.periodo), doc: (docsAnt ?? [])[0] },
-      ];
-      const porPlataforma = new Map<string, FuentesConciliacion["pasarelas"][number]>();
-      for (const rep of reportes) {
-        if (!rep.doc) {
-          if (rep.periodo !== data.periodo)
-            advertencias.push(
-              "No está el reporte de pagos del mes anterior: los abonos de inicio de mes por cobros del mes anterior quedan sin identificar.",
-            );
-          continue;
-        }
-        try {
-          const wb = lectores.libro(await bajar(rep.doc.storage_path));
-          for (const hoja of wb.SheetNames) {
-            if (/consolidado|efectivo|novedad/i.test(hoja)) continue;
-            const plataforma = hoja.trim().toUpperCase();
-            const r = leerHojaPasarela(wb.Sheets[hoja]!, plataforma, rep.periodo);
-            if (!r.transacciones.length) continue;
-            const p = porPlataforma.get(plataforma) ?? {
-              plataforma,
-              transacciones: [],
-              advertencias: [],
-              terceroNit: null,
-              terceroNombre: null,
-              facturas: [],
-              rp: [],
-            };
-            p.transacciones.push(...r.transacciones);
-            if (rep.periodo === data.periodo) p.advertencias.push(...r.advertencias);
-            porPlataforma.set(plataforma, p);
-          }
-        } catch (e) {
-          advertencias.push(
-            `Pasarelas (${rep.periodo}): ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
-      }
-      // Tercero y facturas de comisiones con saldo (CxP de Siigo sincronizadas).
-      for (const p of porPlataforma.values()) {
-        const { data: cxp } = await db
-          .from("siigo_cuentas_por_pagar")
-          .select(
-            "prefix, consecutive, quote, balance, due_date, provider_nit, provider_name, factura_proveedor",
-          )
-          .eq("company_id", data.companyId)
-          .ilike("provider_name", `%${p.plataforma}%`)
-          .gt("balance", 0)
-          .order("due_date", { ascending: true });
-        const filas = (cxp ?? []) as Array<{
-          prefix: string;
-          consecutive: number;
-          quote: number;
-          balance: number;
-          due_date: string | null;
-          provider_nit: string | null;
-          provider_name: string | null;
-          factura_proveedor: string | null;
-        }>;
-        p.terceroNit = filas[0]?.provider_nit ?? null;
-        p.terceroNombre = filas[0]?.provider_name ?? null;
-        if (!p.terceroNit) {
-          const { data: prov } = await db
-            .from("providers")
-            .select("nit, name")
-            .eq("company_id", data.companyId)
-            .ilike("name", `%${p.plataforma}%`)
-            .limit(1);
-          const pr = (prov ?? [])[0] as { nit: string; name: string } | undefined;
-          p.terceroNit = pr?.nit ?? null;
-          p.terceroNombre = pr?.name ?? null;
-        }
-        p.facturas = filas.map((f) => ({
-          prefix: f.prefix,
-          consecutive: Number(f.consecutive),
-          quote: Number(f.quote ?? 1),
-          factura: f.factura_proveedor ?? `${f.prefix}-${f.consecutive}`,
-          saldo: Number(f.balance),
-          vence: f.due_date,
-        }));
-        p.rp = (
-          (egresos ?? []) as Array<{
-            clave: string;
-            origen: string;
-            cuenta_etiqueta: string | null;
-            estado: string;
-            siigo_nombre: string | null;
-            valor: number;
-          }>
+    // Tercero y facturas de comisiones con saldo (CxP de Siigo sincronizadas).
+    for (const p of porPlataforma.values()) {
+      const { data: cxp } = await db
+        .from("siigo_cuentas_por_pagar")
+        .select(
+          "prefix, consecutive, quote, balance, due_date, provider_nit, provider_name, factura_proveedor",
         )
-          .filter((e) => e.origen === "pasarela" && e.clave.split("|")[1] === p.plataforma)
-          .map((e) => ({
-            cuenta: e.cuenta_etiqueta,
-            estado: e.estado,
-            siigoNombre: e.siigo_nombre,
-            valor: Number(e.valor),
-          }));
-        pasarelas.push(p);
-      }
-    }
-    const { data: reglasCuenta } = await db
-      .from("egreso_reglas")
-      .select("patron, cuenta_debito")
-      .eq("company_id", data.companyId)
-      .eq("clase", "concepto")
-      .like("patron", "cuenta:%");
-    const regla = (k: string) =>
-      ((reglasCuenta ?? []) as Array<{ patron: string; cuenta_debito: string | null }>).find(
-        (r) => r.patron === k,
-      )?.cuenta_debito ?? null;
-    const { cargarAjustes } = await import("./egresos.server");
-    const aj = await cargarAjustes(db, data.companyId);
-    // Envíos que quedaron «enviando» (la respuesta de Siigo no alcanzó a guardarse): se busca
-    // en Siigo el documento por su referencia («Ref xxxxxxxx» en las observaciones). Si está,
-    // se marca enviado con su número; si no, queda con error y se puede reintentar.
-    try {
-      const hace = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-      const { data: colgados } = await db
-        .from("conciliacion_ajustes")
-        .select("id, tipo, detalle, created_at")
         .eq("company_id", data.companyId)
-        .eq("estado", "enviando")
-        .is("siigo_id", null)
-        .lt("updated_at", hace)
-        .limit(10);
-      if ((colgados ?? []).length) {
-        const { siigoGet, siigoUseCompany } = await import("./siigo.server");
-        await siigoUseCompany(data.companyId);
-        type D = { id?: string; name?: string; observations?: string };
-        const buscar = async (ruta: string, desde: string, ref: string) => {
-          for (let page = 1; page <= 5; page++) {
-            const r = await siigoGet<{ results?: D[] } | D[]>(
-              `${ruta}?created_start=${desde}&page=${page}&page_size=100`,
-            );
-            const l = Array.isArray(r) ? r : (r.results ?? []);
-            const d = l.find((x) => String(x.observations ?? "").includes(ref));
-            if (d) return d;
-            if (l.length < 100) return null;
-          }
-          return null;
-        };
-        for (const c of (colgados ?? []) as Array<{
-          id: string;
-          tipo: string;
-          detalle: { tipo?: string } | null;
-          created_at: string;
-        }>) {
-          const ref = `Ref ${c.id.slice(0, 8)}`;
-          const desde = String(c.created_at).slice(0, 10);
-          const rutas =
-            c.tipo === "lote" && c.detalle?.tipo === "salida"
-              ? ["/v1/payment-receipts"]
-              : c.tipo === "registro_rc" || (c.tipo === "lote" && c.detalle?.tipo === "entrada")
-                ? ["/v1/vouchers", "/v1/journals"]
-                : ["/v1/journals"];
-          let doc: D | null = null;
-          for (const ruta of rutas) {
-            doc = await buscar(ruta, desde, ref);
-            if (doc) break;
-          }
-          await db
-            .from("conciliacion_ajustes")
-            .update(
-              doc
-                ? {
-                    estado: "enviado",
-                    siigo_id: String(doc.id ?? ""),
-                    siigo_nombre: doc.name ?? null,
-                  }
-                : {
-                    estado: "error",
-                    siigo_error: `No se confirmó la respuesta de Siigo y no se encontró el documento con «${ref}»: revisa en Siigo antes de reintentar.`,
-                  },
-            )
-            .eq("id", c.id)
-            .is("siigo_id", null);
-        }
+        .ilike("provider_name", `%${p.plataforma}%`)
+        .gt("balance", 0)
+        .order("due_date", { ascending: true });
+      const filas = (cxp ?? []) as Array<{
+        prefix: string;
+        consecutive: number;
+        quote: number;
+        balance: number;
+        due_date: string | null;
+        provider_nit: string | null;
+        provider_name: string | null;
+        factura_proveedor: string | null;
+      }>;
+      p.terceroNit = filas[0]?.provider_nit ?? null;
+      p.terceroNombre = filas[0]?.provider_name ?? null;
+      if (!p.terceroNit) {
+        const { data: prov } = await db
+          .from("providers")
+          .select("nit, name")
+          .eq("company_id", data.companyId)
+          .ilike("name", `%${p.plataforma}%`)
+          .limit(1);
+        const pr = (prov ?? [])[0] as { nit: string; name: string } | undefined;
+        p.terceroNit = pr?.nit ?? null;
+        p.terceroNombre = pr?.name ?? null;
       }
-    } catch (e) {
-      advertencias.push(
-        `No se pudieron verificar en Siigo los envíos pendientes: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-    const { data: ajustesDb } = await db
-      .from("conciliacion_ajustes")
-      .select(
-        "clave, tipo, detalle, cuenta_destino_etiqueta, cuenta_etiqueta, fecha, valor, comprobante_origen, estado, siigo_nombre, siigo_error",
-      )
-      .eq("company_id", data.companyId)
-      .eq("periodo", data.periodo);
-
-    // Notas de las partidas de la conciliación de este mes ya guardada.
-    const { data: actual } = await db
-      .from("conciliaciones_bancarias")
-      .select("partidas")
-      .eq("company_id", data.companyId)
-      .eq("periodo", data.periodo);
-    const { clavePartida } = await import("./conciliacion");
-    const notas: Record<string, string> = {};
-    for (const c of (actual ?? []) as Array<{ partidas: unknown }>)
-      for (const p of (c.partidas ?? []) as PartidaConciliatoria[])
-        if (p.nota) notas[clavePartida(p)] = p.nota;
-
-    // Cuentas por pagar vivas (última sincronización con Siigo).
-    const { data: cxpDb } = await db
-      .from("siigo_cuentas_por_pagar")
-      .select(
-        "prefix, consecutive, quote, balance, due_date, provider_nit, provider_name, factura_proveedor, synced_at",
-      )
-      .eq("company_id", data.companyId)
-      .gt("balance", 0)
-      .limit(3000);
-    const filasCxp = (cxpDb ?? []) as Array<{
-      prefix: string;
-      consecutive: number;
-      quote: number;
-      balance: number;
-      due_date: string | null;
-      provider_nit: string | null;
-      provider_name: string | null;
-      factura_proveedor: string | null;
-      synced_at: string | null;
-    }>;
-    const cxp: CxpAbierta[] = filasCxp.map((c) => ({
-      prefix: c.prefix,
-      consecutive: Number(c.consecutive),
-      quote: Number(c.quote ?? 1),
-      balance: Number(c.balance),
-      dueDate: c.due_date ? String(c.due_date).slice(0, 10) : null,
-      providerNit: c.provider_nit,
-      providerName: c.provider_name,
-      factura: c.factura_proveedor,
-    }));
-    const cxpLeidas =
-      filasCxp
-        .map((c) => c.synced_at ?? "")
-        .sort()
-        .at(-1) || null;
-
-    const { data: reglasConc } = await db
-      .from("egreso_reglas")
-      .select("patron, cuenta_debito, tercero_nit, notas")
-      .eq("company_id", data.companyId)
-      .eq("clase", "concepto")
-      .like("patron", "conc:%");
-    const aprendidas = (
-      (reglasConc ?? []) as Array<{
-        patron: string;
-        cuenta_debito: string | null;
-        tercero_nit: string | null;
-        notas: string | null;
-      }>
-    ).map((r) => {
-      const [, tipo = "", ...resto] = r.patron.split(":");
-      return {
-        tipo,
-        patron: resto.join(":"),
-        cuenta: r.cuenta_debito,
-        terceroNit: r.tercero_nit,
-        terceroNombre: r.notas,
-      };
-    });
-
-    return {
-      aprendidas,
-      cxp,
-      cxpLeidas,
-      librosAnteriores,
-      notas,
-      cuentas,
-      rpEnviados,
-      egresosPendientes,
-      rcApi,
-      anterior,
-      advertencias,
-      pdfs,
-      pasarelas,
-      cuentasPasarela: {
-        retefuente: regla("cuenta:pasarela_retefuente"),
-        reteiva: regla("cuenta:pasarela_reteiva"),
-        reteica: regla("cuenta:pasarela_reteica"),
-      },
-      ajusteCuentas: { debito: aj.debito, credito: aj.credito, tope: aj.tope },
-      ajustes: (
-        (ajustesDb ?? []) as Array<{
+      p.facturas = filas.map((f) => ({
+        prefix: f.prefix,
+        consecutive: Number(f.consecutive),
+        quote: Number(f.quote ?? 1),
+        factura: f.factura_proveedor ?? `${f.prefix}-${f.consecutive}`,
+        saldo: Number(f.balance),
+        vence: f.due_date,
+      }));
+      p.rp = (
+        (egresos ?? []) as Array<{
           clave: string;
-          tipo: string;
-          detalle: unknown;
-          cuenta_destino_etiqueta: string | null;
-          cuenta_etiqueta: string;
-          fecha: string;
-          valor: number;
-          comprobante_origen: string | null;
+          origen: string;
+          cuenta_etiqueta: string | null;
           estado: string;
           siigo_nombre: string | null;
-          siigo_error: string | null;
+          valor: number;
         }>
-      ).map((a) => ({
-        clave: a.clave,
-        tipo: a.tipo,
-        detalle: (a.detalle ?? null) as LoteDetalle | null,
-        cuentaDestino: a.cuenta_destino_etiqueta,
-        cuenta: a.cuenta_etiqueta,
-        fecha: String(a.fecha).slice(0, 10),
-        valor: Number(a.valor),
-        origen: a.comprobante_origen,
-        estado: a.estado,
-        siigoNombre: a.siigo_nombre,
-        error: a.siigo_error,
-      })),
+      )
+        .filter((e) => e.origen === "pasarela" && e.clave.split("|")[1] === p.plataforma)
+        .map((e) => ({
+          cuenta: e.cuenta_etiqueta,
+          estado: e.estado,
+          siigoNombre: e.siigo_nombre,
+          valor: Number(e.valor),
+        }));
+      pasarelas.push(p);
+    }
+  }
+  const { data: reglasCuenta } = await db
+    .from("egreso_reglas")
+    .select("patron, cuenta_debito")
+    .eq("company_id", data.companyId)
+    .eq("clase", "concepto")
+    .like("patron", "cuenta:%");
+  const regla = (k: string) =>
+    ((reglasCuenta ?? []) as Array<{ patron: string; cuenta_debito: string | null }>).find(
+      (r) => r.patron === k,
+    )?.cuenta_debito ?? null;
+  const { cargarAjustes } = await import("./egresos.server");
+  const aj = await cargarAjustes(db, data.companyId);
+  // Envíos que quedaron «enviando» (la respuesta de Siigo no alcanzó a guardarse): se busca
+  // en Siigo el documento por su referencia («Ref xxxxxxxx» en las observaciones). Si está,
+  // se marca enviado con su número; si no, queda con error y se puede reintentar.
+  try {
+    const hace = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    const { data: colgados } = await db
+      .from("conciliacion_ajustes")
+      .select("id, tipo, detalle, created_at")
+      .eq("company_id", data.companyId)
+      .eq("estado", "enviando")
+      .is("siigo_id", null)
+      .lt("updated_at", hace)
+      .limit(10);
+    if ((colgados ?? []).length) {
+      const { siigoGet, siigoUseCompany } = await import("./siigo.server");
+      await siigoUseCompany(data.companyId);
+      type D = { id?: string; name?: string; observations?: string };
+      const buscar = async (ruta: string, desde: string, ref: string) => {
+        for (let page = 1; page <= 5; page++) {
+          const r = await siigoGet<{ results?: D[] } | D[]>(
+            `${ruta}?created_start=${desde}&page=${page}&page_size=100`,
+          );
+          const l = Array.isArray(r) ? r : (r.results ?? []);
+          const d = l.find((x) => String(x.observations ?? "").includes(ref));
+          if (d) return d;
+          if (l.length < 100) return null;
+        }
+        return null;
+      };
+      for (const c of (colgados ?? []) as Array<{
+        id: string;
+        tipo: string;
+        detalle: { tipo?: string } | null;
+        created_at: string;
+      }>) {
+        const ref = `Ref ${c.id.slice(0, 8)}`;
+        const desde = String(c.created_at).slice(0, 10);
+        const rutas =
+          c.tipo === "lote" && c.detalle?.tipo === "salida"
+            ? ["/v1/payment-receipts"]
+            : c.tipo === "registro_rc" || (c.tipo === "lote" && c.detalle?.tipo === "entrada")
+              ? ["/v1/vouchers", "/v1/journals"]
+              : ["/v1/journals"];
+        let doc: D | null = null;
+        for (const ruta of rutas) {
+          doc = await buscar(ruta, desde, ref);
+          if (doc) break;
+        }
+        await db
+          .from("conciliacion_ajustes")
+          .update(
+            doc
+              ? {
+                  estado: "enviado",
+                  siigo_id: String(doc.id ?? ""),
+                  siigo_nombre: doc.name ?? null,
+                }
+              : {
+                  estado: "error",
+                  siigo_error: `No se confirmó la respuesta de Siigo y no se encontró el documento con «${ref}»: revisa en Siigo antes de reintentar.`,
+                },
+          )
+          .eq("id", c.id)
+          .is("siigo_id", null);
+      }
+    }
+  } catch (e) {
+    advertencias.push(
+      `No se pudieron verificar en Siigo los envíos pendientes: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  const { data: ajustesDb } = await db
+    .from("conciliacion_ajustes")
+    .select(
+      "clave, tipo, detalle, cuenta_destino_etiqueta, cuenta_etiqueta, fecha, valor, comprobante_origen, estado, siigo_nombre, siigo_error",
+    )
+    .eq("company_id", data.companyId)
+    .eq("periodo", data.periodo);
+
+  // Notas de las partidas de la conciliación de este mes ya guardada.
+  const { data: actual } = await db
+    .from("conciliaciones_bancarias")
+    .select("partidas")
+    .eq("company_id", data.companyId)
+    .eq("periodo", data.periodo);
+  const { clavePartida } = await import("./conciliacion");
+  const notas: Record<string, string> = {};
+  for (const c of (actual ?? []) as Array<{ partidas: unknown }>)
+    for (const p of (c.partidas ?? []) as PartidaConciliatoria[])
+      if (p.nota) notas[clavePartida(p)] = p.nota;
+
+  // Cuentas por pagar vivas (última sincronización con Siigo).
+  const { data: cxpDb } = await db
+    .from("siigo_cuentas_por_pagar")
+    .select(
+      "prefix, consecutive, quote, balance, due_date, provider_nit, provider_name, factura_proveedor, synced_at",
+    )
+    .eq("company_id", data.companyId)
+    .gt("balance", 0)
+    .limit(3000);
+  const filasCxp = (cxpDb ?? []) as Array<{
+    prefix: string;
+    consecutive: number;
+    quote: number;
+    balance: number;
+    due_date: string | null;
+    provider_nit: string | null;
+    provider_name: string | null;
+    factura_proveedor: string | null;
+    synced_at: string | null;
+  }>;
+  const cxp: CxpAbierta[] = filasCxp.map((c) => ({
+    prefix: c.prefix,
+    consecutive: Number(c.consecutive),
+    quote: Number(c.quote ?? 1),
+    balance: Number(c.balance),
+    dueDate: c.due_date ? String(c.due_date).slice(0, 10) : null,
+    providerNit: c.provider_nit,
+    providerName: c.provider_name,
+    factura: c.factura_proveedor,
+  }));
+  const cxpLeidas =
+    filasCxp
+      .map((c) => c.synced_at ?? "")
+      .sort()
+      .at(-1) || null;
+
+  const { data: reglasConc } = await db
+    .from("egreso_reglas")
+    .select("patron, cuenta_debito, tercero_nit, notas")
+    .eq("company_id", data.companyId)
+    .eq("clase", "concepto")
+    .like("patron", "conc:%");
+  const aprendidas = (
+    (reglasConc ?? []) as Array<{
+      patron: string;
+      cuenta_debito: string | null;
+      tercero_nit: string | null;
+      notas: string | null;
+    }>
+  ).map((r) => {
+    const [, tipo = "", ...resto] = r.patron.split(":");
+    return {
+      tipo,
+      patron: resto.join(":"),
+      cuenta: r.cuenta_debito,
+      terceroNit: r.tercero_nit,
+      terceroNombre: r.notas,
     };
   });
+
+  return {
+    aprendidas,
+    cxp,
+    cxpLeidas,
+    librosAnteriores,
+    notas,
+    cuentas,
+    rpEnviados,
+    egresosPendientes,
+    rcApi,
+    anterior,
+    advertencias,
+    pdfs,
+    pasarelas,
+    cuentasPasarela: {
+      retefuente: regla("cuenta:pasarela_retefuente"),
+      reteiva: regla("cuenta:pasarela_reteiva"),
+      reteica: regla("cuenta:pasarela_reteica"),
+    },
+    ajusteCuentas: { debito: aj.debito, credito: aj.credito, tope: aj.tope },
+    ajustes: (
+      (ajustesDb ?? []) as Array<{
+        clave: string;
+        tipo: string;
+        detalle: unknown;
+        cuenta_destino_etiqueta: string | null;
+        cuenta_etiqueta: string;
+        fecha: string;
+        valor: number;
+        comprobante_origen: string | null;
+        estado: string;
+        siigo_nombre: string | null;
+        siigo_error: string | null;
+      }>
+    ).map((a) => ({
+      clave: a.clave,
+      tipo: a.tipo,
+      detalle: (a.detalle ?? null) as LoteDetalle | null,
+      cuentaDestino: a.cuenta_destino_etiqueta,
+      cuenta: a.cuenta_etiqueta,
+      fecha: String(a.fecha).slice(0, 10),
+      valor: Number(a.valor),
+      origen: a.comprobante_origen,
+      estado: a.estado,
+      siigoNombre: a.siigo_nombre,
+      error: a.siigo_error,
+    })),
+  };
+}
 
 export const conciliacionGuardar = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -888,77 +894,79 @@ export const conciliacionMovimientoSiigo = createServerFn({ method: "POST" })
     if (input.desde > input.hasta) throw new Error("La fecha inicial es posterior a la final.");
     return input;
   })
-  .handler(
-    async ({
-      data,
-      context,
-    }): Promise<{
-      filas: LineaAuxiliar[];
-      balance: BalanceCuenta[];
-      advertencias: string[];
-      documentos: number;
-    }> => {
-      const db = context.supabase;
-      const { data: reglas, error } = await db
-        .from("egreso_reglas")
-        .select("patron, cuenta_banco, payment_type_id")
-        .eq("company_id", data.companyId)
-        .eq("clase", "banco");
-      if (error) throw new Error(error.message);
-      const cuentas = (
-        (reglas ?? []) as Array<{
-          patron: string;
-          cuenta_banco: string | null;
-          payment_type_id: string | null;
-        }>
-      )
-        .filter((r) => r.cuenta_banco)
-        .map((r) => ({
-          etiqueta: r.patron,
-          cuentaContable: String(r.cuenta_banco),
-          paymentTypeId: r.payment_type_id,
-        }));
-      if (!cuentas.length)
-        throw new Error(
-          "No hay cuentas de banco/caja configuradas (Egresos y pagos → forma de pago y cuenta de cada origen).",
-        );
-      const { siigoUseCompany } = await import("./siigo.server");
-      await siigoUseCompany(data.companyId);
-      const { movimientoDesdeApi, balanceDesdeApi, nombresFormasPago } =
-        await import("./siigo-movimiento.server");
-      const nombres = await nombresFormasPago();
-      for (const c of cuentas)
-        (c as { formaPagoNombre?: string | null }).formaPagoNombre = c.paymentTypeId
-          ? (nombres.get(String(c.paymentTypeId)) ?? null)
-          : null;
-      const mov = await movimientoDesdeApi({ desde: data.desde, hasta: data.hasta, cuentas });
-      let balance: BalanceCuenta[] = [];
-      const [a1, m1] = data.desde.split("-").map(Number) as [number, number];
-      const [a2, m2] = data.hasta.split("-").map(Number) as [number, number];
-      if (a1 !== a2)
-        mov.advertencias.push(
-          "El balance de prueba de Siigo es por año: elige un rango dentro del mismo año para validar el movimiento.",
-        );
-      else
-        try {
-          balance = await balanceDesdeApi({
-            anio: a1,
-            mesInicial: m1,
-            mesFinal: m2,
-            cuentas: cuentas.map((c) => c.cuentaContable),
-          });
-          if (!balance.length)
-            mov.advertencias.push(
-              "El balance de prueba de Siigo no trajo las cuentas de bancos y caja (revisa el formato del reporte).",
-            );
-        } catch (e) {
-          mov.advertencias.push(
-            `Balance de prueba de Siigo: ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
-      return { ...mov, balance };
-    },
+  .handler(async ({ data, context }) =>
+    conciliacionMovimientoSiigoCore(context.supabase as unknown as SupabaseClient, data),
   );
+
+/** Movimiento de bancos y caja desde la API de Siigo (misma lógica de la pantalla; la usa también el piloto). */
+export async function conciliacionMovimientoSiigoCore(
+  db: SupabaseClient,
+  data: { companyId: string; desde: string; hasta: string },
+): Promise<{
+  filas: LineaAuxiliar[];
+  balance: BalanceCuenta[];
+  advertencias: string[];
+  documentos: number;
+}> {
+  const { data: reglas, error } = await db
+    .from("egreso_reglas")
+    .select("patron, cuenta_banco, payment_type_id")
+    .eq("company_id", data.companyId)
+    .eq("clase", "banco");
+  if (error) throw new Error(error.message);
+  const cuentas = (
+    (reglas ?? []) as Array<{
+      patron: string;
+      cuenta_banco: string | null;
+      payment_type_id: string | null;
+    }>
+  )
+    .filter((r) => r.cuenta_banco)
+    .map((r) => ({
+      etiqueta: r.patron,
+      cuentaContable: String(r.cuenta_banco),
+      paymentTypeId: r.payment_type_id,
+    }));
+  if (!cuentas.length)
+    throw new Error(
+      "No hay cuentas de banco/caja configuradas (Egresos y pagos → forma de pago y cuenta de cada origen).",
+    );
+  const { siigoUseCompany } = await import("./siigo.server");
+  await siigoUseCompany(data.companyId);
+  const { movimientoDesdeApi, balanceDesdeApi, nombresFormasPago } =
+    await import("./siigo-movimiento.server");
+  const nombres = await nombresFormasPago();
+  for (const c of cuentas)
+    (c as { formaPagoNombre?: string | null }).formaPagoNombre = c.paymentTypeId
+      ? (nombres.get(String(c.paymentTypeId)) ?? null)
+      : null;
+  const mov = await movimientoDesdeApi({ desde: data.desde, hasta: data.hasta, cuentas });
+  let balance: BalanceCuenta[] = [];
+  const [a1, m1] = data.desde.split("-").map(Number) as [number, number];
+  const [a2, m2] = data.hasta.split("-").map(Number) as [number, number];
+  if (a1 !== a2)
+    mov.advertencias.push(
+      "El balance de prueba de Siigo es por año: elige un rango dentro del mismo año para validar el movimiento.",
+    );
+  else
+    try {
+      balance = await balanceDesdeApi({
+        anio: a1,
+        mesInicial: m1,
+        mesFinal: m2,
+        cuentas: cuentas.map((c) => c.cuentaContable),
+      });
+      if (!balance.length)
+        mov.advertencias.push(
+          "El balance de prueba de Siigo no trajo las cuentas de bancos y caja (revisa el formato del reporte).",
+        );
+    } catch (e) {
+      mov.advertencias.push(
+        `Balance de prueba de Siigo: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  return { ...mov, balance };
+}
 
 /** Guarda las cuentas de retenciones descontadas por las pasarelas de pago. */
 export const conciliacionGuardarCuentasPasarela = createServerFn({ method: "POST" })

@@ -332,6 +332,47 @@ async function ejecutarPaso(
       cifras,
     };
   }
+  if (paso === "conciliacion") {
+    const { etiquetaMes } = await import("./piloto");
+    if (!mes) throw new Error("No hay mes de trabajo para la conciliación.");
+    const { conciliarMes } = await import("./piloto-conciliacion.server");
+    const r = await conciliarMes(db, companyId, mes.slice(0, 7));
+    const suma = (f: (c: (typeof r.cuentas)[number]) => number) =>
+      r.cuentas.reduce((s, c) => s + f(c), 0);
+    const cifras = {
+      cuentas: r.cuentas.length,
+      movimientos_banco: suma((c) => c.movimientosBanco),
+      cruzados: suma((c) => c.cruzados),
+      salidas_sin_rp: suma((c) => c.salidasSinRp),
+      ingresos_sin_rc: suma((c) => c.ingresosSinRc),
+      diferencias: suma((c) => c.diferencias),
+      libros_sin_banco: suma((c) => c.enLibrosSinBanco),
+      sin_extracto: r.sinExtracto.length,
+      solo_pdf: r.soloPdf.length,
+    };
+    const porCuenta = r.cuentas
+      .map(
+        (c) =>
+          `${c.etiqueta}: ${c.cruzados} de ${c.movimientosBanco} cruzados, ${c.salidasSinRp} salidas sin RP, ${c.ingresosSinRc} ingresos sin RC, ${c.diferencias} con diferencia, ${c.enLibrosSinBanco} en libros sin banco`,
+      )
+      .join("; ");
+    const faltan = [
+      r.sinExtracto.length
+        ? `sin extracto de ${etiquetaMes(mes)}: ${r.sinExtracto.join(", ")}`
+        : "",
+      r.soloPdf.length
+        ? `extracto en PDF (se concilia desde la aplicación): ${r.soloPdf.join(", ")}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return {
+      id: paso,
+      estado: "hecho",
+      detalle: `${r.cuentas.length ? `Conciliación de ${etiquetaMes(mes)} (solo lectura, no se registró nada en Siigo) — ${porCuenta}` : `No hay extractos de ${etiquetaMes(mes)} que el servidor pueda leer`}${faltan ? ` · ${faltan}` : ""}${r.advertencias.length ? ` · Avisos: ${r.advertencias.slice(0, 2).join(" | ")}` : ""}`,
+      cifras,
+    };
+  }
   if (paso === "reporte") return { id: paso, estado: "hecho", detalle: "Reporte enviado." };
   return {
     id: paso,
