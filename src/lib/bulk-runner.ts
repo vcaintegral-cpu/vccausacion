@@ -323,7 +323,12 @@ async function processExcelItem(item: BulkItem, companyId: string, deps: Deps) {
 }
 
 /** Procesa una tarea reutilizando el procesador individual (sin cambios de lógica). */
-export async function processItem(item: BulkItem, companyId: string, deps: Deps) {
+export type ModoServidor = {
+  extract: Parameters<typeof processInvoiceFile>[0]["extract"];
+  preparar: NonNullable<Parameters<typeof processInvoiceFile>[0]["preparar"]>;
+};
+
+export async function processItem(item: BulkItem, companyId: string, deps: Deps, servidor?: ModoServidor) {
   await updateItem(item.id, { status: "downloading", attempts: item.attempts + 1, stage: "recuperando_pdf" });
   try {
     if (item.fingerprint?.startsWith("excel:")) {
@@ -369,7 +374,8 @@ export async function processItem(item: BulkItem, companyId: string, deps: Deps)
       file: stored.file,
       companyId,
       config: deps.config,
-      extract: extractInvoice as never,
+      extract: servidor?.extract ?? (extractInvoice as never),
+      ...(servidor ? { preparar: servidor.preparar } : {}),
       storagePath: item.storage_path,
       onStage: saveTrace,
       knowledge: deps.knowledge,

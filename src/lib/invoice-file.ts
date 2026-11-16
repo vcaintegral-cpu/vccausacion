@@ -2,6 +2,8 @@ export type PreparedInvoiceFile = {
   dataUrl?: string;
   images?: Array<{ dataUrl: string; mimeType: string }>;
   text?: string;
+  /** PDF completo en base64 (lectura en el servidor del piloto, sin renderizar páginas). */
+  pdfBase64?: string;
 };
 
 const MAX_PDF_PAGES = 8;

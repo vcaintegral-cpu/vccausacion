@@ -1,13 +1,14 @@
-// Causación de los documentos del Excel RECIBIDOS en el servidor (piloto automático).
+// Causación de la cola de la carga masiva en el servidor (piloto automático).
 // Usa EXACTAMENTE la misma lógica de la carga masiva del navegador (processItem → saveExtractedInvoice
-// → motor con histórico, precedente, IVA y retenciones), sin IA: el Excel ya trae los datos.
-// Los PDF no se causan aquí (necesitan lectura con IA): quedan en la cola para el navegador.
+// → motor con histórico, precedente, IVA y retenciones):
+//   - Documentos del Excel RECIBIDOS: sin IA, el Excel ya trae los datos.
+//   - PDF: se leen con IA desde el servidor; el PDF viaja completo, sin renderizar páginas.
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 type Db = SupabaseClient;
 
 export type ResultadoCola = {
-  /** Documentos del Excel tomados en esta llamada. */
+  /** Documentos tomados en esta llamada (Excel + PDF). */
   procesadas: number;
   /** Quedaron causadas (borrador) y sin nada que revisar: «en verde». */
   verdes: number;
@@ -17,35 +18,87 @@ export type ResultadoCola = {
   conError: number;
   /** Documentos del Excel que siguen esperando en la cola. */
   pendientes: number;
-  /** PDF que esperan en la cola (se causan desde la aplicación). */
+  /** PDF que siguen esperando en la cola. */
   pdfPendientes: number;
 };
 
-export async function causarColaExcel(
+type Tarea = Record<string, unknown> & {
+  id: string;
+  upload_id: string;
+  fingerprint?: string | null;
+};
+
+const esExcel = (t: Tarea) => String(t.fingerprint ?? "").startsWith("excel:");
+
+export async function causarCola(
   db: Db,
   companyId: string,
-  limite = 8,
+  opciones: { limiteExcel?: number; limitePdf?: number } = {},
 ): Promise<ResultadoCola> {
+  const limiteExcel = opciones.limiteExcel ?? 3;
+  const limitePdf = opciones.limitePdf ?? 2;
   const { conClienteDeServicio } = await import("./db-contextual");
   return conClienteDeServicio(db, async () => {
     const [{ loadDeps, invalidateBulkDeps, processItem }, { resetBulkBatch }] = await Promise.all([
       import("./bulk-runner"),
       import("./bulk-invoices"),
     ]);
-    const base = () =>
+    const pendientes = () =>
       db
         .from("bulk_upload_items")
         .select("*", { count: "exact" })
         .eq("company_id", companyId)
         .eq("status", "pending");
-    const { data: items, error } = await base()
-      .like("fingerprint", "excel:%")
+    const soloExcel = <T extends { like: (c: string, p: string) => T }>(q: T) =>
+      q.like("fingerprint", "excel:%");
+    const soloPdf = <T extends { or: (f: string) => T }>(q: T) =>
+      q.or("fingerprint.is.null,fingerprint.not.like.excel:%");
+
+    // Tareas que quedaron a medias (el proceso se cortó): si llevan más de 15 minutos sin cambios vuelven
+    // a la cola; si ya se intentaron 3 veces se marcan con error para no repetirlas sin fin.
+    const hace15 = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const transitorios = [
+      "downloading",
+      "reading",
+      "ocr",
+      "extracting_data",
+      "validating_company",
+      "ready_for_accounting",
+      "processing",
+    ];
+    const colgadas = () =>
+      db
+        .from("bulk_upload_items")
+        .update({ status: "pending" })
+        .eq("company_id", companyId)
+        .in("status", transitorios)
+        .lt("updated_at", hace15);
+    await colgadas().lt("attempts", 3);
+    await db
+      .from("bulk_upload_items")
+      .update({
+        status: "error",
+        error_message: "Se interrumpió 3 veces al causarla de noche.",
+        user_message: "Se interrumpió 3 veces al causarla de noche. Revísela en la aplicación.",
+      })
+      .eq("company_id", companyId)
+      .in("status", transitorios)
+      .lt("updated_at", hace15)
+      .gte("attempts", 3);
+
+    const { data: excel, error } = await soloExcel(pendientes())
       .order("created_at")
-      .limit(limite);
+      .limit(limiteExcel);
     if (error) throw new Error(error.message);
-    const tomadas = (items ?? []) as Array<
-      Record<string, unknown> & { id: string; upload_id: string }
-    >;
+    const tomadasExcel = (excel ?? []) as Tarea[];
+    // Los PDF solo se toman si no se llenó el cupo con documentos del Excel.
+    let tomadasPdf: Tarea[] = [];
+    if (tomadasExcel.length < limiteExcel && limitePdf > 0) {
+      const { data: pdf } = await soloPdf(pendientes()).order("created_at").limit(limitePdf);
+      tomadasPdf = (pdf ?? []) as Tarea[];
+    }
+    const todas = [...tomadasExcel, ...tomadasPdf];
+
     const resultado: ResultadoCola = {
       procesadas: 0,
       verdes: 0,
@@ -54,21 +107,38 @@ export async function causarColaExcel(
       pendientes: 0,
       pdfPendientes: 0,
     };
-    if (tomadas.length) {
+    if (todas.length) {
       // Dueño de la carga (quien configuró la fuente): los borradores quedan a su nombre.
       const { data: carga } = await db
         .from("bulk_uploads")
         .select("created_by")
-        .eq("id", tomadas[0]!.upload_id)
+        .eq("id", todas[0]!.upload_id)
         .maybeSingle();
       const dueno = (carga as { created_by: string } | null)?.created_by;
       if (!dueno)
         throw new Error("No se encontró el dueño de la carga para causar los documentos.");
+
+      let servidor: import("./bulk-runner").ModoServidor | undefined;
+      if (tomadasPdf.length) {
+        const llave = process.env["LOVABLE_API_KEY"] ?? "";
+        if (!llave)
+          throw new Error("Falta la configuración de IA (LOVABLE_API_KEY) para leer los PDF.");
+        const [{ extractInvoiceWithAi }, { prepararArchivoServidor }] = await Promise.all([
+          import("./extract.server"),
+          import("./invoice-file-servidor"),
+        ]);
+        servidor = {
+          extract: (async (args: { data: Parameters<typeof extractInvoiceWithAi>[0] }) =>
+            extractInvoiceWithAi(args.data, llave)) as never,
+          preparar: prepararArchivoServidor,
+        };
+      }
+
       resetBulkBatch();
       invalidateBulkDeps(companyId);
       const deps = await loadDeps(companyId, dueno);
-      for (const item of tomadas) {
-        await processItem(item as never, companyId, deps);
+      for (const item of todas) {
+        await processItem(item as never, companyId, deps, esExcel(item) ? undefined : servidor);
         resultado.procesadas += 1;
       }
       const { data: despues } = await db
@@ -76,7 +146,7 @@ export async function causarColaExcel(
         .select("id, status, needs_review")
         .in(
           "id",
-          tomadas.map((i) => i.id),
+          todas.map((i) => i.id),
         );
       for (const d of (despues ?? []) as Array<{ status: string; needs_review: boolean | null }>) {
         if (d.status === "completed")
@@ -84,10 +154,10 @@ export async function causarColaExcel(
         else resultado.conError += 1;
       }
     }
-    const { count: excel } = await base().like("fingerprint", "excel:%").limit(1);
-    const { count: pdf } = await base().not("fingerprint", "like", "excel:%").limit(1);
-    resultado.pendientes = excel ?? 0;
-    resultado.pdfPendientes = pdf ?? 0;
+    const { count: nExcel } = await soloExcel(pendientes()).limit(1);
+    const { count: nPdf } = await soloPdf(pendientes()).limit(1);
+    resultado.pendientes = nExcel ?? 0;
+    resultado.pdfPendientes = nPdf ?? 0;
     return resultado;
   });
 }
