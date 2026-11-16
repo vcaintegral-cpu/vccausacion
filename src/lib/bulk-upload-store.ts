@@ -1,7 +1,7 @@
 // Persistencia del procesamiento masivo de facturas (ZIP).
 // El comprimido y cada PDF quedan guardados en Storage, y cada PDF es una tarea
 // independiente en base de datos: el proceso sobrevive a recargas y cierres del navegador.
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/db-contextual";
 
 export type UploadStatus =
   | "uploaded"

@@ -260,6 +260,13 @@
       "when": 1794698908191,
       "tag": "0036_impuestos_cuentas_por_funcion",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794848263280,
+      "tag": "0037_piloto_causacion_servidor",
+      "breakpoints": true
     }
   ]
 }

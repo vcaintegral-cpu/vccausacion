@@ -59,16 +59,33 @@ async function ejecutarPaso(
     return { id: paso, estado: "hecho", detalle: partes.join(" · "), cifras };
   }
   if (paso === "borradores") {
-    const { count } = await db
-      .from("bulk_upload_items")
-      .select("id", { count: "exact", head: true })
-      .eq("company_id", companyId)
-      .eq("status", "pending");
+    const { causarColaExcel } = await import("./bulk-servidor.server");
+    const r = await causarColaExcel(db, companyId, 3);
+    const cifras = {
+      causadas: r.procesadas,
+      verdes: r.verdes,
+      amarillas: r.amarillas,
+      con_error: r.conError,
+      excel_pendientes: r.pendientes,
+      pdf_pendientes: r.pdfPendientes,
+    };
+    const pdf = r.pdfPendientes
+      ? ` · ${r.pdfPendientes} PDF esperan causación en la aplicación (requieren lectura con IA)`
+      : "";
+    // Mientras queden documentos del Excel en la cola, el paso sigue «pendiente» y la siguiente llamada
+    // del programador continúa. Si no se avanzó nada pero hay cola, es un error (se reintenta y se reporta).
+    if (r.pendientes > 0 && r.procesadas === 0)
+      return {
+        id: paso,
+        estado: "error",
+        detalle: `La cola del Excel no avanza: ${r.pendientes} documento(s) sin causar${pdf}`,
+        cifras,
+      };
     return {
       id: paso,
-      estado: "omitido",
-      detalle: `${count ?? 0} documento(s) en la cola esperan causación. La causación automática en el servidor se activa en la siguiente etapa; mientras tanto se causan al abrir la aplicación.`,
-      cifras: { en_cola: count ?? 0 },
+      estado: r.pendientes > 0 ? "pendiente" : "hecho",
+      detalle: `Causadas ${r.procesadas} en esta pasada (${r.verdes} en verde, ${r.amarillas} por revisar, ${r.conError} con error); quedan ${r.pendientes} del Excel${pdf}`,
+      cifras,
     };
   }
   if (paso === "reporte") return { id: paso, estado: "hecho", detalle: "Reporte enviado." };

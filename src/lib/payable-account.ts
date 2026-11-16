@@ -4,7 +4,7 @@
 // se determina por PROVEEDOR → NIT → HISTÓRICO CONTABLE → CUENTA POR PAGAR.
 import { useQuery } from "@tanstack/react-query";
 
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/db-contextual";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 import { isPayableCode } from "@/lib/accounting";
 
@@ -53,7 +53,7 @@ type CandidateRow = {
 
 type LegacyRow = { provider_nit?: string | null; account_code: string; uses: number };
 
-const rpc = supabase.rpc.bind(supabase) as unknown as (
+const rpc = ((...args: unknown[]) => (supabase.rpc as unknown as (...x: unknown[]) => unknown)(...args)) as unknown as (
   fn: string,
   args: Record<string, unknown>,
 ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;

@@ -1,6 +1,6 @@
 // Lectura del precedente tributario desde la base (sesión del usuario, RLS por empresa).
 import { funcionActiva } from "@/empresas/registro";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/db-contextual";
 import {
   aprenderPerfiles,
   reconstruirCompras,

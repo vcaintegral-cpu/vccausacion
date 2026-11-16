@@ -1,6 +1,6 @@
 // Diagnóstico del flujo ZIP SIN llamar a la IA.
 // Usa exactamente el mismo lector que la carga individual (prepareInvoiceFile).
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/db-contextual";
 import { prepareInvoiceFile } from "@/lib/invoice-file";
 import { fileFromStorage, type BulkItem } from "@/lib/bulk-upload-store";
 

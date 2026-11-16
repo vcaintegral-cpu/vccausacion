@@ -1,7 +1,7 @@
 import { funcionActiva } from "@/empresas/registro";
 import { estadoFacturaAfectada, facturaReferidaEnTexto, facturaReferidaEnValor, mensajeNotaCredito, pareceNotaCredito } from "@/lib/nota-credito";
 import { unzipSync } from "fflate";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/db-contextual";
 import { companyUsesCostCenters, costCenterForCompany, costCentersEnabled } from "@/lib/cost-center-config";
 import { prepareInvoiceFile } from "@/lib/invoice-file";
 import { captureSource, sourceErrors, sourceFromRaw, alignJournalToSource } from "@/lib/source-values";

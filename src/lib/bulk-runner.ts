@@ -10,7 +10,7 @@
 // exactamente processInvoiceFile(), el mismo procesador del flujo individual.
 import { useSyncExternalStore } from "react";
 
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/db-contextual";
 import { extractInvoice } from "@/lib/extract.functions";
 import { fetchCompanyPuc } from "@/lib/puc-data";
 import { errorCode } from "@/lib/bulk-diagnostics";
@@ -138,7 +138,11 @@ async function fetchAll<T>(
   return out;
 }
 
-export async function loadDeps(companyId: string): Promise<Deps> {
+/**
+ * Parámetros y catálogos de la empresa para causar. En el navegador toma a la usuaria de la sesión;
+ * el piloto automático (servidor, sin sesión) indica `usuarioId` (dueño de la carga).
+ */
+export async function loadDeps(companyId: string, usuarioId?: string): Promise<Deps> {
   const cached = depsCache.get(companyId);
   if (cached) return cached;
   const promise = (async (): Promise<Deps> => {
@@ -167,7 +171,7 @@ export async function loadDeps(companyId: string): Promise<Deps> {
       supabase.from("companies").select("id,name,nit,uses_cost_centers,default_payable_account").eq("id",companyId).single(),
       fetchAll((from,to) => supabase.from("providers").select("nit,default_expense_account,default_payable_account,default_iva_account,purchase_tax_profile").eq("company_id",companyId).range(from,to)),
       fetchProviderRules(companyId),
-      supabase.auth.getUser(),
+      usuarioId ? Promise.resolve({ data: { user: { id: usuarioId } } }) : supabase.auth.getUser(),
     ]);
     if (company.error || !company.data || !auth.data.user) throw new Error("No se pudieron cargar los parámetros de la empresa.");
     // Precedente tributario (IVA y retenciones sincronizados con Siigo) y bases
@@ -319,7 +323,7 @@ async function processExcelItem(item: BulkItem, companyId: string, deps: Deps) {
 }
 
 /** Procesa una tarea reutilizando el procesador individual (sin cambios de lógica). */
-async function processItem(item: BulkItem, companyId: string, deps: Deps) {
+export async function processItem(item: BulkItem, companyId: string, deps: Deps) {
   await updateItem(item.id, { status: "downloading", attempts: item.attempts + 1, stage: "recuperando_pdf" });
   try {
     if (item.fingerprint?.startsWith("excel:")) {

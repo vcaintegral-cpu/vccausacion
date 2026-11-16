@@ -13,7 +13,7 @@
 // únicamente por proveedor.
 import { useQuery } from "@tanstack/react-query";
 
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/db-contextual";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
 import type { IvaJournalGroup } from "@/lib/tax-selection";
 
@@ -134,7 +134,7 @@ type LearnedRule = {
   times_used: number;
 };
 
-const rpc = supabase.rpc.bind(supabase) as unknown as (
+const rpc = ((...args: unknown[]) => (supabase.rpc as unknown as (...x: unknown[]) => unknown)(...args)) as unknown as (
   fn: string,
   args: Record<string, unknown>,
 ) => PromiseLike<{ data: HistoryRow[] | null; error: { message: string } | null }>;
