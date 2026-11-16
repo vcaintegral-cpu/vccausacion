@@ -2391,8 +2391,8 @@ export type Database = {
           activo: boolean
           company_id: string
           correo: string | null
-          enviar_a_siigo: boolean
           created_at: string
+          enviar_a_siigo: boolean
           hora_inicio: number
           mes_trabajo: string | null
           tope_valor: number
@@ -2403,8 +2403,8 @@ export type Database = {
           activo?: boolean
           company_id: string
           correo?: string | null
-          enviar_a_siigo?: boolean
           created_at?: string
+          enviar_a_siigo?: boolean
           hora_inicio?: number
           mes_trabajo?: string | null
           tope_valor?: number
@@ -2415,8 +2415,8 @@ export type Database = {
           activo?: boolean
           company_id?: string
           correo?: string | null
-          enviar_a_siigo?: boolean
           created_at?: string
+          enviar_a_siigo?: boolean
           hora_inicio?: number
           mes_trabajo?: string | null
           tope_valor?: number
