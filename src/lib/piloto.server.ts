@@ -173,8 +173,10 @@ export async function diagnosticoMes(db: Db, companyId: string, mes: string): Pr
       folder_path: string | null;
       bulk_item_id: string | null;
       message: string | null;
+      period?: string | null;
+      purpose?: string | null;
     }>
-  ).filter((r) => carpetaEsDelMes(r.folder_path, mes));
+  ).filter((r) => r.period === etiqueta || carpetaEsDelMes(r.folder_path, mes));
   const cuenta = (xs: string[]) => {
     const m = new Map<string, number>();
     for (const x of xs) m.set(x, (m.get(x) ?? 0) + 1);
