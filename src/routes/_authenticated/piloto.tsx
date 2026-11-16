@@ -240,14 +240,14 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
                 if (
                   e.target.checked &&
                   !window.confirm(
-                    "Con esto el piloto APROBARÁ, CAUSARÁ y ENVIARÁ A SIIGO de noche las compras del mes de trabajo que queden en verde (sin alertas, cuentas de confianza alta y bajo el tope). Los documentos creados en Siigo no se pueden borrar desde la aplicación. ¿Activar el envío automático?",
+                    "Con esto el piloto APROBARÁ, CAUSARÁ y ENVIARÁ A SIIGO de noche las compras del mes de trabajo y creará los RECIBOS DE PAGO de los pagos del mes que queden en verde (sin alertas, cuentas de confianza alta y bajo el tope). Los documentos creados en Siigo no se pueden borrar desde la aplicación. ¿Activar el envío automático?",
                   )
                 )
                   return;
                 setForm((x) => ({ ...x, enviar_a_siigo: e.target.checked }));
               }}
             />
-            <b>Enviar a Siigo lo que quede en verde</b>
+            <b>Enviar a Siigo lo que quede en verde</b> (compras y recibos de pago)
           </label>
           <div className="mt-1 text-muted-foreground">
             {form.enviar_a_siigo

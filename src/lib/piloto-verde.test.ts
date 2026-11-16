@@ -52,3 +52,64 @@ describe("semáforo del piloto: ¿se envía a Siigo sin preguntar?", () => {
     expect(motivosNoVerde({ ...base, total: 0 })[0]).toMatch(/total inválido/);
   });
 });
+
+import { motivosNoVerdeEgreso, type EntradaVerdeEgreso } from "./piloto-verde";
+
+const egreso: EntradaVerdeEgreso = {
+  estado: "listo",
+  siigoId: null,
+  propuesta: {
+    tipo: "pago_facturas",
+    listo: true,
+    motivos: [],
+    items: [{}],
+    paymentTypeId: "123",
+    grupo: null,
+  },
+  motivos: [],
+  valor: 800_000,
+  tope: 5_000_000,
+};
+
+describe("semáforo del piloto: egresos y recibos de pago", () => {
+  it("un pago de facturas completo, con forma de pago y bajo el tope es verde", () => {
+    expect(motivosNoVerdeEgreso(egreso)).toEqual([]);
+    expect(motivosNoVerdeEgreso({ ...egreso, estado: "aprobado" })).toEqual([]);
+  });
+
+  it("abonos, anticipos, ajustes, líneas adicionales y gastos bancarios los decide la usuaria", () => {
+    expect(
+      motivosNoVerdeEgreso({ ...egreso, propuesta: { ...egreso.propuesta!, tipo: "anticipo" } })[0],
+    ).toMatch(/pagos de facturas completos/);
+    expect(
+      motivosNoVerdeEgreso({
+        ...egreso,
+        propuesta: { ...egreso.propuesta!, ajuste: { valor: 1 } },
+      })[0],
+    ).toMatch(/ajuste/);
+    expect(
+      motivosNoVerdeEgreso({ ...egreso, propuesta: { ...egreso.propuesta!, lineas: [{}] } })[0],
+    ).toMatch(/líneas adicionales/);
+    expect(
+      motivosNoVerdeEgreso({
+        ...egreso,
+        propuesta: { ...egreso.propuesta!, grupo: "bancario|CORRIENTE" },
+      })[0],
+    ).toMatch(/RP único/);
+  });
+
+  it("sin forma de pago, incompleto, sobre el tope o ya en Siigo no se envía", () => {
+    expect(
+      motivosNoVerdeEgreso({
+        ...egreso,
+        propuesta: { ...egreso.propuesta!, paymentTypeId: null },
+      })[0],
+    ).toMatch(/forma de pago/);
+    expect(
+      motivosNoVerdeEgreso({ ...egreso, estado: "por_revisar", motivos: ["Falta la factura"] })[0],
+    ).toBe("Falta la factura");
+    expect(motivosNoVerdeEgreso({ ...egreso, valor: 9_000_000 })[0]).toMatch(/tope/);
+    expect(motivosNoVerdeEgreso({ ...egreso, siigoId: "x" })[0]).toBe("Ya está en Siigo.");
+    expect(motivosNoVerdeEgreso({ ...egreso, propuesta: null })).toContain("Sin propuesta.");
+  });
+});

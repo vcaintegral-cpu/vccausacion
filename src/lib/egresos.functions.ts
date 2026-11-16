@@ -1,5 +1,6 @@
 // Egresos y recibos de pago (RP) en Siigo — funciones de servidor (núcleo global).
 import { createServerFn } from "@tanstack/react-start";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { erroresAntesDeEnviar, nitSinDv, payloadRecibo, type Propuesta } from "@/lib/egresos";
@@ -250,12 +251,23 @@ export const egresosEnviar = createServerFn({ method: "POST" })
     if (!input?.egresoId) throw new Error("egresoId requerido");
     return input;
   })
-  .handler(async ({ data, context }): Promise<ResultadoEnvio> => {
-    const db = context.supabase;
+  .handler(async ({ data, context }): Promise<ResultadoEnvio> =>
+    egresosEnviarCore(context.supabase as unknown as SupabaseClient, data.egresoId, data.documentId ?? null),
+  );
+
+/**
+ * Crea en Siigo el recibo de pago de un egreso aprobado (misma lógica de «Enviar» de Egresos, con sus
+ * validaciones y el bloqueo contra doble envío). La usa también el piloto automático.
+ */
+export async function egresosEnviarCore(
+  db: SupabaseClient,
+  egresoId: string,
+  documentIdEntrada: number | null,
+): Promise<ResultadoEnvio> {
     const { data: f, error } = await db
       .from("egresos")
       .select("*")
-      .eq("id", data.egresoId)
+      .eq("id", egresoId)
       .single();
     if (error || !f) throw new Error(error?.message ?? "Egreso no encontrado.");
     if (f.siigo_id)
@@ -295,7 +307,7 @@ export const egresosEnviar = createServerFn({ method: "POST" })
     const { siigoGet, siigoPostConImpuestos, siigoUseCompany } = await import("./siigo.server");
     const { aprenderImpuestoCuenta } = await import("./egresos.server");
     await siigoUseCompany(f.company_id);
-    let documentId = data.documentId ?? null;
+    let documentId = documentIdEntrada;
     if (!documentId) {
       type Doc = { id?: number; active?: boolean };
       const docs = await siigoGet<Doc[] | { results?: Doc[] }>("/v1/document-types?type=RP");
@@ -445,7 +457,7 @@ export const egresosEnviar = createServerFn({ method: "POST" })
         .is("siigo_id", null);
       return { ok: false, siigoNombre: null, message: msg };
     }
-  });
+}
 
 /** Devuelve a «aprobado» un egreso con error de Siigo, para reintentarlo después de revisar. */
 export const egresosReintentar = createServerFn({ method: "POST" })
