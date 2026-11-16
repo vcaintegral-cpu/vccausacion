@@ -117,6 +117,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-15",
   },
+  drive_por_meses: {
+    descripcion:
+      "Carpetas de Drive por meses (año → mes → «facturas», «extractos» y el Excel de pagos del mes): EGRESOS no entra a «facturas», todo lo de «extractos» es extracto bancario y el Excel con el nombre del mes (aunque no traiga el año) es la relación de pagos",
+    porDefecto: false,
+    agregada: "2026-11-16",
+  },
   piloto_automatico: {
     descripcion:
       "Piloto automático nocturno: desde la hora de inicio revisa la carpeta de Drive, causa y envía a Siigo lo que está en verde, sigue con egresos y conciliación, guarda la memoria del día, pregunta por correo lo que no puede decidir solo y envía el reporte al terminar",

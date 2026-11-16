@@ -67,6 +67,7 @@ describe("alcance global vs. empresa", () => {
               ["función", "compras_por_pagar", true],
               ["función", "pasarelas_pago", true],
               ["función", "reporte_conciliacion_firma", true],
+              ["función", "drive_por_meses", true],
               ["función", "piloto_automatico", true],
             ]
           : p.nit === "900088704"

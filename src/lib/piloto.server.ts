@@ -32,6 +32,77 @@ export type ResultadoPiloto = {
   estado?: PasoRegistro["estado"];
 };
 
+/**
+ * Aparta, SIN leerlos (sin gastar IA), los documentos de la cola que vinieron de la carpeta de otro mes
+ * (document_source_files.period distinto del mes de trabajo). Quedan «fuera_de_mes» y se retoman cuando
+ * el piloto llega a ese mes (reactivarMes).
+ */
+export async function apartarOtrosMeses(db: Db, companyId: string, mes: string): Promise<number> {
+  const { etiquetaPeriodo } = await import("./drive-sync");
+  const etiqueta = etiquetaPeriodo({ anio: Number(mes.slice(0, 4)), mes: Number(mes.slice(5, 7)) });
+  const { data } = await db
+    .from("document_source_files")
+    .select("bulk_item_id")
+    .eq("company_id", companyId)
+    .not("bulk_item_id", "is", null)
+    .not("period", "is", null)
+    .neq("period", etiqueta)
+    .limit(1000);
+  const ids = [
+    ...new Set(((data ?? []) as Array<{ bulk_item_id: string }>).map((x) => x.bulk_item_id)),
+  ];
+  let apartadas = 0;
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data: act } = await db
+      .from("bulk_upload_items")
+      .update({
+        status: "cancelled",
+        stage: "fuera_de_mes",
+        user_message:
+          "Es de la carpeta de otro mes: no es del mes de trabajo del piloto (no se leyó).",
+      })
+      .in("id", ids.slice(i, i + 100))
+      .eq("status", "pending")
+      .select("id");
+    apartadas += act?.length ?? 0;
+  }
+  return apartadas;
+}
+
+/** Devuelve a la cola lo apartado por no ser del mes (por fecha leída o por carpeta de origen). */
+export async function reactivarMes(db: Db, companyId: string, mes: string): Promise<void> {
+  const { rangoDelMes } = await import("./piloto");
+  const { etiquetaPeriodo } = await import("./drive-sync");
+  const { desde, hasta } = rangoDelMes(mes);
+  const reactivar = { status: "pending", stage: null, user_message: null } as never;
+  await db
+    .from("bulk_upload_items")
+    .update(reactivar)
+    .eq("company_id", companyId)
+    .eq("status", "cancelled")
+    .eq("stage", "fuera_de_mes")
+    .gte("issue_date", desde)
+    .lte("issue_date", hasta);
+  const etiqueta = etiquetaPeriodo({ anio: Number(mes.slice(0, 4)), mes: Number(mes.slice(5, 7)) });
+  const { data } = await db
+    .from("document_source_files")
+    .select("bulk_item_id")
+    .eq("company_id", companyId)
+    .eq("period", etiqueta)
+    .not("bulk_item_id", "is", null)
+    .limit(1000);
+  const ids = [
+    ...new Set(((data ?? []) as Array<{ bulk_item_id: string }>).map((x) => x.bulk_item_id)),
+  ];
+  for (let i = 0; i < ids.length; i += 100)
+    await db
+      .from("bulk_upload_items")
+      .update(reactivar)
+      .in("id", ids.slice(i, i + 100))
+      .eq("status", "cancelled")
+      .eq("stage", "fuera_de_mes");
+}
+
 /** Ejecuta un paso del día. Devuelve su registro (hecho, omitido o error). */
 async function ejecutarPaso(
   db: Db,
@@ -43,19 +114,28 @@ async function ejecutarPaso(
 ): Promise<Omit<PasoRegistro, "inicio" | "fin">> {
   if (paso === "drive") {
     const { revisarFuente } = await import("./document-sources.server");
+    const { etiquetaMes } = await import("./piloto");
     const partes: string[] = [];
     const cifras: Record<string, number> = {};
+    // Solo la carpeta del mes de trabajo (año → mes → «facturas» / «extractos» / Excel de pagos).
+    const periodos = mes
+      ? [{ anio: Number(mes.slice(0, 4)), mes: Number(mes.slice(5, 7)) }]
+      : undefined;
+    let quedan = 0;
+    const avisos: string[] = [];
     for (const proposito of ["compras", "egresos"] as const) {
       try {
-        const r = await revisarFuente(db, companyId, proposito);
+        const r = await revisarFuente(db, companyId, proposito, null, periodos);
         cifras[`${proposito}_encontrados`] = r.encontrados;
         cifras[`${proposito}_facturas`] = r.facturasEncoladas;
         cifras[`${proposito}_excel`] = r.documentosExcel;
         cifras[`${proposito}_egresos`] = r.egresosRecibidos;
+        quedan += r.pendientesProximaEjecucion;
+        avisos.push(...r.advertencias.map((a) => `${proposito}: ${a}`));
         partes.push(
           proposito === "compras"
-            ? `Facturas: ${r.facturasEncoladas} PDF y ${r.documentosExcel} Excel nuevos en la cola${r.pendientesProximaEjecucion ? ` (${r.pendientesProximaEjecucion} quedan para la siguiente vuelta)` : ""}`
-            : `Egresos: ${r.egresosRecibidos} archivos nuevos`,
+            ? `Facturas ${mes ? etiquetaMes(mes) : ""}: ${r.facturasEncoladas} PDF y ${r.documentosExcel} Excel nuevos en la cola${r.pendientesProximaEjecucion ? ` (${r.pendientesProximaEjecucion} quedan para la siguiente pasada)` : ""}`
+            : `Egresos y extractos: ${r.egresosRecibidos} archivos nuevos`,
         );
       } catch (e) {
         const m = e instanceof Error ? e.message : String(e);
@@ -63,11 +143,21 @@ async function ejecutarPaso(
         else throw e;
       }
     }
-    return { id: paso, estado: "hecho", detalle: partes.join(" · "), cifras };
+    cifras["quedan"] = quedan;
+    if (avisos.length) partes.push(`Avisos: ${avisos.slice(0, 3).join(" | ")}`);
+    // Mientras queden archivos por traer (se traen por tandas), el paso sigue pendiente.
+    return {
+      id: paso,
+      estado: quedan > 0 ? "pendiente" : "hecho",
+      detalle: partes.join(" · "),
+      cifras,
+    };
   }
   if (paso === "borradores") {
     const { causarCola } = await import("./bulk-servidor.server");
     const { rangoDelMes, etiquetaMes } = await import("./piloto");
+    // Lo que vino de la carpeta de otro mes se aparta sin leerlo (sin gastar IA).
+    const apartadasSinLeer = mes ? await apartarOtrosMeses(db, companyId, mes) : 0;
     const rango = mes ? { ...rangoDelMes(mes), etiqueta: etiquetaMes(mes) } : undefined;
     const r = await causarCola(db, companyId, {
       limiteExcel: 3,
@@ -86,6 +176,7 @@ async function ejecutarPaso(
       excel_pendientes: r.pendientes,
       pdf_pendientes: r.pdfPendientes,
       fuera_de_mes: suma("fuera_de_mes", r.fueraDeMes),
+      apartadas_sin_leer: suma("apartadas_sin_leer", apartadasSinLeer),
     };
     const cola = r.pendientes + r.pdfPendientes;
     // Si hay cola pero no se avanzó nada ni la tiene otro proceso, es un error (se reintenta 3 veces y se reporta).
@@ -101,7 +192,7 @@ async function ejecutarPaso(
       id: paso,
       // Sigue «pendiente» mientras haya documentos en la cola; la siguiente llamada continúa.
       estado: cola > 0 ? "pendiente" : "hecho",
-      detalle: `Leídas ${cifras.leidas} esta noche: ${cifras.causadas} causadas como borrador (${cifras.verdes} en verde, ${cifras.amarillas} por revisar), ${cifras.fuera_de_mes} apartadas por no ser de ${mesTxt}, ${cifras.con_error} con error${
+      detalle: `Leídas ${cifras.leidas} esta noche: ${cifras.causadas} causadas como borrador (${cifras.verdes} en verde, ${cifras.amarillas} por revisar), ${cifras.fuera_de_mes} apartadas tras leerlas por no ser de ${mesTxt}, ${cifras.apartadas_sin_leer} apartadas sin leer (carpeta de otro mes), ${cifras.con_error} con error${
         cola > 0
           ? `; quedan ${r.pendientes} del Excel y ${r.pdfPendientes} PDF`
           : "; la cola quedó vacía"
@@ -389,15 +480,7 @@ async function cicloMes(db: Db, companyId: string, mesActual: string): Promise<s
         .update({ mes_trabajo: nuevo })
         .eq("company_id", companyId);
       if (error) throw new Error(`No se pudo pasar al mes siguiente: ${error.message}`);
-      const { desde, hasta } = rangoDelMes(nuevo);
-      await db
-        .from("bulk_upload_items")
-        .update({ status: "pending", stage: null, user_message: null })
-        .eq("company_id", companyId)
-        .eq("status", "cancelled")
-        .eq("stage", "fuera_de_mes")
-        .gte("issue_date", desde)
-        .lte("issue_date", hasta);
+      await reactivarMes(db, companyId, nuevo);
       mes = nuevo;
     }
     await db

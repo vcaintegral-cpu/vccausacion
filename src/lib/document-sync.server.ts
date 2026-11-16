@@ -25,6 +25,8 @@ import {
   mismoNombre,
   nombreSeguro,
   periodosARevisar,
+  type Periodo,
+  type ContextoArchivo,
   pistaDePago,
   tipoDeArchivo,
   type Proposito,
@@ -91,7 +93,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
     .join("");
 }
 
-type Objetivo = { id: string; ruta: string; periodo: string | null };
+type Objetivo = { id: string; ruta: string; periodo: string | null; mes?: number | null };
 
 /** Carpetas a recorrer: las del mes actual y el anterior, o la carpeta completa si no está organizada por meses. */
 async function carpetasObjetivo(
@@ -99,6 +101,7 @@ async function carpetasObjetivo(
   source: DocumentSource,
   ahora: Date,
   result: SyncResult,
+  periodos: Periodo[] = periodosARevisar(ahora),
 ): Promise<Objetivo[]> {
   const raiz = await provider.listChildren(source.folder_id);
   const anios = raiz.filter((n) => n.isFolder && esCarpetaDeAnio(n.name));
@@ -125,7 +128,7 @@ async function carpetasObjetivo(
   }
 
   const objetivos: Objetivo[] = [];
-  for (const p of periodosARevisar(ahora)) {
+  for (const p of periodos) {
     const etiqueta = etiquetaPeriodo(p);
     let nodos = raiz;
     let ruta = "";
@@ -161,24 +164,45 @@ async function carpetasObjetivo(
       destino = hija;
       ruta = `${ruta}/${hija.name}`;
     }
-    objetivos.push({ id: destino.id, ruta, periodo: etiqueta });
+    objetivos.push({ id: destino.id, ruta, periodo: etiqueta, mes: p.mes });
   }
   return objetivos;
 }
 
-/** Archivos útiles bajo una carpeta (incluidas subcarpetas de proveedor), listando por niveles. */
+/**
+ * Archivos útiles bajo una carpeta (incluidas subcarpetas de proveedor), listando por niveles.
+ * Con `porMeses` (función «drive_por_meses»: cada mes trae «facturas», «extractos» y el Excel de pagos):
+ *   - EGRESOS no entra a «facturas» (son las compras), y
+ *   - lo que está en «extractos» se clasifica como extracto y el Excel con el nombre del mes, en la
+ *     carpeta del mes, como relación de pagos.
+ */
 async function archivosBajo(
   provider: FileProvider,
   objetivos: Objetivo[],
   proposito: Proposito,
+  porMeses = false,
 ): Promise<Archivo[]> {
   const out: Archivo[] = [];
-  // Todas las carpetas objetivo (mes actual y anterior) se recorren juntas, nivel por
-  // nivel: una sola llamada de listado por nivel para todas.
-  type Pos = { ruta: string; periodo: Objetivo["periodo"] };
+  // Todas las carpetas objetivo se recorren juntas, nivel por nivel: una sola llamada de listado
+  // por nivel para todas.
+  type Pos = {
+    ruta: string;
+    periodo: Objetivo["periodo"];
+    mes: number | null;
+    enExtractos: boolean;
+  };
+  const esCarpeta = (nombre: string, patron: RegExp) =>
+    patron.test(
+      nombre
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toUpperCase()
+        .trim(),
+    );
   let nivel = new Map<string, Pos>();
   for (const o of objetivos)
-    if (!nivel.has(o.id)) nivel.set(o.id, { ruta: o.ruta, periodo: o.periodo });
+    if (!nivel.has(o.id))
+      nivel.set(o.id, { ruta: o.ruta, periodo: o.periodo, mes: o.mes ?? null, enExtractos: false });
   const vistos = new Set<string>();
   for (let profundidad = 0; nivel.size > 0 && profundidad < 6; profundidad++) {
     const siguiente = new Map<string, Pos>();
@@ -187,13 +211,20 @@ async function archivosBajo(
       if (padre === undefined || vistos.has(n.id)) continue;
       vistos.add(n.id);
       if (n.isFolder) {
+        // Con carpetas por meses, EGRESOS no toma las facturas de compra.
+        if (porMeses && proposito === "egresos" && esCarpeta(n.name, /^FACTURAS?\b/)) continue;
         siguiente.set(n.id, {
           ruta: padre.ruta ? `${padre.ruta}/${n.name}` : n.name,
           periodo: padre.periodo,
+          mes: padre.mes,
+          enExtractos: padre.enExtractos || (porMeses && esCarpeta(n.name, /^EXTRACTOS?\b/)),
         });
         continue;
       }
-      const tipo = tipoDeArchivo(proposito, n.name, n.mimeType);
+      const contexto: ContextoArchivo | undefined = porMeses
+        ? { mes: padre.mes, enRaizDelMes: profundidad === 0, enExtractos: padre.enExtractos }
+        : undefined;
+      const tipo = tipoDeArchivo(proposito, n.name, n.mimeType, contexto);
       if (tipo) out.push({ node: n, ruta: padre.ruta, periodo: padre.periodo, tipo });
     }
     nivel = siguiente;
@@ -336,6 +367,8 @@ export async function syncSource(
     userId?: string | null | undefined;
     ahora?: Date;
     limite?: number;
+    /** Meses a revisar (el piloto pasa solo su mes de trabajo); por defecto el mes actual y el anterior. */
+    periodos?: Periodo[];
   },
 ): Promise<SyncResult> {
   const limite = opts.limite ?? limitePorEjecucion();
@@ -344,7 +377,7 @@ export async function syncSource(
     sourceId: source.id,
     companyId: source.company_id,
     purpose: source.purpose,
-    periodos: periodosARevisar(ahora).map(etiquetaPeriodo),
+    periodos: (opts.periodos ?? periodosARevisar(ahora)).map(etiquetaPeriodo),
     modo: "por_mes",
     encontrados: 0,
     facturasEncoladas: 0,
@@ -370,10 +403,18 @@ export async function syncSource(
     const ownerId = opts.userId ?? empresa.created_by;
 
     const provider = opts.provider;
+    const porMeses = funcionActiva(empresa.nit, "drive_por_meses");
     const archivos = await archivosBajo(
       provider,
-      await carpetasObjetivo(provider, source, ahora, result),
+      await carpetasObjetivo(
+        provider,
+        source,
+        ahora,
+        result,
+        opts.periodos ?? periodosARevisar(ahora),
+      ),
       source.purpose,
+      porMeses,
     );
     result.encontrados = archivos.length;
 

@@ -45,6 +45,7 @@ export const LED_LIGHTS: PerfilEmpresa = {
     reporte_conciliacion_firma: true,
     // Instrucción del 2026-11-13: trabajar solo desde las 7 p. m. toda la noche; enviar a
     // Siigo lo que esté en verde, preguntar por correo lo demás y enviar el reporte al final.
+    drive_por_meses: true,
     piloto_automatico: true,
   },
   notas: [

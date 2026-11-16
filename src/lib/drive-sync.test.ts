@@ -173,15 +173,56 @@ describe("facturaEnNombre (conciliación de PDF con el Excel RECIBIDOS)", () => 
     { nit: "800242106", prefijo: "", numero: "4304100398362", origen: "app" },
   ];
   it("reconoce el nombre del Procesador XML FE y el de la DIAN", () => {
-    expect(facturaEnNombre("FECT272708_900047217_MEGA LUCES S.A.S.pdf", conocidas)?.numero).toBe("272708");
-    expect(facturaEnNombre("Corriente07 - fv090004721702826FECT00272708.pdf", conocidas)?.numero).toBe("272708");
-    expect(facturaEnNombre("Z09837584_900053978_GLOBAL MENSAJERIA S.A.S.pdf", conocidas)?.nit).toBe("900053978");
+    expect(facturaEnNombre("FECT272708_900047217_MEGA LUCES S.A.S.pdf", conocidas)?.numero).toBe(
+      "272708",
+    );
+    expect(
+      facturaEnNombre("Corriente07 - fv090004721702826FECT00272708.pdf", conocidas)?.numero,
+    ).toBe("272708");
+    expect(facturaEnNombre("Z09837584_900053978_GLOBAL MENSAJERIA S.A.S.pdf", conocidas)?.nit).toBe(
+      "900053978",
+    );
     expect(facturaEnNombre("4304100398362_800242106_SODIMAC.pdf", conocidas)?.origen).toBe("app");
   });
   it("no confunde otra factura del mismo proveedor ni el NIT con el número", () => {
-    expect(facturaEnNombre("Corriente16 - fv090004721702826FECT00274124.pdf", conocidas)).toBeNull();
+    expect(
+      facturaEnNombre("Corriente16 - fv090004721702826FECT00274124.pdf", conocidas),
+    ).toBeNull();
     expect(facturaEnNombre("FECT2727080_900047217_MEGA.pdf", conocidas)).toBeNull();
     expect(facturaEnNombre("ad086001664002726566920261028175206607.pdf", conocidas)).toBeNull();
     expect(facturaEnNombre("FECT272708.pdf", conocidas)).toBeNull(); // sin NIT no se concilia
+  });
+});
+
+describe("Drive por meses: Excel de pagos y extractos", () => {
+  const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+  it("el Excel con el nombre del mes, en la carpeta del mes, es la relación de pagos (aunque no traiga el año)", async () => {
+    const { tipoDeArchivo, nombreTieneMes } = await import("./drive-sync");
+    expect(nombreTieneMes("NOVIEMBRE.xlsx", 11)).toBe(true);
+    expect(nombreTieneMes("Noviembre 2026.xlsx", 11)).toBe(true);
+    expect(nombreTieneMes("OCTUBRE.xlsx", 11)).toBe(false);
+    expect(nombreTieneMes("EXTRACTO NOVIEMBRE.xlsx", 11)).toBe(false);
+    expect(tipoDeArchivo("egresos", "NOVIEMBRE.xlsx", XLSX, { mes: 11, enRaizDelMes: true })).toBe(
+      "relacion_pagos",
+    );
+    // Sin contexto (empresas sin la función) o fuera de la raíz del mes, se comporta como antes.
+    expect(tipoDeArchivo("egresos", "NOVIEMBRE.xlsx", XLSX)).toBe("extracto");
+    expect(tipoDeArchivo("egresos", "NOVIEMBRE.xlsx", XLSX, { mes: 11, enRaizDelMes: false })).toBe(
+      "extracto",
+    );
+  });
+
+  it("todo lo de la subcarpeta «extractos» es extracto bancario", async () => {
+    const { tipoDeArchivo } = await import("./drive-sync");
+    expect(
+      tipoDeArchivo("egresos", "9677 noviembre.pdf", "application/pdf", {
+        mes: 11,
+        enExtractos: true,
+      }),
+    ).toBe("extracto");
+    expect(tipoDeArchivo("egresos", "9677 noviembre.pdf", "application/pdf", { mes: 11 })).toBe(
+      "soporte_pago",
+    );
   });
 });

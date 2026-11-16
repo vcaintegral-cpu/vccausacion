@@ -1,7 +1,7 @@
 // Ejecución de una fuente (botón "Revisar ahora" o tarea programada).
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { Proposito } from "@/lib/drive-sync";
+import type { Periodo, Proposito } from "@/lib/drive-sync";
 import { syncSource, type DocumentSource, type SyncResult } from "@/lib/document-sync.server";
 import { proveedorDeArchivos } from "@/lib/oauth-connections.server";
 
@@ -11,6 +11,7 @@ async function ejecutar(
   admin: SupabaseClient,
   source: DocumentSource,
   userId?: string | null,
+  periodos?: Periodo[],
 ): Promise<SyncResult> {
   try {
     const provider = await proveedorDeArchivos(
@@ -19,7 +20,7 @@ async function ejecutar(
       source.provider,
       source.drive_id,
     );
-    return await syncSource(admin, source, { provider, userId });
+    return await syncSource(admin, source, { provider, userId, ...(periodos ? { periodos } : {}) });
   } catch (e) {
     // Falla de conexión (token vencido, permiso retirado): se deja registrada en la fuente.
     const message = e instanceof Error ? e.message : String(e);
@@ -58,6 +59,7 @@ export async function revisarFuente(
   companyId: string,
   purpose: Proposito,
   userId?: string | null,
+  periodos?: Periodo[],
 ): Promise<SyncResult> {
   const { data, error } = await admin
     .from("document_sources")
@@ -67,7 +69,7 @@ export async function revisarFuente(
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) throw new Error(`La empresa no tiene carpeta de ${purpose} configurada.`);
-  return ejecutar(admin, data as DocumentSource, userId);
+  return ejecutar(admin, data as DocumentSource, userId, periodos);
 }
 
 /** Todas las fuentes activas de todas las empresas (tarea programada diaria). */
