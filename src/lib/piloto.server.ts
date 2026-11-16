@@ -40,28 +40,39 @@ export type ResultadoPiloto = {
 export async function apartarOtrosMeses(db: Db, companyId: string, mes: string): Promise<number> {
   const { etiquetaPeriodo } = await import("./drive-sync");
   const etiqueta = etiquetaPeriodo({ anio: Number(mes.slice(0, 4)), mes: Number(mes.slice(5, 7)) });
-  const { data } = await db
-    .from("document_source_files")
-    .select("bulk_item_id")
+  // Solo tareas que creó la revisión de carpetas (ruta «fuentes»): las que la usuaria sube a mano no se tocan.
+  const { data: pend } = await db
+    .from("bulk_upload_items")
+    .select("id")
     .eq("company_id", companyId)
-    .not("bulk_item_id", "is", null)
-    .not("period", "is", null)
-    .neq("period", etiqueta)
+    .eq("status", "pending")
+    .like("storage_path", "%/fuentes/%")
     .limit(1000);
-  const ids = [
-    ...new Set(((data ?? []) as Array<{ bulk_item_id: string }>).map((x) => x.bulk_item_id)),
-  ];
-  let apartadas = 0;
+  const ids = ((pend ?? []) as Array<{ id: string }>).map((x) => x.id);
+  if (!ids.length) return 0;
+  // Se conservan las que vienen de la carpeta del mes de trabajo; el resto (otro mes o de una carpeta
+  // anterior sin período) se aparta SIN leerlas, para no gastar IA.
+  const conservar = new Set<string>();
   for (let i = 0; i < ids.length; i += 100) {
+    const { data } = await db
+      .from("document_source_files")
+      .select("bulk_item_id")
+      .eq("company_id", companyId)
+      .eq("period", etiqueta)
+      .in("bulk_item_id", ids.slice(i, i + 100));
+    for (const r of (data ?? []) as Array<{ bulk_item_id: string }>) conservar.add(r.bulk_item_id);
+  }
+  const aApartar = ids.filter((id) => !conservar.has(id));
+  let apartadas = 0;
+  for (let i = 0; i < aApartar.length; i += 100) {
     const { data: act } = await db
       .from("bulk_upload_items")
       .update({
         status: "cancelled",
         stage: "fuera_de_mes",
-        user_message:
-          "Es de la carpeta de otro mes: no es del mes de trabajo del piloto (no se leyó).",
+        user_message: "No es de la carpeta del mes de trabajo del piloto: se apartó sin leerla.",
       })
-      .in("id", ids.slice(i, i + 100))
+      .in("id", aApartar.slice(i, i + 100))
       .eq("status", "pending")
       .select("id");
     apartadas += act?.length ?? 0;

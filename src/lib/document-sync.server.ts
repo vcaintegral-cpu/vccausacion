@@ -304,7 +304,13 @@ async function huellasExistentes(
 }
 
 /** Tarea de carga masiva que ya no respalda ningún borrador: cancelada, o procesada con el borrador eliminado. */
-export function tareaMuerta(r: { status: string; invoice_id?: string | null }): boolean {
+export function tareaMuerta(r: {
+  status: string;
+  invoice_id?: string | null;
+  stage?: string | null;
+}): boolean {
+  // «fuera_de_mes»: el piloto la apartó a propósito (otro mes); no está muerta ni se vuelve a encolar.
+  if (r.status === "cancelled" && r.stage === "fuera_de_mes") return false;
   return r.status === "cancelled" || (r.status === "completed" && !r.invoice_id);
 }
 
@@ -316,7 +322,7 @@ async function cargasYTareasVivas(admin: SupabaseClient, uploadIds: string[], it
     for (let i = 0; i < ids.length; i += 200) {
       const { data, error } = await admin
         .from("bulk_upload_items")
-        .select("id, upload_id, status, invoice_id")
+        .select("id, upload_id, status, invoice_id, stage")
         .in(col, ids.slice(i, i + 200));
       if (error) throw new Error(error.message);
       for (const r of (data ?? []) as Array<{
@@ -324,6 +330,7 @@ async function cargasYTareasVivas(admin: SupabaseClient, uploadIds: string[], it
         upload_id: string;
         status: string;
         invoice_id: string | null;
+        stage: string | null;
       }>) {
         if (tareaMuerta(r)) continue;
         cargas.add(r.upload_id);
