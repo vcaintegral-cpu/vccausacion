@@ -31,6 +31,8 @@ export type ExtractInvoiceInput = {
   dataUrl?: string | null;
   images?: Array<{ dataUrl: string; mimeType: string }> | null;
   text?: string | null;
+  /** PDF completo en base64: se envía a la IA como archivo (lectura en el servidor, sin renderizar). */
+  pdfBase64?: string | null;
   /** "soporte": cuenta de cobro / soporte de un vendedor no obligado a facturar. */
   kind?: "compra" | "soporte";
 };
@@ -52,28 +54,51 @@ function normalizedImageUrl(mimeType: string, dataUrl: string) {
 }
 
 export async function extractInvoiceWithAi(data: ExtractInvoiceInput, apiKey: string) {
-  const content: Array<Record<string, unknown>> = [{
-    type: "input_text",
-    text: `Extrae toda la información contable de ${data.kind === "soporte" ? "esta cuenta de cobro / documento soporte" : "esta factura de compra"} (${data.fileName}). Las imágenes están en orden de página. Responde solo con un objeto JSON válido.`,
-  }];
+  const content: Array<Record<string, unknown>> = [
+    {
+      type: "input_text",
+      text: `Extrae toda la información contable de ${data.kind === "soporte" ? "esta cuenta de cobro / documento soporte" : "esta factura de compra"} (${data.fileName}). Las imágenes están en orden de página. Responde solo con un objeto JSON válido.`,
+    },
+  ];
 
   if (data.text) {
-    content.push({ type: "input_text", text: `Contenido XML/texto de la factura:\n${data.text.slice(0, 120000)}` });
+    content.push({
+      type: "input_text",
+      text: `Contenido XML/texto de la factura:\n${data.text.slice(0, 120000)}`,
+    });
   } else if (data.images?.length) {
     for (const image of data.images.slice(0, 8)) {
-      content.push({ type: "input_image", image_url: normalizedImageUrl(image.mimeType, image.dataUrl) });
+      content.push({
+        type: "input_image",
+        image_url: normalizedImageUrl(image.mimeType, image.dataUrl),
+      });
     }
   } else if (data.dataUrl && data.mimeType.startsWith("image/")) {
-    content.push({ type: "input_image", image_url: normalizedImageUrl(data.mimeType, data.dataUrl) });
+    content.push({
+      type: "input_image",
+      image_url: normalizedImageUrl(data.mimeType, data.dataUrl),
+    });
+  } else if (data.pdfBase64) {
+    content.push({
+      type: "input_file",
+      filename: data.fileName.replace(/[^\w.-]/g, "_") || "factura.pdf",
+      file_data: `data:application/pdf;base64,${data.pdfBase64}`,
+    });
   } else if (data.mimeType === "application/pdf") {
-    throw new Error("No fue posible preparar el PDF. Selecciónalo nuevamente para convertir sus páginas antes de leerlo.");
+    throw new Error(
+      "No fue posible preparar el PDF. Selecciónalo nuevamente para convertir sus páginas antes de leerlo.",
+    );
   } else {
     throw new Error("No se recibió contenido legible de la factura.");
   }
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/responses", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Lovable-API-Key": apiKey, "X-Lovable-AIG-SDK": "fetch" },
+    headers: {
+      "Content-Type": "application/json",
+      "Lovable-API-Key": apiKey,
+      "X-Lovable-AIG-SDK": "fetch",
+    },
     body: JSON.stringify({
       model: "openai/gpt-5.6-sol",
       stream: true,
@@ -83,12 +108,16 @@ export async function extractInvoiceWithAi(data: ExtractInvoiceInput, apiKey: st
     }),
   });
 
-  if (response.status === 429) throw new Error("Límite de solicitudes de IA alcanzado. Intenta de nuevo en unos minutos.");
-  if (response.status === 402) throw new Error("Créditos de IA agotados. Recarga créditos para seguir procesando facturas.");
+  if (response.status === 429)
+    throw new Error("Límite de solicitudes de IA alcanzado. Intenta de nuevo en unos minutos.");
+  if (response.status === 402)
+    throw new Error("Créditos de IA agotados. Recarga créditos para seguir procesando facturas.");
   if (!response.ok || !response.body) {
     const detail = await response.text();
     console.error("AI gateway invoice extraction error", response.status, detail);
-    throw new Error(`No fue posible leer la factura con IA (${response.status}): ${detail.slice(0, 500)}`);
+    throw new Error(
+      `No fue posible leer la factura con IA (${response.status}): ${detail.slice(0, 500)}`,
+    );
   }
 
   const reader = response.body.getReader();
@@ -107,26 +136,37 @@ export async function extractInvoiceWithAi(data: ExtractInvoiceInput, apiKey: st
       const payload = trimmed.slice(5).trim();
       if (!payload || payload === "[DONE]") continue;
       try {
-        const event = JSON.parse(payload) as { type?: string; delta?: string; response?: { output_text?: string } };
-        if (event.type === "response.output_text.delta" && typeof event.delta === "string") raw += event.delta;
-        else if (event.type === "response.completed" && !raw && event.response?.output_text) raw = event.response.output_text;
+        const event = JSON.parse(payload) as {
+          type?: string;
+          delta?: string;
+          response?: { output_text?: string };
+        };
+        if (event.type === "response.output_text.delta" && typeof event.delta === "string")
+          raw += event.delta;
+        else if (event.type === "response.completed" && !raw && event.response?.output_text)
+          raw = event.response.output_text;
       } catch {
         // Otros eventos SSE no contienen texto de salida.
       }
     }
   }
 
-  const cleaned = raw.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const cleaned = raw
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/, "")
+    .trim();
   try {
     const parsed = JSON.parse(cleaned) as ExtractedInvoice;
     parsed.lines = Array.isArray(parsed.lines) ? parsed.lines : [];
     return reconcileWithHeader(parsed);
   } catch {
     console.error("Respuesta IA de factura no parseable", raw.slice(0, 500));
-    throw new Error("La IA no pudo estructurar esta factura. Intenta nuevamente o usa una imagen más nítida.");
+    throw new Error(
+      "La IA no pudo estructurar esta factura. Intenta nuevamente o usa una imagen más nítida.",
+    );
   }
 }
 /** Preserve extracted values; inconsistent readings are reviewed, never redistributed. */
 export function reconcileWithHeader(inv: ExtractedInvoice): ExtractedInvoice {
-  return { ...inv, lines: inv.lines.map(l => ({ ...l, subtotal: l.subtotal ?? l.total })) };
+  return { ...inv, lines: inv.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? l.total })) };
 }

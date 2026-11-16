@@ -33,6 +33,7 @@ async function ejecutarPaso(
   db: Db,
   companyId: string,
   paso: PasoId,
+  previo?: PasoRegistro,
 ): Promise<Omit<PasoRegistro, "inicio" | "fin">> {
   if (paso === "drive") {
     const { revisarFuente } = await import("./document-sources.server");
@@ -59,32 +60,37 @@ async function ejecutarPaso(
     return { id: paso, estado: "hecho", detalle: partes.join(" · "), cifras };
   }
   if (paso === "borradores") {
-    const { causarColaExcel } = await import("./bulk-servidor.server");
-    const r = await causarColaExcel(db, companyId, 3);
+    const { causarCola } = await import("./bulk-servidor.server");
+    const r = await causarCola(db, companyId, { limiteExcel: 3, limitePdf: 2 });
+    // Cada llamada del programador hace una pasada: las cifras de la noche se acumulan.
+    const antes = previo?.cifras ?? {};
+    const suma = (k: string, n: number) => (antes[k] ?? 0) + n;
     const cifras = {
-      causadas: r.procesadas,
-      verdes: r.verdes,
-      amarillas: r.amarillas,
-      con_error: r.conError,
+      causadas: suma("causadas", r.procesadas),
+      verdes: suma("verdes", r.verdes),
+      amarillas: suma("amarillas", r.amarillas),
+      con_error: suma("con_error", r.conError),
       excel_pendientes: r.pendientes,
       pdf_pendientes: r.pdfPendientes,
     };
-    const pdf = r.pdfPendientes
-      ? ` · ${r.pdfPendientes} PDF esperan causación en la aplicación (requieren lectura con IA)`
-      : "";
-    // Mientras queden documentos del Excel en la cola, el paso sigue «pendiente» y la siguiente llamada
-    // del programador continúa. Si no se avanzó nada pero hay cola, es un error (se reintenta y se reporta).
-    if (r.pendientes > 0 && r.procesadas === 0)
+    const cola = r.pendientes + r.pdfPendientes;
+    // Si hay cola pero no se avanzó nada, es un error (se reintenta 3 veces y se reporta).
+    if (cola > 0 && r.procesadas === 0)
       return {
         id: paso,
         estado: "error",
-        detalle: `La cola del Excel no avanza: ${r.pendientes} documento(s) sin causar${pdf}`,
+        detalle: `La cola no avanza: ${r.pendientes} del Excel y ${r.pdfPendientes} PDF sin causar`,
         cifras,
       };
     return {
       id: paso,
-      estado: r.pendientes > 0 ? "pendiente" : "hecho",
-      detalle: `Causadas ${r.procesadas} en esta pasada (${r.verdes} en verde, ${r.amarillas} por revisar, ${r.conError} con error); quedan ${r.pendientes} del Excel${pdf}`,
+      // Sigue «pendiente» mientras haya documentos en la cola; la siguiente llamada continúa.
+      estado: cola > 0 ? "pendiente" : "hecho",
+      detalle: `Causadas ${cifras.causadas} esta noche (${cifras.verdes} en verde, ${cifras.amarillas} por revisar, ${cifras.con_error} con error)${
+        cola > 0
+          ? `; quedan ${r.pendientes} del Excel y ${r.pdfPendientes} PDF`
+          : "; la cola quedó vacía"
+      }`,
       cifras,
     };
   }
@@ -327,7 +333,12 @@ export async function avanzarPiloto(
         }
         registro = { id: paso, estado: "hecho", inicio, fin: new Date().toISOString(), detalle };
       } else {
-        const r = await ejecutarPaso(db, cfg.company_id, paso);
+        const r = await ejecutarPaso(
+          db,
+          cfg.company_id,
+          paso,
+          pasos.find((x) => x.id === paso),
+        );
         registro = { ...r, inicio, fin: new Date().toISOString() };
       }
     } catch (e) {

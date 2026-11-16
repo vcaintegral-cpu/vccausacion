@@ -265,6 +265,8 @@ export async function processInvoiceFile(params: {
   /** Ruta del PDF ya guardado en Storage: evita subir el archivo dos veces. */
   storagePath?: string | null;
   onStage?: StageCallback;
+  /** Preparación del archivo (por defecto la del navegador; el piloto usa la del servidor). */
+  preparar?: (file: File) => Promise<Awaited<ReturnType<typeof prepareInvoiceFile>>>;
 }): Promise<ProcessedInvoice> {
   const { file, extract } = params;
   const huella = await fileFingerprint(file);
@@ -274,11 +276,11 @@ export async function processInvoiceFile(params: {
     await params.onStage?.("reading");
     let content;
     try {
-      content = await prepareInvoiceFile(file);
+      content = await (params.preparar ?? prepareInvoiceFile)(file);
     } catch (error) {
       throw new BulkInvoiceStageError(error instanceof Error ? error.message : "ERROR_NO_SE_PUDO_LEER_PDF", "reading");
     }
-    if (!content.text && !content.images?.length && !content.dataUrl) {
+    if (!content.text && !content.images?.length && !content.dataUrl && !content.pdfBase64) {
       throw new BulkInvoiceStageError("ERROR_NO_SE_PUDO_LEER_PDF: no se obtuvo texto ni imagen legible.", "reading");
     }
     await params.onStage?.(content.text ? "extracting_data" : "ocr");
