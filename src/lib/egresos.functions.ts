@@ -252,7 +252,11 @@ export const egresosEnviar = createServerFn({ method: "POST" })
     return input;
   })
   .handler(async ({ data, context }): Promise<ResultadoEnvio> =>
-    egresosEnviarCore(context.supabase as unknown as SupabaseClient, data.egresoId, data.documentId ?? null),
+    egresosEnviarCore(
+      context.supabase as unknown as SupabaseClient,
+      data.egresoId,
+      data.documentId ?? null,
+    ),
   );
 
 /**
@@ -264,199 +268,195 @@ export async function egresosEnviarCore(
   egresoId: string,
   documentIdEntrada: number | null,
 ): Promise<ResultadoEnvio> {
-    const { data: f, error } = await db
-      .from("egresos")
-      .select("*")
-      .eq("id", egresoId)
-      .single();
-    if (error || !f) throw new Error(error?.message ?? "Egreso no encontrado.");
-    if (f.siigo_id)
-      return {
-        ok: true,
-        siigoNombre: f.siigo_nombre,
-        message: `Ya está en Siigo (${f.siigo_nombre ?? f.siigo_id}); no se reenvía.`,
-      };
-    if (f.estado !== "aprobado") throw new Error("Solo se envían egresos aprobados.");
-    if ((f.propuesta as { grupo?: string | null } | null)?.grupo)
-      throw new Error(
-        "Este gasto bancario va en el RP único del banco del mes: envíalo desde «RP de gastos bancarios».",
-      );
-    let p = f.propuesta as unknown as Propuesta;
-    if (p.tipo === "pago_facturas") {
-      // Antes de enviar se valida contra los saldos vigentes de las CxP.
-      const { saldosVigentes } = await import("./egresos.server");
-      const { refrescarSaldos } = await import("./egresos");
-      p = refrescarSaldos(p, await saldosVigentes(db, f.company_id, p.items)).propuesta;
-    }
-    const movimiento = {
-      fecha: String(f.fecha).slice(0, 10),
-      descripcion: f.descripcion,
-      relacion: f.relacion,
-      valor: Number(f.valor),
+  const { data: f, error } = await db.from("egresos").select("*").eq("id", egresoId).single();
+  if (error || !f) throw new Error(error?.message ?? "Egreso no encontrado.");
+  if (f.siigo_id)
+    return {
+      ok: true,
+      siigoNombre: f.siigo_nombre,
+      message: `Ya está en Siigo (${f.siigo_nombre ?? f.siigo_id}); no se reenvía.`,
     };
-    const errores = erroresAntesDeEnviar(movimiento, p);
-    if (errores.length) {
+  if (f.estado !== "aprobado") throw new Error("Solo se envían egresos aprobados.");
+  if ((f.propuesta as { grupo?: string | null } | null)?.grupo)
+    throw new Error(
+      "Este gasto bancario va en el RP único del banco del mes: envíalo desde «RP de gastos bancarios».",
+    );
+  let p = f.propuesta as unknown as Propuesta;
+  if (p.tipo === "pago_facturas") {
+    // Antes de enviar se valida contra los saldos vigentes de las CxP.
+    const { saldosVigentes } = await import("./egresos.server");
+    const { refrescarSaldos } = await import("./egresos");
+    p = refrescarSaldos(p, await saldosVigentes(db, f.company_id, p.items)).propuesta;
+  }
+  const movimiento = {
+    fecha: String(f.fecha).slice(0, 10),
+    descripcion: f.descripcion,
+    relacion: f.relacion,
+    valor: Number(f.valor),
+  };
+  const errores = erroresAntesDeEnviar(movimiento, p);
+  if (errores.length) {
+    await db
+      .from("egresos")
+      .update({ estado: "por_revisar", motivos: errores, propuesta: p as never })
+      .eq("id", f.id)
+      .is("siigo_id", null);
+    return { ok: false, siigoNombre: null, message: errores.join(" "), validacion: true };
+  }
+
+  const { siigoGet, siigoPostConImpuestos, siigoUseCompany } = await import("./siigo.server");
+  const { aprenderImpuestoCuenta } = await import("./egresos.server");
+  await siigoUseCompany(f.company_id);
+  let documentId = documentIdEntrada;
+  if (!documentId) {
+    type Doc = { id?: number; active?: boolean };
+    const docs = await siigoGet<Doc[] | { results?: Doc[] }>("/v1/document-types?type=RP");
+    const activos = (Array.isArray(docs) ? docs : (docs.results ?? [])).filter(
+      (d) => d.id && d.active !== false,
+    );
+    if (activos.length !== 1)
+      throw new Error(
+        activos.length
+          ? "La empresa tiene varios tipos de recibo de pago en Siigo: elige cuál usar."
+          : "La empresa no tiene un tipo de recibo de pago (RP) activo en Siigo.",
+      );
+    documentId = Number(activos[0]!.id);
+  }
+  const { impuestosParaCuentas } = await import("./egresos.server");
+  const { payloadAnticipo, cuentasConImpuesto } = await import("./egresos");
+  // Cuentas de impuestos del recibo (incluidas las 1355 de retenciones que nos practicaron):
+  // Siigo exige su «tax.id».
+  const { mapa: impuestos } = await impuestosParaCuentas(db, f.company_id, cuentasConImpuesto(p));
+  const ref = String(f.id).slice(0, 8);
+  // Uno o dos recibos: el de las facturas/cuentas y, si hay excedente, el de anticipo.
+  const partes: Array<{ parte: "pago" | "anticipo"; payload: Record<string, unknown> }> = [];
+  const valorPrincipal =
+    Number(f.valor) - (p.tipo === "pago_facturas" ? Number(p.anticipo?.valor ?? 0) : 0);
+  if (valorPrincipal > 0.009)
+    partes.push({
+      parte: "pago",
+      payload: payloadRecibo(movimiento, p, documentId, ref, impuestos),
+    });
+  const anticipo = payloadAnticipo(movimiento, p, documentId, ref);
+  if (anticipo) partes.push({ parte: "anticipo", payload: anticipo });
+  // Recibos ya creados en un intento anterior (no se vuelven a crear).
+  const previo = (f.siigo_payload ?? {}) as {
+    creados?: Array<{ parte: string; id: string; nombre: string | null }>;
+  };
+  const creados = [...(previo.creados ?? [])];
+
+  // Bloqueo contra doble envío.
+  const { data: bloqueado } = await db
+    .from("egresos")
+    .update({
+      estado: "enviando",
+      siigo_error: null,
+      siigo_payload: { partes, creados } as never,
+    })
+    .eq("id", f.id)
+    .eq("estado", "aprobado")
+    .is("siigo_id", null)
+    .select("id");
+  if (!bloqueado?.length) throw new Error("Este egreso ya se está enviando a Siigo.");
+
+  try {
+    for (const parte of partes) {
+      if (creados.some((c) => c.parte === parte.parte)) continue;
+      const res = await siigoPostConImpuestos<{ id?: string; name?: string }>(
+        "/v1/payment-receipts",
+        parte.payload,
+        (cuenta, taxId) => aprenderImpuestoCuenta(db, f.company_id, cuenta, taxId),
+      );
+      if (!res?.id) throw new Error("Siigo no devolvió el identificador del recibo.");
+      let nombre = res.name ?? null;
+      try {
+        const leido = await siigoGet<{ name?: string }>(
+          `/v1/payment-receipts/${encodeURIComponent(res.id)}`,
+        );
+        nombre = leido?.name ?? nombre;
+      } catch {
+        /* la lectura de verificación es opcional */
+      }
+      creados.push({ parte: parte.parte, id: String(res.id), nombre });
+      // Se guarda cada recibo creado de inmediato: un reintento no lo vuelve a crear.
       await db
         .from("egresos")
-        .update({ estado: "por_revisar", motivos: errores, propuesta: p as never })
-        .eq("id", f.id)
-        .is("siigo_id", null);
-      return { ok: false, siigoNombre: null, message: errores.join(" "), validacion: true };
+        .update({ siigo_payload: { partes, creados } as never })
+        .eq("id", f.id);
     }
-
-    const { siigoGet, siigoPostConImpuestos, siigoUseCompany } = await import("./siigo.server");
-    const { aprenderImpuestoCuenta } = await import("./egresos.server");
-    await siigoUseCompany(f.company_id);
-    let documentId = documentIdEntrada;
-    if (!documentId) {
-      type Doc = { id?: number; active?: boolean };
-      const docs = await siigoGet<Doc[] | { results?: Doc[] }>("/v1/document-types?type=RP");
-      const activos = (Array.isArray(docs) ? docs : (docs.results ?? [])).filter(
-        (d) => d.id && d.active !== false,
-      );
-      if (activos.length !== 1)
-        throw new Error(
-          activos.length
-            ? "La empresa tiene varios tipos de recibo de pago en Siigo: elige cuál usar."
-            : "La empresa no tiene un tipo de recibo de pago (RP) activo en Siigo.",
-        );
-      documentId = Number(activos[0]!.id);
-    }
-    const { impuestosParaCuentas } = await import("./egresos.server");
-    const { payloadAnticipo, cuentasConImpuesto } = await import("./egresos");
-    // Cuentas de impuestos del recibo (incluidas las 1355 de retenciones que nos practicaron):
-    // Siigo exige su «tax.id».
-    const { mapa: impuestos } = await impuestosParaCuentas(db, f.company_id, cuentasConImpuesto(p));
-    const ref = String(f.id).slice(0, 8);
-    // Uno o dos recibos: el de las facturas/cuentas y, si hay excedente, el de anticipo.
-    const partes: Array<{ parte: "pago" | "anticipo"; payload: Record<string, unknown> }> = [];
-    const valorPrincipal =
-      Number(f.valor) - (p.tipo === "pago_facturas" ? Number(p.anticipo?.valor ?? 0) : 0);
-    if (valorPrincipal > 0.009)
-      partes.push({
-        parte: "pago",
-        payload: payloadRecibo(movimiento, p, documentId, ref, impuestos),
-      });
-    const anticipo = payloadAnticipo(movimiento, p, documentId, ref);
-    if (anticipo) partes.push({ parte: "anticipo", payload: anticipo });
-    // Recibos ya creados en un intento anterior (no se vuelven a crear).
-    const previo = (f.siigo_payload ?? {}) as {
-      creados?: Array<{ parte: string; id: string; nombre: string | null }>;
-    };
-    const creados = [...(previo.creados ?? [])];
-
-    // Bloqueo contra doble envío.
-    const { data: bloqueado } = await db
+    const nombres = creados.map((c) => c.nombre ?? c.id).join(" + ");
+    await db
       .from("egresos")
       .update({
-        estado: "enviando",
+        estado: "enviado",
+        siigo_id: creados[0]!.id,
+        siigo_nombre: nombres,
+        enviado_at: new Date().toISOString(),
         siigo_error: null,
+      })
+      .eq("id", f.id);
+    // Saldo local de las CxP pagadas (se confirma en la próxima sincronización).
+    if (p.tipo === "pago_facturas")
+      for (const i of p.items) {
+        const nuevo = Math.round((i.saldo - i.valor) * 100) / 100;
+        if (nuevo <= 0.009)
+          await db
+            .from("siigo_cuentas_por_pagar")
+            .delete()
+            .eq("company_id", f.company_id)
+            .eq("prefix", i.prefix)
+            .eq("consecutive", i.consecutive)
+            .eq("quote", i.quote);
+        else
+          await db
+            .from("siigo_cuentas_por_pagar")
+            .update({ balance: nuevo })
+            .eq("company_id", f.company_id)
+            .eq("prefix", i.prefix)
+            .eq("consecutive", i.consecutive)
+            .eq("quote", i.quote);
+      }
+    return { ok: true, siigoNombre: nombres, message: `Recibo ${nombres} creado en Siigo.` };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Respuesta perdida (red): el recibo pudo crearse; no se reintenta solo.
+    // 409 «duplicated_document»: Siigo dice que ya existe un recibo igual; puede ser
+    // este mismo pago creado en un intento anterior, así que se verifica antes de reintentar.
+    const incierto =
+      /\b409\b|duplicated_document/.test(msg) || !/\b(400|401|403|404|422)\b/.test(msg);
+    // «items[N].tax.id is required»: la cuenta de esa línea está vinculada a un impuesto.
+    const sinImpuesto = /items\[(\d+)\]\.tax\.id/.exec(msg);
+    const lineaImpuesto = sinImpuesto
+      ? (() => {
+          const items = (partes[creados.length]?.payload["items"] ?? []) as Array<{
+            account?: { code?: string };
+          }>;
+          const code = items[Number(sinImpuesto[1])]?.account?.code;
+          return code
+            ? `La cuenta ${code} está vinculada a un impuesto en Siigo y Siigo no aceptó ninguno de los impuestos activos de ese tipo. En Siigo (Configuración → Impuestos), revisa que exista activo el impuesto cuya cuenta contable de ventas sea ${code} (p. ej. «Retención en la fuente tarjetas 1,5%»), o escoge otra cuenta 1355 que sí esté vinculada. `
+            : "";
+        })()
+      : "";
+    const parcial = creados.length
+      ? `Ya se creó en Siigo ${creados.map((c) => `${c.nombre ?? c.id} (${c.parte === "pago" ? "facturas" : "anticipo"})`).join(", ")}; al reintentar solo se crea lo que falta. `
+      : "";
+    await db
+      .from("egresos")
+      .update({
+        estado: "error",
         siigo_payload: { partes, creados } as never,
+        siigo_error:
+          lineaImpuesto +
+          parcial +
+          (incierto
+            ? "Respuesta de Siigo incierta: verifica en Siigo si el recibo se creó antes de reintentar. "
+            : "") +
+          msg.slice(0, 1600),
       })
       .eq("id", f.id)
-      .eq("estado", "aprobado")
-      .is("siigo_id", null)
-      .select("id");
-    if (!bloqueado?.length) throw new Error("Este egreso ya se está enviando a Siigo.");
-
-    try {
-      for (const parte of partes) {
-        if (creados.some((c) => c.parte === parte.parte)) continue;
-        const res = await siigoPostConImpuestos<{ id?: string; name?: string }>(
-          "/v1/payment-receipts",
-          parte.payload,
-          (cuenta, taxId) => aprenderImpuestoCuenta(db, f.company_id, cuenta, taxId),
-        );
-        if (!res?.id) throw new Error("Siigo no devolvió el identificador del recibo.");
-        let nombre = res.name ?? null;
-        try {
-          const leido = await siigoGet<{ name?: string }>(
-            `/v1/payment-receipts/${encodeURIComponent(res.id)}`,
-          );
-          nombre = leido?.name ?? nombre;
-        } catch {
-          /* la lectura de verificación es opcional */
-        }
-        creados.push({ parte: parte.parte, id: String(res.id), nombre });
-        // Se guarda cada recibo creado de inmediato: un reintento no lo vuelve a crear.
-        await db
-          .from("egresos")
-          .update({ siigo_payload: { partes, creados } as never })
-          .eq("id", f.id);
-      }
-      const nombres = creados.map((c) => c.nombre ?? c.id).join(" + ");
-      await db
-        .from("egresos")
-        .update({
-          estado: "enviado",
-          siigo_id: creados[0]!.id,
-          siigo_nombre: nombres,
-          enviado_at: new Date().toISOString(),
-          siigo_error: null,
-        })
-        .eq("id", f.id);
-      // Saldo local de las CxP pagadas (se confirma en la próxima sincronización).
-      if (p.tipo === "pago_facturas")
-        for (const i of p.items) {
-          const nuevo = Math.round((i.saldo - i.valor) * 100) / 100;
-          if (nuevo <= 0.009)
-            await db
-              .from("siigo_cuentas_por_pagar")
-              .delete()
-              .eq("company_id", f.company_id)
-              .eq("prefix", i.prefix)
-              .eq("consecutive", i.consecutive)
-              .eq("quote", i.quote);
-          else
-            await db
-              .from("siigo_cuentas_por_pagar")
-              .update({ balance: nuevo })
-              .eq("company_id", f.company_id)
-              .eq("prefix", i.prefix)
-              .eq("consecutive", i.consecutive)
-              .eq("quote", i.quote);
-        }
-      return { ok: true, siigoNombre: nombres, message: `Recibo ${nombres} creado en Siigo.` };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // Respuesta perdida (red): el recibo pudo crearse; no se reintenta solo.
-      // 409 «duplicated_document»: Siigo dice que ya existe un recibo igual; puede ser
-      // este mismo pago creado en un intento anterior, así que se verifica antes de reintentar.
-      const incierto =
-        /\b409\b|duplicated_document/.test(msg) || !/\b(400|401|403|404|422)\b/.test(msg);
-      // «items[N].tax.id is required»: la cuenta de esa línea está vinculada a un impuesto.
-      const sinImpuesto = /items\[(\d+)\]\.tax\.id/.exec(msg);
-      const lineaImpuesto = sinImpuesto
-        ? (() => {
-            const items = (partes[creados.length]?.payload["items"] ?? []) as Array<{
-              account?: { code?: string };
-            }>;
-            const code = items[Number(sinImpuesto[1])]?.account?.code;
-            return code
-              ? `La cuenta ${code} está vinculada a un impuesto en Siigo y Siigo no aceptó ninguno de los impuestos activos de ese tipo. En Siigo (Configuración → Impuestos), revisa que exista activo el impuesto cuya cuenta contable de ventas sea ${code} (p. ej. «Retención en la fuente tarjetas 1,5%»), o escoge otra cuenta 1355 que sí esté vinculada. `
-              : "";
-          })()
-        : "";
-      const parcial = creados.length
-        ? `Ya se creó en Siigo ${creados.map((c) => `${c.nombre ?? c.id} (${c.parte === "pago" ? "facturas" : "anticipo"})`).join(", ")}; al reintentar solo se crea lo que falta. `
-        : "";
-      await db
-        .from("egresos")
-        .update({
-          estado: "error",
-          siigo_payload: { partes, creados } as never,
-          siigo_error:
-            lineaImpuesto +
-            parcial +
-            (incierto
-              ? "Respuesta de Siigo incierta: verifica en Siigo si el recibo se creó antes de reintentar. "
-              : "") +
-            msg.slice(0, 1600),
-        })
-        .eq("id", f.id)
-        .is("siigo_id", null);
-      return { ok: false, siigoNombre: null, message: msg };
-    }
+      .is("siigo_id", null);
+    return { ok: false, siigoNombre: null, message: msg };
+  }
 }
 
 /** Devuelve a «aprobado» un egreso con error de Siigo, para reintentarlo después de revisar. */
@@ -781,153 +781,151 @@ export const egresosEnviarGrupoBancario = createServerFn({ method: "POST" })
       throw new Error("Empresa, mes y banco requeridos.");
     return input;
   })
-  .handler(
-    async ({
-      data,
-      context,
-    }): Promise<{ ok: boolean; siigoNombre: string | null; message: string }> => {
-      const db = context.supabase;
-      const { data: filas, error } = await db
-        .from("egresos")
-        .select("id, fecha, descripcion, valor, estado, propuesta, siigo_id")
-        .eq("company_id", data.companyId)
-        .eq("period", data.periodo)
-        .eq("propuesta->>grupo", data.grupo)
-        .order("fecha");
-      if (error) throw new Error(error.message);
-      const lista = (filas ?? []) as Array<{
-        id: string;
-        fecha: string;
-        descripcion: string | null;
-        valor: number;
-        estado: string;
-        propuesta: unknown;
-        siigo_id: string | null;
-      }>;
-      const etiqueta = data.grupo.slice("bancario|".length);
-      if (!lista.length)
-        throw new Error(`No hay gastos bancarios de ${etiqueta} en ${data.periodo}.`);
-      if (lista.some((f) => f.siigo_id))
-        return {
-          ok: true,
-          siigoNombre: null,
-          message: `Los gastos bancarios de ${etiqueta} de ${data.periodo} ya están en Siigo; no se reenvían.`,
-        };
-      const pendientes = lista.filter((f) => !["listo", "aprobado"].includes(f.estado));
-      if (pendientes.length)
-        throw new Error(
-          `Faltan ${pendientes.length} gastos bancarios de ${etiqueta} por revisar (cuenta o tercero) antes de enviar el RP del mes.`,
-        );
-
-      const { payloadReciboAgrupado } = await import("./egresos");
-      const [anio, mes] = data.periodo.split("-").map(Number) as [number, number];
-      const finMes = new Date(Date.UTC(anio, mes, 0)).toISOString().slice(0, 10);
-      const hoy = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
-      const fecha = finMes < hoy ? finMes : hoy;
-      const { siigoGet, siigoPostConImpuestos, siigoUseCompany } = await import("./siigo.server");
-      const { aprenderImpuestoCuenta } = await import("./egresos.server");
-      await siigoUseCompany(data.companyId);
-      const documentId = await tipoReciboPago();
-      const { payload, total, errores } = payloadReciboAgrupado(
-        lista.map((f) => ({
-          fecha: String(f.fecha).slice(0, 10),
-          descripcion: f.descripcion,
-          valor: Number(f.valor),
-          propuesta: f.propuesta as Propuesta,
-        })),
-        documentId,
-        fecha,
-        etiqueta,
-        (
-          await (
-            await import("./egresos.server")
-          ).impuestosParaCuentas(
-            db,
-            data.companyId,
-            lista.flatMap((f) =>
-              (f.propuesta as Propuesta).cuentas
-                .map((c) => c.code)
-                .filter((c) => /^(1355|2365|2367|2368|2408)/.test(c)),
-            ),
-          )
-        ).mapa,
-      );
-      if (errores.length) throw new Error(errores.join(" "));
-
-      // Bloqueo contra doble envío: todos los movimientos del grupo a la vez.
-      const ids = lista.map((f) => f.id);
-      const { data: bloqueados } = await db
-        .from("egresos")
-        .update({ estado: "enviando", siigo_error: null, siigo_payload: payload as never })
-        .in("id", ids)
-        .in("estado", ["listo", "aprobado"])
-        .is("siigo_id", null)
-        .select("id");
-      if ((bloqueados ?? []).length !== ids.length) {
-        await db
-          .from("egresos")
-          .update({ estado: "aprobado" })
-          .in(
-            "id",
-            (bloqueados ?? []).map((b) => b.id),
-          )
-          .eq("estado", "enviando")
-          .is("siigo_id", null);
-        throw new Error("Otro envío está en curso para estos gastos bancarios.");
-      }
-      try {
-        const res = await siigoPostConImpuestos<{ id?: string; name?: string }>(
-          "/v1/payment-receipts",
-          payload,
-          (cuenta, taxId) => aprenderImpuestoCuenta(db, data.companyId, cuenta, taxId),
-        );
-        if (!res?.id) throw new Error("Siigo no devolvió el identificador del recibo.");
-        let nombre = res.name ?? null;
-        try {
-          nombre =
-            (
-              await siigoGet<{ name?: string }>(
-                `/v1/payment-receipts/${encodeURIComponent(res.id)}`,
-              )
-            )?.name ?? nombre;
-        } catch {
-          /* lectura de verificación opcional */
-        }
-        await db
-          .from("egresos")
-          .update({
-            estado: "enviado",
-            siigo_id: String(res.id),
-            siigo_nombre: nombre,
-            enviado_at: new Date().toISOString(),
-          })
-          .in("id", ids);
-        return {
-          ok: true,
-          siigoNombre: nombre,
-          message: `RP ${nombre ?? res.id}: ${lista.length} gastos bancarios de ${etiqueta} por ${total.toLocaleString("es-CO")}.`,
-        };
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        // 409 «duplicated_document»: Siigo dice que ya existe un recibo igual; puede ser
-        // este mismo pago creado en un intento anterior, así que se verifica antes de reintentar.
-        const incierto =
-          /\b409\b|duplicated_document/.test(msg) || !/\b(400|401|403|404|422)\b/.test(msg);
-        await db
-          .from("egresos")
-          .update({
-            estado: "error",
-            siigo_error:
-              (incierto
-                ? "Respuesta de Siigo incierta: verifica en Siigo si el recibo se creó antes de reintentar. "
-                : "") + msg.slice(0, 1800),
-          })
-          .in("id", ids)
-          .is("siigo_id", null);
-        return { ok: false, siigoNombre: null, message: msg };
-      }
-    },
+  .handler(async ({ data, context }) =>
+    egresosEnviarGrupoBancarioCore(context.supabase as unknown as SupabaseClient, data),
   );
+
+/** RP único de gastos bancarios del mes de un banco (misma lógica del botón; la usa también el piloto). */
+export async function egresosEnviarGrupoBancarioCore(
+  db: SupabaseClient,
+  data: { companyId: string; periodo: string; grupo: string },
+): Promise<{ ok: boolean; siigoNombre: string | null; message: string }> {
+  const { data: filas, error } = await db
+    .from("egresos")
+    .select("id, fecha, descripcion, valor, estado, propuesta, siigo_id")
+    .eq("company_id", data.companyId)
+    .eq("period", data.periodo)
+    .eq("propuesta->>grupo", data.grupo)
+    .order("fecha");
+  if (error) throw new Error(error.message);
+  const lista = (filas ?? []) as Array<{
+    id: string;
+    fecha: string;
+    descripcion: string | null;
+    valor: number;
+    estado: string;
+    propuesta: unknown;
+    siigo_id: string | null;
+  }>;
+  const etiqueta = data.grupo.slice("bancario|".length);
+  if (!lista.length) throw new Error(`No hay gastos bancarios de ${etiqueta} en ${data.periodo}.`);
+  if (lista.some((f) => f.siigo_id))
+    return {
+      ok: true,
+      siigoNombre: null,
+      message: `Los gastos bancarios de ${etiqueta} de ${data.periodo} ya están en Siigo; no se reenvían.`,
+    };
+  const pendientes = lista.filter((f) => !["listo", "aprobado"].includes(f.estado));
+  if (pendientes.length)
+    throw new Error(
+      `Faltan ${pendientes.length} gastos bancarios de ${etiqueta} por revisar (cuenta o tercero) antes de enviar el RP del mes.`,
+    );
+
+  const { payloadReciboAgrupado } = await import("./egresos");
+  const [anio, mes] = data.periodo.split("-").map(Number) as [number, number];
+  const finMes = new Date(Date.UTC(anio, mes, 0)).toISOString().slice(0, 10);
+  const hoy = new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
+  const fecha = finMes < hoy ? finMes : hoy;
+  const { siigoGet, siigoPostConImpuestos, siigoUseCompany } = await import("./siigo.server");
+  const { aprenderImpuestoCuenta } = await import("./egresos.server");
+  await siigoUseCompany(data.companyId);
+  const documentId = await tipoReciboPago();
+  const { payload, total, errores } = payloadReciboAgrupado(
+    lista.map((f) => ({
+      fecha: String(f.fecha).slice(0, 10),
+      descripcion: f.descripcion,
+      valor: Number(f.valor),
+      propuesta: f.propuesta as Propuesta,
+    })),
+    documentId,
+    fecha,
+    etiqueta,
+    (
+      await (
+        await import("./egresos.server")
+      ).impuestosParaCuentas(
+        db,
+        data.companyId,
+        lista.flatMap((f) =>
+          (f.propuesta as Propuesta).cuentas
+            .map((c) => c.code)
+            .filter((c) => /^(1355|2365|2367|2368|2408)/.test(c)),
+        ),
+      )
+    ).mapa,
+  );
+  if (errores.length) throw new Error(errores.join(" "));
+
+  // Bloqueo contra doble envío: todos los movimientos del grupo a la vez.
+  const ids = lista.map((f) => f.id);
+  const { data: bloqueados } = await db
+    .from("egresos")
+    .update({ estado: "enviando", siigo_error: null, siigo_payload: payload as never })
+    .in("id", ids)
+    .in("estado", ["listo", "aprobado"])
+    .is("siigo_id", null)
+    .select("id");
+  if ((bloqueados ?? []).length !== ids.length) {
+    await db
+      .from("egresos")
+      .update({ estado: "aprobado" })
+      .in(
+        "id",
+        (bloqueados ?? []).map((b) => b.id),
+      )
+      .eq("estado", "enviando")
+      .is("siigo_id", null);
+    throw new Error("Otro envío está en curso para estos gastos bancarios.");
+  }
+  try {
+    const res = await siigoPostConImpuestos<{ id?: string; name?: string }>(
+      "/v1/payment-receipts",
+      payload,
+      (cuenta, taxId) => aprenderImpuestoCuenta(db, data.companyId, cuenta, taxId),
+    );
+    if (!res?.id) throw new Error("Siigo no devolvió el identificador del recibo.");
+    let nombre = res.name ?? null;
+    try {
+      nombre =
+        (await siigoGet<{ name?: string }>(`/v1/payment-receipts/${encodeURIComponent(res.id)}`))
+          ?.name ?? nombre;
+    } catch {
+      /* lectura de verificación opcional */
+    }
+    await db
+      .from("egresos")
+      .update({
+        estado: "enviado",
+        siigo_id: String(res.id),
+        siigo_nombre: nombre,
+        enviado_at: new Date().toISOString(),
+      })
+      .in("id", ids);
+    return {
+      ok: true,
+      siigoNombre: nombre,
+      message: `RP ${nombre ?? res.id}: ${lista.length} gastos bancarios de ${etiqueta} por ${total.toLocaleString("es-CO")}.`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // 409 «duplicated_document»: Siigo dice que ya existe un recibo igual; puede ser
+    // este mismo pago creado en un intento anterior, así que se verifica antes de reintentar.
+    const incierto =
+      /\b409\b|duplicated_document/.test(msg) || !/\b(400|401|403|404|422)\b/.test(msg);
+    await db
+      .from("egresos")
+      .update({
+        estado: "error",
+        siigo_error:
+          (incierto
+            ? "Respuesta de Siigo incierta: verifica en Siigo si el recibo se creó antes de reintentar. "
+            : "") + msg.slice(0, 1800),
+      })
+      .in("id", ids)
+      .is("siigo_id", null);
+    return { ok: false, siigoNombre: null, message: msg };
+  }
+}
 
 /** Cuentas del ajuste al peso de los recibos y CxP cruzada de la empresa (detectadas o elegidas). */
 export const egresosCuentasAjuste = createServerFn({ method: "POST" })

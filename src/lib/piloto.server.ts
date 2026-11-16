@@ -373,6 +373,50 @@ async function ejecutarPaso(
       cifras,
     };
   }
+  if (paso === "gastos_bancarios") {
+    const { etiquetaMes, rangoDelMes, horaColombia } = await import("./piloto");
+    if (!mes) throw new Error("No hay mes de trabajo para los gastos bancarios.");
+    const { procesarGastosBancarios } = await import("./piloto-gastos.server");
+    const { hasta } = rangoDelMes(mes);
+    // El RP único se envía al cierre: desde el último día del mes de trabajo en adelante.
+    const cierre = horaColombia(new Date()).fecha >= hasta;
+    const enviar = envio?.enviar === true;
+    const r = await procesarGastosBancarios(db, companyId, {
+      periodo: mes.slice(0, 7),
+      tope: envio?.tope ?? 5_000_000,
+      enviar,
+      cierre,
+    });
+    const completo = (g: (typeof r.grupos)[number]) => !g.faltante && g.listos > 0;
+    const cifras = {
+      grupos: r.grupos.length,
+      movimientos: r.grupos.reduce((s, g) => s + g.movimientos, 0),
+      completos: r.grupos.filter(completo).length,
+      enviados: r.grupos.filter((g) => g.enviado).length,
+      con_error: r.conError,
+    };
+    const fmt = (n: number) => `$${n.toLocaleString("es-CO")}`;
+    const lineas = r.grupos
+      .map((g) =>
+        g.enviado
+          ? `${g.banco}: RP único ya enviado`
+          : completo(g)
+            ? `${g.banco}: ${g.movimientos} movimientos por ${fmt(g.valor)}, completo para el RP único`
+            : `${g.banco}: ${g.movimientos} movimientos por ${fmt(g.valor)}, ${g.listos} listos — falta: ${g.faltante ?? "completar movimientos"}`,
+      )
+      .join("; ");
+    const cuando = cierre
+      ? enviar
+        ? `${r.enviados} RP único(s) enviado(s) ahora`
+        : "es el cierre del mes pero el envío a Siigo está en modo prueba: no se envió nada"
+      : `se envían al cierre (${hasta})`;
+    return {
+      id: paso,
+      estado: r.conError > 0 ? "error" : "hecho",
+      detalle: `Gastos bancarios de ${etiquetaMes(mes)}: ${r.grupos.length ? lineas : "sin gastos bancarios del mes"} · ${cuando}${r.mensajes.length ? ` · ${r.mensajes.slice(0, 3).join(" | ")}` : ""}`,
+      cifras,
+    };
+  }
   if (paso === "reporte") return { id: paso, estado: "hecho", detalle: "Reporte enviado." };
   return {
     id: paso,
