@@ -198,6 +198,36 @@ export class BulkInvoiceStageError extends Error {
   }
 }
 
+/**
+ * El documento no es del mes de trabajo del piloto automático: no se causa. Si es de un mes anterior ya
+ * está cerrado; si es de uno posterior queda apartado y se retoma cuando el piloto llegue a ese mes.
+ */
+export class FueraDeMesError extends Error {
+  readonly fecha: string | null;
+  readonly ubicacion: "anterior" | "posterior" | "sin_fecha";
+
+  constructor(message: string, fecha: string | null, ubicacion: FueraDeMesError["ubicacion"]) {
+    super(message);
+    this.name = "FueraDeMesError";
+    this.fecha = fecha;
+    this.ubicacion = ubicacion;
+  }
+}
+
+/** Rango de fechas del mes de trabajo (AAAA-MM-DD). */
+export type RangoMes = { desde: string; hasta: string; etiqueta: string };
+
+export function verificarMes(fecha: string | null | undefined, mes?: RangoMes) {
+  if (!mes) return;
+  const f = String(fecha ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f))
+    throw new FueraDeMesError(`Sin fecha legible: no se puede ubicar en ${mes.etiqueta}; revísela en la aplicación.`, null, "sin_fecha");
+  if (f < mes.desde)
+    throw new FueraDeMesError(`Es del ${f}, de un mes anterior a ${mes.etiqueta}: ya está cerrado, no se causó.`, f, "anterior");
+  if (f > mes.hasta)
+    throw new FueraDeMesError(`Es del ${f}, posterior a ${mes.etiqueta}: queda apartada hasta que el piloto llegue a ese mes.`, f, "posterior");
+}
+
 /** Caché de extracciones ya realizadas (por huella del archivo) para no volver a llamar a la IA. */
 const extraccionCache = new Map<string, { data: ExtractedInvoice; texto: string; lectura: "texto" | "imagen" }>();
 
@@ -267,6 +297,8 @@ export async function processInvoiceFile(params: {
   onStage?: StageCallback;
   /** Preparación del archivo (por defecto la del navegador; el piloto usa la del servidor). */
   preparar?: (file: File) => Promise<Awaited<ReturnType<typeof prepareInvoiceFile>>>;
+  /** Mes de trabajo del piloto: una factura de otro mes no se causa. */
+  mes?: RangoMes;
 }): Promise<ProcessedInvoice> {
   const { file, extract } = params;
   const huella = await fileFingerprint(file);
@@ -302,6 +334,7 @@ export async function processInvoiceFile(params: {
     };
     extraccionCache.set(huella, cached);
   }
+  verificarMes(cached.data.issue_date, params.mes);
   return saveExtractedInvoice({
     data: cached.data,
     fileName: file.name,

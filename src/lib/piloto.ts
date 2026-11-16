@@ -143,6 +143,8 @@ export function reporteHtml(p: {
   pasos: PasoRegistro[];
   pendientes: number;
   base: string;
+  /** Mes de trabajo del piloto, p. ej. «noviembre de 2026». */
+  mes?: string;
 }): { asunto: string; html: string } {
   const icono: Record<EstadoPaso, string> = {
     hecho: "✔",
@@ -160,10 +162,72 @@ export function reporteHtml(p: {
   return {
     asunto: `${p.empresa}: reporte del piloto automático (noche del ${p.noche})${errores ? ` — ${errores} con error` : ""}`,
     html: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222">
-      <p>Reporte del piloto automático de <b>${esc(p.empresa)}</b>, noche del ${esc(p.noche)}.</p>
+      <p>Reporte del piloto automático de <b>${esc(p.empresa)}</b>, noche del ${esc(p.noche)}.${p.mes ? ` Mes de trabajo: <b>${esc(p.mes)}</b>.` : ""}</p>
       <table style="border-collapse:collapse;border:1px solid #ddd">${filas}</table>
       <p>${p.pendientes ? `Quedan <b>${p.pendientes}</b> pregunta(s) esperando su respuesta.` : "No quedan preguntas pendientes."}</p>
       <p style="color:#666;font-size:12px">Detalle y memoria de cada noche en ${esc(p.base.replace(/\/$/, ""))}/piloto</p>
     </div>`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Mes de trabajo: el piloto solo causa documentos del mes en curso y pasa al siguiente mes
+// únicamente cuando la usuaria confirma que el mes quedó completo (facturas, egresos y conciliación).
+// ---------------------------------------------------------------------------
+
+/** Primer día del mes de una fecha AAAA-MM-DD (o AAAA-MM). */
+export const primerDiaDeMes = (fecha: string): string => `${fecha.slice(0, 7)}-01`;
+
+/** Mes de trabajo: el guardado en la configuración o, si no hay, el mes actual de Colombia. */
+export function mesDeTrabajo(guardado: string | null | undefined, ahora: Date): string {
+  return guardado && /^\d{4}-\d{2}/.test(guardado)
+    ? primerDiaDeMes(guardado)
+    : primerDiaDeMes(horaColombia(ahora).fecha);
+}
+
+/** Primer y último día del mes. */
+export function rangoDelMes(mes: string): { desde: string; hasta: string } {
+  const [a, m] = mes.split("-").map(Number) as [number, number];
+  const ultimo = new Date(Date.UTC(a, m, 0)).getUTCDate();
+  const base = primerDiaDeMes(mes);
+  return { desde: base, hasta: `${base.slice(0, 7)}-${String(ultimo).padStart(2, "0")}` };
+}
+
+/** Mes siguiente (primer día). */
+export function siguienteMes(mes: string): string {
+  const [a, m] = mes.split("-").map(Number) as [number, number];
+  const d = new Date(Date.UTC(a, m, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+}
+
+const MESES = [
+  "enero",
+  "febrero",
+  "marzo",
+  "abril",
+  "mayo",
+  "junio",
+  "julio",
+  "agosto",
+  "septiembre",
+  "octubre",
+  "noviembre",
+  "diciembre",
+];
+
+/** «noviembre de 2026». */
+export function etiquetaMes(mes: string): string {
+  const [a, m] = mes.split("-").map(Number) as [number, number];
+  return `${MESES[m - 1]} de ${a}`;
+}
+
+/** Dónde cae una fecha respecto del mes de trabajo. */
+export function ubicacionEnMes(
+  fecha: string | null | undefined,
+  mes: string,
+): "dentro" | "anterior" | "posterior" | "sin_fecha" {
+  const f = String(fecha ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) return "sin_fecha";
+  const { desde, hasta } = rangoDelMes(mes);
+  return f < desde ? "anterior" : f > hasta ? "posterior" : "dentro";
 }

@@ -14,7 +14,7 @@ import { supabase } from "@/lib/db-contextual";
 import { extractInvoice } from "@/lib/extract.functions";
 import { fetchCompanyPuc } from "@/lib/puc-data";
 import { errorCode } from "@/lib/bulk-diagnostics";
-import { BulkInvoiceStageError, processInvoiceFile, resetBulkBatch, saveExtractedInvoice, type BulkConfig, type InvoiceReadTrace } from "@/lib/bulk-invoices";
+import { BulkInvoiceStageError, FueraDeMesError, verificarMes, type RangoMes, processInvoiceFile, resetBulkBatch, saveExtractedInvoice, type BulkConfig, type InvoiceReadTrace } from "@/lib/bulk-invoices";
 import { parsePurchaseWorkbook, type PurchaseDocument } from "@/lib/purchase-excel";
 import { excelDocKey, excelDocToExtracted } from "@/lib/excel-invoice-adapter";
 import { fetchProviderRules } from "@/lib/provider-rules";
@@ -250,12 +250,13 @@ function parseExcelCached(storagePath: string, fileName: string, companyNit: str
 }
 
 /** Procesa un documento del Excel RECIBIDOS por la MISMA función de causación del PDF. */
-async function processExcelItem(item: BulkItem, companyId: string, deps: Deps) {
+async function processExcelItem(item: BulkItem, companyId: string, deps: Deps, mes?: RangoMes) {
   const key = item.fingerprint?.startsWith("excel:") ? item.fingerprint.slice(6) : "";
   if (!item.storage_path || !key) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene el documento del Excel.");
   const docs = await parseExcelCached(item.storage_path, item.file_name, deps.config.batch?.company.nit ?? "");
   const doc = docs.find((d) => excelDocKey(d) === key);
   if (!doc) throw new Error("El documento ya no está en el archivo Excel cargado.");
+  verificarMes(doc.header.issue_date, mes);
   const trace: InvoiceReadTrace = {
     providerName: doc.header.provider_name || null,
     providerNit: doc.header.provider_nit || null,
@@ -328,11 +329,11 @@ export type ModoServidor = {
   preparar: NonNullable<Parameters<typeof processInvoiceFile>[0]["preparar"]>;
 };
 
-export async function processItem(item: BulkItem, companyId: string, deps: Deps, servidor?: ModoServidor) {
+export async function processItem(item: BulkItem, companyId: string, deps: Deps, servidor?: ModoServidor, mes?: RangoMes) {
   await updateItem(item.id, { status: "downloading", attempts: item.attempts + 1, stage: "recuperando_pdf" });
   try {
     if (item.fingerprint?.startsWith("excel:")) {
-      await processExcelItem(item, companyId, deps);
+      await processExcelItem(item, companyId, deps, mes);
       return;
     }
     if (!item.storage_path) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene storage_path.");
@@ -376,6 +377,7 @@ export async function processItem(item: BulkItem, companyId: string, deps: Deps,
       config: deps.config,
       extract: servidor?.extract ?? (extractInvoice as never),
       ...(servidor ? { preparar: servidor.preparar } : {}),
+      ...(mes ? { mes } : {}),
       storagePath: item.storage_path,
       onStage: saveTrace,
       knowledge: deps.knowledge,
@@ -399,6 +401,17 @@ export async function processItem(item: BulkItem, companyId: string, deps: Deps,
       read_status: result.readMode === "texto" ? "Leída (texto)" : "Leída (imagen)",
     });
   } catch (error) {
+    if (error instanceof FueraDeMesError) {
+      // Fuera del mes de trabajo: no es una falla. Queda apartada (cancelada) con su fecha para retomarla.
+      await updateItem(item.id, {
+        status: "cancelled",
+        stage: "fuera_de_mes",
+        issue_date: error.fecha,
+        error_message: null,
+        user_message: error.message,
+      });
+      return;
+    }
     const message = error instanceof Error ? error.message : "Error al procesar";
     const duplicado = /duplicad|ya fue causada|ya existe|repetido/i.test(message);
     const staged = error instanceof BulkInvoiceStageError ? error : null;

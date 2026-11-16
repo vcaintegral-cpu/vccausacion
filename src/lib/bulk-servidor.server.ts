@@ -20,6 +20,8 @@ export type ResultadoCola = {
   pendientes: number;
   /** PDF que siguen esperando en la cola. */
   pdfPendientes: number;
+  /** Apartados por no ser del mes de trabajo (anteriores o posteriores). */
+  fueraDeMes: number;
 };
 
 type Tarea = Record<string, unknown> & {
@@ -33,7 +35,11 @@ const esExcel = (t: Tarea) => String(t.fingerprint ?? "").startsWith("excel:");
 export async function causarCola(
   db: Db,
   companyId: string,
-  opciones: { limiteExcel?: number; limitePdf?: number } = {},
+  opciones: {
+    limiteExcel?: number;
+    limitePdf?: number;
+    mes?: import("./bulk-invoices").RangoMes;
+  } = {},
 ): Promise<ResultadoCola> {
   const limiteExcel = opciones.limiteExcel ?? 3;
   const limitePdf = opciones.limitePdf ?? 2;
@@ -106,6 +112,7 @@ export async function causarCola(
       conError: 0,
       pendientes: 0,
       pdfPendientes: 0,
+      fueraDeMes: 0,
     };
     if (todas.length) {
       // Dueño de la carga (quien configuró la fuente): los borradores quedan a su nombre.
@@ -138,19 +145,30 @@ export async function causarCola(
       invalidateBulkDeps(companyId);
       const deps = await loadDeps(companyId, dueno);
       for (const item of todas) {
-        await processItem(item as never, companyId, deps, esExcel(item) ? undefined : servidor);
+        await processItem(
+          item as never,
+          companyId,
+          deps,
+          esExcel(item) ? undefined : servidor,
+          opciones.mes,
+        );
         resultado.procesadas += 1;
       }
       const { data: despues } = await db
         .from("bulk_upload_items")
-        .select("id, status, needs_review")
+        .select("id, status, needs_review, stage")
         .in(
           "id",
           todas.map((i) => i.id),
         );
-      for (const d of (despues ?? []) as Array<{ status: string; needs_review: boolean | null }>) {
+      for (const d of (despues ?? []) as Array<{
+        status: string;
+        needs_review: boolean | null;
+        stage: string | null;
+      }>) {
         if (d.status === "completed")
           d.needs_review ? (resultado.amarillas += 1) : (resultado.verdes += 1);
+        else if (d.stage === "fuera_de_mes") resultado.fueraDeMes += 1;
         else resultado.conError += 1;
       }
     }

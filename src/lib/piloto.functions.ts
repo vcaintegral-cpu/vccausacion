@@ -10,6 +10,8 @@ export type EstadoPiloto = {
     correo: string | null;
     tope_valor: number;
     hora_inicio: number;
+    /** Mes de trabajo (AAAA-MM-01); null = el mes actual. */
+    mes_trabajo: string | null;
   } | null;
   ejecuciones: Array<{
     id: string;
@@ -61,11 +63,7 @@ export const pilotoEstado = createServerFn({ method: "POST" })
     const db = context.supabase;
     await verificarEmpresa(db, data.companyId);
     const [cfg, ej, dec] = await Promise.all([
-      db
-        .from("piloto_config")
-        .select("activo, correo, tope_valor, hora_inicio")
-        .eq("company_id", data.companyId)
-        .maybeSingle(),
+      db.from("piloto_config").select("*").eq("company_id", data.companyId).maybeSingle(),
       db
         .from("piloto_ejecuciones")
         .select("id, noche, estado, pasos, reporte_enviado_at")
@@ -84,7 +82,10 @@ export const pilotoEstado = createServerFn({ method: "POST" })
     return {
       config: cfg.data
         ? {
-            ...(cfg.data as EstadoPiloto["config"] & object),
+            activo: (cfg.data as { activo: boolean }).activo,
+            correo: (cfg.data as { correo: string | null }).correo,
+            hora_inicio: (cfg.data as { hora_inicio: number }).hora_inicio,
+            mes_trabajo: (cfg.data as { mes_trabajo?: string | null }).mes_trabajo ?? null,
             tope_valor: Number((cfg.data as { tope_valor: number }).tope_valor),
           }
         : null,
@@ -104,8 +105,12 @@ export const pilotoGuardarConfig = createServerFn({ method: "POST" })
       correo: string | null;
       tope_valor: number;
       hora_inicio: number;
+      /** Mes de trabajo (AAAA-MM o AAAA-MM-DD). Si no viene, no se cambia. */
+      mes_trabajo?: string | null;
     }) => {
       if (!input?.companyId) throw new Error("companyId requerido");
+      if (input.mes_trabajo && !/^\d{4}-(0[1-9]|1[0-2])(-\d{2})?$/.test(input.mes_trabajo))
+        throw new Error("Mes de trabajo inválido.");
       if (input.correo && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.correo))
         throw new Error("Correo inválido.");
       if (!(Number(input.tope_valor) >= 0)) throw new Error("Tope inválido.");
@@ -125,11 +130,25 @@ export const pilotoGuardarConfig = createServerFn({ method: "POST" })
         correo: data.correo?.trim() || null,
         tope_valor: Math.round(Number(data.tope_valor)),
         hora_inicio: Math.round(Number(data.hora_inicio)),
+        ...(data.mes_trabajo ? { mes_trabajo: `${data.mes_trabajo.slice(0, 7)}-01` } : {}),
         updated_by: u.user?.id ?? null,
       },
       { onConflict: "company_id" },
     );
     if (error) throw new Error(error.message);
+    if (data.mes_trabajo) {
+      // Al cambiar el mes a mano, los documentos apartados por ser de ese mes vuelven a la cola.
+      const { rangoDelMes } = await import("./piloto");
+      const { desde, hasta } = rangoDelMes(`${data.mes_trabajo.slice(0, 7)}-01`);
+      await db
+        .from("bulk_upload_items")
+        .update({ status: "pending", stage: null, user_message: null })
+        .eq("company_id", data.companyId)
+        .eq("status", "cancelled")
+        .eq("stage", "fuera_de_mes")
+        .gte("issue_date", desde)
+        .lte("issue_date", hasta);
+    }
     return { ok: true };
   });
 

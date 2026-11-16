@@ -12,7 +12,7 @@ import { EmptyCompany } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { fecha } from "@/lib/format";
-import { PASOS } from "@/lib/piloto";
+import { PASOS, etiquetaMes, mesDeTrabajo, siguienteMes } from "@/lib/piloto";
 import {
   pilotoEjecutarAhora,
   pilotoEstado,
@@ -53,6 +53,7 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
     correo: "",
     tope_valor: "5000000",
     hora_inicio: "18",
+    mes_trabajo: "",
   });
   useEffect(() => {
     const c = estado.data?.config;
@@ -62,12 +63,13 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
         correo: c.correo ?? "",
         tope_valor: String(c.tope_valor),
         hora_inicio: String(c.hora_inicio),
+        mes_trabajo: c.mes_trabajo ? c.mes_trabajo.slice(0, 7) : "",
       });
   }, [estado.data?.config]);
   const [instrucciones, setInstrucciones] = useState<Record<string, string>>({});
 
   const mGuardar = useMutation({
-    mutationFn: () =>
+    mutationFn: (mesForzado?: string) =>
       guardar({
         data: {
           companyId,
@@ -75,6 +77,9 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
           correo: form.correo || null,
           tope_valor: Number(form.tope_valor),
           hora_inicio: Number(form.hora_inicio),
+          ...((mesForzado ?? form.mes_trabajo)
+            ? { mes_trabajo: mesForzado ?? form.mes_trabajo }
+            : {}),
         },
       }),
     onSuccess: () => {
@@ -105,6 +110,7 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
   };
 
   const d = estado.data;
+  const mesActual = mesDeTrabajo(d?.config?.mes_trabajo ?? null, new Date());
   const pendientes = (d?.decisiones ?? []).filter((x) => x.estado === "pendiente");
   const respondidas = (d?.decisiones ?? []).filter((x) => x.estado !== "pendiente").slice(0, 20);
 
@@ -166,7 +172,20 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
               onChange={(e) => setForm((x) => ({ ...x, hora_inicio: e.target.value }))}
             />
           </label>
-          <Button size="sm" onClick={() => mGuardar.mutate()} disabled={mGuardar.isPending}>
+          <label className="flex flex-col gap-1">
+            Mes de trabajo
+            <Input
+              className="h-8 w-40"
+              type="month"
+              value={form.mes_trabajo || mesActual.slice(0, 7)}
+              onChange={(e) => setForm((x) => ({ ...x, mes_trabajo: e.target.value }))}
+            />
+          </label>
+          <Button
+            size="sm"
+            onClick={() => mGuardar.mutate(undefined)}
+            disabled={mGuardar.isPending}
+          >
             <Save className="mr-1 h-4 w-4" /> Guardar
           </Button>
           <Button
@@ -181,6 +200,31 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
               <Play className="mr-1 h-4 w-4" />
             )}
             Ejecutar un paso ahora
+          </Button>
+        </div>
+        <div className="mt-2 rounded border border-border bg-muted/30 p-2">
+          Trabajando en <b>{etiquetaMes(mesActual)}</b>: solo se causan documentos de ese mes (los
+          de meses anteriores se omiten y los posteriores se apartan hasta que llegue su mes). El
+          piloto no cambia de mes solo: le pregunta cuando la cola queda limpia, y usted confirma
+          que facturas, egresos y conciliación están completos.{" "}
+          <Button
+            size="sm"
+            variant="outline"
+            className="ml-1 h-7"
+            disabled={mGuardar.isPending}
+            onClick={() => {
+              const sig = siguienteMes(mesActual);
+              if (
+                window.confirm(
+                  `¿Confirma que ${etiquetaMes(mesActual)} quedó COMPLETO (facturas causadas, egresos y conciliación bancaria) y pasar a ${etiquetaMes(sig)}? Desde ese momento el piloto dejará de causar documentos de ${etiquetaMes(mesActual)}.`,
+                )
+              ) {
+                setForm((x) => ({ ...x, mes_trabajo: sig.slice(0, 7) }));
+                mGuardar.mutate(sig.slice(0, 7));
+              }
+            }}
+          >
+            Cerrar {etiquetaMes(mesActual)} y pasar al siguiente
           </Button>
         </div>
         {d && !d.alertasConfiguradas ? (

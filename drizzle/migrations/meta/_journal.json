@@ -267,6 +267,13 @@
       "when": 1794848263280,
       "tag": "0037_piloto_causacion_servidor",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794850515316,
+      "tag": "0038_piloto_mes_de_trabajo",
+      "breakpoints": true
     }
   ]
 }
