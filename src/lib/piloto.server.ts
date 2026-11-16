@@ -14,6 +14,8 @@ import {
   nocheDe,
   registrarPaso,
   reporteHtml,
+  mesDeTrabajo,
+  etiquetaMes,
   siguientePaso,
   type PasoId,
   type PasoRegistro,
@@ -34,6 +36,7 @@ async function ejecutarPaso(
   companyId: string,
   paso: PasoId,
   previo?: PasoRegistro,
+  mes?: string,
 ): Promise<Omit<PasoRegistro, "inicio" | "fin">> {
   if (paso === "drive") {
     const { revisarFuente } = await import("./document-sources.server");
@@ -61,7 +64,13 @@ async function ejecutarPaso(
   }
   if (paso === "borradores") {
     const { causarCola } = await import("./bulk-servidor.server");
-    const r = await causarCola(db, companyId, { limiteExcel: 3, limitePdf: 2 });
+    const { rangoDelMes, etiquetaMes } = await import("./piloto");
+    const rango = mes ? { ...rangoDelMes(mes), etiqueta: etiquetaMes(mes) } : undefined;
+    const r = await causarCola(db, companyId, {
+      limiteExcel: 3,
+      limitePdf: 2,
+      ...(rango ? { mes: rango } : {}),
+    });
     // Cada llamada del programador hace una pasada: las cifras de la noche se acumulan.
     const antes = previo?.cifras ?? {};
     const suma = (k: string, n: number) => (antes[k] ?? 0) + n;
@@ -72,6 +81,7 @@ async function ejecutarPaso(
       con_error: suma("con_error", r.conError),
       excel_pendientes: r.pendientes,
       pdf_pendientes: r.pdfPendientes,
+      fuera_de_mes: suma("fuera_de_mes", r.fueraDeMes),
     };
     const cola = r.pendientes + r.pdfPendientes;
     // Si hay cola pero no se avanzó nada, es un error (se reintenta 3 veces y se reporta).
@@ -86,7 +96,11 @@ async function ejecutarPaso(
       id: paso,
       // Sigue «pendiente» mientras haya documentos en la cola; la siguiente llamada continúa.
       estado: cola > 0 ? "pendiente" : "hecho",
-      detalle: `Causadas ${cifras.causadas} esta noche (${cifras.verdes} en verde, ${cifras.amarillas} por revisar, ${cifras.con_error} con error)${
+      detalle: `Causadas ${cifras.causadas} esta noche (${cifras.verdes} en verde, ${cifras.amarillas} por revisar, ${cifras.con_error} con error${
+        cifras.fuera_de_mes
+          ? `, ${cifras.fuera_de_mes} fuera de ${mes ? etiquetaMes(mes) : "el mes de trabajo"}`
+          : ""
+      })${
         cola > 0
           ? `; quedan ${r.pendientes} del Excel y ${r.pdfPendientes} PDF`
           : "; la cola quedó vacía"
@@ -230,6 +244,104 @@ async function cicloCorrecciones(db: Db, companyId: string): Promise<string | nu
 }
 
 /**
+ * Mes de trabajo. El piloto solo causa documentos del mes en curso; pasa al siguiente únicamente
+ * cuando la usuaria respondió «cerrar» a la pregunta del cierre (facturas, egresos y conciliación del
+ * mes completos). Al cambiar de mes retoma los documentos apartados por ser de ese mes.
+ */
+async function cicloMes(db: Db, companyId: string, mesActual: string): Promise<string> {
+  const { siguienteMes, rangoDelMes } = await import("./piloto");
+  const { data } = await db
+    .from("piloto_decisiones")
+    .select("id, clave, respuesta")
+    .eq("company_id", companyId)
+    .eq("tipo", "cerrar_mes")
+    .eq("estado", "respondida")
+    .is("aplicada_at", null);
+  let mes = mesActual;
+  for (const d of (data ?? []) as Array<{ id: string; clave: string; respuesta: string | null }>) {
+    const delMes = d.clave.split("|")[1];
+    if (d.respuesta === "cerrar" && delMes === mes) {
+      const nuevo = siguienteMes(mes);
+      const { error } = await db
+        .from("piloto_config")
+        .update({ mes_trabajo: nuevo })
+        .eq("company_id", companyId);
+      if (error) throw new Error(`No se pudo pasar al mes siguiente: ${error.message}`);
+      const { desde, hasta } = rangoDelMes(nuevo);
+      await db
+        .from("bulk_upload_items")
+        .update({ status: "pending", stage: null, user_message: null })
+        .eq("company_id", companyId)
+        .eq("status", "cancelled")
+        .eq("stage", "fuera_de_mes")
+        .gte("issue_date", desde)
+        .lte("issue_date", hasta);
+      mes = nuevo;
+    }
+    await db
+      .from("piloto_decisiones")
+      .update({ estado: "aplicada", aplicada_at: new Date().toISOString() })
+      .eq("id", d.id);
+  }
+  return mes;
+}
+
+/**
+ * Al terminar la noche, si la cola del mes quedó vacía y sin documentos con error, pregunta (una sola
+ * pregunta abierta a la vez) si se cierra el mes. Egresos y conciliación todavía no los evalúa el
+ * piloto: por eso la confirmación de la usuaria es la que manda.
+ */
+async function proponerCierreDeMes(
+  db: Db,
+  companyId: string,
+  mes: string,
+  noche: string,
+  pasos: PasoRegistro[],
+) {
+  const borradores = pasos.find((p) => p.id === "borradores");
+  if (!borradores || borradores.estado !== "hecho") return;
+  const { rangoDelMes, etiquetaMes, siguienteMes } = await import("./piloto");
+  const { count: abierta } = await db
+    .from("piloto_decisiones")
+    .select("id", { count: "exact", head: true })
+    .eq("company_id", companyId)
+    .eq("tipo", "cerrar_mes")
+    .eq("estado", "pendiente");
+  if ((abierta ?? 0) > 0) return;
+  const { desde, hasta } = rangoDelMes(mes);
+  const [{ count: errores }, { count: sinEnviar }] = await Promise.all([
+    db
+      .from("bulk_upload_items")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .eq("status", "error"),
+    db
+      .from("invoices")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .in("status", ["borrador", "error"])
+      .gte("issue_date", desde)
+      .lte("issue_date", hasta),
+  ]);
+  if ((errores ?? 0) > 0) return;
+  const etiqueta = etiquetaMes(mes);
+  await db.from("piloto_decisiones").upsert(
+    {
+      company_id: companyId,
+      clave: `cerrar-mes|${mes}|${noche}`,
+      tipo: "cerrar_mes",
+      titulo: `¿Cerramos ${etiqueta}?`,
+      pregunta: `La cola de facturas de ${etiqueta} quedó vacía y no hay documentos con error. Hay ${sinEnviar ?? 0} borrador(es) de ese mes sin enviar a Siigo. Para pasar a ${etiquetaMes(siguienteMes(mes))}, confirme que las facturas, los egresos y la conciliación bancaria de ${etiqueta} ya están completos. Mientras no confirme, el piloto sigue trabajando solo en ${etiqueta}.`,
+      opciones: [
+        { id: "cerrar", etiqueta: `Sí, cerrar ${etiqueta} y pasar al siguiente mes` },
+        { id: "seguir", etiqueta: `No, seguir en ${etiqueta}` },
+      ] as never,
+    },
+    { onConflict: "company_id,clave", ignoreDuplicates: true },
+  );
+}
+
+/**
  * Avanza el piloto de las empresas activas. `forzar`: ejecuta aunque sea de día (botón
  * «Ejecutar ahora»), con la noche de hoy.
  */
@@ -238,10 +350,7 @@ export async function avanzarPiloto(
   opciones: { base: string; companyId?: string; forzar?: boolean; ahora?: Date },
 ): Promise<ResultadoPiloto[]> {
   const ahora = opciones.ahora ?? new Date();
-  let q = db
-    .from("piloto_config")
-    .select("company_id, activo, correo, hora_inicio")
-    .eq("activo", true);
+  let q = db.from("piloto_config").select("*").eq("activo", true);
   if (opciones.companyId) q = q.eq("company_id", opciones.companyId);
   const { data: configs, error } = await q;
   if (error) throw new Error(error.message);
@@ -252,6 +361,7 @@ export async function avanzarPiloto(
     company_id: string;
     correo: string | null;
     hora_inicio: number;
+    mes_trabajo?: string | null;
   }>) {
     const { data: empresa } = await db
       .from("companies")
@@ -261,6 +371,8 @@ export async function avanzarPiloto(
     const emp = empresa as { name: string; nit: string | null } | null;
     if (!emp || !funcionActiva(emp.nit, "piloto_automatico")) continue;
     const reintento = await cicloCorrecciones(db, cfg.company_id);
+    // Mes de trabajo: solo se pasa al siguiente cuando la usuaria confirma que el mes quedó completo.
+    const mes = await cicloMes(db, cfg.company_id, mesDeTrabajo(cfg.mes_trabajo ?? null, ahora));
     const noche = opciones.forzar
       ? horaColombia(ahora).fecha
       : (nocheDe(ahora, cfg.hora_inicio) ?? reintento);
@@ -312,6 +424,7 @@ export async function avanzarPiloto(
     let registro: PasoRegistro;
     try {
       if (paso === "reporte") {
+        await proponerCierreDeMes(db, cfg.company_id, mes, noche, pasos);
         const { count } = await db
           .from("piloto_decisiones")
           .select("id", { count: "exact", head: true })
@@ -326,6 +439,7 @@ export async function avanzarPiloto(
             pasos,
             pendientes: count ?? 0,
             base: opciones.base,
+            mes: etiquetaMes(mes),
           });
           const r = await enviarCorreo({ para: cfg.correo, asunto: rep.asunto, html: rep.html });
           if (!r.ok) throw new Error(r.error ?? "No se pudo enviar el reporte.");
@@ -338,6 +452,7 @@ export async function avanzarPiloto(
           cfg.company_id,
           paso,
           pasos.find((x) => x.id === paso),
+          mes,
         );
         registro = { ...r, inicio, fin: new Date().toISOString() };
       }
