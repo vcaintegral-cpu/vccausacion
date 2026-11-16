@@ -388,7 +388,8 @@ async function ejecutarPaso(
       enviar,
       cierre,
     });
-    const completo = (g: (typeof r.grupos)[number]) => !g.faltante && g.listos > 0;
+    const completo = (g: (typeof r.grupos)[number]) =>
+      !g.faltante && g.listos > 0 && g.extracto.cuadra;
     const cifras = {
       grupos: r.grupos.length,
       movimientos: r.grupos.reduce((s, g) => s + g.movimientos, 0),
@@ -402,8 +403,8 @@ async function ejecutarPaso(
         g.enviado
           ? `${g.banco}: RP único ya enviado`
           : completo(g)
-            ? `${g.banco}: ${g.movimientos} movimientos por ${fmt(g.valor)}, completo para el RP único`
-            : `${g.banco}: ${g.movimientos} movimientos por ${fmt(g.valor)}, ${g.listos} listos — falta: ${g.faltante ?? "completar movimientos"}`,
+            ? `${g.banco}: ${g.movimientos} movimientos por ${fmt(g.valor)}, completo y verificado con el extracto`
+            : `${g.banco}: ${g.movimientos} movimientos por ${fmt(g.valor)}, ${g.listos} listos — falta: ${g.faltante ?? g.extracto.nota ?? "completar movimientos"}`,
       )
       .join("; ");
     const cuando = cierre

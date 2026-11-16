@@ -18,8 +18,11 @@ export const PASOS: Array<{ id: PasoId; nombre: string }> = [
   { id: "borradores", nombre: "Borradores de compras (lectura, precedente y causación)" },
   { id: "siigo_compras", nombre: "Aprobar y enviar a Siigo las compras en verde" },
   { id: "egresos", nombre: "Egresos: pagos del mes, CxP de Siigo y recibos de pago" },
-  { id: "gastos_bancarios", nombre: "Gastos bancarios del día (RP único al cierre del mes)" },
   { id: "conciliacion", nombre: "Conciliación: movimiento de Siigo, cruce y memoria del día" },
+  {
+    id: "gastos_bancarios",
+    nombre: "Gastos bancarios: verificados con el extracto, un RP por cuenta al cierre del mes",
+  },
   { id: "reporte", nombre: "Reporte de la noche" },
 ];
 
