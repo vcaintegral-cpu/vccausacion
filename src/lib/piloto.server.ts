@@ -78,7 +78,8 @@ async function ejecutarPaso(
     const antes = previo?.cifras ?? {};
     const suma = (k: string, n: number) => (antes[k] ?? 0) + n;
     const cifras = {
-      causadas: suma("causadas", r.procesadas),
+      leidas: suma("leidas", r.procesadas),
+      causadas: suma("causadas", r.verdes + r.amarillas),
       verdes: suma("verdes", r.verdes),
       amarillas: suma("amarillas", r.amarillas),
       con_error: suma("con_error", r.conError),
@@ -87,23 +88,20 @@ async function ejecutarPaso(
       fuera_de_mes: suma("fuera_de_mes", r.fueraDeMes),
     };
     const cola = r.pendientes + r.pdfPendientes;
-    // Si hay cola pero no se avanzó nada, es un error (se reintenta 3 veces y se reporta).
-    if (cola > 0 && r.procesadas === 0)
+    // Si hay cola pero no se avanzó nada ni la tiene otro proceso, es un error (se reintenta 3 veces y se reporta).
+    if (cola > 0 && r.procesadas === 0 && r.ocupadas === 0)
       return {
         id: paso,
         estado: "error",
         detalle: `La cola no avanza: ${r.pendientes} del Excel y ${r.pdfPendientes} PDF sin causar`,
         cifras,
       };
+    const mesTxt = mes ? etiquetaMes(mes) : "el mes de trabajo";
     return {
       id: paso,
       // Sigue «pendiente» mientras haya documentos en la cola; la siguiente llamada continúa.
       estado: cola > 0 ? "pendiente" : "hecho",
-      detalle: `Causadas ${cifras.causadas} esta noche (${cifras.verdes} en verde, ${cifras.amarillas} por revisar, ${cifras.con_error} con error${
-        cifras.fuera_de_mes
-          ? `, ${cifras.fuera_de_mes} fuera de ${mes ? etiquetaMes(mes) : "el mes de trabajo"}`
-          : ""
-      })${
+      detalle: `Leídas ${cifras.leidas} esta noche: ${cifras.causadas} causadas como borrador (${cifras.verdes} en verde, ${cifras.amarillas} por revisar), ${cifras.fuera_de_mes} apartadas por no ser de ${mesTxt}, ${cifras.con_error} con error${
         cola > 0
           ? `; quedan ${r.pendientes} del Excel y ${r.pdfPendientes} PDF`
           : "; la cola quedó vacía"

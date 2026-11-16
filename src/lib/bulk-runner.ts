@@ -14,14 +14,34 @@ import { supabase } from "@/lib/db-contextual";
 import { extractInvoice } from "@/lib/extract.functions";
 import { fetchCompanyPuc } from "@/lib/puc-data";
 import { errorCode } from "@/lib/bulk-diagnostics";
-import { BulkInvoiceStageError, FueraDeMesError, verificarMes, type RangoMes, processInvoiceFile, resetBulkBatch, saveExtractedInvoice, type BulkConfig, type InvoiceReadTrace } from "@/lib/bulk-invoices";
+import {
+  BulkInvoiceStageError,
+  FueraDeMesError,
+  verificarMes,
+  type RangoMes,
+  processInvoiceFile,
+  resetBulkBatch,
+  saveExtractedInvoice,
+  type BulkConfig,
+  type InvoiceReadTrace,
+} from "@/lib/bulk-invoices";
 import { parsePurchaseWorkbook, type PurchaseDocument } from "@/lib/purchase-excel";
 import { excelDocKey, excelDocToExtracted } from "@/lib/excel-invoice-adapter";
 import { fetchProviderRules } from "@/lib/provider-rules";
-import { estadoFacturaAfectada, facturaReferidaEnExcel, mensajeNotaCredito } from "@/lib/nota-credito";
+import {
+  estadoFacturaAfectada,
+  facturaReferidaEnExcel,
+  mensajeNotaCredito,
+} from "@/lib/nota-credito";
 import { fetchIvaConfig } from "@/lib/iva-treatment";
 import { fetchCompanyKnowledge, type CompanyKnowledge } from "@/lib/causacion-engine";
-import { cargarHistorialCompras, cargarPrecedentes, cargarTablasBases, invalidarPrecedentes, invalidarTablasBases } from "@/lib/precedente-tributario.data";
+import {
+  cargarHistorialCompras,
+  cargarPrecedentes,
+  cargarTablasBases,
+  invalidarPrecedentes,
+  invalidarTablasBases,
+} from "@/lib/precedente-tributario.data";
 import type { ImpuestoConfigurado } from "@/lib/precedente-tributario";
 import type { Rule, TaxRate } from "@/lib/accounting";
 import {
@@ -98,7 +118,6 @@ function emit(patch: Partial<BulkProgress>) {
   setTimeout(notificar, 250);
 }
 
-
 function subscribe(listener: () => void) {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -124,7 +143,10 @@ export type Deps = { config: BulkConfig; knowledge: CompanyKnowledge };
 const depsCache = new Map<string, Promise<Deps>>();
 
 async function fetchAll<T>(
-  run: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  run: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
 ) {
   const PAGE = 1000;
   const out: T[] = [];
@@ -146,7 +168,18 @@ export async function loadDeps(companyId: string, usuarioId?: string): Promise<D
   const cached = depsCache.get(companyId);
   if (cached) return cached;
   const promise = (async (): Promise<Deps> => {
-    const [rules, taxes, accounts, products, categories, knowledge, company, providers, providerRules, auth] = await Promise.all([
+    const [
+      rules,
+      taxes,
+      accounts,
+      products,
+      categories,
+      knowledge,
+      company,
+      providers,
+      providerRules,
+      auth,
+    ] = await Promise.all([
       supabase.from("accounting_rules").select("*").eq("company_id", companyId),
       supabase.from("tax_rates").select("*").eq("company_id", companyId),
       fetchCompanyPuc(companyId),
@@ -168,12 +201,25 @@ export async function loadDeps(companyId: string, usuarioId?: string): Promise<D
           .range(from, to),
       ),
       fetchCompanyKnowledge(companyId),
-      supabase.from("companies").select("id,name,nit,uses_cost_centers,default_payable_account").eq("id",companyId).single(),
-      fetchAll((from,to) => supabase.from("providers").select("nit,default_expense_account,default_payable_account,default_iva_account,purchase_tax_profile").eq("company_id",companyId).range(from,to)),
+      supabase
+        .from("companies")
+        .select("id,name,nit,uses_cost_centers,default_payable_account")
+        .eq("id", companyId)
+        .single(),
+      fetchAll((from, to) =>
+        supabase
+          .from("providers")
+          .select(
+            "nit,default_expense_account,default_payable_account,default_iva_account,purchase_tax_profile",
+          )
+          .eq("company_id", companyId)
+          .range(from, to),
+      ),
       fetchProviderRules(companyId),
       usuarioId ? Promise.resolve({ data: { user: { id: usuarioId } } }) : supabase.auth.getUser(),
     ]);
-    if (company.error || !company.data || !auth.data.user) throw new Error("No se pudieron cargar los parámetros de la empresa.");
+    if (company.error || !company.data || !auth.data.user)
+      throw new Error("No se pudieron cargar los parámetros de la empresa.");
     // Precedente tributario (IVA y retenciones sincronizados con Siigo) y bases
     // mínimas: se precargan para el lote y quedan en una caché de 5 minutos, de
     // modo que lo sincronizado después con Siigo se aprende sin recargar la app.
@@ -184,7 +230,12 @@ export async function loadDeps(companyId: string, usuarioId?: string): Promise<D
       cargarHistorialCompras(companyId).catch(() => null),
     ]);
     const config: BulkConfig = {
-      batch: { company: company.data, providers: Object.fromEntries(providers.map((p) => [p.nit,p])), providerRules, userId: auth.data.user.id },
+      batch: {
+        company: company.data,
+        providers: Object.fromEntries(providers.map((p) => [p.nit, p])),
+        providerRules,
+        userId: auth.data.user.id,
+      },
       accounts,
       rules: (rules.data ?? []) as unknown as Rule[],
       taxes: (taxes.data ?? []) as unknown as TaxRate[],
@@ -226,7 +277,9 @@ const detenciones = new Map<string, "pausar" | "cancelar">();
 function counters(items: Array<Pick<BulkItem, "status" | "needs_review">>) {
   const done = items.filter((i) => i.status === "completed").length;
   const errors = items.filter((i) => i.status === "error").length;
-  const review = items.filter((i) => i.status === "requires_review" || (i.status === "completed" && i.needs_review)).length;
+  const review = items.filter(
+    (i) => i.status === "requires_review" || (i.status === "completed" && i.needs_review),
+  ).length;
   const duplicates = items.filter((i) => i.status === "duplicate").length;
   const pending = items.filter((i) => PENDING_STATUSES.includes(i.status)).length;
   return { total: items.length, done, errors, review, duplicates, pending };
@@ -235,7 +288,11 @@ function counters(items: Array<Pick<BulkItem, "status" | "needs_review">>) {
 /** Caché del libro Excel ya descargado y leído (una sola vez por carga). */
 const excelCache = new Map<string, Promise<PurchaseDocument[]>>();
 
-function parseExcelCached(storagePath: string, fileName: string, companyNit: string): Promise<PurchaseDocument[]> {
+function parseExcelCached(
+  storagePath: string,
+  fileName: string,
+  companyNit: string,
+): Promise<PurchaseDocument[]> {
   const key = `${storagePath}|${companyNit}`;
   let cached = excelCache.get(key);
   if (!cached) {
@@ -252,8 +309,13 @@ function parseExcelCached(storagePath: string, fileName: string, companyNit: str
 /** Procesa un documento del Excel RECIBIDOS por la MISMA función de causación del PDF. */
 async function processExcelItem(item: BulkItem, companyId: string, deps: Deps, mes?: RangoMes) {
   const key = item.fingerprint?.startsWith("excel:") ? item.fingerprint.slice(6) : "";
-  if (!item.storage_path || !key) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene el documento del Excel.");
-  const docs = await parseExcelCached(item.storage_path, item.file_name, deps.config.batch?.company.nit ?? "");
+  if (!item.storage_path || !key)
+    throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene el documento del Excel.");
+  const docs = await parseExcelCached(
+    item.storage_path,
+    item.file_name,
+    deps.config.batch?.company.nit ?? "",
+  );
   const doc = docs.find((d) => excelDocKey(d) === key);
   if (!doc) throw new Error("El documento ya no está en el archivo Excel cargado.");
   verificarMes(doc.header.issue_date, mes);
@@ -281,7 +343,12 @@ async function processExcelItem(item: BulkItem, companyId: string, deps: Deps, m
   if (doc.kind === "credit_note") {
     // Las notas crédito de compra se registran manualmente en Siigo sobre la factura causada.
     const referida = facturaReferidaEnExcel(doc.rawHeader);
-    const estado = await estadoFacturaAfectada(supabase, companyId, doc.header.provider_nit, referida);
+    const estado = await estadoFacturaAfectada(
+      supabase,
+      companyId,
+      doc.header.provider_nit,
+      referida,
+    );
     throw new BulkInvoiceStageError(
       mensajeNotaCredito({
         numero: [doc.header.prefix, doc.header.number].join("") || null,
@@ -302,7 +369,11 @@ async function processExcelItem(item: BulkItem, companyId: string, deps: Deps, m
     config: deps.config,
     knowledge: deps.knowledge,
     readMode: "texto",
-    rawExtraction: { fuente: "excel_recibidos", fila_excel: doc.rowNumber, tipo_documento: doc.type },
+    rawExtraction: {
+      fuente: "excel_recibidos",
+      fila_excel: doc.rowNumber,
+      tipo_documento: doc.type,
+    },
   });
   await updateItem(item.id, {
     status: "completed",
@@ -329,15 +400,30 @@ export type ModoServidor = {
   preparar: NonNullable<Parameters<typeof processInvoiceFile>[0]["preparar"]>;
 };
 
-export async function processItem(item: BulkItem, companyId: string, deps: Deps, servidor?: ModoServidor, mes?: RangoMes) {
-  await updateItem(item.id, { status: "downloading", attempts: item.attempts + 1, stage: "recuperando_pdf" });
+export async function processItem(
+  item: BulkItem,
+  companyId: string,
+  deps: Deps,
+  servidor?: ModoServidor,
+  mes?: RangoMes,
+) {
+  await updateItem(item.id, {
+    status: "downloading",
+    attempts: item.attempts + 1,
+    stage: "recuperando_pdf",
+  });
   try {
     if (item.fingerprint?.startsWith("excel:")) {
       await processExcelItem(item, companyId, deps, mes);
       return;
     }
-    if (!item.storage_path) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene storage_path.");
-    const stored = await fileFromStorage(item.storage_path, item.file_name, item.storage_bucket ?? "facturas");
+    if (!item.storage_path)
+      throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene storage_path.");
+    const stored = await fileFromStorage(
+      item.storage_path,
+      item.file_name,
+      item.storage_bucket ?? "facturas",
+    );
     // Los datos de la descarga viajan con la siguiente actualización (una escritura menos).
     let descarga: Partial<BulkItem> | null = {
       download_status: "OK",
@@ -465,7 +551,13 @@ async function runUpload(job: QueuedUpload) {
       active: 0,
     });
     // Una factura con error nunca detiene el lote: solo se toman las pendientes.
-    const pendientes = items.filter((i) => PENDING_STATUSES.includes(i.status));
+    // Una tarea en estado intermedio modificada hace menos de 10 minutos la está causando otro proceso (p. ej.
+    // el piloto automático en el servidor): no se toma, para no causar la misma factura dos veces.
+    const enCursoAjeno = (i: BulkItem) =>
+      i.status !== "pending" &&
+      !!i.updated_at &&
+      Date.now() - Date.parse(i.updated_at) < 10 * 60 * 1000;
+    const pendientes = items.filter((i) => PENDING_STATUSES.includes(i.status) && !enCursoAjeno(i));
     if (pendientes.length === 0 || detenciones.has(job.uploadId)) break;
 
     // Varias facturas en paralelo: la espera de la IA de una no bloquea a las demás.
@@ -525,7 +617,8 @@ async function runUpload(job: QueuedUpload) {
  */
 export async function detenerCarga(uploadId: string, modo: "pausar" | "cancelar") {
   detenciones.set(uploadId, modo);
-  for (let i = queue.length - 1; i >= 0; i--) if (queue[i]!.uploadId === uploadId) queue.splice(i, 1);
+  for (let i = queue.length - 1; i >= 0; i--)
+    if (queue[i]!.uploadId === uploadId) queue.splice(i, 1);
   if (modo === "cancelar") await cancelPendingItems(uploadId);
   const items = await listItems(uploadId);
   await refreshUploadCounters(uploadId, items, modo === "pausar" ? "paused" : "cancelled");
@@ -534,9 +627,10 @@ export async function detenerCarga(uploadId: string, modo: "pausar" | "cancelar"
 
 /** true mientras el motor sigue terminando las facturas en curso de una carga detenida. */
 export function cargaDeteniendose(uploadId: string | null | undefined) {
-  return !!uploadId && detenciones.has(uploadId) && snapshot.running && snapshot.uploadId === uploadId;
+  return (
+    !!uploadId && detenciones.has(uploadId) && snapshot.running && snapshot.uploadId === uploadId
+  );
 }
-
 
 async function drain() {
   try {
@@ -548,7 +642,8 @@ async function drain() {
       } catch (error) {
         await updateUpload(job.uploadId, {
           status: "failed",
-          error_message: error instanceof Error ? error.message : "Error en el procesamiento en segundo plano.",
+          error_message:
+            error instanceof Error ? error.message : "Error en el procesamiento en segundo plano.",
         }).catch(() => undefined);
       }
     }
@@ -578,7 +673,12 @@ export function startBackgroundUpload(job: QueuedUpload) {
 
 /** Reintenta tareas puntuales sin reiniciar todo el ZIP. */
 export async function retryBulkItems(job: QueuedUpload, itemIds: string[]) {
-  await updateItems(itemIds, { status: "pending", stage: null, error_message: null, user_message: null });
+  await updateItems(itemIds, {
+    status: "pending",
+    stage: null,
+    error_message: null,
+    user_message: null,
+  });
   startBackgroundUpload(job);
 }
 
@@ -597,7 +697,11 @@ export function resumeBackgroundUploads(companyId: string): Promise<void> {
     try {
       const uploads: BulkUpload[] = await listActiveUploads(companyId);
       for (const up of uploads) {
-        if (queue.some((q) => q.uploadId === up.id) || (snapshot.running && snapshot.uploadId === up.id)) continue;
+        if (
+          queue.some((q) => q.uploadId === up.id) ||
+          (snapshot.running && snapshot.uploadId === up.id)
+        )
+          continue;
         const estados = await listItemStatuses(up.id);
         if (estados.some((i) => PENDING_STATUSES.includes(i.status))) {
           startBackgroundUpload({ uploadId: up.id, companyId, fileName: up.file_name });

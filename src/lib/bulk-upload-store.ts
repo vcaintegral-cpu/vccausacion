@@ -47,6 +47,8 @@ export type BulkUpload = {
 };
 
 export type BulkItem = {
+  /** Última modificación (la mantiene la base): sirve para no tomar tareas que otro proceso está causando. */
+  updated_at?: string;
   id: string;
   upload_id: string;
   company_id: string;
@@ -80,7 +82,12 @@ export type BulkItem = {
   company_validation?: string | null;
 };
 
-export const ACTIVE_STATUSES: UploadStatus[] = ["uploaded", "extracting", "processing", "completed_with_errors"];
+export const ACTIVE_STATUSES: UploadStatus[] = [
+  "uploaded",
+  "extracting",
+  "processing",
+  "completed_with_errors",
+];
 
 export const UPLOAD_LABEL: Record<UploadStatus, string> = {
   uploaded: "Cargado",
@@ -130,12 +137,17 @@ export async function createUpload(params: {
 }
 
 export async function updateUpload(id: string, patch: Partial<BulkUpload>) {
-  const { error } = await supabase.from("bulk_uploads").update(patch as never).eq("id", id);
+  const { error } = await supabase
+    .from("bulk_uploads")
+    .update(patch as never)
+    .eq("id", id);
   if (error) throw new Error(error.message);
 }
 
 /** Solo estado de cada tarea: para los contadores de avance (consulta liviana). */
-export async function listItemStatuses(uploadId: string): Promise<Array<Pick<BulkItem, "id" | "status" | "needs_review">>> {
+export async function listItemStatuses(
+  uploadId: string,
+): Promise<Array<Pick<BulkItem, "id" | "status" | "needs_review">>> {
   const out: Array<Pick<BulkItem, "id" | "status" | "needs_review">> = [];
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
@@ -156,13 +168,19 @@ export async function listItemStatuses(uploadId: string): Promise<Array<Pick<Bul
 /** Misma actualización para varias tareas en una sola consulta. */
 export async function updateItems(ids: string[], patch: Partial<BulkItem>) {
   for (let i = 0; i < ids.length; i += 200) {
-    const { error } = await supabase.from("bulk_upload_items").update(patch as never).in("id", ids.slice(i, i + 200));
+    const { error } = await supabase
+      .from("bulk_upload_items")
+      .update(patch as never)
+      .in("id", ids.slice(i, i + 200));
     if (error) throw new Error(error.message);
   }
 }
 
 export async function updateItem(id: string, patch: Partial<BulkItem>) {
-  const { error } = await supabase.from("bulk_upload_items").update(patch as never).eq("id", id);
+  const { error } = await supabase
+    .from("bulk_upload_items")
+    .update(patch as never)
+    .eq("id", id);
   if (error) throw new Error(error.message);
 }
 
@@ -186,7 +204,7 @@ export async function insertItems(rows: Array<Partial<BulkItem>>): Promise<BulkI
  * volvía lenta la carga masiva.
  */
 const COLUMNAS_TAREA =
-  "id, upload_id, company_id, file_name, storage_path, size_bytes, fingerprint, status, attempts, stage, error_message, user_message, invoice_id, invoice_number, invoice_total, score, needs_review, position, provider_name, provider_nit, buyer_name, buyer_nit, issue_date, read_status, storage_bucket, download_status, stored_size_bytes, mime_type, content_status, company_validation";
+  "id, upload_id, company_id, file_name, storage_path, size_bytes, fingerprint, status, attempts, stage, error_message, user_message, invoice_id, invoice_number, invoice_total, score, needs_review, position, provider_name, provider_nit, buyer_name, buyer_nit, issue_date, read_status, storage_bucket, download_status, stored_size_bytes, mime_type, content_status, company_validation, updated_at";
 
 export async function listItems(uploadId: string): Promise<BulkItem[]> {
   const out: BulkItem[] = [];
@@ -236,7 +254,10 @@ export async function listUploads(companyId: string, limit = 30): Promise<BulkUp
  * Huellas de archivos que terminaron correctamente en la empresa.
  * Las tareas pendientes, fallidas o abandonadas no bloquean una nueva carga del PDF.
  */
-export async function existingFingerprints(companyId: string, hashes: string[]): Promise<Set<string>> {
+export async function existingFingerprints(
+  companyId: string,
+  hashes: string[],
+): Promise<Set<string>> {
   const found = new Set<string>();
   for (let i = 0; i < hashes.length; i += 200) {
     const chunk = hashes.slice(i, i + 200);
@@ -255,11 +276,24 @@ export async function existingFingerprints(companyId: string, hashes: string[]):
 }
 
 /** Recalcula contadores del proceso a partir del estado real de sus tareas. */
-export async function refreshUploadCounters(uploadId: string, items: BulkItem[], statusFijo?: UploadStatus) {
+export async function refreshUploadCounters(
+  uploadId: string,
+  items: BulkItem[],
+  statusFijo?: UploadStatus,
+) {
   const processed = items.filter((i) => i.status === "completed").length;
   const errors = items.filter((i) => i.status === "error" || i.status === "requires_review").length;
   const pending = items.filter((i) =>
-    ["pending", "downloading", "reading", "ocr", "extracting_data", "validating_company", "ready_for_accounting", "processing"].includes(i.status),
+    [
+      "pending",
+      "downloading",
+      "reading",
+      "ocr",
+      "extracting_data",
+      "validating_company",
+      "ready_for_accounting",
+      "processing",
+    ].includes(i.status),
   ).length;
   // Una carga pausada o cancelada por el usuario conserva ese estado.
   const status: UploadStatus =
@@ -268,7 +302,9 @@ export async function refreshUploadCounters(uploadId: string, items: BulkItem[],
     processed_count: processed,
     error_count: errors,
     status,
-    ...(pending === 0 || status === "cancelled" ? { finished_at: new Date().toISOString() } : { finished_at: null }),
+    ...(pending === 0 || status === "cancelled"
+      ? { finished_at: new Date().toISOString() }
+      : { finished_at: null }),
   });
   return status;
 }
@@ -281,18 +317,32 @@ export type StoredPdf = {
   mimeType: string;
 };
 
-export async function fileFromStorage(path: string, name: string, bucket = "facturas", expectPdf = true): Promise<StoredPdf> {
-  if (!path) throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene una ruta de almacenamiento.");
+export async function fileFromStorage(
+  path: string,
+  name: string,
+  bucket = "facturas",
+  expectPdf = true,
+): Promise<StoredPdf> {
+  if (!path)
+    throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene una ruta de almacenamiento.");
   const { data, error } = await supabase.storage.from(bucket).download(path);
-  if (error || !data) throw new Error(`ERROR_STORAGE: ${error?.message ?? "no fue posible recuperar el PDF"}`);
+  if (error || !data)
+    throw new Error(`ERROR_STORAGE: ${error?.message ?? "no fue posible recuperar el PDF"}`);
   if (data.size === 0) throw new Error("ERROR_ARCHIVO_VACIO: el PDF guardado no contiene datos.");
   if (expectPdf) {
     const bytes = new Uint8Array(await data.slice(0, 5).arrayBuffer());
     const validPdf = new TextDecoder().decode(bytes) === "%PDF-";
-    if (!validPdf) throw new Error("ERROR_PDF_INVALIDO: el archivo recuperado no contiene un PDF válido.");
+    if (!validPdf)
+      throw new Error("ERROR_PDF_INVALIDO: el archivo recuperado no contiene un PDF válido.");
   }
   const mimeType = data.type || (expectPdf ? "application/pdf" : "application/octet-stream");
-  return { file: new File([data], name, { type: mimeType }), bucket, path, size: data.size, mimeType };
+  return {
+    file: new File([data], name, { type: mimeType }),
+    bucket,
+    path,
+    size: data.size,
+    mimeType,
+  };
 }
 
 export async function sha256(bytes: Uint8Array): Promise<string> {
@@ -308,10 +358,16 @@ export async function sha256(bytes: Uint8Array): Promise<string> {
 /** Mensaje sencillo para el usuario final; el detalle técnico queda en error_message. */
 export async function deleteUpload(uploadId: string) {
   const items = await listItems(uploadId);
-  const { data: up } = await supabase.from("bulk_uploads").select("storage_path").eq("id", uploadId).maybeSingle();
+  const { data: up } = await supabase
+    .from("bulk_uploads")
+    .select("storage_path")
+    .eq("id", uploadId)
+    .maybeSingle();
   const paths = [
     ...items.map((i) => i.storage_path).filter((p): p is string => !!p),
-    ...((up as { storage_path: string | null } | null)?.storage_path ? [(up as { storage_path: string }).storage_path] : []),
+    ...((up as { storage_path: string | null } | null)?.storage_path
+      ? [(up as { storage_path: string }).storage_path]
+      : []),
   ];
   for (let i = 0; i < paths.length; i += 100) {
     await supabase.storage.from("facturas").remove(paths.slice(i, i + 100));
@@ -323,13 +379,18 @@ export async function deleteUpload(uploadId: string) {
 }
 
 export function mensajeUsuario(fileName: string, error: string): string {
-  if (/NOTA CR[EÉ]DITO\s+[—-]\s+REGISTRO MANUAL/i.test(error)) return `${fileName}: es una nota crédito; se registra manualmente en Siigo.`;
-  if (/duplicad|ya fue causada|ya existe/i.test(error)) return `${fileName}: este documento ya fue procesado.`;
-  if (/identificar el comprador/i.test(error)) return "No fue posible identificar el comprador de la factura.";
+  if (/NOTA CR[EÉ]DITO\s+[—-]\s+REGISTRO MANUAL/i.test(error))
+    return `${fileName}: es una nota crédito; se registra manualmente en Siigo.`;
+  if (/duplicad|ya fue causada|ya existe/i.test(error))
+    return `${fileName}: este documento ya fue procesado.`;
+  if (/identificar el comprador/i.test(error))
+    return "No fue posible identificar el comprador de la factura.";
   if (/no pertenece|no coincide/i.test(error)) return "Comprador diferente a la empresa activa.";
   if (/ERROR_STORAGE|ERROR_ARCHIVO_NO_ENCONTRADO/i.test(error)) return "Error al recuperar PDF.";
-  if (/ERROR_ARCHIVO_VACIO|ERROR_PDF_INVALIDO/i.test(error)) return "El contenido recuperado no es un PDF válido.";
-  if (/pdf|ilegible|dañad|contraseñ/i.test(error)) return `${fileName} no pudo ser leída. Puede reintentarse.`;
+  if (/ERROR_ARCHIVO_VACIO|ERROR_PDF_INVALIDO/i.test(error))
+    return "El contenido recuperado no es un PDF válido.";
+  if (/pdf|ilegible|dañad|contraseñ/i.test(error))
+    return `${fileName} no pudo ser leída. Puede reintentarse.`;
   return `${fileName} no pudo ser procesada. Puede reintentarse.`;
 }
 

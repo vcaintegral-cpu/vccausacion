@@ -22,6 +22,8 @@ export type ResultadoCola = {
   pdfPendientes: number;
   /** Apartados por no ser del mes de trabajo (anteriores o posteriores). */
   fueraDeMes: number;
+  /** Tareas que otro proceso ya había tomado (no se tocaron). */
+  ocupadas: number;
 };
 
 type Tarea = Record<string, unknown> & {
@@ -113,6 +115,7 @@ export async function causarCola(
       pendientes: 0,
       pdfPendientes: 0,
       fueraDeMes: 0,
+      ocupadas: 0,
     };
     if (todas.length) {
       // Dueño de la carga (quien configuró la fuente): los borradores quedan a su nombre.
@@ -145,6 +148,17 @@ export async function causarCola(
       invalidateBulkDeps(companyId);
       const deps = await loadDeps(companyId, dueno);
       for (const item of todas) {
+        // Se reclama la tarea de forma atómica: si la aplicación abierta (u otro proceso) ya la tomó, se salta.
+        const { data: reclamada } = await db
+          .from("bulk_upload_items")
+          .update({ status: "downloading" })
+          .eq("id", item.id)
+          .eq("status", "pending")
+          .select("id");
+        if (!reclamada?.length) {
+          resultado.ocupadas += 1;
+          continue;
+        }
         await processItem(
           item as never,
           companyId,
