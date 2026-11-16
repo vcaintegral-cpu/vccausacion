@@ -92,6 +92,64 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
+  const [prueba, setPrueba] = useState<{
+    corriendo: boolean;
+    lineas: Array<{ ok: boolean; texto: string }>;
+  }>({
+    corriendo: false,
+    lineas: [],
+  });
+  /** Reinicia la noche de hoy y recorre TODOS los pasos, uno por llamada, hasta el reporte por correo. */
+  const probarNoche = async () => {
+    const real = form.enviar_a_siigo;
+    if (
+      !window.confirm(
+        `Se reiniciará la memoria de la noche de HOY y se ejecutarán todos los pasos seguidos hasta el reporte por correo.\n\n${
+          real
+            ? "ATENCIÓN: el envío a Siigo está ACTIVADO. Esta prueba SÍ aprobará, causará y enviará a Siigo lo que quede en verde."
+            : "El envío a Siigo está en modo prueba: no se enviará nada a Siigo."
+        }\n\n¿Continuar?`,
+      )
+    )
+      return;
+    setPrueba({ corriendo: true, lineas: [] });
+    const agregar = (ok: boolean, texto: string) =>
+      setPrueba((p) => ({ ...p, lineas: [...p.lineas, { ok, texto }] }));
+    try {
+      for (let i = 0; i < 80; i += 1) {
+        const r = await ejecutar({
+          data: {
+            companyId,
+            base: window.location.origin,
+            prueba: true,
+            ...(i === 0 ? { reiniciar: true } : {}),
+          },
+        });
+        const x = r[0];
+        if (!x) {
+          agregar(false, "El piloto no está activo para esta empresa.");
+          break;
+        }
+        if (x.paso === null) {
+          agregar(true, "La noche terminó: el reporte ya se envió por correo.");
+          break;
+        }
+        agregar(x.estado !== "error", x.detalle);
+        if (x.estado === "error") {
+          agregar(
+            false,
+            "Se detuvo en este paso. El programador lo reintentará 3 veces y luego abrirá un caso de error.",
+          );
+          break;
+        }
+      }
+    } catch (e) {
+      agregar(false, e instanceof Error ? e.message : String(e));
+    } finally {
+      setPrueba((p) => ({ ...p, corriendo: false }));
+      void estado.refetch();
+    }
+  };
   const mEjecutar = useMutation({
     mutationFn: () => ejecutar({ data: { companyId, base: window.location.origin } }),
     onSuccess: (r) => {
@@ -205,7 +263,31 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
             )}
             Ejecutar un paso ahora
           </Button>
+          <Button
+            size="sm"
+            onClick={() => void probarNoche()}
+            disabled={prueba.corriendo || mEjecutar.isPending}
+          >
+            {prueba.corriendo ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="mr-1 h-4 w-4" />
+            )}
+            Probar la noche completa
+          </Button>
         </div>
+        {prueba.lineas.length ? (
+          <div className="mt-2 rounded border border-border bg-muted/30 p-2">
+            <div className="mb-1 font-semibold">
+              Prueba de la noche {prueba.corriendo ? "(en curso…)" : ""}
+            </div>
+            {prueba.lineas.map((l, i) => (
+              <div key={i} className={l.ok ? "" : "text-red-700"}>
+                {l.ok ? "✔" : "✖"} {l.texto}
+              </div>
+            ))}
+          </div>
+        ) : null}
         <div className="mt-2 rounded border border-border bg-muted/30 p-2">
           Trabajando en <b>{etiquetaMes(mesActual)}</b>: solo se causan documentos de ese mes (los
           de meses anteriores se omiten y los posteriores se apartan hasta que llegue su mes). El
