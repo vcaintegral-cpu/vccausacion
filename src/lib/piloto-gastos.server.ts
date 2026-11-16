@@ -32,6 +32,8 @@ export type VerificacionExtracto = {
   cuadra: boolean;
   /** Rendimientos financieros que trae el extracto (informativo, no se usa para enviar). */
   rendimientos: number;
+  /** De dónde salieron los movimientos: extracto en Excel o la hoja de la cuenta en la relación de pagos. */
+  fuente: string | null;
   nota: string | null;
 };
 
@@ -61,6 +63,7 @@ const sinExtracto = (nota: string | null): VerificacionExtracto => ({
   movimientosExtracto: 0,
   cuadra: false,
   rendimientos: 0,
+  fuente: null,
   nota,
 });
 
@@ -86,8 +89,8 @@ async function verificarConExtractos(
           banco,
           sinExtracto(
             pdfs.has(banco)
-              ? "extracto en PDF: se verifica desde la pantalla de Conciliación"
-              : "sin extracto del mes en la carpeta «extractos»",
+              ? "solo hay extracto en PDF y la relación de pagos no trae la hoja de esta cuenta: se verifica desde la pantalla de Conciliación"
+              : "sin movimientos del mes: ni extracto en Excel ni hoja de la cuenta en la relación de pagos",
           ),
         );
         continue;
@@ -106,6 +109,7 @@ async function verificarConExtractos(
         movimientosExtracto: cargos.length,
         cuadra,
         rendimientos,
+        fuente: c.fuente ?? null,
         nota: cuadra
           ? null
           : `el extracto trae $${valorExtracto.toLocaleString("es-CO")} en ${cargos.length} cargos y el RP suma $${esperado.toLocaleString("es-CO")}`,

@@ -94,3 +94,14 @@ describe("verificación con el extracto", () => {
     expect(dav.extracto.nota).toContain("PDF");
   });
 });
+
+describe("carpetaEsDelMes y subcuenta del PUC", () => {
+  it("reconoce la carpeta del mes en la ruta de Drive", async () => {
+    const { carpetaEsDelMes } = await import("./piloto.server");
+    expect(carpetaEsDelMes("2026/11. NOVIEMBRE/FACTURAS/1. PEND. - PROVEEDOR", "2026-11-01")).toBe(
+      true,
+    );
+    expect(carpetaEsDelMes("2026/10. OCTUBRE/FACTURAS", "2026-11-01")).toBe(false);
+    expect(carpetaEsDelMes(null, "2026-11-01")).toBe(false);
+  });
+});
