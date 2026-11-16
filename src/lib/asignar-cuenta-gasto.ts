@@ -44,7 +44,7 @@ export async function asignarCuentaGasto(
       renglones: 0,
       message: "Solo se puede asignar cuenta a facturas en borrador.",
     };
-  const raw = ((inv.raw_extraction ?? {}) as Record<string, unknown>) ?? {};
+  const raw = (inv.raw_extraction ?? {}) as Record<string, unknown>;
   const ia = raw["ia"] as { lines?: unknown[] } | undefined;
   if (!ia || !Array.isArray(ia.lines))
     return {
