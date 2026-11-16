@@ -142,7 +142,7 @@ const iguales = (a: number, b: number) => Math.abs(roundCOP(a) - roundCOP(b)) < 
 
 /** Cargos del banco que van en un solo comprobante mensual (comisiones, IVA, 4x1000). */
 export const esGastoBancario = (descripcion: string) =>
-  /4\s*X\s*1000|GRAVAMEN|IMPTO GOBIERNO|CUOTA (PLAN|MANEJO)|C MANEJO|CUOTA MANEJO|COMISION|\bCOMIS\b|SWIFT|SERVICIO (PAGO|E ?MAIL|DE PAGO)|E-?MAILS|COBRO IVA|IVA CUOTA|IVA COMIS|IVA POR SERVICIOS|IVA PAGOS|INTERESES? (DE )?MORA|CARGO/i.test(
+  /4\s*X\s*1000|GRAVAMEN|IMPTO GOBIERNO|CUOTA (PLAN|MANEJO)|C MANEJO|CUOTA MANEJO|COMISION|\bCOMIS\b|SWIFT|SERVICIO (PAGO|POR PAGOS|E ?MAIL|DE PAGO)|COBRO TARIFA|TARIFA PLAN|E-?MAILS|COBRO IVA|IVA CUOTA|IVA COMIS|IVA POR SERVICIOS|IVA PAGOS|INTERESES? (DE )?MORA|CARGO/i.test(
     sinTildes(descripcion),
   );
 

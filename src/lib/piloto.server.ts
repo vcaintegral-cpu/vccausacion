@@ -196,6 +196,37 @@ export async function diagnosticoMes(db: Db, companyId: string, mes: string): Pr
   return `Diagnóstico de la carpeta del mes — archivos registrados: ${filas.length} (${archivos}); tareas: ${cuenta(tareas)}${dup ? `; ejemplo de duplicado: ${dup.slice(0, 120)}` : ""}`;
 }
 
+/** Estado de la cola de la carga masiva de la empresa (para diagnosticar). */
+export async function diagnosticoCola(db: Db, companyId: string): Promise<string> {
+  const { data } = await db
+    .from("bulk_upload_items")
+    .select("status, stage, file_name, user_message, storage_path")
+    .eq("company_id", companyId)
+    .neq("status", "completed")
+    .order("created_at", { ascending: false })
+    .limit(300);
+  const filas = (data ?? []) as Array<{
+    status: string;
+    stage: string | null;
+    file_name: string | null;
+    user_message: string | null;
+    storage_path: string | null;
+  }>;
+  const m = new Map<string, number>();
+  for (const f of filas) {
+    const k = `${f.status}${f.stage ? `/${f.stage}` : ""}${/\/fuentes\//.test(f.storage_path ?? "") ? " (Drive)" : " (manual)"}`;
+    m.set(k, (m.get(k) ?? 0) + 1);
+  }
+  const lista = [...m].map(([k, n]) => `${k} ${n}`).join(", ") || "vacía";
+  const ej = filas
+    .filter((f) => f.status === "error" || f.status === "pending")
+    .slice(0, 2)
+    .map(
+      (f) => `${(f.file_name ?? "?").slice(0, 40)}: ${(f.user_message ?? f.status).slice(0, 100)}`,
+    );
+  return `Cola de carga masiva sin completar: ${lista}${ej.length ? `; ejemplos: ${ej.join(" | ")}` : ""}`;
+}
+
 /** Devuelve a la cola lo apartado por no ser del mes (por fecha leída o por carpeta de origen). */
 export async function reactivarMes(db: Db, companyId: string, mes: string): Promise<void> {
   const { rangoDelMes } = await import("./piloto");
@@ -259,6 +290,14 @@ async function ejecutarPaso(
         cifras[`${proposito}_egresos`] = r.egresosRecibidos;
         quedan += r.pendientesProximaEjecucion;
         avisos.push(...r.advertencias.map((a) => `${proposito}: ${a}`));
+        if (r.errores.length)
+          avisos.push(
+            ...r.errores.slice(0, 3).map((e) => `${proposito} ERROR: ${e.slice(0, 200)}`),
+          );
+        if (proposito === "compras")
+          partes.push(
+            `Drive compras: ${r.encontrados} encontrados, ${r.duplicados} duplicados, ${r.conciliados} ya estaban en el Excel o la app, ${r.facturasEncoladas} PDF y ${r.documentosExcel} documentos del Excel encolados`,
+          );
         if (proposito === "compras")
           partes.push(
             `Drive listó (${proposito}): ${r.resumenArchivos.length ? r.resumenArchivos.join("; ") : "ningún archivo"}`,
@@ -278,6 +317,7 @@ async function ejecutarPaso(
     if (mes) {
       try {
         partes.push(await diagnosticoMes(db, companyId, mes));
+        partes.push(await diagnosticoCola(db, companyId));
       } catch {
         /* el diagnóstico es informativo */
       }
