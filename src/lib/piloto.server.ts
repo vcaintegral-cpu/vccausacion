@@ -121,6 +121,8 @@ function nombreTieneMesRuta(seg: string, mes: number): boolean {
  * carpeta del mes de trabajo: vuelve a la cola para causarse.
  */
 export async function recuperarDelMes(db: Db, companyId: string, mes: string): Promise<number> {
+  const { etiquetaPeriodo } = await import("./drive-sync");
+  const etiqueta = etiquetaPeriodo({ anio: Number(mes.slice(0, 4)), mes: Number(mes.slice(5, 7)) });
   const { data } = await db
     .from("document_source_files")
     .select("bulk_item_id, period, folder_path")
@@ -136,7 +138,7 @@ export async function recuperarDelMes(db: Db, companyId: string, mes: string): P
           folder_path: string | null;
         }>
       )
-        .filter((r) => carpetaEsDelMes(r.folder_path, mes))
+        .filter((r) => r.period === etiqueta || carpetaEsDelMes(r.folder_path, mes))
         .map((r) => r.bulk_item_id),
     ),
   ];
@@ -157,9 +159,11 @@ export async function recuperarDelMes(db: Db, companyId: string, mes: string): P
 
 /** Qué hay en la base de la carpeta del mes: archivos por tipo/estado y tareas por estado (para el reporte). */
 export async function diagnosticoMes(db: Db, companyId: string, mes: string): Promise<string> {
+  const { etiquetaPeriodo } = await import("./drive-sync");
+  const etiqueta = etiquetaPeriodo({ anio: Number(mes.slice(0, 4)), mes: Number(mes.slice(5, 7)) });
   const { data } = await db
     .from("document_source_files")
-    .select("file_type, status, folder_path, bulk_item_id, message")
+    .select("file_type, status, folder_path, bulk_item_id, message, period")
     .eq("company_id", companyId)
     .eq("purpose", "compras")
     .limit(3000);

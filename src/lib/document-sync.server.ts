@@ -436,6 +436,8 @@ export async function syncSource(
         bulk_item_id: string | null;
         message: string | null;
         file_type: string | null;
+        period: string | null;
+        folder_path: string | null;
       }
     >();
     const ids = archivos.map((a) => a.node.id);
@@ -443,7 +445,7 @@ export async function syncSource(
       const { data, error } = await admin
         .from("document_source_files")
         .select(
-          "external_id, name, external_modified_at, status, upload_id, bulk_item_id, message, file_type",
+          "external_id, name, external_modified_at, status, upload_id, bulk_item_id, message, file_type, period, folder_path",
         )
         .eq("company_id", source.company_id)
         .eq("provider", source.provider)
@@ -458,6 +460,8 @@ export async function syncSource(
         bulk_item_id: string | null;
         message: string | null;
         file_type: string | null;
+        period: string | null;
+        folder_path: string | null;
       }>) {
         vistos.set(r.external_id, {
           name: r.name,
@@ -467,6 +471,8 @@ export async function syncSource(
           bulk_item_id: r.bulk_item_id,
           message: r.message,
           file_type: r.file_type,
+          period: r.period,
+          folder_path: r.folder_path,
         });
       }
     }
@@ -480,10 +486,19 @@ export async function syncSource(
     const filas = new Map<string, Record<string, unknown>>();
     const aProcesar: Archivo[] = [];
     const renombradas: Archivo[] = [];
+    const reubicadas = new Map<string, { periodo: string | null; ruta: string; ids: string[] }>();
     for (const a of archivos) {
       const previo = vistos.get(a.node.id);
       const mismoMomento = (x: string | null, y: string | null) =>
         !!x && !!y && new Date(x).getTime() === new Date(y).getTime();
+      // Archivo ya registrado con otra ubicación (p. ej. una configuración anterior sin mes): se corrige
+      // el período y la ruta para que el piloto lo reconozca como de la carpeta del mes.
+      if (previo && (previo.period !== a.periodo || previo.folder_path !== a.ruta)) {
+        const k = `${a.periodo ?? ""}\u0000${a.ruta}`;
+        const g = reubicadas.get(k) ?? { periodo: a.periodo, ruta: a.ruta, ids: [] };
+        g.ids.push(a.node.id);
+        reubicadas.set(k, g);
+      }
       if (!previo || debeReenviarse(previo, vivas)) aProcesar.push(a);
       // El Excel RECIBIDOS se reemplaza durante el mes: si cambió, se vuelve a leer
       // (solo entran los documentos nuevos; los ya cargados se reconocen por CUFE).
@@ -680,6 +695,17 @@ export async function syncSource(
       }
     }
 
+    for (const g of reubicadas.values())
+      for (let i = 0; i < g.ids.length; i += 200) {
+        const { error } = await admin
+          .from("document_source_files")
+          .update({ period: g.periodo, folder_path: g.ruta })
+          .eq("company_id", source.company_id)
+          .eq("provider", source.provider)
+          .in("external_id", g.ids.slice(i, i + 200));
+        if (error)
+          result.errores.push(`No se actualizó la ubicación de ${g.ruta}: ${error.message}`);
+      }
     for (const a of renombradas) {
       const { error } = await admin
         .from("document_source_files")

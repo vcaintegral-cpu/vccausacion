@@ -122,6 +122,7 @@ export async function cargarAjustes(db: Db, companyId: string) {
         .select("code, name")
         .eq("company_id", companyId)
         .or("code.like.5395%,code.like.4295%,code.like.1330%")
+        .order("code")
         .range(a, b),
     ),
     db
@@ -313,10 +314,11 @@ export async function cargarContexto(db: Db, companyId: string): Promise<Context
           "prefix, consecutive, quote, due_date, balance, provider_nit, provider_name, factura_proveedor, siigo_purchase_id",
         )
         .eq("company_id", companyId)
+        .order("id")
         .range(a, b),
     ),
     todas<{ nit: string; name: string }>((a, b) =>
-      db.from("providers").select("nit, name").eq("company_id", companyId).range(a, b),
+      db.from("providers").select("nit, name").eq("company_id", companyId).order("id").range(a, b),
     ),
     todas<{
       clase: string;
@@ -331,6 +333,7 @@ export async function cargarContexto(db: Db, companyId: string): Promise<Context
         .from("egreso_reglas")
         .select("clase, patron, tipo, cuenta_debito, tercero_nit, cuenta_banco, payment_type_id")
         .eq("company_id", companyId)
+        .order("id")
         .range(a, b),
     ),
     todas<MovAux>(
@@ -342,6 +345,7 @@ export async function cargarContexto(db: Db, companyId: string): Promise<Context
           )
           .eq("company_id", companyId)
           .or("voucher.ilike.CE-%,voucher.ilike.RP-%")
+          .order("id")
           .range(a, b),
       30000,
     ).catch(() => [] as MovAux[]),
@@ -358,10 +362,16 @@ export async function cargarContexto(db: Db, companyId: string): Promise<Context
         .select("prefix, number, provider_nit, siigo_number, siigo_id, payable_account")
         .eq("company_id", companyId)
         .not("siigo_number", "is", null)
+        .order("id")
         .range(a, b),
     ),
     todas<{ code: string; name: string | null }>((a, b) =>
-      db.from("puc_accounts").select("code, name").eq("company_id", companyId).range(a, b),
+      db
+        .from("puc_accounts")
+        .select("code, name")
+        .eq("company_id", companyId)
+        .order("code")
+        .range(a, b),
     ),
   ]);
   const ajustes = await cargarAjustes(db, companyId);
