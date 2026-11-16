@@ -455,6 +455,7 @@ export async function syncSource(
         file_type: string | null;
         period: string | null;
         folder_path: string | null;
+        purpose: string | null;
       }
     >();
     const ids = archivos.map((a) => a.node.id);
@@ -462,7 +463,7 @@ export async function syncSource(
       const { data, error } = await admin
         .from("document_source_files")
         .select(
-          "external_id, name, external_modified_at, status, upload_id, bulk_item_id, message, file_type, period, folder_path",
+          "external_id, name, external_modified_at, status, upload_id, bulk_item_id, message, file_type, period, folder_path, purpose",
         )
         .eq("company_id", source.company_id)
         .eq("provider", source.provider)
@@ -479,6 +480,7 @@ export async function syncSource(
         file_type: string | null;
         period: string | null;
         folder_path: string | null;
+        purpose: string | null;
       }>) {
         vistos.set(r.external_id, {
           name: r.name,
@@ -490,6 +492,7 @@ export async function syncSource(
           file_type: r.file_type,
           period: r.period,
           folder_path: r.folder_path,
+          purpose: r.purpose,
         });
       }
     }
@@ -516,7 +519,12 @@ export async function syncSource(
         g.ids.push(a.node.id);
         reubicadas.set(k, g);
       }
-      if (!previo || debeReenviarse(previo, vivas)) aProcesar.push(a);
+      // Con carpetas por meses, un archivo de «facturas» que antes registró la fuente de EGRESOS
+      // (como soporte de pago, cuando esa fuente aún recorría esa carpeta) no es una factura leída:
+      // se procesa como compra (la fila se reasigna por el registro por lotes).
+      const deOtraFuente =
+        !!previo && porMeses && source.purpose === "compras" && previo.purpose === "egresos";
+      if (!previo || deOtraFuente || debeReenviarse(previo, vivas)) aProcesar.push(a);
       // El Excel RECIBIDOS se reemplaza durante el mes: si cambió, se vuelve a leer
       // (solo entran los documentos nuevos; los ya cargados se reconocen por CUFE).
       // Un Excel que quedó en error (p. ej. por una regla de lectura ya corregida) se reintenta.

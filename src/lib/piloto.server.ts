@@ -163,9 +163,8 @@ export async function diagnosticoMes(db: Db, companyId: string, mes: string): Pr
   const etiqueta = etiquetaPeriodo({ anio: Number(mes.slice(0, 4)), mes: Number(mes.slice(5, 7)) });
   const { data } = await db
     .from("document_source_files")
-    .select("file_type, status, folder_path, bulk_item_id, message, period")
+    .select("file_type, status, folder_path, bulk_item_id, message, period, purpose")
     .eq("company_id", companyId)
-    .eq("purpose", "compras")
     .limit(3000);
   const filas = (
     (data ?? []) as Array<{
@@ -181,7 +180,9 @@ export async function diagnosticoMes(db: Db, companyId: string, mes: string): Pr
     for (const x of xs) m.set(x, (m.get(x) ?? 0) + 1);
     return [...m].map(([k, n]) => `${k} ${n}`).join(", ") || "ninguno";
   };
-  const archivos = cuenta(filas.map((r) => `${r.file_type ?? "?"}/${r.status}`));
+  const archivos = cuenta(
+    filas.map((r) => `${r.purpose ?? "?"}:${r.file_type ?? "?"}/${r.status}`),
+  );
   const ids = [...new Set(filas.map((r) => r.bulk_item_id).filter((x): x is string => !!x))];
   const tareas: string[] = [];
   for (let i = 0; i < ids.length; i += 100) {

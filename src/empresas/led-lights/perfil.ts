@@ -17,6 +17,8 @@ export const LED_LIGHTS: PerfilEmpresa = {
   cuentasEgresosPorConcepto: {
     gasto_bancario: "53050501",
     "4x1000": "530530",
+    // Instrucción del 2026-11-16: IVA descontable por servicios 19% (IVA de los cobros bancarios).
+    iva_bancario: "24081501",
   },
   funciones: {
     // Instrucción del 2026-11-10: LED LIGHTS no usa ni causa el impoconsumo; su valor
