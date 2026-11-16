@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/db-contextual";
 import type { PucAccount } from "@/lib/puc-hierarchy";
 
 const PUC_PAGE_SIZE = 1000;

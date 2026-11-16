@@ -13,7 +13,7 @@
 // Validación obligatoria: la cuenta de gasto SOLO puede empezar por 5, 6, 7,
 // 15, 16 o 17. Una sugerencia en 11, 13, 22, 23 o 24 se descarta y pasa a la
 // siguiente prioridad.
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/db-contextual";
 import { roundCOP } from "@/lib/money";
 import type { Line } from "@/lib/accounting";
 

@@ -5,7 +5,7 @@
 // 5) historial de causaciones (proveedor / conceptos similares),
 // 6) reglas contables del usuario y PUC operativo.
 // Todo es SIEMPRE por empresa: nunca se comparten datos entre empresas.
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/db-contextual";
 import { bySourcePriority, type HistoryEvent, type LearningRule } from "@/lib/learning";
 import { resolveProductAccount, type CategoryRef, type ProductRef } from "@/lib/product-account";
 import { resolveOperationalAccount, type PucAccount } from "@/lib/puc-hierarchy";
@@ -60,7 +60,7 @@ export const emptyKnowledge = (): CompanyKnowledge => ({ learning: [], history: 
 type HistoryRow = { provider_nit: string | null; concept: string | null; account_code: string; uses: number };
 
 /** Llamada tipada a las funciones de resumen del histórico (no están en los tipos generados). */
-const rpc = supabase.rpc.bind(supabase) as unknown as (
+const rpc = ((...args: unknown[]) => (supabase.rpc as unknown as (...x: unknown[]) => unknown)(...args)) as unknown as (
   fn: string,
   args: Record<string, unknown>,
 ) => PromiseLike<{ data: HistoryRow[] | null; error: { message: string } | null }>;
