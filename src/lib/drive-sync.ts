@@ -148,7 +148,9 @@ export function esReporteDeMes(nombre: string): boolean {
   const n = normalizar(nombre.replace(/\.(xlsx|xls|xlsm|csv)$/i, "")).replace(/[^A-Z0-9 ]/g, " ");
   if (/EXTRACTO|CORRIENTE|AHORRO|NOMINA|FORMATO|VENTAS|RECIBIDOS/.test(n)) return false;
   const palabras = n.split(/\s+/);
-  return palabras.some((p) => mesPorNombre(p) !== null) && palabras.some((p) => /^20\d{2}$/.test(p));
+  return (
+    palabras.some((p) => mesPorNombre(p) !== null) && palabras.some((p) => /^20\d{2}$/.test(p))
+  );
 }
 
 /**
@@ -157,10 +159,28 @@ export function esReporteDeMes(nombre: string): boolean {
  * - egresos: PDF → soporte de pago; Excel/CSV o nombre con "extracto" → extracto bancario.
  * Lo demás se ignora.
  */
+/** ¿El nombre trae el mes (p. ej. «NOVIEMBRE», «Noviembre 2026») sin ser extracto, nómina, ventas, etc.? */
+export function nombreTieneMes(nombre: string, mes: number): boolean {
+  const n = normalizar(nombre.replace(/\.(xlsx|xls|xlsm|csv)$/i, "")).replace(/[^A-Z0-9 ]/g, " ");
+  if (/EXTRACTO|CORRIENTE|AHORRO|NOMINA|FORMATO|VENTAS|RECIBIDOS/.test(n)) return false;
+  return n.split(/\s+/).some((p) => mesPorNombre(p) === mes);
+}
+
+/** Dónde está el archivo dentro de la carpeta del mes (solo empresas con la función «drive_por_meses»). */
+export type ContextoArchivo = {
+  /** Mes de la carpeta (1-12). */
+  mes?: number | null;
+  /** El archivo está directamente en la carpeta del mes (no en una subcarpeta). */
+  enRaizDelMes?: boolean;
+  /** El archivo está en la subcarpeta «extractos». */
+  enExtractos?: boolean;
+};
+
 export function tipoDeArchivo(
   proposito: Proposito,
   nombre: string,
   mimeType: string | null | undefined,
+  contexto?: ContextoArchivo,
 ): "factura_pdf" | "recibidos_excel" | "soporte_pago" | "extracto" | "relacion_pagos" | null {
   const pdf = esPdf(nombre, mimeType);
   const hoja = esHojaDeCalculo(nombre, mimeType);
@@ -168,6 +188,16 @@ export function tipoDeArchivo(
   // Reporte mensual de pagos («OCTUBRE 2026», Excel u hoja de Google): se lee como
   // relación de pagos si la empresa tiene configurado su lector; si no, queda como extracto.
   if ((hoja || mimeType === HOJA_GOOGLE) && esReporteDeMes(nombre)) return "relacion_pagos";
+  // Carpeta por meses: el Excel con el nombre del mes (sin año) en la carpeta del mes es el reporte de pagos.
+  if (
+    (hoja || mimeType === HOJA_GOOGLE) &&
+    contexto?.enRaizDelMes &&
+    contexto.mes &&
+    nombreTieneMes(nombre, contexto.mes)
+  )
+    return "relacion_pagos";
+  // Todo lo que está en la subcarpeta «extractos» es un extracto bancario.
+  if (contexto?.enExtractos && (hoja || pdf)) return "extracto";
   if (hoja || (pdf && /extracto/i.test(sinTildes(nombre)))) return "extracto";
   return pdf ? "soporte_pago" : null;
 }
@@ -241,7 +271,10 @@ export function interpretarEnlace(enlace: string): EnlaceCarpeta | null {
 /** Factura ya conocida (en el Excel RECIBIDOS o causada en la app), para conciliar PDF por su nombre. */
 export type FacturaConocida = { nit: string; prefijo: string; numero: string; origen: string };
 
-const alfanum = (s: string) => sinTildes(s).toUpperCase().replace(/[^A-Z0-9]/g, "");
+const alfanum = (s: string) =>
+  sinTildes(s)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
 const escaparRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
@@ -250,7 +283,10 @@ const escaparRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * nombres del Procesador XML FE ("FECT272708_900047217_MEGA LUCES S.A.S.pdf") y los de
  * la DIAN ("Corriente07 - fv090004721702826FECT00272708.pdf"). Sin coincidencia clara, null.
  */
-export function facturaEnNombre(nombre: string, conocidas: FacturaConocida[]): FacturaConocida | null {
+export function facturaEnNombre(
+  nombre: string,
+  conocidas: FacturaConocida[],
+): FacturaConocida | null {
   const base = alfanum(nombre.replace(/\.pdf$/i, ""));
   for (const f of conocidas) {
     const nit = f.nit.replace(/\D/g, "");

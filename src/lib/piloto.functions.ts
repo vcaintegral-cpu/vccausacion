@@ -151,17 +151,9 @@ export const pilotoGuardarConfig = createServerFn({ method: "POST" })
     }
     if (error) throw new Error(error.message);
     if (data.mes_trabajo) {
-      // Al cambiar el mes a mano, los documentos apartados por ser de ese mes vuelven a la cola.
-      const { rangoDelMes } = await import("./piloto");
-      const { desde, hasta } = rangoDelMes(`${data.mes_trabajo.slice(0, 7)}-01`);
-      await db
-        .from("bulk_upload_items")
-        .update({ status: "pending", stage: null, user_message: null })
-        .eq("company_id", data.companyId)
-        .eq("status", "cancelled")
-        .eq("stage", "fuera_de_mes")
-        .gte("issue_date", desde)
-        .lte("issue_date", hasta);
+      // Al cambiar el mes a mano, lo apartado por ser de ese mes vuelve a la cola.
+      const { reactivarMes } = await import("./piloto.server");
+      await reactivarMes(db, data.companyId, `${data.mes_trabajo.slice(0, 7)}-01`);
     }
     return { ok: true, aviso };
   });
