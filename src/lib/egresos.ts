@@ -857,8 +857,18 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
     motivos.push(
       `Falta la cuenta débito${concepto ? ` de «${concepto.etiqueta}»` : ""}: elígela una vez y la herramienta la recordará.`,
     );
-  else if (ctx.puc && !ctx.puc.has(cuenta))
-    motivos.push(`La cuenta ${cuenta} no está en el PUC sincronizado.`);
+  else if (ctx.puc && !ctx.puc.has(cuenta)) {
+    // El histórico de Siigo puede traer la cuenta de mayor nivel (p. ej. 530530) y el PUC tener solo
+    // la subcuenta de movimiento: si hay una sola, se usa; si hay varias, se listan para elegir.
+    const hijas = [...ctx.puc].filter((c) => c.length > cuenta!.length && c.startsWith(cuenta!));
+    if (hijas.length === 1) cuenta = hijas[0]!;
+    else
+      motivos.push(
+        hijas.length
+          ? `La cuenta ${cuenta} tiene subcuentas (${hijas.slice(0, 4).join(", ")}${hijas.length > 4 ? "…" : ""}): elige una y la herramienta la recordará.`
+          : `La cuenta ${cuenta} no está en el PUC sincronizado.`,
+      );
+  }
   if (!p.cuentaBanco)
     motivos.push(`Falta la cuenta de banco/caja de «${m.cuenta ?? "sin origen"}».`);
   if (!p.terceroNit)

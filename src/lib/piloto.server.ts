@@ -56,11 +56,16 @@ export async function apartarOtrosMeses(db: Db, companyId: string, mes: string):
   for (let i = 0; i < ids.length; i += 100) {
     const { data } = await db
       .from("document_source_files")
-      .select("bulk_item_id")
+      .select("bulk_item_id, period, folder_path")
       .eq("company_id", companyId)
-      .eq("period", etiqueta)
       .in("bulk_item_id", ids.slice(i, i + 100));
-    for (const r of (data ?? []) as Array<{ bulk_item_id: string }>) conservar.add(r.bulk_item_id);
+    for (const r of (data ?? []) as Array<{
+      bulk_item_id: string;
+      period: string | null;
+      folder_path: string | null;
+    }>)
+      if (r.period === etiqueta || (!r.period && carpetaEsDelMes(r.folder_path, mes)))
+        conservar.add(r.bulk_item_id);
   }
   const aApartar = ids.filter((id) => !conservar.has(id));
   let apartadas = 0;
@@ -78,6 +83,76 @@ export async function apartarOtrosMeses(db: Db, companyId: string, mes: string):
     apartadas += act?.length ?? 0;
   }
   return apartadas;
+}
+
+/** La ruta de Drive del archivo pasa por la carpeta de ese mes (p. ej. «11. NOVIEMBRE»). */
+export function carpetaEsDelMes(ruta: string | null | undefined, mes: string): boolean {
+  if (!ruta) return false;
+  const n = Number(mes.slice(5, 7));
+  return ruta.split("/").some((seg) => nombreTieneMesRuta(seg, n));
+}
+
+// Misma regla que la revisión de Drive: el nombre de la carpeta trae el nombre del mes.
+function nombreTieneMesRuta(seg: string, mes: number): boolean {
+  const MESES = [
+    "ENERO",
+    "FEBRERO",
+    "MARZO",
+    "ABRIL",
+    "MAYO",
+    "JUNIO",
+    "JULIO",
+    "AGOSTO",
+    "SEPTIEMBRE",
+    "OCTUBRE",
+    "NOVIEMBRE",
+    "DICIEMBRE",
+  ];
+  const t = seg
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]/g, " ");
+  return t.split(/\s+/).includes(MESES[mes - 1] ?? "");
+}
+
+/**
+ * Recupera lo que una configuración anterior (sin período) apartó SIN leer pero que está en la
+ * carpeta del mes de trabajo: vuelve a la cola para causarse.
+ */
+export async function recuperarDelMes(db: Db, companyId: string, mes: string): Promise<number> {
+  const { data } = await db
+    .from("document_source_files")
+    .select("bulk_item_id, period, folder_path")
+    .eq("company_id", companyId)
+    .not("bulk_item_id", "is", null)
+    .limit(3000);
+  const ids = [
+    ...new Set(
+      (
+        (data ?? []) as Array<{
+          bulk_item_id: string;
+          period: string | null;
+          folder_path: string | null;
+        }>
+      )
+        .filter((r) => carpetaEsDelMes(r.folder_path, mes))
+        .map((r) => r.bulk_item_id),
+    ),
+  ];
+  let n = 0;
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data: act } = await db
+      .from("bulk_upload_items")
+      .update({ status: "pending", stage: null, user_message: null } as never)
+      .in("id", ids.slice(i, i + 100))
+      .eq("status", "cancelled")
+      .eq("stage", "fuera_de_mes")
+      .like("user_message", "%sin leerla%")
+      .select("id");
+    n += act?.length ?? 0;
+  }
+  return n;
 }
 
 /** Devuelve a la cola lo apartado por no ser del mes (por fecha leída o por carpeta de origen). */
@@ -168,6 +243,7 @@ async function ejecutarPaso(
     const { causarCola } = await import("./bulk-servidor.server");
     const { rangoDelMes, etiquetaMes } = await import("./piloto");
     // Lo que vino de la carpeta de otro mes se aparta sin leerlo (sin gastar IA).
+    const recuperadas = mes ? await recuperarDelMes(db, companyId, mes) : 0;
     const apartadasSinLeer = mes ? await apartarOtrosMeses(db, companyId, mes) : 0;
     const rango = mes ? { ...rangoDelMes(mes), etiqueta: etiquetaMes(mes) } : undefined;
     const r = await causarCola(db, companyId, {
@@ -188,6 +264,7 @@ async function ejecutarPaso(
       pdf_pendientes: r.pdfPendientes,
       fuera_de_mes: suma("fuera_de_mes", r.fueraDeMes),
       apartadas_sin_leer: suma("apartadas_sin_leer", apartadasSinLeer),
+      recuperadas: suma("recuperadas", recuperadas),
     };
     const cola = r.pendientes + r.pdfPendientes;
     // Si hay cola pero no se avanzó nada ni la tiene otro proceso, es un error (se reintenta 3 veces y se reporta).
@@ -203,7 +280,7 @@ async function ejecutarPaso(
       id: paso,
       // Sigue «pendiente» mientras haya documentos en la cola; la siguiente llamada continúa.
       estado: cola > 0 ? "pendiente" : "hecho",
-      detalle: `Leídas ${cifras.leidas} esta noche: ${cifras.causadas} causadas como borrador (${cifras.verdes} en verde, ${cifras.amarillas} por revisar), ${cifras.fuera_de_mes} apartadas tras leerlas por no ser de ${mesTxt}, ${cifras.apartadas_sin_leer} apartadas sin leer (carpeta de otro mes), ${cifras.con_error} con error${
+      detalle: `Leídas ${cifras.leidas} esta noche: ${cifras.causadas} causadas como borrador (${cifras.verdes} en verde, ${cifras.amarillas} por revisar), ${cifras.fuera_de_mes} apartadas tras leerlas por no ser de ${mesTxt}, ${cifras.apartadas_sin_leer} apartadas sin leer (carpeta de otro mes), ${cifras.recuperadas} recuperadas de la carpeta del mes, ${cifras.con_error} con error${
         cola > 0
           ? `; quedan ${r.pendientes} del Excel y ${r.pdfPendientes} PDF`
           : "; la cola quedó vacía"
@@ -403,7 +480,7 @@ async function ejecutarPaso(
         g.enviado
           ? `${g.banco}: RP único ya enviado`
           : completo(g)
-            ? `${g.banco}: ${g.movimientos} movimientos por ${fmt(g.valor)}, completo y verificado con el extracto`
+            ? `${g.banco}: ${g.movimientos} movimientos por ${fmt(g.valor)}, completo y verificado con ${g.extracto.fuente ?? "el extracto"} (se confirma con el extracto del banco cuando llegue)`
             : `${g.banco}: ${g.movimientos} movimientos por ${fmt(g.valor)}, ${g.listos} listos — falta: ${g.faltante ?? g.extracto.nota ?? "completar movimientos"}`,
       )
       .join("; ");
