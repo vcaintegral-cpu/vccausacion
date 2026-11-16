@@ -54,6 +54,7 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
     tope_valor: "5000000",
     hora_inicio: "18",
     mes_trabajo: "",
+    enviar_a_siigo: false,
   });
   useEffect(() => {
     const c = estado.data?.config;
@@ -64,6 +65,7 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
         tope_valor: String(c.tope_valor),
         hora_inicio: String(c.hora_inicio),
         mes_trabajo: c.mes_trabajo ? c.mes_trabajo.slice(0, 7) : "",
+        enviar_a_siigo: c.enviar_a_siigo,
       });
   }, [estado.data?.config]);
   const [instrucciones, setInstrucciones] = useState<Record<string, string>>({});
@@ -77,13 +79,15 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
           correo: form.correo || null,
           tope_valor: Number(form.tope_valor),
           hora_inicio: Number(form.hora_inicio),
+          enviar_a_siigo: form.enviar_a_siigo,
           ...((mesForzado ?? form.mes_trabajo)
             ? { mes_trabajo: mesForzado ?? form.mes_trabajo }
             : {}),
         },
       }),
-    onSuccess: () => {
-      toast.success("Configuración guardada.");
+    onSuccess: (r) => {
+      if (r?.aviso) toast.warning(r.aviso, { duration: 20000 });
+      else toast.success("Configuración guardada.");
       void estado.refetch();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
@@ -226,6 +230,30 @@ function PilotoEmpresa({ companyId }: { companyId: string }) {
           >
             Cerrar {etiquetaMes(mesActual)} y pasar al siguiente
           </Button>
+        </div>
+        <div className="mt-2 rounded border border-border bg-muted/30 p-2">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={form.enviar_a_siigo}
+              onChange={(e) => {
+                if (
+                  e.target.checked &&
+                  !window.confirm(
+                    "Con esto el piloto APROBARÁ, CAUSARÁ y ENVIARÁ A SIIGO de noche las compras del mes de trabajo que queden en verde (sin alertas, cuentas de confianza alta y bajo el tope). Los documentos creados en Siigo no se pueden borrar desde la aplicación. ¿Activar el envío automático?",
+                  )
+                )
+                  return;
+                setForm((x) => ({ ...x, enviar_a_siigo: e.target.checked }));
+              }}
+            />
+            <b>Enviar a Siigo lo que quede en verde</b>
+          </label>
+          <div className="mt-1 text-muted-foreground">
+            {form.enviar_a_siigo
+              ? "ACTIVO: las compras en verde se aprueban, causan y envían a Siigo de noche; lo demás queda por revisar. Recuerde pulsar Guardar."
+              : "Modo prueba: el piloto evalúa las compras del mes y le dice en el reporte cuántas enviaría y cuáles quedan por revisar, sin enviar nada."}
+          </div>
         </div>
         {d && !d.alertasConfiguradas ? (
           <div className="mt-2 text-amber-700">

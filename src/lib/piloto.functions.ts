@@ -12,6 +12,8 @@ export type EstadoPiloto = {
     hora_inicio: number;
     /** Mes de trabajo (AAAA-MM-01); null = el mes actual. */
     mes_trabajo: string | null;
+    /** false = modo prueba: evalúa y reporta, sin enviar nada a Siigo. */
+    enviar_a_siigo: boolean;
   } | null;
   ejecuciones: Array<{
     id: string;
@@ -86,6 +88,7 @@ export const pilotoEstado = createServerFn({ method: "POST" })
             correo: (cfg.data as { correo: string | null }).correo,
             hora_inicio: (cfg.data as { hora_inicio: number }).hora_inicio,
             mes_trabajo: (cfg.data as { mes_trabajo?: string | null }).mes_trabajo ?? null,
+            enviar_a_siigo: (cfg.data as { enviar_a_siigo?: boolean }).enviar_a_siigo === true,
             tope_valor: Number((cfg.data as { tope_valor: number }).tope_valor),
           }
         : null,
@@ -107,6 +110,7 @@ export const pilotoGuardarConfig = createServerFn({ method: "POST" })
       hora_inicio: number;
       /** Mes de trabajo (AAAA-MM o AAAA-MM-DD). Si no viene, no se cambia. */
       mes_trabajo?: string | null;
+      enviar_a_siigo?: boolean;
     }) => {
       if (!input?.companyId) throw new Error("companyId requerido");
       if (input.mes_trabajo && !/^\d{4}-(0[1-9]|1[0-2])(-\d{2})?$/.test(input.mes_trabajo))
@@ -123,18 +127,28 @@ export const pilotoGuardarConfig = createServerFn({ method: "POST" })
     const db = context.supabase;
     await verificarEmpresa(db, data.companyId);
     const { data: u } = await db.auth.getUser();
-    const { error } = await db.from("piloto_config").upsert(
-      {
-        company_id: data.companyId,
-        activo: !!data.activo,
-        correo: data.correo?.trim() || null,
-        tope_valor: Math.round(Number(data.tope_valor)),
-        hora_inicio: Math.round(Number(data.hora_inicio)),
-        ...(data.mes_trabajo ? { mes_trabajo: `${data.mes_trabajo.slice(0, 7)}-01` } : {}),
-        updated_by: u.user?.id ?? null,
-      },
-      { onConflict: "company_id" },
-    );
+    const base = {
+      company_id: data.companyId,
+      activo: !!data.activo,
+      correo: data.correo?.trim() || null,
+      tope_valor: Math.round(Number(data.tope_valor)),
+      hora_inicio: Math.round(Number(data.hora_inicio)),
+      updated_by: u.user?.id ?? null,
+    };
+    const extras = {
+      ...(data.mes_trabajo ? { mes_trabajo: `${data.mes_trabajo.slice(0, 7)}-01` } : {}),
+      ...(data.enviar_a_siigo !== undefined ? { enviar_a_siigo: data.enviar_a_siigo } : {}),
+    };
+    let aviso: string | null = null;
+    let { error } = await db
+      .from("piloto_config")
+      .upsert({ ...base, ...extras }, { onConflict: "company_id" });
+    // Si faltan las columnas nuevas (migraciones 0038/0039 sin aplicar), se guarda lo demás y se avisa.
+    if (error && /mes_trabajo|enviar_a_siigo/.test(error.message) && Object.keys(extras).length) {
+      aviso =
+        "Se guardó la configuración, pero el mes de trabajo y el envío a Siigo necesitan que Lovable aplique las migraciones 0038 y 0039.";
+      ({ error } = await db.from("piloto_config").upsert(base, { onConflict: "company_id" }));
+    }
     if (error) throw new Error(error.message);
     if (data.mes_trabajo) {
       // Al cambiar el mes a mano, los documentos apartados por ser de ese mes vuelven a la cola.
@@ -149,7 +163,7 @@ export const pilotoGuardarConfig = createServerFn({ method: "POST" })
         .gte("issue_date", desde)
         .lte("issue_date", hasta);
     }
-    return { ok: true };
+    return { ok: true, aviso };
   });
 
 /** Responde una pregunta desde la bandeja (opción y, si quiere, una instrucción adicional). */

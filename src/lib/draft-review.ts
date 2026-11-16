@@ -2,7 +2,7 @@ import { sourceFromRaw, sourceErrors, compareSource } from "@/lib/source-values"
 // Revisión masiva de borradores: lee la recomendación REAL almacenada por el motor
 // de causación (journal_lines) y ejecuta aprobación y causación por factura,
 // sin crear una segunda lógica contable.
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/db-contextual";
 import { estadoUnico, findExistingInvoice, type EstadoFactura } from "@/lib/invoice-duplicates";
 import { isPayableCode, learnPayableAccount } from "@/lib/payable-account";
 import { isValidExpenseAccount, isValidPurchaseAccount } from "@/lib/provider-rules";
@@ -289,7 +289,7 @@ export async function causarFactura(inv: DraftInvoice, etiqueta: string): Promis
   if (estadoUnico(inv) !== "aprobado")
     return { id: inv.id, etiqueta, ok: false, message: "Solo se pueden causar facturas en estado Aprobada." };
   if (inv.processing_at) return { id: inv.id, etiqueta, ok: false, message: "La factura está siendo procesada." };
-  const rpc = supabase.rpc.bind(supabase) as unknown as (
+  const rpc = ((...args: unknown[]) => (supabase.rpc as unknown as (...x: unknown[]) => unknown)(...args)) as unknown as (
     fn: string,
     args: Record<string, unknown>,
   ) => PromiseLike<{ data: PostResult | null; error: { message: string } | null }>;
@@ -308,7 +308,7 @@ export async function causarFactura(inv: DraftInvoice, etiqueta: string): Promis
 type RpcResult = { ok: boolean; message?: string };
 
 async function llamarRpc(fn: string, invoiceId: string): Promise<RpcResult> {
-  const rpc = supabase.rpc.bind(supabase) as unknown as (
+  const rpc = ((...args: unknown[]) => (supabase.rpc as unknown as (...x: unknown[]) => unknown)(...args)) as unknown as (
     name: string,
     args: Record<string, unknown>,
   ) => PromiseLike<{ data: RpcResult | null; error: { message: string } | null }>;

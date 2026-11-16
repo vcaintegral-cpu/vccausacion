@@ -45,6 +45,7 @@ import { checkInvoiceCompany, motivoBloqueoEmpresa } from "./company-validation"
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { normalizeItemType } from "@/lib/item-type";
 import { isPayableCode } from "@/lib/accounting";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/integrations/supabase/types";
 
 export type SiigoStatus = {
@@ -797,7 +798,20 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     if (!input?.invoiceId) throw new Error("invoiceId requerido");
     return input;
   })
-  .handler(async ({ data, context }): Promise<SiigoSyncResult> => {
+  .handler(async ({ data, context }): Promise<SiigoSyncResult> =>
+    siigoSyncInvoiceCore(context.supabase as unknown as SupabaseClient<Database>, context.userId, data.invoiceId),
+  );
+
+/**
+ * Envía una factura a Siigo. Es la MISMA lógica de «Causar en Siigo» de la aplicación, con todas sus
+ * barreras (empresa, nota crédito, doble envío, duplicados, validaciones previas y lectura de
+ * vuelta); la usa también el piloto automático con el cliente de servicio.
+ */
+export async function siigoSyncInvoiceCore(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+  invoiceId: string,
+): Promise<SiigoSyncResult> {
     const {
       siigoGet,
       siigoGetCatalogo,
@@ -810,14 +824,13 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
       buildSiigoPurchasePayload,
       siigoUseCompany,
     } = await import("./siigo.server");
-    const supabase = context.supabase;
 
     const { data: inv, error: invErr } = await supabase
       .from("invoices")
       .select(
         "raw_extraction, source_override, discount, id, company_id, cufe, prefix, number, issue_date, due_date, provider_nit, provider_name, provider_address, provider_city, provider_phone, provider_email, buyer_nit, buyer_name, notes, total, iva, impoconsumo, subtotal, retefuente, reteiva, reteica, cost_center, payment_form, payment_method, payment_type_id, payment_type_name, payable_account, status, siigo_status, siigo_id, siigo_number, siigo_document_url, siigo_synced_at, voucher_number, import_source, siigo_attempts, siigo_error_kind, advance_amount",
       )
-      .eq("id", data.invoiceId)
+      .eq("id", invoiceId)
       .single();
     if (invErr || !inv) throw new Error(invErr?.message ?? "Factura no encontrada.");
 
@@ -931,7 +944,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     const { data: journal, error: jErr } = await supabase
       .from("journal_lines")
       .select("id, account_code, account_name, debit, credit, cost_center")
-      .eq("invoice_id", data.invoiceId)
+      .eq("invoice_id", invoiceId)
       .order("position");
     if (jErr) throw new Error(jErr.message);
     if (!journal || journal.length === 0)
@@ -1104,7 +1117,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         siigo_attempts: Number(inv.siigo_attempts ?? 0) + 1,
         siigo_last_attempt_at: new Date().toISOString(),
       })
-      .eq("id", data.invoiceId)
+      .eq("id", invoiceId)
       .neq("siigo_status", "sincronizando")
       .neq("siigo_status", "sincronizada")
       .select("id");
@@ -1113,7 +1126,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
     }
 
     let siigoAttemptTrace: Record<string, unknown> = {
-      invoice_id: data.invoiceId,
+      invoice_id: invoiceId,
       company_id: inv.company_id,
       iniciado_at: new Date().toISOString(),
       resultado: "preparando",
@@ -1185,7 +1198,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .select(
           "position, iva, retention, iva_tax_id, iva_siigo_id, iva_siigo_name, iva_tax_rate, iva_operational_account, ret_tax_id, ret_siigo_id, ret_siigo_name, ret_tax_kind, ret_tax_name, ret_tax_rate, ret_operational_account",
         )
-        .eq("invoice_id", data.invoiceId)
+        .eq("invoice_id", invoiceId)
         .order("position");
       const idsImpuestos = Array.from(
         new Set(
@@ -1298,7 +1311,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .select(
           "code, description, quantity, unit_value, discount, iva, impoconsumo, account_code, account_name, item_type, position",
         )
-        .eq("invoice_id", data.invoiceId)
+        .eq("invoice_id", invoiceId)
         .order("position");
 
       const esCuentaFiscal = (code: string) => /^(2205|2365|2367|2368|2408|621008)/.test(code);
@@ -3085,14 +3098,14 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           siigo_number: siigoNumber,
           siigo_document_url: documentUrl,
           siigo_synced_at: syncedAt,
-          siigo_synced_by: context.userId,
+          siigo_synced_by: userId,
           siigo_error: null,
           siigo_trace: trace,
           siigo_pending_label: pendientes.length
             ? pendientes.map((p) => p.label).join(" · ")
             : null,
         })
-        .eq("id", data.invoiceId);
+        .eq("id", invoiceId);
       for (const p of pendientes) {
         await supabase.from("siigo_pending_settlements").upsert(
           {
@@ -3105,7 +3118,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
             provider_name: inv.provider_name,
             invoice_label: [inv.prefix, inv.number].filter(Boolean).join("-"),
             siigo_number: siigoNumber,
-            created_by: context.userId,
+            created_by: userId,
           },
           { onConflict: "invoice_id,kind" },
         );
@@ -3164,7 +3177,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         .update({
           siigo_trace: failedTrace,
         })
-        .eq("id", data.invoiceId);
+        .eq("id", invoiceId);
       await supabase
         .from("invoices")
         // Si Siigo falla, la factura CONSERVA su causación y queda como "Error Siigo"
@@ -3173,10 +3186,10 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
           siigo_status: "error",
           siigo_error: message,
           siigo_error_kind: creadoEnSiigo ? "creado_diferencia" : "sin_crear",
-          siigo_synced_by: context.userId,
+          siigo_synced_by: userId,
           status: "causada",
         })
-        .eq("id", data.invoiceId);
+        .eq("id", invoiceId);
       return {
         ok: false,
         siigoId: null,
@@ -3190,7 +3203,7 @@ export const siigoSyncInvoice = createServerFn({ method: "POST" })
         supplierMessage: tercero?.message ?? null,
       };
     }
-  });
+}
 
 export type SiigoProduct = { id: string; code: string; name: string };
 
