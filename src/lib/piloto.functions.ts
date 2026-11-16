@@ -205,10 +205,12 @@ export const pilotoResponder = createServerFn({ method: "POST" })
 /** Ejecuta ahora un paso del piloto (aunque sea de día) para revisar que funciona. */
 export const pilotoEjecutarAhora = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { companyId: string; base: string }) => {
-    if (!input?.companyId) throw new Error("companyId requerido");
-    return input;
-  })
+  .inputValidator(
+    (input: { companyId: string; base: string; reiniciar?: boolean; prueba?: boolean }) => {
+      if (!input?.companyId) throw new Error("companyId requerido");
+      return input;
+    },
+  )
   .handler(async ({ data, context }) => {
     await verificarEmpresa(context.supabase, data.companyId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -220,6 +222,8 @@ export const pilotoEjecutarAhora = createServerFn({ method: "POST" })
         base,
         companyId: data.companyId,
         forzar: true,
+        ...(data.reiniciar ? { reiniciar: true } : {}),
+        ...(data.prueba ? { prueba: true } : {}),
       },
     );
   });

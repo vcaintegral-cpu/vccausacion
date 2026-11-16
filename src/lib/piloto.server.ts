@@ -28,6 +28,8 @@ export type ResultadoPiloto = {
   noche: string | null;
   paso: PasoId | null;
   detalle: string;
+  /** Resultado del paso ejecutado (para que la prueba completa sepa cuándo detenerse). */
+  estado?: PasoRegistro["estado"];
 };
 
 /** Ejecuta un paso del día. Devuelve su registro (hecho, omitido o error). */
@@ -469,7 +471,14 @@ async function proponerCierreDeMes(
  */
 export async function avanzarPiloto(
   db: Db,
-  opciones: { base: string; companyId?: string; forzar?: boolean; ahora?: Date },
+  opciones: {
+    base: string;
+    companyId?: string;
+    forzar?: boolean;
+    reiniciar?: boolean;
+    prueba?: boolean;
+    ahora?: Date;
+  },
 ): Promise<ResultadoPiloto[]> {
   const ahora = opciones.ahora ?? new Date();
   let q = db.from("piloto_config").select("*").eq("activo", true);
@@ -523,6 +532,19 @@ export async function avanzarPiloto(
       reporte_enviado_at: string | null;
     };
     let ej = previa as unknown as Ejecucion | null;
+    // Prueba completa desde la pantalla: se reinicia la noche de hoy para repasar todos los pasos otra vez.
+    if (ej && opciones.forzar && opciones.reiniciar) {
+      await db
+        .from("piloto_ejecuciones")
+        .update({
+          estado: "en_curso",
+          pasos: [] as never,
+          reporte_enviado_at: null,
+          resumen: { prueba: true } as never,
+        })
+        .eq("id", ej.id);
+      ej = { ...ej, estado: "en_curso", pasos: [], reporte_enviado_at: null };
+    }
     if (!ej) {
       const { data: nueva, error: e2 } = await db
         .from("piloto_ejecuciones")
@@ -580,6 +602,13 @@ export async function avanzarPiloto(
           { tope: Number(cfg.tope_valor ?? 5_000_000), enviar: cfg.enviar_a_siigo === true },
         );
         registro = { ...r, inicio, fin: new Date().toISOString() };
+        // Prueba desde la pantalla: una sola pasada por paso; lo que quede en cola lo hace la noche real.
+        if (opciones.prueba && registro.estado === "pendiente")
+          registro = {
+            ...registro,
+            estado: "hecho",
+            detalle: `${registro.detalle} (prueba: una sola pasada; el resto se hace de noche)`,
+          };
       }
     } catch (e) {
       registro = {
@@ -637,6 +666,7 @@ export async function avanzarPiloto(
       noche,
       paso,
       detalle: `${PASOS.find((x) => x.id === paso)?.nombre}: ${registro.detalle}`,
+      estado: registro.estado,
     });
   }
   return salida;
