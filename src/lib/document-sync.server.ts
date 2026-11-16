@@ -65,6 +65,8 @@ export type SyncResult = {
   periodos: string[];
   modo: "por_mes" | "carpeta_directa";
   encontrados: number;
+  /** Lo que Drive listó por período: «NOVIEMBRE 2026: 23 PDF, 0 Excel, 8 carpetas». */
+  resumenArchivos: string[];
   facturasEncoladas: number;
   documentosExcel: number;
   egresosRecibidos: number;
@@ -387,6 +389,7 @@ export async function syncSource(
     periodos: (opts.periodos ?? periodosARevisar(ahora)).map(etiquetaPeriodo),
     modo: "por_mes",
     encontrados: 0,
+    resumenArchivos: [],
     facturasEncoladas: 0,
     documentosExcel: 0,
     egresosRecibidos: 0,
@@ -424,6 +427,20 @@ export async function syncSource(
       porMeses,
     );
     result.encontrados = archivos.length;
+    {
+      const g = new Map<string, { pdf: number; hoja: number; carpetas: Set<string> }>();
+      for (const a of archivos) {
+        const k = a.periodo ?? "(sin período)";
+        const x = g.get(k) ?? { pdf: 0, hoja: 0, carpetas: new Set<string>() };
+        if (/\.pdf$/i.test(a.node.name) || a.node.mimeType === "application/pdf") x.pdf += 1;
+        else x.hoja += 1;
+        x.carpetas.add(a.ruta);
+        g.set(k, x);
+      }
+      result.resumenArchivos = [...g].map(
+        ([k, x]) => `${k}: ${x.pdf} PDF, ${x.hoja} Excel/otros, ${x.carpetas.size} carpeta(s)`,
+      );
+    }
 
     // Archivos ya vistos por ID de la fuente.
     const vistos = new Map<

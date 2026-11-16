@@ -485,6 +485,8 @@ export type Contexto = {
   precedente: PrecedenteEgresos | null;
   /** Cuentas del PUC que existen (para validar las elegidas). */
   puc?: Set<string>;
+  /** Cuenta de débito por defecto de cada concepto (perfil de la empresa); va antes del precedente. */
+  cuentasConcepto?: Record<string, string> | undefined;
   /** Cuentas del ajuste al peso del recibo y CxP cruzada; tope del ajuste automático. */
   ajustes?: AjustesRecibo;
   /** Cuentas auxiliares de caja y bancos (1105/1110/1120) con su nombre. */
@@ -839,6 +841,7 @@ export function proponerEgreso(m: MovimientoPago, ctx: Contexto): Propuesta {
   const p = base("detallado");
   const precedente = ctx.precedente;
   let cuenta = regla?.cuenta_debito ?? null;
+  if (!cuenta && concepto) cuenta = ctx.cuentasConcepto?.[concepto.id] ?? null;
   if (!cuenta && concepto) cuenta = masUsada(precedente?.porConcepto.get(concepto.id));
   if (!cuenta && p.terceroNit) cuenta = masUsada(precedente?.porTercero.get(p.terceroNit));
   // El tercero aprendido para el concepto (p. ej. el banco de los gastos bancarios) solo se usa

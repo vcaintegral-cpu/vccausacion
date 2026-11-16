@@ -294,6 +294,17 @@ export async function impuestosParaCuentas(
   return { mapa, sinImpuesto };
 }
 
+/** Cuenta de débito por defecto de cada concepto según el perfil de la empresa (si lo tiene). */
+async function cuentasConceptoDePerfil(
+  db: Db,
+  companyId: string,
+): Promise<Record<string, string> | undefined> {
+  const { data } = await db.from("companies").select("nit").eq("id", companyId).maybeSingle();
+  const { perfilDeEmpresa } = await import("@/empresas/registro");
+  return perfilDeEmpresa((data as { nit: string | null } | null)?.nit ?? null)
+    ?.cuentasEgresosPorConcepto;
+}
+
 /** Contexto para proponer: CxP, terceros, reglas, precedente del auxiliar y facturas causadas. */
 export async function cargarContexto(db: Db, companyId: string): Promise<Contexto> {
   const [cxp, provs, reglas, hist, causadas, puc] = await Promise.all([
@@ -405,6 +416,7 @@ export async function cargarContexto(db: Db, companyId: string): Promise<Context
     conceptos: reglas.filter((r) => r.clase === "concepto") as ReglaConcepto[],
     precedente: hist.length ? aprenderEgresos(hist) : null,
     puc: new Set(puc.map((p) => p.code)),
+    cuentasConcepto: await cuentasConceptoDePerfil(db, companyId),
     cuentasBanco: puc
       .filter((p) => /^11(05|10|20)/.test(p.code))
       .map((p) => ({ code: p.code, name: p.name ?? "" })),
