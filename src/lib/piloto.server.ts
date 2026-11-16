@@ -349,6 +349,7 @@ async function ejecutarPaso(
       libros_sin_banco: suma((c) => c.enLibrosSinBanco),
       sin_extracto: r.sinExtracto.length,
       solo_pdf: r.soloPdf.length,
+      movimiento_incompleto: r.movimientoIncompleto ? 1 : 0,
     };
     const porCuenta = r.cuentas
       .map(
@@ -369,7 +370,7 @@ async function ejecutarPaso(
     return {
       id: paso,
       estado: "hecho",
-      detalle: `${r.cuentas.length ? `Conciliación de ${etiquetaMes(mes)} (solo lectura, no se registró nada en Siigo) — ${porCuenta}` : `No hay extractos de ${etiquetaMes(mes)} que el servidor pueda leer`}${faltan ? ` · ${faltan}` : ""}${r.advertencias.length ? ` · Avisos: ${r.advertencias.slice(0, 2).join(" | ")}` : ""}`,
+      detalle: `${r.movimientoIncompleto ? "⚠ RESULTADO NO CONFIABLE: Siigo entregó el movimiento incompleto (límite de documentos de la API), por eso los «sin RP/RC» pueden ser falsos. Suba el auxiliar de bancos del mes y concilie desde la pantalla de Conciliación. " : ""}${r.cuentas.length ? `Conciliación de ${etiquetaMes(mes)} (solo lectura, no se registró nada en Siigo) — ${porCuenta}` : `No hay extractos de ${etiquetaMes(mes)} que el servidor pueda leer`}${faltan ? ` · ${faltan}` : ""}${r.advertencias.length ? ` · Avisos: ${r.advertencias.slice(0, 2).join(" | ")}` : ""}`,
       cifras,
     };
   }

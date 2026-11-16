@@ -94,5 +94,6 @@ describe("conciliación del piloto (solo lectura)", () => {
     expect(c.salidasSinRp).toBe(1);
     expect(c.ingresosSinRc).toBe(1);
     expect(r.advertencias).toContain("Balance de prueba no disponible");
+    expect(r.movimientoIncompleto).toBe(false);
   });
 });
