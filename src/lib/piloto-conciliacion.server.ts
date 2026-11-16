@@ -26,6 +26,8 @@ export type ResultadoConciliacionPiloto = {
   /** Cuentas cuyo extracto es un PDF (se concilian desde la aplicación). */
   soloPdf: string[];
   advertencias: string[];
+  /** El movimiento de Siigo llegó incompleto (límite de documentos de la API): el cruce NO es confiable. */
+  movimientoIncompleto: boolean;
 };
 
 const finDeMes = (periodo: string) => {
@@ -50,6 +52,7 @@ export async function conciliarMes(
     sinExtracto: [],
     soloPdf: [],
     advertencias: [...fuentes.advertencias],
+    movimientoIncompleto: false,
   };
   const pdfs = new Set(fuentes.pdfs.map((p) => p.etiqueta.toUpperCase()));
   const conExtracto = fuentes.cuentas.filter((c) => c.movimientos.length > 0);
@@ -66,6 +69,7 @@ export async function conciliarMes(
     hasta: finDeMes(periodo),
   });
   salida.advertencias.push(...siigo.advertencias);
+  salida.movimientoIncompleto = siigo.advertencias.some((a) => /se alcanzó el límite/i.test(a));
 
   const previasDe = (etiqueta: string) =>
     fuentes.anterior.find((a) => a.cuenta.toUpperCase() === etiqueta.toUpperCase())?.partidas ?? [];
