@@ -148,11 +148,48 @@ export async function recuperarDelMes(db: Db, companyId: string, mes: string): P
       .in("id", ids.slice(i, i + 100))
       .eq("status", "cancelled")
       .eq("stage", "fuera_de_mes")
-      .like("user_message", "%sin leerla%")
+      .or("user_message.like.%sin leerla%,issue_date.is.null")
       .select("id");
     n += act?.length ?? 0;
   }
   return n;
+}
+
+/** Qué hay en la base de la carpeta del mes: archivos por tipo/estado y tareas por estado (para el reporte). */
+export async function diagnosticoMes(db: Db, companyId: string, mes: string): Promise<string> {
+  const { data } = await db
+    .from("document_source_files")
+    .select("file_type, status, folder_path, bulk_item_id, message")
+    .eq("company_id", companyId)
+    .eq("purpose", "compras")
+    .limit(3000);
+  const filas = (
+    (data ?? []) as Array<{
+      file_type: string | null;
+      status: string;
+      folder_path: string | null;
+      bulk_item_id: string | null;
+      message: string | null;
+    }>
+  ).filter((r) => carpetaEsDelMes(r.folder_path, mes));
+  const cuenta = (xs: string[]) => {
+    const m = new Map<string, number>();
+    for (const x of xs) m.set(x, (m.get(x) ?? 0) + 1);
+    return [...m].map(([k, n]) => `${k} ${n}`).join(", ") || "ninguno";
+  };
+  const archivos = cuenta(filas.map((r) => `${r.file_type ?? "?"}/${r.status}`));
+  const ids = [...new Set(filas.map((r) => r.bulk_item_id).filter((x): x is string => !!x))];
+  const tareas: string[] = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data: t } = await db
+      .from("bulk_upload_items")
+      .select("status, stage")
+      .in("id", ids.slice(i, i + 100));
+    for (const x of (t ?? []) as Array<{ status: string; stage: string | null }>)
+      tareas.push(x.stage === "fuera_de_mes" ? `${x.status}/fuera_de_mes` : x.status);
+  }
+  const dup = filas.find((r) => r.status === "duplicate" && r.message)?.message;
+  return `Diagnóstico de la carpeta del mes — archivos registrados: ${filas.length} (${archivos}); tareas: ${cuenta(tareas)}${dup ? `; ejemplo de duplicado: ${dup.slice(0, 120)}` : ""}`;
 }
 
 /** Devuelve a la cola lo apartado por no ser del mes (por fecha leída o por carpeta de origen). */
@@ -230,6 +267,13 @@ async function ejecutarPaso(
       }
     }
     cifras["quedan"] = quedan;
+    if (mes) {
+      try {
+        partes.push(await diagnosticoMes(db, companyId, mes));
+      } catch {
+        /* el diagnóstico es informativo */
+      }
+    }
     if (avisos.length) partes.push(`Avisos: ${avisos.slice(0, 3).join(" | ")}`);
     // Mientras queden archivos por traer (se traen por tandas), el paso sigue pendiente.
     return {

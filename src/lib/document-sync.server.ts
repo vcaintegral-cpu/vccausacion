@@ -479,6 +479,7 @@ export async function syncSource(
 
     const filas = new Map<string, Record<string, unknown>>();
     const aProcesar: Archivo[] = [];
+    const renombradas: Archivo[] = [];
     for (const a of archivos) {
       const previo = vistos.get(a.node.id);
       const mismoMomento = (x: string | null, y: string | null) =>
@@ -496,7 +497,9 @@ export async function syncSource(
         aProcesar.push(a);
       else if (previo.name !== a.node.name) {
         // La usuaria agrega "Corriente16 - ..." al pagar: se actualiza la pista de pago.
-        filas.set(a.node.id, filaArchivo(source, a));
+        // Se actualiza aparte (no con el upsert por lotes): una fila sin «status» dentro del lote lo
+        // enviaría como nulo y la base rechaza todo el registro.
+        renombradas.push(a);
         result.renombrados += 1;
       }
     }
@@ -675,6 +678,16 @@ export async function syncSource(
           fingerprint: d.huella,
         });
       }
+    }
+
+    for (const a of renombradas) {
+      const { error } = await admin
+        .from("document_source_files")
+        .update(filaArchivo(source, a))
+        .eq("company_id", source.company_id)
+        .eq("provider", source.provider)
+        .eq("external_id", a.node.id);
+      if (error) result.errores.push(`No se actualizó ${a.node.name}: ${error.message}`);
     }
 
     // Registro de archivos vistos (insert o actualización por ID de la fuente).
