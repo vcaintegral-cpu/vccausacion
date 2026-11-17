@@ -978,7 +978,9 @@ export async function computeDraftAccounting(params: {
   let scoreFinal = score;
   let reasonFinal = reason;
   if (perfilReciente) {
-    const candidatas = Object.entries(decisions).filter(([, d]) => d.origin === "HISTORIAL" && d.confidence === "ALTA");
+    // Decisiones de historial (ALTA o MEDIA): el precedente reciente del proveedor las confirma o no.
+    const candidatas = Object.entries(decisions).filter(([, d]) => d.origin === "HISTORIAL");
+    const validaCuenta = (c: string) => isValidExpenseAccount(c) && (config.accounts.length === 0 || resolveOperationalAccount(config.accounts, c).valid);
     if (candidatas.length) {
       const cuentasIva = ivaPorLinea.flatMap((x, i) => ((lines[i]?.iva ?? 0) > 0 ? [x?.tax ? resolveTaxAccount(x.tax as TaxRecord, config.accounts).code || null : null] : []));
       const dif = diferenciasConPrecedente(perfilReciente, {
@@ -990,9 +992,11 @@ export async function computeDraftAccounting(params: {
       if (dif.length) alertas.push(`Difiere del precedente reciente del proveedor: ${dif.join("; ")}.`);
       else {
         for (const [k, d] of candidatas) {
-          const enReciente = perfilReciente.gastos.some((g) => g.cuenta === d.code || String(d.code).startsWith(g.cuenta) || g.cuenta.startsWith(String(d.code)));
+          // La cuenta de la decisión debe ser la que el proveedor usa en sus compras recientes (≥ 80 % o por concepto).
+          const hr = cuentaGastoHistorica(perfilReciente, lines[Number(k)]?.description ?? "", validaCuenta);
+          const enReciente = !!hr && (hr.cuenta === d.code || String(d.code).startsWith(hr.cuenta) || hr.cuenta.startsWith(String(d.code)));
           if (!enReciente && !desdeReciente.has(Number(k))) continue;
-          decisions[Number(k)] = { ...d, score: Math.max(d.score, 0.95), reason: `${d.reason} Verificado con ${perfilReciente.compras} compra(s) recientes del proveedor: cuenta, IVA y retenciones coinciden.` };
+          decisions[Number(k)] = { ...d, confidence: "ALTA", score: Math.max(d.score, 0.95), reason: `${d.reason} Verificado con ${perfilReciente.compras} compra(s) recientes del proveedor: cuenta, IVA y retenciones coinciden.` };
         }
         const todas = Object.values(decisions);
         scoreFinal = todas.length === 0 ? 1 : Math.min(...todas.map((d) => d.score));
@@ -1116,6 +1120,25 @@ export async function recalcularCuentasBorrador(
       normalizado = motivo;
     }
   }
+  // Cuadre del IVA de los renglones leídos (igual que al guardar): si el encabezado cuadra y una sola combinación
+  // de tarifas explica el IVA del documento, se corrigen los IVA de los renglones y el valor de origen.
+  let cuadreIva: string | null = null;
+  {
+    const cuadre = cuadrarIvaDeLineas({ ...data, surcharge: data.surcharge ?? 0, lines: data.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? l.total })) });
+    if (cuadre) {
+      let aplicado = true;
+      if (source) {
+        const valores = { ...source, lines: source.lines.map((l, i) => ({ ...l, iva: Math.round((cuadre.data.lines[i]?.iva ?? l.iva / 100) * 100), iva_rate: cuadre.data.lines[i]?.iva_rate ?? l.iva_rate, iva_base: Math.round((cuadre.data.lines[i]?.iva_base ?? (l.iva_base ?? 0) / 100) * 100) })) };
+        const { error: corrErr } = await supabase.rpc("correct_invoice_source_values", { _invoice_id: invoiceId, _values: valores as never, _reason: cuadre.motivo });
+        if (corrErr) aplicado = false;
+        else source = valores;
+      }
+      if (aplicado) {
+        data = { ...data, lines: data.lines.map((l, i) => ({ ...l, iva: cuadre.data.lines[i]!.iva, iva_rate: cuadre.data.lines[i]!.iva_rate ?? 0, iva_base: cuadre.data.lines[i]!.iva_base ?? 0 })) };
+        cuadreIva = cuadre.motivo;
+      }
+    }
+  }
   const fuente = source;
   if (fuente) data = { ...data, subtotal: fuente.subtotal / 100, iva: fuente.iva / 100, impoconsumo: fuente.impoconsumo / 100, total: fuente.total / 100, discount: fuente.discount / 100, surcharge: fuente.surcharge / 100, lines: data.lines.map((l, i) => ({ ...l, subtotal: (fuente.lines[i]?.subtotal ?? 0) / 100, total: (fuente.lines[i]?.subtotal ?? 0) / 100, impoconsumo: (fuente.lines[i]?.impoconsumo ?? Math.round(Number(l.impoconsumo || 0) * 100)) / 100, discount: fuente.source === "excel" ? 0 : l.discount })) };
   const { lines, ...header } = data;
@@ -1178,6 +1201,7 @@ export async function recalcularCuentasBorrador(
       ...(source ? { subtotal: source.subtotal / 100, iva: source.iva / 100, impoconsumo: source.impoconsumo / 100, total: source.total / 100, discount: source.discount / 100 } : {}),
       raw_extraction: { ...raw, account_decisions: acc.decisions, productos_nuevos: acc.productosNuevos } as never,
       ...payablePatch,
+      ...(cuadreIva ? { posting_error: null } : {}),
       updated_at: new Date().toISOString(),
     } as never)
     .eq("id", invoiceId);
@@ -1234,7 +1258,7 @@ export async function recalcularCuentasBorrador(
       .eq("id", l.id);
   }
 
-  const motivo = [normalizado, acc.reason, ...acc.unresolvedAccounts, ...acc.alertas].filter(Boolean).join(" ");
+  const motivo = [normalizado, cuadreIva, acc.reason, ...acc.unresolvedAccounts, ...acc.alertas].filter(Boolean).join(" ");
   // Mismo criterio que al guardar la factura, pero con las decisiones finales (incluidas las manuales).
   // Para el piloto: necesita revisión si algún renglón no tiene cuenta, la decisión no es de confianza ALTA
   // (precedente del proveedor, regla o producto) o hay una condición del proveedor por confirmar.
