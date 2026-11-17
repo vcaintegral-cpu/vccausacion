@@ -33,6 +33,7 @@ async function ejecutar(
       encontrados: 0,
       resumenArchivos: [],
       facturasEncoladas: 0,
+      xmlEncolados: 0,
       documentosExcel: 0,
       egresosRecibidos: 0,
       duplicados: 0,

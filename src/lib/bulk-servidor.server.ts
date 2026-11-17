@@ -32,7 +32,8 @@ type Tarea = Record<string, unknown> & {
   fingerprint?: string | null;
 };
 
-const esExcel = (t: Tarea) => String(t.fingerprint ?? "").startsWith("excel:");
+// Documentos que se leen sin IA: filas del Excel RECIBIDOS y facturas desde su XML.
+const esExcel = (t: Tarea) => /^(excel|xml):/.test(String(t.fingerprint ?? ""));
 
 export async function causarCola(
   db: Db,
@@ -57,10 +58,10 @@ export async function causarCola(
         .select("*", { count: "exact" })
         .eq("company_id", companyId)
         .eq("status", "pending");
-    const soloExcel = <T extends { like: (c: string, p: string) => T }>(q: T) =>
-      q.like("fingerprint", "excel:%");
+    const soloExcel = <T extends { or: (f: string) => T }>(q: T) =>
+      q.or("fingerprint.like.excel:%,fingerprint.like.xml:%");
     const soloPdf = <T extends { or: (f: string) => T }>(q: T) =>
-      q.or("fingerprint.is.null,fingerprint.not.like.excel:%");
+      q.or("fingerprint.is.null,and(fingerprint.not.like.excel:%,fingerprint.not.like.xml:%)");
 
     // Tareas que quedaron a medias (el proceso se cortó): si llevan más de 15 minutos sin cambios vuelven
     // a la cola; si ya se intentaron 3 veces se marcan con error para no repetirlas sin fin.

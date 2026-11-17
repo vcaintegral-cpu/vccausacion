@@ -174,6 +174,8 @@ export type ContextoArchivo = {
   enRaizDelMes?: boolean;
   /** El archivo está en la subcarpeta «extractos». */
   enExtractos?: boolean;
+  /** Función «facturas_xml»: en compras, los XML de factura se leen sin IA. */
+  xmlFacturas?: boolean;
 };
 
 export function tipoDeArchivo(
@@ -181,10 +183,21 @@ export function tipoDeArchivo(
   nombre: string,
   mimeType: string | null | undefined,
   contexto?: ContextoArchivo,
-): "factura_pdf" | "recibidos_excel" | "soporte_pago" | "extracto" | "relacion_pagos" | null {
+):
+  | "factura_pdf"
+  | "factura_xml"
+  | "recibidos_excel"
+  | "soporte_pago"
+  | "extracto"
+  | "relacion_pagos"
+  | null {
   const pdf = esPdf(nombre, mimeType);
   const hoja = esHojaDeCalculo(nombre, mimeType);
-  if (proposito === "compras") return pdf ? "factura_pdf" : hoja ? "recibidos_excel" : null;
+  if (proposito === "compras") {
+    if (pdf) return "factura_pdf";
+    if (hoja) return "recibidos_excel";
+    return contexto?.xmlFacturas && /\.xml$/i.test(nombre) ? "factura_xml" : null;
+  }
   // Reporte mensual de pagos («OCTUBRE 2026», Excel u hoja de Google): se lee como
   // relación de pagos si la empresa tiene configurado su lector; si no, queda como extracto.
   if ((hoja || mimeType === HOJA_GOOGLE) && esReporteDeMes(nombre)) return "relacion_pagos";

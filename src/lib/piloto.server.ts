@@ -48,7 +48,20 @@ export async function apartarOtrosMeses(db: Db, companyId: string, mes: string):
     .eq("status", "pending")
     .like("storage_path", "%/fuentes/%")
     .limit(1000);
-  const ids = ((pend ?? []) as Array<{ id: string }>).map((x) => x.id);
+  // También las tareas viejas con error o trabadas (más de 1 hora sin cambios) de otros meses: no
+  // se reintentan ni dejan la burbuja «Procesando…» abierta en la aplicación.
+  const hace1h = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { data: viejas } = await db
+    .from("bulk_upload_items")
+    .select("id")
+    .eq("company_id", companyId)
+    .in("status", ["error", "downloading", "reading", "ocr", "extracting_data", "processing"])
+    .like("storage_path", "%/fuentes/%")
+    .lt("updated_at", hace1h)
+    .limit(1000);
+  const ids = [
+    ...new Set([...(pend ?? []), ...(viejas ?? [])].map((x) => (x as { id: string }).id)),
+  ];
   if (!ids.length) return 0;
   // Se conservan las que vienen de la carpeta del mes de trabajo; el resto (otro mes o de una carpeta
   // anterior sin período) se aparta SIN leerlas, para no gastar IA.
@@ -78,7 +91,15 @@ export async function apartarOtrosMeses(db: Db, companyId: string, mes: string):
         user_message: "No es de la carpeta del mes de trabajo del piloto: se apartó sin leerla.",
       })
       .in("id", aApartar.slice(i, i + 100))
-      .eq("status", "pending")
+      .in("status", [
+        "pending",
+        "error",
+        "downloading",
+        "reading",
+        "ocr",
+        "extracting_data",
+        "processing",
+      ])
       .select("id");
     apartadas += act?.length ?? 0;
   }
@@ -289,6 +310,7 @@ async function ejecutarPaso(
         const r = await revisarFuente(db, companyId, proposito, null, periodos);
         cifras[`${proposito}_encontrados`] = r.encontrados;
         cifras[`${proposito}_facturas`] = r.facturasEncoladas;
+        cifras[`${proposito}_xml`] = r.xmlEncolados;
         cifras[`${proposito}_excel`] = r.documentosExcel;
         cifras[`${proposito}_egresos`] = r.egresosRecibidos;
         quedan += r.pendientesProximaEjecucion;
@@ -299,7 +321,7 @@ async function ejecutarPaso(
           );
         if (proposito === "compras")
           partes.push(
-            `Drive compras: ${r.encontrados} encontrados, ${r.duplicados} duplicados, ${r.conciliados} ya estaban en el Excel o la app, ${r.facturasEncoladas} PDF y ${r.documentosExcel} documentos del Excel encolados`,
+            `Drive compras: ${r.encontrados} encontrados, ${r.duplicados} duplicados, ${r.conciliados} ya estaban en el Excel o la app, ${r.xmlEncolados} XML, ${r.facturasEncoladas} PDF y ${r.documentosExcel} documentos del Excel encolados`,
           );
         if (proposito === "compras")
           partes.push(

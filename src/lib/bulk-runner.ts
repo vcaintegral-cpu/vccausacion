@@ -394,6 +394,78 @@ async function processExcelItem(item: BulkItem, companyId: string, deps: Deps, m
   });
 }
 
+/** Procesa la factura de un XML (DIAN UBL, sin IA) por la MISMA función de causación del PDF. */
+async function processXmlItem(item: BulkItem, companyId: string, deps: Deps, mes?: RangoMes) {
+  if (!item.storage_path)
+    throw new Error("ERROR_ARCHIVO_NO_ENCONTRADO: la tarea no tiene el XML guardado.");
+  const { leerFacturaXml } = await import("./factura-xml");
+  const stored = await fileFromStorage(item.storage_path, item.file_name, "facturas", false);
+  const lectura = leerFacturaXml(await stored.file.text());
+  if (!lectura.ok) {
+    const trace: InvoiceReadTrace = {
+      providerName: lectura.proveedorNombre,
+      providerNit: lectura.proveedorNit,
+      buyerName: null,
+      buyerNit: null,
+      invoiceNumber: lectura.numero,
+      issueDate: null,
+      text: null,
+      readMode: "texto",
+    };
+    // Notas crédito y otros documentos: requieren revisión manual (no se causan solos).
+    throw new BulkInvoiceStageError(lectura.motivo, "validating_company", trace, true);
+  }
+  const data = lectura.extracted;
+  verificarMes(data.issue_date, mes);
+  const trace: InvoiceReadTrace = {
+    providerName: data.provider_name || null,
+    providerNit: data.provider_nit || null,
+    buyerName: data.buyer_name || null,
+    buyerNit: data.buyer_nit || null,
+    invoiceNumber: [data.prefix, data.number].filter(Boolean).join("-") || null,
+    issueDate: data.issue_date || null,
+    text: null,
+    readMode: "texto",
+  };
+  await updateItem(item.id, {
+    status: "validating_company",
+    stage: "validating_company",
+    provider_name: trace.providerName,
+    provider_nit: trace.providerNit,
+    buyer_name: trace.buyerName,
+    buyer_nit: trace.buyerNit,
+    invoice_number: trace.invoiceNumber,
+    issue_date: trace.issueDate,
+    read_status: "Leída (XML)",
+  });
+  const result = await saveExtractedInvoice({
+    data,
+    fileName: item.file_name,
+    companyId,
+    config: deps.config,
+    knowledge: deps.knowledge,
+    readMode: "texto",
+    rawExtraction: { fuente: "xml_dian", cufe: lectura.cufe },
+  });
+  await updateItem(item.id, {
+    status: "completed",
+    stage: "guardado",
+    invoice_id: result.invoiceId,
+    invoice_number: result.numero,
+    invoice_total: result.total,
+    score: result.score,
+    needs_review: result.needsReview,
+    error_message: null,
+    user_message: null,
+    provider_name: result.providerName,
+    provider_nit: result.providerNit,
+    buyer_name: result.buyerName,
+    buyer_nit: result.buyerNit,
+    issue_date: result.issueDate,
+    read_status: "Leída (XML)",
+  });
+}
+
 /** Procesa una tarea reutilizando el procesador individual (sin cambios de lógica). */
 export type ModoServidor = {
   extract: Parameters<typeof processInvoiceFile>[0]["extract"];
@@ -415,6 +487,10 @@ export async function processItem(
   try {
     if (item.fingerprint?.startsWith("excel:")) {
       await processExcelItem(item, companyId, deps, mes);
+      return;
+    }
+    if (item.fingerprint?.startsWith("xml:")) {
+      await processXmlItem(item, companyId, deps, mes);
       return;
     }
     if (!item.storage_path)
