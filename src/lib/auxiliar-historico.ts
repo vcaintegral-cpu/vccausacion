@@ -504,6 +504,8 @@ export function diferenciasConPrecedente(
     hayIva: boolean;
     retenciones: Record<RetencionKind, boolean>;
     baseRetencion: Record<RetencionKind, number>;
+    /** Retenciones cuya condición ya confirmó la usuaria (no se comparan con el historial). */
+    confirmadas?: Partial<Record<RetencionKind, boolean>>;
   },
 ): string[] {
   const dif: string[] = [];
@@ -515,6 +517,7 @@ export function diferenciasConPrecedente(
       );
   } else if (perfil.iva.length) dif.push("el proveedor sí cobraba IVA en sus compras recientes");
   for (const kind of ["retefuente", "reteiva", "reteica"] as RetencionKind[]) {
+    if (borrador.confirmadas?.[kind]) continue;
     const veces = perfil.retenciones[kind].reduce((t, u) => t + u.veces, 0);
     if (borrador.retenciones[kind]) {
       if (veces === 0) dif.push(`${kind}: no se le retenía en sus compras recientes`);
