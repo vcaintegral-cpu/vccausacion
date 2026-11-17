@@ -67,6 +67,52 @@ export function sugerirCuentas(
   return out;
 }
 
+export type CondicionEscrita =
+  | { tipo: "sin"; motivo: string; detalle: string }
+  | { tipo: "con"; impuestoId: string; nombre: string };
+
+/**
+ * Interpreta una instrucción escrita sobre la retención de un proveedor: «no se le retiene porque…» (con el motivo
+ * en el detalle) o «retener servicios 4%» / «honorarios 10» (busca el impuesto de retefuente por nombre y tarifa).
+ */
+export function interpretarCondicionEscrita(
+  texto: string,
+  retefuentes: Array<{ id: string; name: string; rate: number }>,
+): CondicionEscrita | null {
+  const t = sinTildes(texto).replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  if (/^(no|sin)\b|\bno se (le )?(retiene|practica|aplica)|\bno aplica\b|\bno retener\b/.test(t)) {
+    const motivo = /autorretened/.test(t)
+      ? "autorretenedor"
+      : /regimen especial|esal/.test(t)
+        ? "regimen_especial"
+        : /no sujeto|no contribuyente/.test(t)
+          ? "no_sujeto"
+          : /gran contribuyente/.test(t)
+            ? "gran_contribuyente"
+            : "otro";
+    return { tipo: "sin", motivo, detalle: texto.trim().slice(0, 200) };
+  }
+  const numero = /(\d+(?:[.,]\d+)?)\s*%?/.exec(t)?.[1];
+  const tarifa = numero ? Number(numero.replace(",", ".")) : null;
+  const palabras = t
+    .replace(/[^a-z ]+/g, " ")
+    .split(/\s+/)
+    .filter(
+      (w) =>
+        w.length >= 4 && !/^(retener|retiene|retencion|fuente|con|le|se|por|del|sobre)$/.test(w),
+    );
+  let candidatos = retefuentes;
+  if (tarifa != null)
+    candidatos = candidatos.filter((c) => Math.abs(Number(c.rate) - tarifa) < 0.001);
+  if (palabras.length)
+    candidatos = candidatos.filter((c) => palabras.every((w) => sinTildes(c.name).includes(w)));
+  if (tarifa == null && !palabras.length) return null;
+  return candidatos.length === 1
+    ? { tipo: "con", impuestoId: String(candidatos[0]!.id), nombre: candidatos[0]!.name }
+    : null;
+}
+
 /** Cuenta de gasto/costo que corresponde a una respuesta escrita: código o nombre. */
 export function reconocerCuenta(
   texto: string,
@@ -325,11 +371,36 @@ export async function gestionarCuentasNuevas(
       const clave = `cuenta|${p.nit}|${periodo}`;
       const { data: previa } = await db
         .from("piloto_decisiones")
-        .select("id")
+        .select("id, estado, opciones")
         .eq("company_id", companyId)
         .eq("clave", clave)
         .maybeSingle();
-      if (previa) continue;
+      if (previa) {
+        // Preguntas creadas antes de existir la opción de inventario: se les agrega (sin volver a enviar el correo).
+        const pr = previa as {
+          id: string;
+          estado: string;
+          opciones: Array<{ id: string; etiqueta: string }>;
+        };
+        if (
+          inventario &&
+          pr.estado === "pendiente" &&
+          !pr.opciones.some((o) => o.id === "inventario")
+        )
+          await db
+            .from("piloto_decisiones")
+            .update({
+              opciones: [
+                {
+                  id: "inventario",
+                  etiqueta: "Es INVENTARIO: cuenta 14, producto del catálogo o nuevo",
+                },
+                ...pr.opciones,
+              ] as never,
+            })
+            .eq("id", pr.id);
+        continue;
+      }
       let sugeridas = sugerirCuentas(
         p.renglones.map((r) => r.descripcion),
         (deps.knowledge.history ?? []) as Array<{
@@ -484,7 +555,7 @@ export async function gestionarCondicionesRetencion(
       .eq("kind", "retefuente")
       .eq("active", true)
       .order("rate")
-      .limit(12);
+      .limit(60);
     const retefuentes = (imp ?? []) as Array<{ id: string; name: string; rate: number }>;
 
     // 1) Respuestas ya dadas: se guardan en el proveedor y se recalculan sus borradores.
@@ -503,9 +574,19 @@ export async function gestionarCondicionesRetencion(
       pregunta: string;
     }>) {
       const nit = nitLimpio(d.referencia_id);
-      const sin = d.respuesta ? MOTIVOS_SIN[d.respuesta] : undefined;
+      let sin = d.respuesta ? MOTIVOS_SIN[d.respuesta] : undefined;
       const conId = d.respuesta?.startsWith("con:") ? d.respuesta.slice(4) : null;
-      const impuesto = conId ? retefuentes.find((t) => String(t.id) === conId) : undefined;
+      let impuesto = conId ? retefuentes.find((t) => String(t.id) === conId) : undefined;
+      let detalleSin = "Confirmado por correo";
+      // Instrucción escrita (cuando ninguna opción aplica): «no se le retiene porque…» o «servicios 4%».
+      if (!sin && !impuesto && d.instruccion?.trim()) {
+        const e = interpretarCondicionEscrita(d.instruccion, retefuentes);
+        if (e?.tipo === "sin") {
+          sin = { motivo: e.motivo, etiqueta: "" };
+          detalleSin = e.detalle;
+        } else if (e?.tipo === "con")
+          impuesto = retefuentes.find((t) => String(t.id) === e.impuestoId);
+      }
       if (!nit || (!sin && !impuesto)) {
         res.sinReconocer += 1;
         await db
@@ -515,7 +596,7 @@ export async function gestionarCondicionesRetencion(
             respuesta: null,
             instruccion: null,
             notificada_at: null,
-            pregunta: `${d.pregunta.replace(/ ⚠ .*$/s, "")} ⚠ Toque una de las opciones: una instrucción escrita no alcanza para esta pregunta.`,
+            pregunta: `${d.pregunta.replace(/ ⚠ .*$/s, "")} ⚠ No entendí «${(d.instruccion ?? "").slice(0, 60)}»: toque una opción o escriba, por ejemplo, «no se le retiene porque es persona natural no responsable» o «se le retiene con Servicios 4%».`,
           })
           .eq("id", d.id);
         continue;
@@ -530,7 +611,7 @@ export async function gestionarCondicionesRetencion(
       const ahora = new Date().toISOString();
       const condicion = sin
         ? {
-            sinRetencion: { retefuente: { motivo: sin.motivo, detalle: "Confirmado por correo" } },
+            sinRetencion: { retefuente: { motivo: sin.motivo, detalle: detalleSin } },
             confirmadoPor: "piloto automático (respuesta por correo)",
             confirmadoEn: ahora,
           }
@@ -609,7 +690,7 @@ export async function gestionarCondicionesRetencion(
           tipo: "condicion_retencion",
           referencia_id: p.nitCrudo,
           titulo: `Retención en la fuente de ${p.nombre.slice(0, 60)}`,
-          pregunta: `¿Se le practica retención en la fuente a ${p.nombre} (NIT ${nit})? Facturas de este mes: ${p.facturas.join(", ")}. No tiene precedente claro en Siigo. Su respuesta queda guardada para este proveedor y sus facturas pasan a verde si lo demás coincide.`,
+          pregunta: `¿Se le practica retención en la fuente a ${p.nombre} (NIT ${nit})? Facturas de este mes: ${p.facturas.join(", ")}. No tiene precedente claro en Siigo. Toque una opción o, si ninguna aplica, escriba su instrucción en la aplicación (Piloto automático → Bandeja), por ejemplo «no se le retiene porque es persona natural no responsable» o «se le retiene con Servicios 4%». Su respuesta queda guardada para este proveedor y sus facturas pasan a verde si lo demás coincide.`,
           opciones: opciones as never,
         },
         { onConflict: "company_id,clave", ignoreDuplicates: true },

@@ -42,3 +42,33 @@ describe("reconocerCuenta", () => {
     expect(reconocerCuenta("", cuentas, valida)).toBeNull();
   });
 });
+
+describe("interpretarCondicionEscrita", () => {
+  const imp = [
+    { id: "a", name: "Compras 2.5%", rate: 2.5 },
+    { id: "b", name: "Servicios 4%", rate: 4 },
+    { id: "c", name: "Servicios 6%", rate: 6 },
+    { id: "d", name: "Honorarios 10%", rate: 10 },
+  ];
+  it("«no se le retiene…» queda como sin retención con su motivo y detalle", async () => {
+    const { interpretarCondicionEscrita } = await import("./piloto-cuentas.server");
+    expect(
+      interpretarCondicionEscrita("No se le retiene porque es régimen especial", imp),
+    ).toMatchObject({ tipo: "sin", motivo: "regimen_especial" });
+    expect(interpretarCondicionEscrita("no aplica retención, base menor", imp)).toMatchObject({
+      tipo: "sin",
+      motivo: "otro",
+    });
+  });
+  it("busca el impuesto por nombre y tarifa, solo si es único", async () => {
+    const { interpretarCondicionEscrita } = await import("./piloto-cuentas.server");
+    expect(interpretarCondicionEscrita("retener servicios 4%", imp)).toMatchObject({
+      tipo: "con",
+      impuestoId: "b",
+    });
+    expect(interpretarCondicionEscrita("honorarios", imp)).toMatchObject({ impuestoId: "d" });
+    expect(interpretarCondicionEscrita("2,5", imp)).toMatchObject({ impuestoId: "a" });
+    expect(interpretarCondicionEscrita("servicios", imp)).toBeNull(); // ambiguo
+    expect(interpretarCondicionEscrita("", imp)).toBeNull();
+  });
+});
