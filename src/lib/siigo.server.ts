@@ -108,13 +108,11 @@ export function siigoConfig(): SiigoConfig {
   const missing: string[] = [];
   if (!username) missing.push("Usuario API de Siigo");
   if (!accessKey) missing.push("Access Key de Siigo");
+  // Siigo rechaza con 400 header_required cualquier llamada sin Partner-Id:
+  // no es opcional, aunque algunas credenciales antiguas no lo tengan.
+  if (!partnerId) missing.push("Partner-Id de Siigo");
 
   const warnings: string[] = [];
-  if (!partnerId) {
-    warnings.push(
-      "El Partner-Id no está configurado para esta empresa: se omite ese encabezado. Puedes configurarlo más adelante.",
-    );
-  }
 
   return { username, accessKey, partnerId, missing, warnings };
 }
@@ -165,9 +163,7 @@ export async function siigoToken(): Promise<string> {
   if (cached && cached.exp > now + 30_000) return cached.token;
 
   const url = `${SIIGO_BASE}/auth`;
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (partnerId) headers["Partner-Id"] = partnerId;
-  else console.warn("[siigo] SIIGO_PARTNER_ID vacío: se omite el header Partner-Id.");
+  const headers: Record<string, string> = { "Content-Type": "application/json", "Partner-Id": partnerId };
   console.log("[siigo] POST", url, "headers:", logHeaders(headers), "body: { username: ***, access_key: *** }");
 
   let res: Response;
@@ -212,8 +208,8 @@ async function siigoRequest<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
+    "Partner-Id": partnerId,
   };
-  if (partnerId) headers["Partner-Id"] = partnerId;
 
   console.log("[siigo]", method, url, "headers:", logHeaders(headers));
 

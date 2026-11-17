@@ -279,11 +279,11 @@ function Integraciones() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="siigo-partner">Partner-Id</Label>
+              <Label htmlFor="siigo-partner">Partner-Id *</Label>
               <Input
                 id="siigo-partner"
                 autoComplete="off"
-                placeholder="Opcional"
+                placeholder="Obligatorio: lo entrega Siigo con tus credenciales"
                 value={form.partnerId}
                 onChange={(e) => setForm((f) => ({ ...f, partnerId: e.target.value }))}
               />
@@ -293,7 +293,10 @@ function Integraciones() {
             <Button variant="outline" onClick={() => setCredsOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={() => guardar.mutate()} disabled={guardar.isPending}>
+            <Button
+              onClick={() => guardar.mutate()}
+              disabled={guardar.isPending || !form.username.trim() || !form.accessKey.trim() || !form.partnerId.trim()}
+            >
               {guardar.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
               Guardar y probar
             </Button>
