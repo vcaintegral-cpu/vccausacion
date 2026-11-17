@@ -10,6 +10,8 @@ export type EntradaVerde = {
   alertas: Alerta[];
   /** ¿La tarea de la carga masiva quedó completada y sin «necesita revisión»? */
   tareaSinRevision: boolean;
+  /** Motivo guardado por el recálculo cuando la tarea necesita revisión (para decir POR QUÉ). */
+  motivoRevision?: string | null;
   /** Confianza de la decisión de cuenta de cada renglón (ALTA/MEDIA/BAJA). */
   confianzas: Array<string | null | undefined>;
   total: number;
@@ -19,7 +21,12 @@ export type EntradaVerde = {
 /** Motivos por los que NO es verde (lista vacía = verde). */
 export function motivosNoVerde(e: EntradaVerde): string[] {
   const m: string[] = [];
-  if (!e.tareaSinRevision) m.push("El motor la marcó para revisión.");
+  if (!e.tareaSinRevision)
+    m.push(
+      e.motivoRevision
+        ? `Necesita revisión: ${e.motivoRevision.slice(0, 220)}`
+        : "El motor la marcó para revisión.",
+    );
   for (const a of e.alertas) {
     if (a.level === "error") m.push(a.message);
     else if (a.level === "warn" && !ALERTAS_ACEPTADAS.some((r) => r.test(a.message)))

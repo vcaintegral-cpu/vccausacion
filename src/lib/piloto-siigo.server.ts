@@ -111,7 +111,11 @@ export async function recalcularBorradoresMes(
         if (res.needsReview !== undefined)
           await db
             .from("bulk_upload_items")
-            .update({ needs_review: res.needsReview })
+            .update({
+              needs_review: res.needsReview,
+              // El motivo queda en la tarea para que el reporte diga POR QUÉ no está en verde.
+              user_message: res.needsReview ? res.message.slice(0, 400) : null,
+            })
             .eq("invoice_id", id)
             .eq("status", "completed");
       } catch {
@@ -187,18 +191,24 @@ export async function enviarVerdesASiigo(
     const ids = facturas.map((f) => f.id);
     const tareas = new Map<
       string,
-      { needs_review: boolean | null; status: string; upload_id: string }
+      {
+        needs_review: boolean | null;
+        status: string;
+        upload_id: string;
+        user_message: string | null;
+      }
     >();
     for (const g of chunk(ids, 100)) {
       const { data } = await db
         .from("bulk_upload_items")
-        .select("invoice_id, status, needs_review, upload_id")
+        .select("invoice_id, status, needs_review, upload_id, user_message")
         .in("invoice_id", g);
       for (const t of (data ?? []) as Array<{
         invoice_id: string;
         status: string;
         needs_review: boolean | null;
         upload_id: string;
+        user_message: string | null;
       }>)
         tareas.set(t.invoice_id, t);
     }
@@ -234,6 +244,7 @@ export async function enviarVerdesASiigo(
       const motivos = motivosNoVerde({
         alertas: alertasBorrador(f as never, acc, pucCodes, inventario),
         tareaSinRevision: !!t && t.status === "completed" && !t.needs_review,
+        motivoRevision: t?.user_message ?? null,
         confianzas: decisiones.map((d) => d.confidence),
         total: Number(f.total || 0),
         tope: op.tope,
