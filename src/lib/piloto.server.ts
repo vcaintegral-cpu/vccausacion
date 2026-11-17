@@ -432,6 +432,14 @@ async function ejecutarPaso(
     } catch {
       /* el recálculo es una mejora: si falla, se evalúa lo que hay */
     }
+    // Condición de retención de proveedores sin precedente: pregunta por correo y aplica las respuestas.
+    let condiciones = { creadas: 0, aplicadas: 0, sinReconocer: 0 };
+    try {
+      const { gestionarCondicionesRetencion } = await import("./piloto-cuentas.server");
+      condiciones = await gestionarCondicionesRetencion(db, companyId, rangoDelMes(mes));
+    } catch {
+      /* si falla, el piloto sigue con lo demás */
+    }
     const r = await enviarVerdesASiigo(db, companyId, {
       mes: rangoDelMes(mes),
       tope: envio?.tope ?? 5_000_000,
@@ -469,7 +477,7 @@ async function ejecutarPaso(
       return {
         id: paso,
         estado: "hecho",
-        detalle: `MODO PRUEBA (no se envió nada a Siigo): de ${r.candidatas} borrador(es) de ${mesTxt} (${cifras.recalculados} recalculados con el precedente actual${cuentasNuevas.creadas ? `; ${cuentasNuevas.creadas} pregunta(s) por correo de cuentas de proveedores nuevos` : ""}${cuentasNuevas.aplicadas ? `; ${cuentasNuevas.aplicadas} factura(s) con la cuenta respondida` : ""}), ${r.verdes} están en verde y se enviarían; ${r.porRevisar.length} por revisar${motivos ? ` — ${motivos}` : ""}${quien ? ` · Primeras: ${quien}` : ""}. Active «Enviar a Siigo lo que quede en verde» en Piloto automático para enviarlas.`,
+        detalle: `MODO PRUEBA (no se envió nada a Siigo): de ${r.candidatas} borrador(es) de ${mesTxt} (${cifras.recalculados} recalculados con el precedente actual${cuentasNuevas.creadas ? `; ${cuentasNuevas.creadas} pregunta(s) por correo de cuentas de proveedores nuevos` : ""}${cuentasNuevas.aplicadas ? `; ${cuentasNuevas.aplicadas} factura(s) con la cuenta respondida` : ""}${condiciones.creadas ? `; ${condiciones.creadas} pregunta(s) por correo de retención de proveedores nuevos` : ""}${condiciones.aplicadas ? `; ${condiciones.aplicadas} condición(es) de retención respondidas y aplicadas` : ""}), ${r.verdes} están en verde y se enviarían; ${r.porRevisar.length} por revisar${motivos ? ` — ${motivos}` : ""}${quien ? ` · Primeras: ${quien}` : ""}. Active «Enviar a Siigo lo que quede en verde» en Piloto automático para enviarlas.`,
         cifras,
       };
     // Si hay verdes pendientes pero esta pasada no envió nada ni falló, algo no avanza.

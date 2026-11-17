@@ -294,7 +294,7 @@ export async function gestionarCuentasNuevas(
         .eq("clave", clave)
         .maybeSingle();
       if (previa) continue;
-      const sugeridas = sugerirCuentas(
+      let sugeridas = sugerirCuentas(
         p.renglones.map((r) => r.descripcion),
         (deps.knowledge.history ?? []) as Array<{
           concept: string | null;
@@ -303,6 +303,24 @@ export async function gestionarCuentasNuevas(
         }>,
         operativa,
       );
+      // Sin conceptos parecidos: las cuentas de gasto/costo que más usa la empresa (para elegir con un toque).
+      if (!sugeridas.length) {
+        const uso = new Map<string, number>();
+        for (const h of (deps.knowledge.history ?? []) as Array<{
+          account_code: string;
+          weight?: number;
+        }>)
+          uso.set(h.account_code, (uso.get(h.account_code) ?? 0) + Number(h.weight ?? 1));
+        sugeridas = [...uso]
+          .sort((a, b) => b[1] - a[1])
+          .map(([c]) => operativa(c))
+          .filter((c): c is { codigo: string; nombre: string } => !!c)
+          .slice(0, 3)
+          .map((c) => ({
+            codigo: c.codigo,
+            nombre: `${c.nombre} (de las más usadas por la empresa)`,
+          }));
+      }
       const conceptos = p.renglones
         .slice(0, 6)
         .map((r) => `«${r.descripcion.slice(0, 70) || "sin descripción"}» ${pesos(r.valor)}`)
@@ -321,6 +339,218 @@ export async function gestionarCuentasNuevas(
             id: c.codigo,
             etiqueta: `${c.codigo} · ${c.nombre}`.slice(0, 80),
           })) as never,
+        },
+        { onConflict: "company_id,clave", ignoreDuplicates: true },
+      );
+      if (!error) res.creadas += 1;
+    }
+    return res;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Condición de retención del proveedor (pregunta por correo)
+// ---------------------------------------------------------------------------
+export type ResultadoCondiciones = { creadas: number; aplicadas: number; sinReconocer: number };
+
+const MOTIVOS_SIN: Record<string, { motivo: string; etiqueta: string }> = {
+  "sin:autorretenedor": {
+    motivo: "autorretenedor",
+    etiqueta: "No se le retiene: es autorretenedor",
+  },
+  "sin:regimen_especial": {
+    motivo: "regimen_especial",
+    etiqueta: "No se le retiene: régimen especial / ESAL",
+  },
+  "sin:no_sujeto": { motivo: "no_sujeto", etiqueta: "No se le retiene: no sujeto" },
+  "sin:otro": { motivo: "otro", etiqueta: "No se le retiene (otra razón, p. ej. base menor)" },
+};
+
+/**
+ * El motor pide confirmar si se le practica retención en la fuente a un proveedor sin precedente claro. Cada
+ * proveedor con ese pedido en un borrador del mes recibe UNA pregunta por correo («no se le retiene» con su motivo,
+ * o «se le retiene con» cada impuesto de retefuente activo). La respuesta queda guardada en el proveedor
+ * (providers.purchase_tax_profile.condicion_retencion, la misma memoria de la pantalla de condición tributaria) y los
+ * borradores de ese proveedor se recalculan en el acto.
+ */
+export async function gestionarCondicionesRetencion(
+  db: Db,
+  companyId: string,
+  mes: { desde: string; hasta: string },
+): Promise<ResultadoCondiciones> {
+  const res: ResultadoCondiciones = { creadas: 0, aplicadas: 0, sinReconocer: 0 };
+  const { conClienteDeServicio } = await import("./db-contextual");
+  return conClienteDeServicio(db, async () => {
+    // Proveedores con el pedido de confirmar la condición en un borrador del mes.
+    const { data: marcadas } = await db
+      .from("bulk_upload_items")
+      .select("invoice_id")
+      .eq("company_id", companyId)
+      .eq("status", "completed")
+      .eq("needs_review", true)
+      .ilike("user_message", "%confirmar condición del proveedor%")
+      .not("invoice_id", "is", null)
+      .limit(200);
+    const ids = [
+      ...new Set(((marcadas ?? []) as Array<{ invoice_id: string }>).map((x) => x.invoice_id)),
+    ];
+    const proveedores = new Map<
+      string,
+      { nitCrudo: string; nombre: string; facturas: string[]; ids: string[] }
+    >();
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data } = await db
+        .from("invoices")
+        .select("id, prefix, number, provider_nit, provider_name, total")
+        .in("id", ids.slice(i, i + 100))
+        .eq("status", "borrador")
+        .gte("issue_date", mes.desde)
+        .lte("issue_date", mes.hasta);
+      for (const f of (data ?? []) as Array<{
+        id: string;
+        prefix: string | null;
+        number: string | null;
+        provider_nit: string | null;
+        provider_name: string | null;
+        total: number | string;
+      }>) {
+        const nit = nitLimpio(f.provider_nit);
+        if (!nit) continue;
+        const p = proveedores.get(nit) ?? {
+          nitCrudo: String(f.provider_nit),
+          nombre: f.provider_name ?? nit,
+          facturas: [],
+          ids: [],
+        };
+        p.facturas.push(
+          `${[f.prefix, f.number].filter(Boolean).join("-") || f.id.slice(0, 8)} (${pesos(Number(f.total || 0))})`,
+        );
+        p.ids.push(f.id);
+        proveedores.set(nit, p);
+      }
+    }
+
+    // Impuestos de retefuente activos (para «se le retiene con…»).
+    const { data: imp } = await db
+      .from("tax_rates")
+      .select("id, name, rate")
+      .eq("company_id", companyId)
+      .eq("kind", "retefuente")
+      .eq("active", true)
+      .order("rate")
+      .limit(12);
+    const retefuentes = (imp ?? []) as Array<{ id: string; name: string; rate: number }>;
+
+    // 1) Respuestas ya dadas: se guardan en el proveedor y se recalculan sus borradores.
+    const { data: dec } = await db
+      .from("piloto_decisiones")
+      .select("id, referencia_id, estado, respuesta, instruccion, pregunta")
+      .eq("company_id", companyId)
+      .eq("tipo", "condicion_retencion")
+      .eq("estado", "respondida");
+    const { perfilConCondicion } = await import("./precedente-tributario");
+    for (const d of (dec ?? []) as Array<{
+      id: string;
+      referencia_id: string | null;
+      respuesta: string | null;
+      instruccion: string | null;
+      pregunta: string;
+    }>) {
+      const nit = nitLimpio(d.referencia_id);
+      const sin = d.respuesta ? MOTIVOS_SIN[d.respuesta] : undefined;
+      const conId = d.respuesta?.startsWith("con:") ? d.respuesta.slice(4) : null;
+      const impuesto = conId ? retefuentes.find((t) => String(t.id) === conId) : undefined;
+      if (!nit || (!sin && !impuesto)) {
+        res.sinReconocer += 1;
+        await db
+          .from("piloto_decisiones")
+          .update({
+            estado: "pendiente",
+            respuesta: null,
+            instruccion: null,
+            notificada_at: null,
+            pregunta: `${d.pregunta.replace(/ ⚠ .*$/s, "")} ⚠ Toque una de las opciones: una instrucción escrita no alcanza para esta pregunta.`,
+          })
+          .eq("id", d.id);
+        continue;
+      }
+      const { data: prov } = await db
+        .from("providers")
+        .select("id, purchase_tax_profile")
+        .eq("company_id", companyId)
+        .eq("nit", d.referencia_id ?? "")
+        .maybeSingle();
+      if (!prov) continue;
+      const ahora = new Date().toISOString();
+      const condicion = sin
+        ? {
+            sinRetencion: { retefuente: { motivo: sin.motivo, detalle: "Confirmado por correo" } },
+            confirmadoPor: "piloto automático (respuesta por correo)",
+            confirmadoEn: ahora,
+          }
+        : {
+            retenerCon: { retefuente: String(impuesto!.id) },
+            confirmadoPor: "piloto automático (respuesta por correo)",
+            confirmadoEn: ahora,
+          };
+      const previa = (prov as { purchase_tax_profile: unknown }).purchase_tax_profile as {
+        condicion_retencion?: Record<string, unknown>;
+      } | null;
+      const fusion = {
+        ...(previa?.condicion_retencion ?? {}),
+        ...condicion,
+      } as never;
+      const perfil = perfilConCondicion(previa, fusion);
+      const { error } = await db
+        .from("providers")
+        .update({ purchase_tax_profile: perfil as never })
+        .eq("id", (prov as { id: string }).id);
+      if (error) continue;
+      await db
+        .from("piloto_decisiones")
+        .update({ estado: "aplicada", aplicada_at: ahora })
+        .eq("id", d.id);
+      res.aplicadas += 1;
+      // Los borradores del proveedor se recalculan con la condición confirmada.
+      const { recalcularCuentasBorrador } = await import("./bulk-invoices");
+      const { loadDeps, invalidateBulkDeps } = await import("./bulk-runner");
+      invalidateBulkDeps(companyId);
+      const deps = await loadDeps(companyId);
+      for (const f of proveedores.get(nit)?.ids ?? []) {
+        try {
+          await recalcularCuentasBorrador(f, deps.config);
+        } catch {
+          /* el siguiente recálculo lo reintenta */
+        }
+      }
+    }
+
+    // 2) Preguntas nuevas, una por proveedor (la condición vale para siempre).
+    for (const [nit, p] of proveedores) {
+      const clave = `retencion|${nit}`;
+      const { data: previa } = await db
+        .from("piloto_decisiones")
+        .select("id")
+        .eq("company_id", companyId)
+        .eq("clave", clave)
+        .maybeSingle();
+      if (previa) continue;
+      const opciones = [
+        ...Object.entries(MOTIVOS_SIN).map(([id, v]) => ({ id, etiqueta: v.etiqueta })),
+        ...retefuentes.slice(0, 4).map((t) => ({
+          id: `con:${t.id}`,
+          etiqueta: `Se le retiene con ${t.name}`.slice(0, 80),
+        })),
+      ];
+      const { error } = await db.from("piloto_decisiones").upsert(
+        {
+          company_id: companyId,
+          clave,
+          tipo: "condicion_retencion",
+          referencia_id: p.nitCrudo,
+          titulo: `Retención en la fuente de ${p.nombre.slice(0, 60)}`,
+          pregunta: `¿Se le practica retención en la fuente a ${p.nombre} (NIT ${nit})? Facturas de este mes: ${p.facturas.join(", ")}. No tiene precedente claro en Siigo. Su respuesta queda guardada para este proveedor y sus facturas pasan a verde si lo demás coincide.`,
+          opciones: opciones as never,
         },
         { onConflict: "company_id,clave", ignoreDuplicates: true },
       );
