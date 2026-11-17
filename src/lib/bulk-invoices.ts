@@ -143,7 +143,7 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
 }
 
 /** Versión de la lógica de causación: el piloto recalcula una vez los borradores guardados con otra versión. */
-export const MOTOR_VERSION = "2026-11-17.1";
+export const MOTOR_VERSION = "2026-11-17.2";
 
 export type BulkConfig = {
   accounts: PucAccount[];
@@ -387,6 +387,8 @@ export type DraftAccounting = {
   ivaPorLinea: Array<{ tax: ImpuestoConfigurado; motivo: string } | null>;
   /** Pide confirmar la condición tributaria del proveedor (retención sin precedente). */
   confirmarCondicion: string | null;
+  /** Por qué el precedente reciente del proveedor no subió la confianza de la cuenta (para el motivo de revisión). */
+  precedenteMotivo?: string | null;
   /** Productos que no existen en el catálogo y se crearán en Siigo al causar (por renglón). */
   productosNuevos: Record<number, ProductoNuevo>;
 };
@@ -982,6 +984,9 @@ export async function computeDraftAccounting(params: {
   // retenciones coinciden con sus compras recientes, la confianza sube (cuenta, IVA y retenciones según proveedor).
   let scoreFinal = score;
   let reasonFinal = reason;
+  let precedenteMotivo: string | null = null;
+  if (!perfilReciente && perfilRecienteBruto && Object.values(decisions).some((d) => d.origin === "HISTORIAL"))
+    precedenteMotivo = `precedente reciente insuficiente: ${perfilRecienteBruto.compras} compra(s) del proveedor desde abril (mínimo ${MIN_COMPRAS_RECIENTES})`;
   if (perfilReciente) {
     // Decisiones de historial (ALTA o MEDIA): el precedente reciente del proveedor las confirma o no.
     const candidatas = Object.entries(decisions).filter(([, d]) => d.origin === "HISTORIAL");
@@ -994,13 +999,20 @@ export async function computeDraftAccounting(params: {
         retenciones: { retefuente: Number(retenciones.retefuente) > 0, reteiva: Number(retenciones.reteiva) > 0, reteica: Number(retenciones.reteica) > 0 },
         baseRetencion: { retefuente: baseGravable, reteiva: ivaTotal, reteica: baseGravable },
       });
-      if (dif.length) alertas.push(`Difiere del precedente reciente del proveedor: ${dif.join("; ")}.`);
-      else {
+      if (dif.length) {
+        alertas.push(`Difiere del precedente reciente del proveedor: ${dif.join("; ")}.`);
+        precedenteMotivo = `difiere del precedente reciente: ${dif.join("; ")}`;
+      } else {
         for (const [k, d] of candidatas) {
           // La cuenta de la decisión debe ser la que el proveedor usa en sus compras recientes (≥ 80 % o por concepto).
           const hr = cuentaGastoHistorica(perfilReciente, lines[Number(k)]?.description ?? "", validaCuenta);
           const enReciente = !!hr && (hr.cuenta === d.code || String(d.code).startsWith(hr.cuenta) || hr.cuenta.startsWith(String(d.code)));
-          if (!enReciente && !desdeReciente.has(Number(k))) continue;
+          if (!enReciente && !desdeReciente.has(Number(k))) {
+            precedenteMotivo = hr
+              ? `la cuenta ${d.code} no es la que el proveedor usa en sus compras recientes (usa ${hr.cuenta})`
+              : `el proveedor no tiene una cuenta dominante en sus ${perfilReciente.compras} compras recientes (la cuenta ${d.code} queda por validar)`;
+            continue;
+          }
           decisions[Number(k)] = { ...d, confidence: "ALTA", score: Math.max(d.score, 0.95), reason: `${d.reason} Verificado con ${perfilReciente.compras} compra(s) recientes del proveedor: cuenta, IVA y retenciones coinciden.` };
         }
         const todas = Object.values(decisions);
@@ -1027,6 +1039,7 @@ export async function computeDraftAccounting(params: {
     decisions,
     ivaPorLinea,
     confirmarCondicion,
+    precedenteMotivo,
   };
 }
 
@@ -1335,6 +1348,7 @@ export async function recalcularCuentasBorrador(
     sinCuenta ? "hay renglones sin cuenta de gasto/costo" : "",
     dudosa ? `${Object.values(acc.decisions as Record<string, { confidence?: string } | undefined>).filter((d) => !!d?.confidence && String(d.confidence).toUpperCase() !== "ALTA").length} renglón(es) con cuenta de confianza media/baja` : "",
     acc.confirmarCondicion ? `confirmar condición del proveedor (${acc.confirmarCondicion})` : "",
+    acc.precedenteMotivo ? `precedente: ${acc.precedenteMotivo}` : "",
   ].filter(Boolean);
   const necesitaRevision = dudosa || sinCuenta || !!acc.confirmarCondicion;
   const mensajeFinal = (causas.length ? `${causas.join("; ")} — ` : "") + (motivo || "Cuentas recalculadas.");
@@ -1342,7 +1356,7 @@ export async function recalcularCuentasBorrador(
   // del piloto la lee y debe reflejar el estado actual del borrador.
   await supabase
     .from("bulk_upload_items")
-    .update({ needs_review: necesitaRevision, user_message: necesitaRevision ? mensajeFinal.slice(0, 400) : null } as never)
+    .update({ needs_review: necesitaRevision, user_message: necesitaRevision ? mensajeFinal.slice(0, 700) : null } as never)
     .eq("invoice_id", invoiceId)
     .eq("status", "completed");
   return {
