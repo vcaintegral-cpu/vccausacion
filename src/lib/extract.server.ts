@@ -10,12 +10,13 @@ Estructura exacta:
 "payment_method":string|null,"currency":string|null,"cost_center":string|null,"notes":string|null,
 "subtotal":number,"discount":number,"surcharge":number,"iva":number,"impoconsumo":number,
 "retefuente":number,"reteiva":number,"reteica":number,"total":number,
-"lines":[{"code":string|null,"description":string,"quantity":number,"unit_value":number,"discount":number,"iva":number,"retention":number,"impoconsumo":number,"total":number}]}
+"lines":[{"code":string|null,"description":string,"quantity":number,"unit_value":number,"discount":number,"iva":number,"iva_rate":number,"retention":number,"impoconsumo":number,"total":number}]}
 Reglas: los importes son números sin separadores ni símbolos. El NIT va sin dígito de verificación separado por guion (usa solo el número base).
 "provider_*" es el EMISOR/VENDEDOR de la factura (quien la expide, normalmente en el encabezado junto al logo y la resolución DIAN).
 "buyer_nit" y "buyer_name" son el NIT y la razón social del ADQUIRIENTE/COMPRADOR/CLIENTE (bloque "Adquiriente", "Cliente", "Señores", "Facturar a", "Datos del receptor"). Nunca uses el mismo NIT para proveedor y comprador: son dos empresas distintas. Si dudas, el emisor es quien cobra y el adquiriente es quien paga.
 No supongas impuestos: si la factura no muestra IVA, "iva" es 0. Usa exclusivamente los valores impresos en el documento.
 "retefuente", "reteiva" y "reteica" son las retenciones practicadas que aparecen impresas en la factura. Si la factura no muestra una retención, ese campo es 0. Nunca calcules ni estimes retenciones: solo transcribe las que estén impresas.
+IVA POR RENGLÓN (regla crítica): identifica cuáles renglones están gravados y cuáles no. "iva_rate" es el porcentaje de IVA del renglón (19, 5 u otro impreso) y "iva" su valor = "total" del renglón × porcentaje / 100. Los renglones excluidos, exentos o no gravados (marcados como "E", "EX", "excluido", "exento", "no gravado", sin IVA, o con tarifa 0 %) llevan "iva_rate" 0 e "iva" 0: su valor solo suma al subtotal. Si el documento imprime el IVA de cada renglón, transcríbelo; si solo imprime el porcentaje o una marca de gravado, calcula el IVA solo de los gravados. La suma de "iva" de los renglones debe ser igual al "iva" impreso del encabezado.
 PRECIO UNITARIO (regla crítica): en las facturas colombianas la columna "Precio unitario" suele ser un valor de lista o con IVA incluido y NO es la base gravable. Cuando exista una columna "Precio unitario de venta" (o "Valor venta", "Precio de venta", "Valor neto"), ESE es el valor real y corresponde al TOTAL de la línea por toda la cantidad, sin IVA. En ese caso:
 - "total" de la línea = ese valor de venta (base gravable de la línea, sin IVA).
 - "unit_value" = ese valor de venta DIVIDIDO por la cantidad (ej.: cantidad 8 y precio unitario de venta 40.336,13 -> unit_value = 5.042,02).

@@ -34,7 +34,25 @@ export function cuadrarIvaDeLineas<T extends EncabezadoIvaLeido & { lines: Linea
   if (!lineas.length || lineas.length > MAX_RENGLONES) return null;
   const sumaActual = roundCOP(lineas.reduce((s, l) => s + Number(l.iva || 0), 0));
   const ivaDoc = roundCOP(d.iva);
-  if (Math.abs(sumaActual - ivaDoc) <= 1) return null;
+  const tarifaLeida = (l: LineaIvaLeida) =>
+    l.iva_rate !== null &&
+    l.iva_rate !== undefined &&
+    Number.isFinite(Number(l.iva_rate)) &&
+    Number(l.iva_rate) >= 0
+      ? Number(l.iva_rate)
+      : null;
+  // Con la tarifa leída en TODOS los renglones, también se corrige un IVA bien sumado pero mal repartido
+  // (p. ej. IVA en un renglón exento y sin IVA en el gravado): cada renglón lleva base × tarifa.
+  const conTarifas = lineas.every((l) => tarifaLeida(l) !== null);
+  const repartoCorrecto =
+    !conTarifas ||
+    lineas.every(
+      (l) =>
+        Math.abs(
+          roundCOP((roundCOP(l.subtotal ?? l.total) * tarifaLeida(l)!) / 100) - roundCOP(l.iva),
+        ) <= 1,
+    );
+  if (Math.abs(sumaActual - ivaDoc) <= 1 && repartoCorrecto) return null;
   // El encabezado debe cuadrar solo: si no, la lectura es dudosa y se revisa a mano.
   const cuadra =
     roundCOP(d.subtotal - d.discount + Number(d.surcharge ?? 0) + ivaDoc + d.impoconsumo) -

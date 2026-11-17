@@ -50,3 +50,32 @@ describe("cuadrarIvaDeLineas", () => {
     expect(cuadrarIvaDeLineas(d)).toBeNull();
   });
 });
+
+describe("cuadrarIvaDeLineas con tarifa leída en cada renglón", () => {
+  it("corrige un IVA bien sumado pero mal repartido: el gravado lleva el IVA y el exento no", () => {
+    // 100.000 al 19 % y 100.000 exento: la IA puso el IVA en el renglón exento.
+    const d = factura(
+      [
+        { total: 100000, iva: 0, iva_rate: 19 },
+        { total: 100000, iva: 19000, iva_rate: 0 },
+      ],
+      19000,
+      219000,
+    );
+    const r = cuadrarIvaDeLineas(d)!;
+    expect(r.data.lines.map((l) => l.iva)).toEqual([19000, 0]);
+    expect(r.data.lines.map((l) => l.iva_rate)).toEqual([19, 0]);
+  });
+
+  it("no toca lo que ya está bien repartido", () => {
+    const d = factura(
+      [
+        { total: 100000, iva: 19000, iva_rate: 19 },
+        { total: 100000, iva: 0, iva_rate: 0 },
+      ],
+      19000,
+      219000,
+    );
+    expect(cuadrarIvaDeLineas(d)).toBeNull();
+  });
+});
