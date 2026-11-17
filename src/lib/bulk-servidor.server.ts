@@ -83,6 +83,20 @@ export async function causarCola(
         .in("status", transitorios)
         .lt("updated_at", hace15);
     await colgadas().lt("attempts", 3);
+    // Lecturas con IA que fallaron por un error transitorio de la pasarela (524, 502, 503, 504): se reintentan
+    // (hasta 4 intentos, solo tareas de Drive de los últimos 3 días; las de otro mes ya se apartaron antes).
+    const hace3d = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    await db
+      .from("bulk_upload_items")
+      .update({ status: "pending", stage: null, error_message: null, user_message: null })
+      .eq("company_id", companyId)
+      .eq("status", "error")
+      .like("storage_path", "%/fuentes/%")
+      .lt("attempts", 4)
+      .gte("updated_at", hace3d)
+      .or(
+        "error_message.ilike.%(524)%,error_message.ilike.%(502)%,error_message.ilike.%(503)%,error_message.ilike.%(504)%",
+      );
     await db
       .from("bulk_upload_items")
       .update({
