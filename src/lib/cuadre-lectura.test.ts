@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cuadrarIvaDeLineas } from "./cuadre-lectura";
+import { cuadrarIvaDeLineas, diagnosticarIva } from "./cuadre-lectura";
 
 const factura = (
   lines: Array<{ total: number; iva: number; iva_rate?: number | null }>,
@@ -77,5 +77,36 @@ describe("cuadrarIvaDeLineas con tarifa leída en cada renglón", () => {
       219000,
     );
     expect(cuadrarIvaDeLineas(d)).toBeNull();
+  });
+});
+
+describe("diagnosticarIva y desempate por tarifa uniforme", () => {
+  it("elige la combinación con todos los renglones gravados a la misma tarifa cuando es la única uniforme", () => {
+    // Bases 100.000 y 50.000; IVA 28.500 = 19 % de 150.000; también podría explicarse con 5 %/19 %… pero no hay otra uniforme.
+    const d = factura(
+      [
+        { total: 100000, iva: 0 },
+        { total: 50000, iva: 0 },
+      ],
+      28500,
+      178500,
+    );
+    const r = cuadrarIvaDeLineas(d)!;
+    expect(r.data.lines.map((l) => l.iva)).toEqual([19000, 9500]);
+  });
+
+  it("explica por qué no cuadra: encabezado inconsistente o reparto ambiguo", () => {
+    const malo = factura([{ total: 100000, iva: 0 }], 19000, 150000);
+    expect(diagnosticarIva(malo)).toContain("no cuadra con el total");
+    const ambiguo = factura(
+      [
+        { total: 100000, iva: 0 },
+        { total: 100000, iva: 0 },
+      ],
+      19000,
+      219000,
+    );
+    expect(diagnosticarIva(ambiguo)).toContain("única forma");
+    expect(diagnosticarIva(factura([{ total: 100000, iva: 19000 }], 19000, 119000))).toBeNull();
   });
 });

@@ -38,7 +38,7 @@ import { cargarHistorialCompras, cargarPrecedentes, cargarTablasBases } from "@/
 import { cuentaGastoHistorica, diferenciasConPrecedente, MIN_COMPRAS_RECIENTES, perfilDe, type PerfilHistorico } from "@/lib/auxiliar-historico";
 import { buscarProducto, codigoProductoNuevo, type ProductoCatalogo } from "@/lib/producto-coincidencia";
 import { aplicarRepartoExtraido, motivoReparto, repartirCargos, repartoDeFuente } from "@/lib/cargos-en-items";
-import { cuadrarIvaDeLineas } from "@/lib/cuadre-lectura";
+import { cuadrarIvaDeLineas, diagnosticarIva } from "@/lib/cuadre-lectura";
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
@@ -1139,6 +1139,8 @@ export async function recalcularCuentasBorrador(
       }
     }
   }
+  // Si el IVA de los renglones sigue sin cuadrar, el motivo dice por qué (para el semáforo del piloto y la revisión).
+  const motivoIva = cuadreIva ? null : diagnosticarIva({ ...data, surcharge: data.surcharge ?? 0, lines: data.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? l.total })) });
   const fuente = source;
   if (fuente) data = { ...data, subtotal: fuente.subtotal / 100, iva: fuente.iva / 100, impoconsumo: fuente.impoconsumo / 100, total: fuente.total / 100, discount: fuente.discount / 100, surcharge: fuente.surcharge / 100, lines: data.lines.map((l, i) => ({ ...l, subtotal: (fuente.lines[i]?.subtotal ?? 0) / 100, total: (fuente.lines[i]?.subtotal ?? 0) / 100, impoconsumo: (fuente.lines[i]?.impoconsumo ?? Math.round(Number(l.impoconsumo || 0) * 100)) / 100, discount: fuente.source === "excel" ? 0 : l.discount })) };
   const { lines, ...header } = data;
@@ -1258,7 +1260,7 @@ export async function recalcularCuentasBorrador(
       .eq("id", l.id);
   }
 
-  const motivo = [normalizado, cuadreIva, acc.reason, ...acc.unresolvedAccounts, ...acc.alertas].filter(Boolean).join(" ");
+  const motivo = [normalizado, cuadreIva, motivoIva, acc.reason, ...acc.unresolvedAccounts, ...acc.alertas].filter(Boolean).join(" ");
   // Mismo criterio que al guardar la factura, pero con las decisiones finales (incluidas las manuales).
   // Para el piloto: necesita revisión si algún renglón no tiene cuenta, la decisión no es de confianza ALTA
   // (precedente del proveedor, regla o producto) o hay una condición del proveedor por confirmar.
