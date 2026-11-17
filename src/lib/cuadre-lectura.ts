@@ -69,7 +69,7 @@ export function cuadrarIvaDeLineas<T extends EncabezadoIvaLeido & { lines: Linea
   const soluciones: number[][] = [];
   const actual: number[] = [];
   const buscar = (i: number, suma: number) => {
-    if (soluciones.length > 1) return;
+    if (soluciones.length > 8) return;
     if (i === lineas.length) {
       if (Math.abs(suma - ivaDoc) <= 1) soluciones.push([...actual]);
       return;
@@ -80,9 +80,15 @@ export function cuadrarIvaDeLineas<T extends EncabezadoIvaLeido & { lines: Linea
     }
   };
   buscar(0, 0);
-  // Una sola combinación de tarifas explica el IVA del documento: es la correcta.
-  if (soluciones.length !== 1) return null;
-  const tarifas = soluciones[0]!;
+  // Una sola combinación de tarifas explica el IVA del documento: es la correcta. Si hay varias, la de TODOS los
+  // renglones gravados a una misma tarifa (la factura sin renglones exentos) es la más probable, solo si es única.
+  let elegida = soluciones.length === 1 ? soluciones[0]! : null;
+  if (!elegida && soluciones.length > 1) {
+    const uniformes = soluciones.filter((t) => t[0]! > 0 && t.every((x) => x === t[0]));
+    if (uniformes.length === 1) elegida = uniformes[0]!;
+  }
+  if (!elegida) return null;
+  const tarifas = elegida;
   const ivas = bases.map((b, i) => roundCOP((b * tarifas[i]!) / 100));
   const resto = roundCOP(ivaDoc - ivas.reduce((s, v) => s + v, 0));
   if (resto !== 0) {
@@ -104,4 +110,25 @@ export function cuadrarIvaDeLineas<T extends EncabezadoIvaLeido & { lines: Linea
     },
     motivo: `IVA de los renglones corregido para cuadrar con el IVA de la factura (${ivaDoc.toLocaleString("es-CO")}): tarifas ${tarifas.join("%, ")}%.`,
   };
+}
+
+/**
+ * Por qué no se pudo cuadrar el IVA de los renglones con el del encabezado (null si ya cuadra o no aplica).
+ * Va en el motivo de revisión del borrador para que la usuaria sepa qué revisar.
+ */
+export function diagnosticarIva<T extends EncabezadoIvaLeido & { lines: LineaIvaLeida[] }>(
+  d: T,
+): string | null {
+  const lineas = d.lines;
+  if (!lineas.length) return null;
+  const suma = roundCOP(lineas.reduce((s, l) => s + Number(l.iva || 0), 0));
+  const ivaDoc = roundCOP(d.iva);
+  if (Math.abs(suma - ivaDoc) <= 1) return null;
+  const dif =
+    roundCOP(d.subtotal - d.discount + Number(d.surcharge ?? 0) + ivaDoc + d.impoconsumo) -
+    roundCOP(d.total);
+  const f = (n: number) => Math.abs(n).toLocaleString("es-CO");
+  if (Math.abs(dif) > 1)
+    return `IVA de los renglones (${f(suma)}) distinto al del encabezado (${f(ivaDoc)}) y el encabezado no cuadra con el total (diferencia ${f(dif)}): revise los valores del PDF.`;
+  return `IVA de los renglones (${f(suma)}) distinto al del encabezado (${f(ivaDoc)}) y no hay una única forma de repartirlo entre los renglones gravados: marque con el lápiz cuáles llevan IVA.`;
 }
