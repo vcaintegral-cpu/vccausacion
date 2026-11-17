@@ -23,7 +23,17 @@ export type EncabezadoValores = {
   total: number;
 };
 
+export type OpcionesReparto = {
+  /**
+   * true (por defecto): el INC también se reparte en los ítems (empresas que no usan impoconsumo, función
+   * «cargos_en_items»). false: solo se reparten el recargo y el descuento global y el INC conserva su casilla.
+   */
+  incluirInc?: boolean;
+};
+
 export type Reparto = {
+  /** El INC del documento y de los renglones se conserva (no se repartió). */
+  conservaInc?: boolean;
   /** Valor sumado (positivo) o restado (negativo) a cada ítem, en pesos. */
   ajustes: number[];
   /** Nuevos subtotales de los ítems (pesos). */
@@ -37,8 +47,13 @@ export type Reparto = {
  * Reparte INC, recargo y descuento global en los ítems. Devuelve null si no hay nada que
  * repartir o si la diferencia del documento no corresponde a esos valores.
  */
-export function repartirCargos(h: EncabezadoValores, lineas: LineaValores[]): Reparto | null {
+export function repartirCargos(
+  h: EncabezadoValores,
+  lineas: LineaValores[],
+  opciones: OpcionesReparto = {},
+): Reparto | null {
   if (!lineas.length) return null;
+  if (opciones.incluirInc === false) return repartirRecargoYDescuento(h, lineas);
   const incLineas = lineas.reduce((s, l) => s + Number(l.impoconsumo || 0), 0);
   const subLineas = lineas.reduce((s, l) => s + Number(l.subtotal || 0), 0);
   const ivaLineas = lineas.reduce((s, l) => s + Number(l.iva || 0), 0);
@@ -82,6 +97,49 @@ export function repartirCargos(h: EncabezadoValores, lineas: LineaValores[]): Re
   };
 }
 
+/**
+ * Todas las empresas: solo el recargo y el descuento global pasan a los ítems (en proporción a su valor);
+ * el impuesto al consumo conserva su casilla. Subtotal + IVA + INC = total.
+ */
+function repartirRecargoYDescuento(h: EncabezadoValores, lineas: LineaValores[]): Reparto | null {
+  const recargo = roundCOP(Number(h.surcharge || 0));
+  const descuento = roundCOP(Number(h.discount || 0));
+  if (recargo === 0 && descuento === 0) return null;
+  const subLineas = lineas.reduce((s, l) => s + Number(l.subtotal || 0), 0);
+  const ivaLineas = lineas.reduce((s, l) => s + Number(l.iva || 0), 0);
+  const inc = roundCOP(Number(h.impoconsumo || 0));
+  // Lo que falta para que ítems + IVA + INC = total debe ser exactamente el recargo menos el descuento.
+  const faltante = roundCOP(Number(h.total) - Number(h.iva) - inc - subLineas);
+  if (Math.abs(faltante - roundCOP(recargo - descuento)) > 1) return null;
+  if (Math.abs(roundCOP(ivaLineas) - roundCOP(h.iva)) > 1 && ivaLineas !== 0) return null;
+  const base = subLineas > 0 ? subLineas : lineas.length;
+  const ajustes = lineas.map((l) => roundCOP((faltante * (subLineas > 0 ? Number(l.subtotal || 0) : 1)) / base));
+  const resto = roundCOP(faltante - ajustes.reduce((s, a) => s + a, 0));
+  if (resto !== 0) {
+    let mayor = 0;
+    lineas.forEach((l, i) => {
+      if (Number(l.subtotal || 0) > Number(lineas[mayor]!.subtotal || 0)) mayor = i;
+    });
+    ajustes[mayor] = roundCOP(ajustes[mayor]! + resto);
+  }
+  const subtotales = lineas.map((l, i) => roundCOP(Number(l.subtotal || 0) + ajustes[i]!));
+  if (subtotales.some((s) => s < 0)) return null;
+  return {
+    conservaInc: true,
+    ajustes,
+    subtotales,
+    encabezado: {
+      subtotal: roundCOP(subtotales.reduce((s, v) => s + v, 0)),
+      iva: roundCOP(h.iva),
+      impoconsumo: inc,
+      discount: 0,
+      surcharge: 0,
+      total: roundCOP(h.total),
+    },
+    detalle: { inc: 0, recargo, descuento },
+  };
+}
+
 /** Texto para el motivo de la corrección y las alertas del borrador. */
 export function motivoReparto(r: Reparto): string {
   const partes: string[] = [];
@@ -101,7 +159,7 @@ export function aplicarRepartoExtraido<T extends EncabezadoValores & { lines: Li
     lines: data.lines.map((l, i) => {
       const subtotal = r.subtotales[i]!;
       const cantidad = Number(l.quantity || 0) || 1;
-      return { ...l, subtotal, total: subtotal, impoconsumo: 0, unit_value: (subtotal + Number(l.discount || 0)) / cantidad };
+      return { ...l, subtotal, total: subtotal, impoconsumo: r.conservaInc ? l.impoconsumo : 0, unit_value: (subtotal + Number(l.discount || 0)) / cantidad };
     }),
   };
 }
@@ -112,11 +170,12 @@ type Fuente = {
 };
 
 /** Reparto sobre los valores de origen (en centavos), para corregir un borrador ya creado. */
-export function repartoDeFuente<F extends Fuente>(s: F): { valores: F; reparto: Reparto } | null {
+export function repartoDeFuente<F extends Fuente>(s: F, opciones: OpcionesReparto = {}): { valores: F; reparto: Reparto } | null {
   const c = (v: number) => v / 100;
   const r = repartirCargos(
     { subtotal: c(s.subtotal), iva: c(s.iva), impoconsumo: c(s.impoconsumo), discount: c(s.discount), surcharge: c(s.surcharge ?? 0), total: c(s.total) },
     s.lines.map((l) => ({ subtotal: c(l.subtotal), iva: c(l.iva), impoconsumo: c(l.impoconsumo) })),
+    opciones,
   );
   if (!r) return null;
   const cent = (v: number) => Math.round(v * 100);
@@ -125,10 +184,10 @@ export function repartoDeFuente<F extends Fuente>(s: F): { valores: F; reparto: 
     valores: {
       ...s,
       subtotal: cent(r.encabezado.subtotal),
-      impoconsumo: 0,
+      impoconsumo: r.conservaInc ? s.impoconsumo : 0,
       discount: 0,
       surcharge: 0,
-      lines: s.lines.map((l, i) => ({ ...l, subtotal: cent(r.subtotales[i]!), impoconsumo: 0 })),
+      lines: s.lines.map((l, i) => ({ ...l, subtotal: cent(r.subtotales[i]!), impoconsumo: r.conservaInc ? l.impoconsumo : 0 })),
     },
   };
 }

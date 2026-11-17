@@ -92,21 +92,29 @@ export async function extractInvoiceWithAi(data: ExtractInvoiceInput, apiKey: st
     throw new Error("No se recibió contenido legible de la factura.");
   }
 
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Lovable-API-Key": apiKey,
-      "X-Lovable-AIG-SDK": "fetch",
-    },
-    body: JSON.stringify({
-      model: "openai/gpt-5.6-sol",
-      stream: true,
-      instructions: data.kind === "soporte" ? SYSTEM + SOPORTE : SYSTEM,
-      input: [{ role: "user", content }],
-      text: { format: { type: "json_object" } },
-    }),
-  });
+  const llamar = () =>
+    fetch("https://ai.gateway.lovable.dev/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Lovable-API-Key": apiKey,
+        "X-Lovable-AIG-SDK": "fetch",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-5.6-sol",
+        stream: true,
+        instructions: data.kind === "soporte" ? SYSTEM + SOPORTE : SYSTEM,
+        input: [{ role: "user", content }],
+        text: { format: { type: "json_object" } },
+      }),
+    });
+  let response = await llamar();
+  // Errores transitorios de la pasarela (tiempo agotado 524, 502, 503, 504): se reintenta una vez.
+  if ([502, 503, 504, 524].includes(response.status)) {
+    await response.text().catch(() => "");
+    await new Promise((r) => setTimeout(r, 2000));
+    response = await llamar();
+  }
 
   if (response.status === 429)
     throw new Error("Límite de solicitudes de IA alcanzado. Intenta de nuevo en unos minutos.");

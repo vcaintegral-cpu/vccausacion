@@ -18,3 +18,8 @@ export const PLANTILLA: PerfilEmpresa = {
   funciones: {},
   notas: [],
 };
+
+// PREGUNTAS AL CREAR UN PERFIL (instrucción del 2026-11-16):
+//  - ¿La empresa usa impuesto al consumo (impoconsumo)? Si NO lo usa, encender las funciones
+//    «impoconsumo_al_gasto» y «cargos_en_items» (el INC leído se suma a los ítems y su casilla queda vacía).
+//  - El recargo global y el descuento global NO necesitan función: en todas las empresas se reparten en los ítems.
