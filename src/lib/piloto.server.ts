@@ -224,7 +224,7 @@ export async function diagnosticoMes(db: Db, companyId: string, mes: string): Pr
 export async function diagnosticoCola(db: Db, companyId: string): Promise<string> {
   const { data } = await db
     .from("bulk_upload_items")
-    .select("status, stage, file_name, user_message, storage_path")
+    .select("status, stage, file_name, user_message, error_message, storage_path")
     .eq("company_id", companyId)
     .neq("status", "completed")
     .order("created_at", { ascending: false })
@@ -234,6 +234,7 @@ export async function diagnosticoCola(db: Db, companyId: string): Promise<string
     stage: string | null;
     file_name: string | null;
     user_message: string | null;
+    error_message?: string | null;
     storage_path: string | null;
   }>;
   const m = new Map<string, number>();
@@ -246,7 +247,8 @@ export async function diagnosticoCola(db: Db, companyId: string): Promise<string
     .filter((f) => f.status === "error")
     .slice(0, 3)
     .map(
-      (f) => `${(f.file_name ?? "?").slice(0, 40)}: ${(f.user_message ?? f.status).slice(0, 100)}`,
+      (f) =>
+        `${(f.file_name ?? "?").slice(0, 40)}: ${(f.error_message ?? f.user_message ?? f.status).slice(0, 260)}`,
     );
   return `Cola de carga masiva sin completar: ${lista}${ej.length ? `; ejemplos: ${ej.join(" | ")}` : ""}`;
 }
