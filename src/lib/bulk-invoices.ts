@@ -142,6 +142,9 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
   return { pdfs, skipped, filesFound };
 }
 
+/** Versión de la lógica de causación: el piloto recalcula una vez los borradores guardados con otra versión. */
+export const MOTOR_VERSION = "2026-11-16.3";
+
 export type BulkConfig = {
   accounts: PucAccount[];
   rules: Rule[];
@@ -1201,7 +1204,7 @@ export async function recalcularCuentasBorrador(
       reteiva: roundCOP(acc.retenciones.reteiva),
       reteica: roundCOP(acc.retenciones.reteica),
       ...(source ? { subtotal: source.subtotal / 100, iva: source.iva / 100, impoconsumo: source.impoconsumo / 100, total: source.total / 100, discount: source.discount / 100 } : {}),
-      raw_extraction: { ...raw, account_decisions: acc.decisions, productos_nuevos: acc.productosNuevos } as never,
+      raw_extraction: { ...raw, account_decisions: acc.decisions, productos_nuevos: acc.productosNuevos, motor_version: MOTOR_VERSION } as never,
       ...payablePatch,
       ...(cuadreIva ? { posting_error: null } : {}),
       updated_at: new Date().toISOString(),
@@ -1266,9 +1269,15 @@ export async function recalcularCuentasBorrador(
   // (precedente del proveedor, regla o producto) o hay una condición del proveedor por confirmar.
   const dudosa = Object.values(acc.decisions as Record<string, { confidence?: string } | undefined>).some((d) => !!d?.confidence && String(d.confidence).toUpperCase() !== "ALTA");
   const sinCuenta = acc.lines.some((l) => !l.account_code);
+  // La causa va primero para que el reporte diga POR QUÉ necesita revisión.
+  const causas = [
+    sinCuenta ? "hay renglones sin cuenta de gasto/costo" : "",
+    dudosa ? `${Object.values(acc.decisions as Record<string, { confidence?: string } | undefined>).filter((d) => !!d?.confidence && String(d.confidence).toUpperCase() !== "ALTA").length} renglón(es) con cuenta de confianza media/baja` : "",
+    acc.confirmarCondicion ? `confirmar condición del proveedor (${acc.confirmarCondicion})` : "",
+  ].filter(Boolean);
   return {
     ok: true,
-    message: motivo || "Cuentas recalculadas.",
+    message: (causas.length ? `${causas.join("; ")} — ` : "") + (motivo || "Cuentas recalculadas."),
     needsReview: dudosa || sinCuenta || !!acc.confirmarCondicion,
   };
 }
@@ -1497,6 +1506,7 @@ export async function saveExtractedInvoice(params: {
         lectura: params.readMode,
         texto: textoDocumento ? textoDocumento.slice(0, 20000) : null,
         archivo: fileName,
+        motor_version: MOTOR_VERSION,
         ...(params.rawExtraction ?? {}),
       } as never,
     };

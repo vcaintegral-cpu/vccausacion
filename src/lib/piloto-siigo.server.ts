@@ -48,6 +48,8 @@ export async function recalcularBorradoresMes(
     // Solo las tareas que hoy están marcadas «necesita revisión»: son las que pueden cambiar de estado
     // con el conocimiento actual. No se repite el cálculo de lo recalculado hace menos de 5 minutos.
     const hace5m = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const hace3h = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const { MOTOR_VERSION: motorVersion } = await import("./bulk-invoices");
     const { data: marcadas } = await db
       .from("bulk_upload_items")
       .select("invoice_id")
@@ -72,6 +74,10 @@ export async function recalcularBorradoresMes(
         .is("siigo_id", null)
         .is("siigo_number", null)
         .is("processing_at", null)
+        // Una vez por versión del motor (cambia cuando se mejora la lógica) y de nuevo si pasaron 3 horas.
+        .or(
+          `raw_extraction->>motor_version.is.null,raw_extraction->>motor_version.neq.${motorVersion},updated_at.lt.${hace3h}`,
+        )
         .lt("updated_at", hace5m)
         .order("updated_at")
         .limit(limite - ids.length);
