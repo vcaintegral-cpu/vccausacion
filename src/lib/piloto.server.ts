@@ -412,6 +412,19 @@ async function ejecutarPaso(
     if (!mes) throw new Error("No hay mes de trabajo para enviar a Siigo.");
     const { enviarVerdesASiigo, recalcularBorradoresMes } = await import("./piloto-siigo.server");
     const enviar = envio?.enviar === true;
+    // Proveedores nuevos: aplica las respuestas ya dadas por correo y pregunta las cuentas que faltan.
+    let cuentasNuevas = { creadas: 0, aplicadas: 0, sinReconocer: 0 };
+    try {
+      const { gestionarCuentasNuevas } = await import("./piloto-cuentas.server");
+      cuentasNuevas = await gestionarCuentasNuevas(
+        db,
+        companyId,
+        rangoDelMes(mes),
+        etiquetaMes(mes),
+      );
+    } catch {
+      /* si falla, el piloto sigue con lo demás */
+    }
     // Antes de evaluar: se recalculan los borradores con el precedente y las reglas de ahora.
     let recalculo = { evaluados: 0, recalculados: 0, fallidos: 0 };
     try {
@@ -434,6 +447,8 @@ async function ejecutarPaso(
       con_error: (antes["con_error"] ?? 0) + r.conError,
       verdes_pendientes: r.verdesPendientes,
       recalculados: (antes["recalculados"] ?? 0) + recalculo.recalculados,
+      preguntas_cuenta: (antes["preguntas_cuenta"] ?? 0) + cuentasNuevas.creadas,
+      cuentas_aplicadas: (antes["cuentas_aplicadas"] ?? 0) + cuentasNuevas.aplicadas,
     };
     // Motivos agrupados (los más frecuentes), para que el reporte diga POR QUÉ no se envió.
     const frecuencia = new Map<string, number>();
@@ -454,7 +469,7 @@ async function ejecutarPaso(
       return {
         id: paso,
         estado: "hecho",
-        detalle: `MODO PRUEBA (no se envió nada a Siigo): de ${r.candidatas} borrador(es) de ${mesTxt} (${cifras.recalculados} recalculados con el precedente actual), ${r.verdes} están en verde y se enviarían; ${r.porRevisar.length} por revisar${motivos ? ` — ${motivos}` : ""}${quien ? ` · Primeras: ${quien}` : ""}. Active «Enviar a Siigo lo que quede en verde» en Piloto automático para enviarlas.`,
+        detalle: `MODO PRUEBA (no se envió nada a Siigo): de ${r.candidatas} borrador(es) de ${mesTxt} (${cifras.recalculados} recalculados con el precedente actual${cuentasNuevas.creadas ? `; ${cuentasNuevas.creadas} pregunta(s) por correo de cuentas de proveedores nuevos` : ""}${cuentasNuevas.aplicadas ? `; ${cuentasNuevas.aplicadas} factura(s) con la cuenta respondida` : ""}), ${r.verdes} están en verde y se enviarían; ${r.porRevisar.length} por revisar${motivos ? ` — ${motivos}` : ""}${quien ? ` · Primeras: ${quien}` : ""}. Active «Enviar a Siigo lo que quede en verde» en Piloto automático para enviarlas.`,
         cifras,
       };
     // Si hay verdes pendientes pero esta pasada no envió nada ni falló, algo no avanza.
