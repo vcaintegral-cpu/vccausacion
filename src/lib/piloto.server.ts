@@ -408,8 +408,15 @@ async function ejecutarPaso(
   if (paso === "siigo_compras") {
     const { rangoDelMes, etiquetaMes } = await import("./piloto");
     if (!mes) throw new Error("No hay mes de trabajo para enviar a Siigo.");
-    const { enviarVerdesASiigo } = await import("./piloto-siigo.server");
+    const { enviarVerdesASiigo, recalcularBorradoresMes } = await import("./piloto-siigo.server");
     const enviar = envio?.enviar === true;
+    // Antes de evaluar: se recalculan los borradores con el precedente y las reglas de ahora.
+    let recalculo = { evaluados: 0, recalculados: 0, fallidos: 0 };
+    try {
+      recalculo = await recalcularBorradoresMes(db, companyId, rangoDelMes(mes), 20);
+    } catch {
+      /* el recálculo es una mejora: si falla, se evalúa lo que hay */
+    }
     const r = await enviarVerdesASiigo(db, companyId, {
       mes: rangoDelMes(mes),
       tope: envio?.tope ?? 5_000_000,
@@ -424,6 +431,7 @@ async function ejecutarPaso(
       enviadas: (antes["enviadas"] ?? 0) + r.enviadas,
       con_error: (antes["con_error"] ?? 0) + r.conError,
       verdes_pendientes: r.verdesPendientes,
+      recalculados: (antes["recalculados"] ?? 0) + recalculo.recalculados,
     };
     // Motivos agrupados (los más frecuentes), para que el reporte diga POR QUÉ no se envió.
     const frecuencia = new Map<string, number>();
@@ -435,12 +443,16 @@ async function ejecutarPaso(
       .slice(0, 4)
       .map(([m, n]) => `${n}× ${m}`)
       .join("; ");
+    const quien = r.porRevisar
+      .slice(0, 4)
+      .map((x) => `${x.etiqueta}: ${(x.motivos[0] ?? "").slice(0, 70)}`)
+      .join(" | ");
     const mesTxt = etiquetaMes(mes);
     if (!enviar)
       return {
         id: paso,
         estado: "hecho",
-        detalle: `MODO PRUEBA (no se envió nada a Siigo): de ${r.candidatas} borrador(es) de ${mesTxt}, ${r.verdes} están en verde y se enviarían; ${r.porRevisar.length} por revisar${motivos ? ` — ${motivos}` : ""}. Active «Enviar a Siigo lo que quede en verde» en Piloto automático para enviarlas.`,
+        detalle: `MODO PRUEBA (no se envió nada a Siigo): de ${r.candidatas} borrador(es) de ${mesTxt} (${cifras.recalculados} recalculados con el precedente actual), ${r.verdes} están en verde y se enviarían; ${r.porRevisar.length} por revisar${motivos ? ` — ${motivos}` : ""}${quien ? ` · Primeras: ${quien}` : ""}. Active «Enviar a Siigo lo que quede en verde» en Piloto automático para enviarlas.`,
         cifras,
       };
     // Si hay verdes pendientes pero esta pasada no envió nada ni falló, algo no avanza.

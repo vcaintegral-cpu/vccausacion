@@ -30,6 +30,82 @@ export type ResultadoEnvio = {
 const chunk = <T>(a: T[], n: number) =>
   Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n));
 
+export type ResultadoRecalculo = { evaluados: number; recalculados: number; fallidos: number };
+
+/**
+ * Recalcula las cuentas, el IVA y la CxP de los borradores del mes con el conocimiento de AHORA
+ * (precedente por proveedor, histórico, reglas enseñadas, cuentas manuales) y actualiza la marca de
+ * «necesita revisión» de su tarea. Solo borradores sin documento en Siigo, no tocados en la última hora.
+ */
+export async function recalcularBorradoresMes(
+  db: Db,
+  companyId: string,
+  mes: { desde: string; hasta: string },
+  limite = 20,
+): Promise<ResultadoRecalculo> {
+  const { conClienteDeServicio } = await import("./db-contextual");
+  return conClienteDeServicio(db, async () => {
+    const hace1h = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { data } = await db
+      .from("invoices")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("doc_kind", "compra")
+      .eq("status", "borrador")
+      .gte("issue_date", mes.desde)
+      .lte("issue_date", mes.hasta)
+      .is("siigo_id", null)
+      .is("siigo_number", null)
+      .is("processing_at", null)
+      .lt("updated_at", hace1h)
+      .order("updated_at")
+      .limit(limite);
+    const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+    const r: ResultadoRecalculo = { evaluados: ids.length, recalculados: 0, fallidos: 0 };
+    if (!ids.length) return r;
+    const [{ recalcularCuentasBorrador }, { loadDeps, invalidateBulkDeps }] = await Promise.all([
+      import("./bulk-invoices"),
+      import("./bulk-runner"),
+    ]);
+    // El dueño de las cargas da el contexto (config, conocimiento) igual que al causar.
+    const { data: tarea } = await db
+      .from("bulk_upload_items")
+      .select("upload_id")
+      .in("invoice_id", ids)
+      .limit(1)
+      .maybeSingle();
+    const { data: carga } = tarea
+      ? await db
+          .from("bulk_uploads")
+          .select("created_by")
+          .eq("id", (tarea as { upload_id: string }).upload_id)
+          .maybeSingle()
+      : { data: null };
+    const dueno = (carga as { created_by: string } | null)?.created_by;
+    invalidateBulkDeps(companyId);
+    const deps = await loadDeps(companyId, dueno);
+    for (const id of ids) {
+      try {
+        const res = await recalcularCuentasBorrador(id, deps.config);
+        if (!res.ok) {
+          r.fallidos += 1;
+          continue;
+        }
+        r.recalculados += 1;
+        if (res.needsReview !== undefined)
+          await db
+            .from("bulk_upload_items")
+            .update({ needs_review: res.needsReview })
+            .eq("invoice_id", id)
+            .eq("status", "completed");
+      } catch {
+        r.fallidos += 1;
+      }
+    }
+    return r;
+  });
+}
+
 export async function enviarVerdesASiigo(
   db: Db,
   companyId: string,
@@ -129,7 +205,7 @@ export async function enviarVerdesASiigo(
       etiqueta: string;
     }> = [];
     for (const f of facturas) {
-      const etiqueta = [f.prefix, f.number].filter(Boolean).join("-") || f.id.slice(0, 8);
+      const etiqueta = `${[f.prefix, f.number].filter(Boolean).join("-") || f.id.slice(0, 8)} · ${String(f["provider_name"] ?? "").slice(0, 30)}`;
       const acc = classifyJournal((asientos.get(f.id) ?? []) as never);
       const t = tareas.get(f.id);
       const decisiones = Object.values(

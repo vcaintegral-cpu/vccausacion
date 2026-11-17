@@ -1043,7 +1043,7 @@ export async function recalcularBorradoresEmpresa(
 export async function recalcularCuentasBorrador(
   invoiceId: string,
   config: BulkConfig,
-): Promise<{ ok: boolean; message: string }> {
+): Promise<{ ok: boolean; message: string; needsReview?: boolean }> {
   const { data: inv, error } = await supabase
     .from("invoices")
     .select("id, company_id, status, raw_extraction, source_override, payable_manual, payable_account")
@@ -1196,7 +1196,15 @@ export async function recalcularCuentasBorrador(
   }
 
   const motivo = [normalizado, acc.reason, ...acc.unresolvedAccounts, ...acc.alertas].filter(Boolean).join(" ");
-  return { ok: true, message: motivo || "Cuentas recalculadas." };
+  // Mismo criterio que al guardar la factura, pero con las decisiones finales (incluidas las manuales).
+  const puntajes = Object.values(acc.decisions as Record<string, { score?: number } | undefined>).map((d) => Number(d?.score ?? 1));
+  const peorPuntaje = puntajes.length ? Math.min(...puntajes) : 1;
+  const sinCuenta = acc.lines.some((l) => !l.account_code);
+  return {
+    ok: true,
+    message: motivo || "Cuentas recalculadas.",
+    needsReview: peorPuntaje < 0.95 || sinCuenta || !!acc.confirmarCondicion,
+  };
 }
 
 export async function saveExtractedInvoice(params: {
