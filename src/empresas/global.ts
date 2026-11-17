@@ -149,7 +149,7 @@ export const FUNCIONES = {
   },
   cargos_en_items: {
     descripcion:
-      "INC, recargo global y descuento global se reparten en los ítems en proporción a su valor (subtotal = suma de los ítems), al crear y al recalcular el borrador",
+      "El impuesto al consumo (INC) también se reparte en los ítems en proporción a su valor y su casilla queda en 0 (la empresa no usa impoconsumo). El recargo global y el descuento global se reparten SIEMPRE en los ítems, en todas las empresas, y sus casillas quedan en 0 (subtotal = suma de los ítems), al crear y al recalcular el borrador",
     porDefecto: false,
     agregada: "2026-11-11",
   },

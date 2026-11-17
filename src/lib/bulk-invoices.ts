@@ -38,6 +38,7 @@ import { cargarHistorialCompras, cargarPrecedentes, cargarTablasBases } from "@/
 import { cuentaGastoHistorica, diferenciasConPrecedente, MIN_COMPRAS_RECIENTES, perfilDe, type PerfilHistorico } from "@/lib/auxiliar-historico";
 import { buscarProducto, codigoProductoNuevo, type ProductoCatalogo } from "@/lib/producto-coincidencia";
 import { aplicarRepartoExtraido, motivoReparto, repartirCargos, repartoDeFuente } from "@/lib/cargos-en-items";
+import { cuadrarIvaDeLineas } from "@/lib/cuadre-lectura";
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
 import {
   buildJournal,
@@ -1099,8 +1100,10 @@ export async function recalcularCuentasBorrador(
   // global se normaliza con la corrección autorizada (queda en el historial de cambios con
   // su motivo), igual que la corrección manual.
   let normalizado: string | null = null;
-  if (source && funcionActiva(await nitDeEmpresa(inv.company_id as string, config), "cargos_en_items")) {
-    const n = repartoDeFuente(source);
+  // Todas las empresas: el recargo y el descuento global pasan a los ítems; el INC solo con «cargos_en_items».
+  if (source) {
+    const incluirInc = funcionActiva(await nitDeEmpresa(inv.company_id as string, config), "cargos_en_items");
+    const n = repartoDeFuente(source, { incluirInc });
     if (n) {
       const motivo = motivoReparto(n.reparto);
       const { error: corrErr } = await supabase.rpc("correct_invoice_source_values", {
@@ -1261,11 +1264,25 @@ export async function saveExtractedInvoice(params: {
 }): Promise<ProcessedInvoice> {
   // Función por empresa "cargos_en_items": INC, recargo y descuento global del documento se
   // reparten en los ítems antes de guardar (la nota crédito se revisa igual, más abajo).
-  if (funcionActiva(await nitDeEmpresa(params.companyId, params.config), "cargos_en_items")) {
+  // Cuadre del IVA de los renglones leídos: si el encabezado cuadra y una sola combinación de tarifas explica su IVA,
+  // se corrigen los IVA de los renglones (la IA a veces los lee mal) para que la factura cuadre con el documento.
+  {
+    const cuadre = cuadrarIvaDeLineas({ ...params.data, surcharge: params.data.surcharge ?? 0, lines: params.data.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? l.total })) });
+    if (cuadre)
+      params = {
+        ...params,
+        data: { ...params.data, lines: params.data.lines.map((l, i) => ({ ...l, iva: cuadre.data.lines[i]!.iva, iva_rate: cuadre.data.lines[i]!.iva_rate ?? 0, iva_base: cuadre.data.lines[i]!.iva_base ?? 0 })) },
+        rawExtraction: { ...(params.rawExtraction ?? {}), cuadre_iva: cuadre.motivo },
+      };
+  }
+  // Todas las empresas: recargo y descuento global van a los ítems; el INC solo con «cargos_en_items» (LED).
+  {
+    const incluirInc = funcionActiva(await nitDeEmpresa(params.companyId, params.config), "cargos_en_items");
     const d = params.data;
     const reparto = repartirCargos(
       { subtotal: d.subtotal, iva: d.iva, impoconsumo: d.impoconsumo, discount: d.discount, surcharge: d.surcharge ?? 0, total: d.total },
       d.lines.map((l) => ({ subtotal: l.subtotal ?? l.total, iva: l.iva, impoconsumo: l.impoconsumo })),
+      { incluirInc },
     );
     if (reparto)
       params = {
