@@ -143,7 +143,7 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
 }
 
 /** Versión de la lógica de causación: el piloto recalcula una vez los borradores guardados con otra versión. */
-export const MOTOR_VERSION = "2026-11-16.4";
+export const MOTOR_VERSION = "2026-11-16.6";
 
 export type BulkConfig = {
   accounts: PucAccount[];
@@ -575,7 +575,9 @@ export async function computeDraftAccounting(params: {
     const catalogo = config.products as ProductoCatalogo[];
     const cuentas14 = (perfilHistorico?.gastos ?? []).filter((g) => /^14/.test(g.cuenta));
     const vecesInventario = cuentas14.reduce((s, g) => s + g.veces, 0);
-    const proveedorInventario = !!perfilHistorico && vecesInventario > 0 && vecesInventario >= perfilHistorico.compras / 2;
+    // Proveedor de inventario por historial, o confirmado por la usuaria (pregunta por correo).
+    const confirmadoInventario = !!(provider as { purchase_tax_profile?: { es_inventario?: boolean } | null } | null)?.purchase_tax_profile?.es_inventario;
+    const proveedorInventario = confirmadoInventario || (!!perfilHistorico && vecesInventario > 0 && vecesInventario >= perfilHistorico.compras / 2);
     // Cuenta 14 de la empresa más usada (para productos sin cuenta propia ni precedente del proveedor).
     const cuenta14Empresa = (() => {
       const uso = new Map<string, number>();
@@ -1127,7 +1129,27 @@ export async function recalcularCuentasBorrador(
   // de tarifas explica el IVA del documento, se corrigen los IVA de los renglones y el valor de origen.
   let cuadreIva: string | null = null;
   {
-    const cuadre = cuadrarIvaDeLineas({ ...data, surcharge: data.surcharge ?? 0, lines: data.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? l.total })) });
+    // Se evalúa sobre los valores de ORIGEN vigentes (incluida una corrección anterior), no sobre la lectura original:
+    // si el IVA de los renglones de origen ya suma el del encabezado no se toca nada (el recálculo es estable).
+    const base = source
+      ? {
+          ...data,
+          subtotal: source.subtotal / 100,
+          discount: source.discount / 100,
+          surcharge: source.surcharge / 100,
+          iva: source.iva / 100,
+          impoconsumo: source.impoconsumo / 100,
+          total: source.total / 100,
+          lines: data.lines.map((l, i) => ({
+            ...l,
+            subtotal: (source!.lines[i]?.subtotal ?? 0) / 100,
+            total: (source!.lines[i]?.subtotal ?? 0) / 100,
+            iva: (source!.lines[i]?.iva ?? 0) / 100,
+            iva_rate: source!.lines[i]?.iva_rate ?? l.iva_rate ?? null,
+          })),
+        }
+      : data;
+    const cuadre = cuadrarIvaDeLineas({ ...base, surcharge: base.surcharge ?? 0, lines: base.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? l.total })) });
     if (cuadre) {
       let aplicado = true;
       if (source) {
@@ -1143,7 +1165,21 @@ export async function recalcularCuentasBorrador(
     }
   }
   // Si el IVA de los renglones sigue sin cuadrar, el motivo dice por qué (para el semáforo del piloto y la revisión).
-  const motivoIva = cuadreIva ? null : diagnosticarIva({ ...data, surcharge: data.surcharge ?? 0, lines: data.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? l.total })) });
+  const motivoIva = cuadreIva
+    ? null
+    : diagnosticarIva(
+        source
+          ? {
+              subtotal: source.subtotal / 100,
+              discount: source.discount / 100,
+              surcharge: source.surcharge / 100,
+              iva: source.iva / 100,
+              impoconsumo: source.impoconsumo / 100,
+              total: source.total / 100,
+              lines: source.lines.map((l) => ({ total: l.subtotal / 100, subtotal: l.subtotal / 100, iva: l.iva / 100, iva_rate: l.iva_rate })),
+            }
+          : { ...data, surcharge: data.surcharge ?? 0, lines: data.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? l.total })) },
+      );
   const fuente = source;
   if (fuente) data = { ...data, subtotal: fuente.subtotal / 100, iva: fuente.iva / 100, impoconsumo: fuente.impoconsumo / 100, total: fuente.total / 100, discount: fuente.discount / 100, surcharge: fuente.surcharge / 100, lines: data.lines.map((l, i) => ({ ...l, subtotal: (fuente.lines[i]?.subtotal ?? 0) / 100, total: (fuente.lines[i]?.subtotal ?? 0) / 100, impoconsumo: (fuente.lines[i]?.impoconsumo ?? Math.round(Number(l.impoconsumo || 0) * 100)) / 100, discount: fuente.source === "excel" ? 0 : l.discount })) };
   const { lines, ...header } = data;
@@ -1153,7 +1189,7 @@ export async function recalcularCuentasBorrador(
   // El IVA ya elegido en cada renglón se respeta; los que no tienen se resuelven con el precedente.
   const { data: ivaActual } = await supabase
     .from("invoice_lines")
-    .select("position, iva_tax_id")
+    .select("position, iva_tax_id, account_code, account_name, item_type, code")
     .eq("invoice_id", invoiceId)
     .order("position");
   const ivaFijado = lines.map((_, i) => (ivaActual ?? []).find((l) => l.position === i)?.iva_tax_id ?? null);
@@ -1181,6 +1217,31 @@ export async function recalcularCuentasBorrador(
     acc.decisions[i] = d as never;
     const j = acc.journal.find((x) => x.account_code === anterior && x.debit > 0);
     if (j) { j.account_code = d.code; j.account_name = (d as { name?: string }).name ?? j.account_name; }
+  }
+  // Estabilidad: una cuenta ya asignada (por precedente, producto, regla o elección) NO se cambia sola. Solo se
+  // reemplaza si la nueva decisión es válida y de confianza igual o mayor; nunca por una pendiente o más débil.
+  {
+    const rango = (c?: string) => (String(c ?? "").toUpperCase() === "ALTA" ? 3 : String(c ?? "").toUpperCase() === "MEDIA" ? 2 : 1);
+    const previas = ((raw as Record<string, unknown> | null)?.["account_decisions"] ?? {}) as Record<string, { confidence?: string; code?: string }>;
+    const inventarioEmpresa = funcionActiva(await nitDeEmpresa(inv.company_id as string, config), "productos_inventario");
+    for (const l of ivaActual ?? []) {
+      const i = Number(l.position);
+      const actual = acc.lines[i];
+      const E = String(l.account_code ?? "").trim();
+      if (!actual || !E || !isValidPurchaseAccount(E, inventarioEmpresa)) continue;
+      if (manuales.some(([k]) => Number(k) === i)) continue;
+      const N = String(actual.account_code ?? "").trim();
+      const previa = previas[String(i)];
+      const nuevaDec = acc.decisions[i];
+      const nuevaValida = !!N && isValidPurchaseAccount(N, inventarioEmpresa);
+      const conservar = !nuevaValida || (N !== E && rango(nuevaDec?.confidence) < rango(previa?.confidence ?? "ALTA"));
+      if (!conservar || N === E) continue;
+      acc.lines[i] = { ...actual, account_code: E, account_name: (l.account_name as string | null) ?? actual.account_name ?? null, item_type: ((l.item_type as string | null) ?? actual.item_type ?? "gasto") as never, ...(l.code ? { code: l.code as string } : {}) };
+      delete acc.productosNuevos[i];
+      if (previa) acc.decisions[i] = { ...(previa as Record<string, unknown>), code: E } as never;
+      const j = acc.journal.find((x) => x.account_code === N && x.debit > 0);
+      if (j) { j.account_code = E; j.account_name = (l.account_name as string | null) ?? j.account_name; }
+    }
   }
   if (inv.payable_manual && inv.payable_account) {
     acc.journal = acc.journal.map((j) => isPayableCode(j.account_code) && j.credit > 0 ? { ...j, account_code: inv.payable_account ?? j.account_code } : j);
