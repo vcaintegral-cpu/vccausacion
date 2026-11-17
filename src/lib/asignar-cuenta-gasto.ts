@@ -1,7 +1,7 @@
 // Borradores (función «cuenta_gasto_en_borradores»): asignar la cuenta de gasto/costo a los renglones
 // pendientes de cuenta de uno o varios borradores. La cuenta queda como decisión MANUAL del renglón:
 // el recálculo del motor nunca la reemplaza (igual que las demás cuentas manuales).
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/db-contextual";
 import { recalcularCuentasBorrador, type BulkConfig } from "@/lib/bulk-invoices";
 import { isValidPurchaseAccount } from "@/lib/provider-rules";
 
