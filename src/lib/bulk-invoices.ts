@@ -143,7 +143,7 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
 }
 
 /** Versión de la lógica de causación: el piloto recalcula una vez los borradores guardados con otra versión. */
-export const MOTOR_VERSION = "2026-11-16.6";
+export const MOTOR_VERSION = "2026-11-17.1";
 
 export type BulkConfig = {
   accounts: PucAccount[];
@@ -1181,7 +1181,7 @@ export async function recalcularCuentasBorrador(
           : { ...data, surcharge: data.surcharge ?? 0, lines: data.lines.map((l) => ({ ...l, subtotal: l.subtotal ?? l.total })) },
       );
   const fuente = source;
-  if (fuente) data = { ...data, subtotal: fuente.subtotal / 100, iva: fuente.iva / 100, impoconsumo: fuente.impoconsumo / 100, total: fuente.total / 100, discount: fuente.discount / 100, surcharge: fuente.surcharge / 100, lines: data.lines.map((l, i) => ({ ...l, subtotal: (fuente.lines[i]?.subtotal ?? 0) / 100, total: (fuente.lines[i]?.subtotal ?? 0) / 100, impoconsumo: (fuente.lines[i]?.impoconsumo ?? Math.round(Number(l.impoconsumo || 0) * 100)) / 100, discount: fuente.source === "excel" ? 0 : l.discount })) };
+  if (fuente) data = { ...data, subtotal: fuente.subtotal / 100, iva: fuente.iva / 100, impoconsumo: fuente.impoconsumo / 100, total: fuente.total / 100, discount: fuente.discount / 100, surcharge: fuente.surcharge / 100, lines: data.lines.map((l, i) => ({ ...l, iva: fuente.lines[i] ? fuente.lines[i]!.iva / 100 : l.iva, iva_rate: fuente.lines[i]?.iva_rate ?? l.iva_rate ?? 0, iva_base: fuente.lines[i]?.iva_base != null ? fuente.lines[i]!.iva_base! / 100 : l.iva_base ?? 0, subtotal: (fuente.lines[i]?.subtotal ?? 0) / 100, total: (fuente.lines[i]?.subtotal ?? 0) / 100, impoconsumo: (fuente.lines[i]?.impoconsumo ?? Math.round(Number(l.impoconsumo || 0) * 100)) / 100, discount: fuente.source === "excel" ? 0 : l.discount })) };
   const { lines, ...header } = data;
   // Las cuentas elegidas manualmente por el usuario nunca se recalculan.
   const manuales = Object.entries(((raw as Record<string, unknown> | null)?.["account_decisions"] ?? {}) as Record<string, { code?: string; origin?: string }>)
