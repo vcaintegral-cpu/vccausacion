@@ -143,7 +143,7 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
 }
 
 /** Versión de la lógica de causación: el piloto recalcula una vez los borradores guardados con otra versión. */
-export const MOTOR_VERSION = "2026-11-16.3";
+export const MOTOR_VERSION = "2026-11-16.4";
 
 export type BulkConfig = {
   accounts: PucAccount[];
@@ -1275,10 +1275,19 @@ export async function recalcularCuentasBorrador(
     dudosa ? `${Object.values(acc.decisions as Record<string, { confidence?: string } | undefined>).filter((d) => !!d?.confidence && String(d.confidence).toUpperCase() !== "ALTA").length} renglón(es) con cuenta de confianza media/baja` : "",
     acc.confirmarCondicion ? `confirmar condición del proveedor (${acc.confirmarCondicion})` : "",
   ].filter(Boolean);
+  const necesitaRevision = dudosa || sinCuenta || !!acc.confirmarCondicion;
+  const mensajeFinal = (causas.length ? `${causas.join("; ")} — ` : "") + (motivo || "Cuentas recalculadas.");
+  // La marca de la tarea de la carga masiva sigue al recálculo (también el manual desde Borradores): el semáforo
+  // del piloto la lee y debe reflejar el estado actual del borrador.
+  await supabase
+    .from("bulk_upload_items")
+    .update({ needs_review: necesitaRevision, user_message: necesitaRevision ? mensajeFinal.slice(0, 400) : null } as never)
+    .eq("invoice_id", invoiceId)
+    .eq("status", "completed");
   return {
     ok: true,
-    message: (causas.length ? `${causas.join("; ")} — ` : "") + (motivo || "Cuentas recalculadas."),
-    needsReview: dudosa || sinCuenta || !!acc.confirmarCondicion,
+    message: mensajeFinal,
+    needsReview: necesitaRevision,
   };
 }
 
@@ -1563,7 +1572,11 @@ export async function saveExtractedInvoice(params: {
     total,
     score,
     // 95% o más: automática. 80–94%: sugerida y marcada para revisión. Menos de 80%: revisión obligatoria.
-    needsReview: score < 0.95 || unresolvedAccounts.length > 0 || !!acc.confirmarCondicion,
+    // Empresas con precedente reciente (perfil «precedenteDesde»): la marca depende de la confianza real de cada
+    // cuenta (ALTA = precedente del proveedor, regla o producto), igual que en el recálculo del piloto.
+    needsReview: config.perfilesRecientes
+      ? Object.values(acc.decisions).some((d) => !!d?.confidence && String(d.confidence).toUpperCase() !== "ALTA") || unresolvedAccounts.length > 0 || !!acc.confirmarCondicion
+      : score < 0.95 || unresolvedAccounts.length > 0 || !!acc.confirmarCondicion,
     reason: [
       reason,
       ...unresolvedAccounts,
