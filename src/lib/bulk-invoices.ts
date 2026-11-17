@@ -143,7 +143,7 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
 }
 
 /** Versión de la lógica de causación: el piloto recalcula una vez los borradores guardados con otra versión. */
-export const MOTOR_VERSION = "2026-11-17.3";
+export const MOTOR_VERSION = "2026-11-17.4";
 
 export type BulkConfig = {
   accounts: PucAccount[];
@@ -1004,6 +1004,12 @@ export async function computeDraftAccounting(params: {
         hayIva: ivaTotal > 0,
         retenciones: { retefuente: Number(retenciones.retefuente) > 0, reteiva: Number(retenciones.reteiva) > 0, reteica: Number(retenciones.reteica) > 0 },
         baseRetencion: { retefuente: baseGravable, reteiva: ivaTotal, reteica: baseGravable },
+        // Lo que la usuaria ya confirmó del proveedor (no se le retiene / se le retiene con X) manda sobre el historial.
+        confirmadas: (() => {
+          const c = condicionDePerfil((provider as { purchase_tax_profile?: unknown } | null)?.purchase_tax_profile);
+          const kinds = ["retefuente", "reteiva", "reteica"] as const;
+          return Object.fromEntries(kinds.map((k) => [k, !!(c?.sinRetencion?.[k] || c?.retenerCon?.[k])]));
+        })(),
       });
       if (dif.length) {
         alertas.push(`Difiere del precedente reciente del proveedor: ${dif.join("; ")}.`);

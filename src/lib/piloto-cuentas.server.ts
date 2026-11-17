@@ -267,6 +267,13 @@ export async function gestionarCuentasNuevas(
       const nit = nitLimpio(d.referencia_id);
       if (!nit) continue;
       const texto = (d.instruccion?.trim() || d.respuesta || "").trim();
+      if (d.respuesta === "ninguna" && d.estado === "respondida") {
+        await db
+          .from("piloto_decisiones")
+          .update({ estado: "aplicada", aplicada_at: new Date().toISOString() })
+          .eq("id", d.id);
+        continue;
+      }
       if (d.respuesta === "inventario" && !d.instruccion?.trim()) {
         // Inventario: el proveedor queda marcado y el motor propone cuenta 14, producto del catálogo o producto nuevo.
         const { data: prov } = await db
@@ -367,6 +374,87 @@ export async function gestionarCuentasNuevas(
       porProveedor.set(nit, p);
     }
     const periodo = mes.desde.slice(0, 7);
+
+    // 3) Productos nuevos de proveedores que la usuaria aún no confirmó como de inventario: una pregunta por proveedor.
+    if (inventario) {
+      const nuevosPorNit = new Map<
+        string,
+        { nitCrudo: string; nombre: string; productos: string[] }
+      >();
+      for (let i = 0; i < facturas.length; i += 50) {
+        const { data: raws } = await db
+          .from("invoices")
+          .select("id, raw_extraction")
+          .in(
+            "id",
+            facturas.slice(i, i + 50).map((f) => f.id),
+          );
+        for (const r of (raws ?? []) as Array<{
+          id: string;
+          raw_extraction: Record<string, unknown> | null;
+        }>) {
+          const nuevos = (r.raw_extraction?.["productos_nuevos"] ?? {}) as Record<
+            string,
+            { nombre?: string }
+          >;
+          const nombres = Object.values(nuevos)
+            .map((n) => String(n?.nombre ?? "").trim())
+            .filter(Boolean);
+          if (!nombres.length) continue;
+          const f = facturas.find((x) => x.id === r.id);
+          if (!f) continue;
+          const nit = nitLimpio(f.provider_nit);
+          const confirmado = !!(
+            deps.config.batch?.providers[String(f.provider_nit ?? "")]?.purchase_tax_profile as
+              { es_inventario?: boolean } | undefined
+          )?.es_inventario;
+          if (!nit || confirmado) continue;
+          const x = nuevosPorNit.get(nit) ?? {
+            nitCrudo: String(f.provider_nit),
+            nombre: f.provider_name ?? nit,
+            productos: [],
+          };
+          x.productos.push(...nombres);
+          nuevosPorNit.set(nit, x);
+        }
+      }
+      for (const [nit, x] of nuevosPorNit) {
+        const clave = `inventario|${nit}`;
+        const { data: previa } = await db
+          .from("piloto_decisiones")
+          .select("id")
+          .eq("company_id", companyId)
+          .eq("clave", clave)
+          .maybeSingle();
+        if (previa) continue;
+        const { error } = await db.from("piloto_decisiones").upsert(
+          {
+            company_id: companyId,
+            clave,
+            tipo: "cuenta_proveedor",
+            referencia_id: x.nitCrudo,
+            titulo: `¿Inventario? ${x.nombre.slice(0, 60)}`,
+            pregunta: `${x.nombre} (NIT ${nit}) facturó productos que no existen en el catálogo: ${[
+              ...new Set(x.productos),
+            ]
+              .slice(0, 6)
+              .map((n) => `«${n.slice(0, 60)}»`)
+              .join(
+                "; ",
+              )}. Si es inventario, cruzo con el catálogo y creo en Siigo los productos nuevos al causar la factura (cuenta 14); si no, queda por revisar.`,
+            opciones: [
+              {
+                id: "inventario",
+                etiqueta: "Sí, es inventario: cruzar con el catálogo o crear los productos nuevos",
+              },
+              { id: "ninguna", etiqueta: "No, lo reviso yo" },
+            ] as never,
+          },
+          { onConflict: "company_id,clave", ignoreDuplicates: true },
+        );
+        if (!error) res.creadas += 1;
+      }
+    }
     for (const p of porProveedor.values()) {
       const clave = `cuenta|${p.nit}|${periodo}`;
       const { data: previa } = await db
