@@ -35,7 +35,7 @@ import {
   type TablaBases,
 } from "@/lib/precedente-tributario";
 import { cargarHistorialCompras, cargarPrecedentes, cargarTablasBases } from "@/lib/precedente-tributario.data";
-import { cuentaGastoHistorica, perfilDe, type PerfilHistorico } from "@/lib/auxiliar-historico";
+import { cuentaGastoHistorica, diferenciasConPrecedente, MIN_COMPRAS_RECIENTES, perfilDe, type PerfilHistorico } from "@/lib/auxiliar-historico";
 import { buscarProducto, codigoProductoNuevo, type ProductoCatalogo } from "@/lib/producto-coincidencia";
 import { aplicarRepartoExtraido, motivoReparto, repartirCargos, repartoDeFuente } from "@/lib/cargos-en-items";
 import { applyPucToPayable, fetchPayableAccount } from "@/lib/payable-account";
@@ -163,6 +163,8 @@ export type BulkConfig = {
   tablasBases?: TablaBases[];
   /** Perfil de cada proveedor aprendido del auxiliar histórico de Siigo, una vez por lote. */
   perfilesHistoricos?: Map<string, PerfilHistorico>;
+  /** Perfil de cada proveedor aprendido solo de sus compras recientes (perfil de empresa «precedenteDesde»). */
+  perfilesRecientes?: Map<string, PerfilHistorico>;
   batch?: {
     company: { id: string; name: string; nit: string | null; uses_cost_centers: boolean | null; default_payable_account: string | null };
     providers: Record<string, { nit: string; default_expense_account: string | null; default_payable_account: string | null; default_iva_account: string | null; purchase_tax_profile?: unknown }>;
@@ -480,6 +482,10 @@ export async function computeDraftAccounting(params: {
   const perfilesHistoricos =
     config.perfilesHistoricos ?? (await cargarHistorialCompras(companyId).then((h) => h.perfiles).catch(() => new Map<string, PerfilHistorico>()));
   const perfilHistorico = perfilDe(perfilesHistoricos, header.provider_nit);
+  // Precedente reciente del proveedor (p. ej. desde abril de 2026): cuenta de gasto, IVA y retenciones de sus últimas compras.
+  const perfilRecienteBruto = perfilDe(config.perfilesRecientes, header.provider_nit);
+  const perfilReciente = perfilRecienteBruto && perfilRecienteBruto.compras >= MIN_COMPRAS_RECIENTES ? perfilRecienteBruto : null;
+  const desdeReciente = new Set<number>();
   const impuestosPrevios = config.taxes as unknown as ImpuestoConfigurado[];
   const precedentesPrevios =
     config.precedentes ?? (await cargarPrecedentes(companyId, impuestosPrevios).catch(() => new Map() as PrecedentesEmpresa));
@@ -511,7 +517,7 @@ export async function computeDraftAccounting(params: {
   // Auxiliar histórico: cuenta de gasto/costo del propio proveedor (por palabras de la
   // descripción, o la que usa en casi todas sus compras) para renglones sin cuenta o
   // resueltos solo por descripciones de OTROS proveedores. Nunca reemplaza una regla.
-  if (perfilHistorico) {
+  if (perfilHistorico || perfilReciente) {
     const nitHist = await nitDeEmpresa(companyId, config);
     const confianzaPorConcepto = funcionActiva(nitHist, "historial_confianza_concepto");
     const productoDelHistorial = funcionActiva(nitHist, "producto_del_historial");
@@ -520,8 +526,10 @@ export async function computeDraftAccounting(params: {
     lines.forEach((l, i) => {
       const d = decisions[i];
       if (d && d.origin !== "NINGUNA" && d.origin !== "HISTORIAL_DESCRIPCION") return;
-      const h = cuentaGastoHistorica(perfilHistorico, l.description ?? "", valida);
+      const hReciente = perfilReciente ? cuentaGastoHistorica(perfilReciente, l.description ?? "", valida) : null;
+      const h = hReciente ?? cuentaGastoHistorica(perfilHistorico, l.description ?? "", valida);
       if (!h) return;
+      if (hReciente) desdeReciente.add(i);
       const op = config.accounts.length ? resolveOperationalAccount(config.accounts, h.cuenta) : null;
       const code = op?.operationalAccount ?? h.cuenta;
       lines[i] = { ...l, account_code: code, account_name: op?.operational?.name ?? h.nombre };
@@ -964,6 +972,34 @@ export async function computeDraftAccounting(params: {
     };
   });
 
+  // Verificación con el precedente reciente: si la cuenta de gasto viene del historial del proveedor y su IVA y
+  // retenciones coinciden con sus compras recientes, la confianza sube (cuenta, IVA y retenciones según proveedor).
+  let scoreFinal = score;
+  let reasonFinal = reason;
+  if (perfilReciente) {
+    const candidatas = Object.entries(decisions).filter(([, d]) => d.origin === "HISTORIAL" && d.confidence === "ALTA");
+    if (candidatas.length) {
+      const cuentasIva = ivaPorLinea.flatMap((x, i) => ((lines[i]?.iva ?? 0) > 0 ? [x?.tax ? resolveTaxAccount(x.tax as TaxRecord, config.accounts).code || null : null] : []));
+      const dif = diferenciasConPrecedente(perfilReciente, {
+        cuentasIva,
+        hayIva: ivaTotal > 0,
+        retenciones: { retefuente: Number(retenciones.retefuente) > 0, reteiva: Number(retenciones.reteiva) > 0, reteica: Number(retenciones.reteica) > 0 },
+        baseRetencion: { retefuente: baseGravable, reteiva: ivaTotal, reteica: baseGravable },
+      });
+      if (dif.length) alertas.push(`Difiere del precedente reciente del proveedor: ${dif.join("; ")}.`);
+      else {
+        for (const [k, d] of candidatas) {
+          const enReciente = perfilReciente.gastos.some((g) => g.cuenta === d.code || String(d.code).startsWith(g.cuenta) || g.cuenta.startsWith(String(d.code)));
+          if (!enReciente && !desdeReciente.has(Number(k))) continue;
+          decisions[Number(k)] = { ...d, score: Math.max(d.score, 0.95), reason: `${d.reason} Verificado con ${perfilReciente.compras} compra(s) recientes del proveedor: cuenta, IVA y retenciones coinciden.` };
+        }
+        const todas = Object.values(decisions);
+        scoreFinal = todas.length === 0 ? 1 : Math.min(...todas.map((d) => d.score));
+        reasonFinal = todas.sort((a, b) => a.score - b.score)[0]?.reason ?? reason;
+      }
+    }
+  }
+
   return {
     productosNuevos,
     lines,
@@ -974,8 +1010,8 @@ export async function computeDraftAccounting(params: {
     ivaTotal,
     centroFactura,
     costCentersEnabled: costCentersEnabled(costPolicy),
-    score,
-    reason,
+    score: scoreFinal,
+    reason: reasonFinal,
     unresolvedAccounts,
     alertas,
     decisions,
