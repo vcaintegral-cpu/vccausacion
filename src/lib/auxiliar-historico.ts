@@ -510,7 +510,9 @@ export function diferenciasConPrecedente(
   if (borrador.hayIva) {
     if (!perfil.iva.length) dif.push("el proveedor no cobraba IVA en sus compras recientes");
     else if (borrador.cuentasIva.some((c) => !c || !perfil.iva.some((u) => mismaCuenta(String(c), u.cuenta))))
-      dif.push("la cuenta de IVA no coincide con la de sus compras recientes");
+      dif.push(
+        `la cuenta de IVA no coincide con la de sus compras recientes (usa ${perfil.iva.map((u) => u.cuenta).slice(0, 3).join(", ")})`,
+      );
   } else if (perfil.iva.length) dif.push("el proveedor sí cobraba IVA en sus compras recientes");
   for (const kind of ["retefuente", "reteiva", "reteica"] as RetencionKind[]) {
     const veces = perfil.retenciones[kind].reduce((t, u) => t + u.veces, 0);

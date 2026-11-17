@@ -143,7 +143,7 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
 }
 
 /** Versión de la lógica de causación: el piloto recalcula una vez los borradores guardados con otra versión. */
-export const MOTOR_VERSION = "2026-11-17.2";
+export const MOTOR_VERSION = "2026-11-17.3";
 
 export type BulkConfig = {
   accounts: PucAccount[];
@@ -622,9 +622,9 @@ export async function computeDraftAccounting(params: {
         code: cuenta.code,
         name: lines[i]!.account_name ?? "",
         origin: "PRODUCTO",
-        reason: `Producto nuevo ${codigo}: no hay uno parecido en el catálogo; se creará en Siigo al causar${grupo ? ` (grupo ${grupo})` : ""}.${r.candidatos.length ? ` Más parecidos: ${r.candidatos.slice(0, 3).map((c) => c.producto.name).join(" · ")}.` : ""}`,
-        confidence: "MEDIA",
-        score: 0.7,
+        reason: `Producto nuevo ${codigo}: no hay uno parecido en el catálogo; se creará en Siigo al causar${grupo ? ` (grupo ${grupo})` : ""}${confirmadoInventario ? " (proveedor de inventario confirmado por la usuaria)" : ""}.${r.candidatos.length ? ` Más parecidos: ${r.candidatos.slice(0, 3).map((c) => c.producto.name).join(" · ")}.` : ""}`,
+        confidence: confirmadoInventario ? "ALTA" : "MEDIA",
+        score: confirmadoInventario ? 0.9 : 0.7,
         error: null,
       };
     });
@@ -992,7 +992,13 @@ export async function computeDraftAccounting(params: {
     const candidatas = Object.entries(decisions).filter(([, d]) => d.origin === "HISTORIAL");
     const validaCuenta = (c: string) => isValidExpenseAccount(c) && (config.accounts.length === 0 || resolveOperationalAccount(config.accounts, c).valid);
     if (candidatas.length) {
-      const cuentasIva = ivaPorLinea.flatMap((x, i) => ((lines[i]?.iva ?? 0) > 0 ? [x?.tax ? resolveTaxAccount(x.tax as TaxRecord, config.accounts).code || null : null] : []));
+      // Solo se compara el IVA que NO salió del propio proveedor: el elegido por su precedente, por una selección ya
+      // hecha o por ser el único de la tarifa coincide por construcción; el genérico de la empresa sí se verifica.
+      const cuentasIva = ivaPorLinea.flatMap((x, i) =>
+        (lines[i]?.iva ?? 0) > 0 && (!x?.tax || /que más usa la empresa/i.test(x.motivo ?? ""))
+          ? [x?.tax ? resolveTaxAccount(x.tax as TaxRecord, config.accounts).code || null : null]
+          : [],
+      );
       const dif = diferenciasConPrecedente(perfilReciente, {
         cuentasIva,
         hayIva: ivaTotal > 0,
