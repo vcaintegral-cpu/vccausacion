@@ -594,6 +594,39 @@ async function ejecutarPaso(
       enviar,
       cierre,
     });
+    // Rendimientos financieros: un comprobante contable mensual por cuenta, solo con el extracto.
+    let rendimientosTxt = "";
+    let rendimientosCifras: Record<string, number> = {};
+    try {
+      const { procesarRendimientos } = await import("./piloto-rendimientos.server");
+      const { perfilDeEmpresa } = await import("@/empresas/registro");
+      const { data: emp } = await db.from("companies").select("nit").eq("id", companyId).single();
+      const cuentaRend =
+        perfilDeEmpresa((emp as { nit: string | null } | null)?.nit ?? null)
+          ?.cuentaRendimientosFinancieros ?? null;
+      const rr = await procesarRendimientos(db, companyId, {
+        periodo: mes.slice(0, 7),
+        cuentaRendimientos: cuentaRend,
+        enviar,
+        cierre,
+      });
+      const fm = (n: number) => `$${n.toLocaleString("es-CO")}`;
+      rendimientosCifras = {
+        rendimientos_cuentas: rr.cuentas.filter((c) => c.total > 0).length,
+        rendimientos_enviados: rr.cuentas.filter((c) => c.enSiigo).length,
+      };
+      const lista = rr.cuentas
+        .filter((c) => c.total > 0 || c.enSiigo)
+        .map(
+          (c) =>
+            `${c.etiqueta} ${fm(c.total)} (${c.movimientos.length} abonos, ${c.enSiigo ? `ya en Siigo: ${c.enSiigo}` : c.desdeExtracto ? "confirmado con el extracto" : "provisional: se envía cuando llegue el extracto"})`,
+        )
+        .join("; ");
+      rendimientosTxt = ` · Rendimientos financieros: ${lista || "sin abonos"}${rr.mensajes.length ? ` · ${rr.mensajes.slice(0, 2).join(" | ")}` : ""}`;
+      if (rr.conError > 0) rendimientosCifras["rendimientos_error"] = rr.conError;
+    } catch (e) {
+      rendimientosTxt = ` · Rendimientos: no se pudieron revisar (${(e instanceof Error ? e.message : String(e)).slice(0, 120)})`;
+    }
     const completo = (g: (typeof r.grupos)[number]) =>
       !g.faltante && g.listos > 0 && g.extracto.cuadra;
     const cifras = {
@@ -602,6 +635,7 @@ async function ejecutarPaso(
       completos: r.grupos.filter(completo).length,
       enviados: r.grupos.filter((g) => g.enviado).length,
       con_error: r.conError,
+      ...rendimientosCifras,
     };
     const fmt = (n: number) => `$${n.toLocaleString("es-CO")}`;
     const lineas = r.grupos
@@ -621,7 +655,7 @@ async function ejecutarPaso(
     return {
       id: paso,
       estado: r.conError > 0 ? "error" : "hecho",
-      detalle: `Gastos bancarios de ${etiquetaMes(mes)}: ${r.grupos.length ? lineas : "sin gastos bancarios del mes"} · ${cuando}${r.mensajes.length ? ` · ${r.mensajes.slice(0, 3).join(" | ")}` : ""}`,
+      detalle: `Gastos bancarios de ${etiquetaMes(mes)}: ${r.grupos.length ? lineas : "sin gastos bancarios del mes"} · ${cuando}${r.mensajes.length ? ` · ${r.mensajes.slice(0, 3).join(" | ")}` : ""}${rendimientosTxt}`,
       cifras,
     };
   }

@@ -105,3 +105,35 @@ describe("carpetaEsDelMes y subcuenta del PUC", () => {
     expect(carpetaEsDelMes(null, "2026-11-01")).toBe(false);
   });
 });
+
+describe("rendimientos financieros", () => {
+  it("reconoce solo los abonos de intereses y arma el comprobante", async () => {
+    const { rendimientosDe, payloadRendimientos } = await import("./piloto-rendimientos.server");
+    const r = rendimientosDe([
+      { fecha: "2026-11-02", valor: 7.68, descripcion: "ABONO INTERESES AHORROS" },
+      { fecha: "2026-11-05", valor: 11.46, descripcion: "Abono intereses ahorros" },
+      { fecha: "2026-11-06", valor: -758.1, descripcion: "COBRO IVA PAGOS AUTOMATICOS" },
+      { fecha: "2026-11-07", valor: 500000, descripcion: "CONSIGNACION CLIENTE" },
+    ]);
+    expect(r.map((x) => x.valor)).toEqual([7.68, 11.46]);
+    const p = payloadRendimientos({
+      documentId: 7,
+      fecha: "2026-11-30",
+      total: 19.14,
+      cuentaBanco: "11200502",
+      cuentaRendimientos: "42100501",
+      terceroNit: "900.111.222",
+      descripcion: "Rendimientos financieros AHORROS 2026-11",
+      referencia: "abcd1234",
+    }) as { items: Array<{ account: { code: string; movement: string }; value: number }> };
+    expect(p.items).toHaveLength(2);
+    expect(p.items[0]).toMatchObject({
+      account: { code: "11200502", movement: "Debit" },
+      value: 19.14,
+    });
+    expect(p.items[1]).toMatchObject({
+      account: { code: "42100501", movement: "Credit" },
+      value: 19.14,
+    });
+  });
+});
