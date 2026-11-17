@@ -221,6 +221,42 @@ export async function gestionarCuentasNuevas(
       const nit = nitLimpio(d.referencia_id);
       if (!nit) continue;
       const texto = (d.instruccion?.trim() || d.respuesta || "").trim();
+      if (d.respuesta === "inventario" && !d.instruccion?.trim()) {
+        // Inventario: el proveedor queda marcado y el motor propone cuenta 14, producto del catálogo o producto nuevo.
+        const { data: prov } = await db
+          .from("providers")
+          .select("id, purchase_tax_profile")
+          .eq("company_id", companyId)
+          .eq("nit", d.referencia_id ?? "")
+          .maybeSingle();
+        if (prov) {
+          const previo = ((prov as { purchase_tax_profile: unknown }).purchase_tax_profile ??
+            {}) as Record<string, unknown>;
+          const { error } = await db
+            .from("providers")
+            .update({ purchase_tax_profile: { ...previo, es_inventario: true } as never })
+            .eq("id", (prov as { id: string }).id);
+          if (!error) {
+            const { recalcularCuentasBorrador } = await import("./bulk-invoices");
+            const { invalidateBulkDeps } = await import("./bulk-runner");
+            invalidateBulkDeps(companyId);
+            const deps2 = await loadDeps(companyId, dueno);
+            for (const f of facturas.filter((x) => nitLimpio(x.provider_nit) === nit)) {
+              try {
+                const r2 = await recalcularCuentasBorrador(f.id, deps2.config);
+                if (r2.ok) res.aplicadas += 1;
+              } catch {
+                /* el siguiente recálculo lo reintenta */
+              }
+            }
+            await db
+              .from("piloto_decisiones")
+              .update({ estado: "aplicada", aplicada_at: new Date().toISOString() })
+              .eq("id", d.id);
+          }
+        }
+        continue;
+      }
       const cuenta = reconocerCuenta(texto, cuentas, valida);
       if (!cuenta) {
         if (d.estado === "respondida") {
@@ -335,10 +371,20 @@ export async function gestionarCuentasNuevas(
           referencia_id: p.nit,
           titulo: `Cuenta contable para ${p.nombre.slice(0, 60)}`,
           pregunta: `Proveedor sin historial: ${p.nombre} (NIT ${p.nit}). Facturas de ${etiquetaMes}: ${numeros}. Facturó: ${conceptos}${mas}. ¿A qué cuenta de gasto/costo debo causarlo? ${sugeridas.length ? "Toque una cuenta sugerida o escriba" : "Escriba"} en la aplicación (Piloto automático → Bandeja) el código o el nombre de la cuenta; lo aplico a todas sus facturas y lo recuerdo.`,
-          opciones: sugeridas.map((c) => ({
-            id: c.codigo,
-            etiqueta: `${c.codigo} · ${c.nombre}`.slice(0, 80),
-          })) as never,
+          opciones: [
+            ...(inventario
+              ? [
+                  {
+                    id: "inventario",
+                    etiqueta: "Es INVENTARIO: cuenta 14, producto del catálogo o nuevo",
+                  },
+                ]
+              : []),
+            ...sugeridas.map((c) => ({
+              id: c.codigo,
+              etiqueta: `${c.codigo} · ${c.nombre}`.slice(0, 80),
+            })),
+          ] as never,
         },
         { onConflict: "company_id,clave", ignoreDuplicates: true },
       );
@@ -515,7 +561,21 @@ export async function gestionarCondicionesRetencion(
       const { recalcularCuentasBorrador } = await import("./bulk-invoices");
       const { loadDeps, invalidateBulkDeps } = await import("./bulk-runner");
       invalidateBulkDeps(companyId);
-      const deps = await loadDeps(companyId);
+      // El dueño de las cargas da el contexto (el cliente de servicio no tiene sesión de usuario).
+      const { data: t0 } = await db
+        .from("bulk_upload_items")
+        .select("upload_id")
+        .in("invoice_id", proveedores.get(nit)?.ids ?? [])
+        .limit(1)
+        .maybeSingle();
+      const { data: c0 } = t0
+        ? await db
+            .from("bulk_uploads")
+            .select("created_by")
+            .eq("id", (t0 as { upload_id: string }).upload_id)
+            .maybeSingle()
+        : { data: null };
+      const deps = await loadDeps(companyId, (c0 as { created_by: string } | null)?.created_by);
       for (const f of proveedores.get(nit)?.ids ?? []) {
         try {
           await recalcularCuentasBorrador(f, deps.config);
