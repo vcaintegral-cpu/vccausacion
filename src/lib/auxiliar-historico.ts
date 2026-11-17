@@ -482,6 +482,49 @@ export function aprenderPerfiles(compras: CompraHistorica[]): Map<string, Perfil
 }
 
 /** Perfil del proveedor (por NIT con o sin DV). */
+/** Perfiles aprendidos solo de las compras desde una fecha (p. ej. el precedente reciente del proveedor). */
+export function aprenderPerfilesDesde(compras: CompraHistorica[], desde: string): Map<string, PerfilHistorico> {
+  return aprenderPerfiles(compras.filter((c) => !!c.fecha && c.fecha >= desde));
+}
+
+/** Compras mínimas del proveedor en el período reciente para que su precedente cuente. */
+export const MIN_COMPRAS_RECIENTES = 2;
+
+const mismaCuenta = (a: string, b: string) => !!a && !!b && (a === b || a.startsWith(b) || b.startsWith(a));
+
+/**
+ * Compara el IVA y las retenciones de un borrador con el precedente reciente del proveedor.
+ * Devuelve las diferencias (lista vacía = coincide). Si el proveedor se retuvo en sus compras recientes, el
+ * borrador debe llevar la retención; sin ella solo vale si la base es de las que históricamente no se retuvieron.
+ */
+export function diferenciasConPrecedente(
+  perfil: PerfilHistorico,
+  borrador: {
+    cuentasIva: Array<string | null>;
+    hayIva: boolean;
+    retenciones: Record<RetencionKind, boolean>;
+    baseRetencion: Record<RetencionKind, number>;
+  },
+): string[] {
+  const dif: string[] = [];
+  if (borrador.hayIva) {
+    if (!perfil.iva.length) dif.push("el proveedor no cobraba IVA en sus compras recientes");
+    else if (borrador.cuentasIva.some((c) => !c || !perfil.iva.some((u) => mismaCuenta(String(c), u.cuenta))))
+      dif.push("la cuenta de IVA no coincide con la de sus compras recientes");
+  } else if (perfil.iva.length) dif.push("el proveedor sí cobraba IVA en sus compras recientes");
+  for (const kind of ["retefuente", "reteiva", "reteica"] as RetencionKind[]) {
+    const veces = perfil.retenciones[kind].reduce((t, u) => t + u.veces, 0);
+    if (borrador.retenciones[kind]) {
+      if (veces === 0) dif.push(`${kind}: no se le retenía en sus compras recientes`);
+    } else if (veces > 0) {
+      const sin = perfil.sinRetencion[kind];
+      if (!(sin.veces > 0 && borrador.baseRetencion[kind] <= sin.baseMax))
+        dif.push(`${kind}: se le retenía en sus compras recientes y el borrador no la trae`);
+    }
+  }
+  return dif;
+}
+
 export function perfilDe(perfiles: Map<string, PerfilHistorico> | null | undefined, nit: string | null | undefined) {
   return perfiles?.get(nitLimpio(nit)) ?? null;
 }

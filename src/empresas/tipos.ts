@@ -62,6 +62,11 @@ export type PerfilEmpresa = {
   cuentasEgresosPorConcepto?: Record<string, string>;
   /** Cuenta de ingreso de los rendimientos financieros (comprobante mensual por cuenta bancaria). */
   cuentaRendimientosFinancieros?: string;
+  /**
+   * Fecha (yyyy-MM-dd) desde la que el precedente de cada proveedor es claro y continuo: el motor de causación
+   * verifica cuenta de gasto, IVA y retenciones contra sus compras desde esa fecha para dar confianza ALTA.
+   */
+  precedenteDesde?: string;
   /** Notas de contexto: software contable, particularidades, decisiones tomadas en el chat. */
   notas: string[];
 };

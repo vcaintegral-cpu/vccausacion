@@ -34,6 +34,8 @@ import {
   mensajeNotaCredito,
 } from "@/lib/nota-credito";
 import { fetchIvaConfig } from "@/lib/iva-treatment";
+import { aprenderPerfilesDesde } from "@/lib/auxiliar-historico";
+import { perfilDeEmpresa } from "@/empresas/registro";
 import { fetchCompanyKnowledge, type CompanyKnowledge } from "@/lib/causacion-engine";
 import {
   cargarHistorialCompras,
@@ -229,6 +231,7 @@ export async function loadDeps(companyId: string, usuarioId?: string): Promise<D
       fetchIvaConfig(companyId),
       cargarHistorialCompras(companyId).catch(() => null),
     ]);
+    const precedenteDesde = perfilDeEmpresa(company.data.nit)?.precedenteDesde;
     const config: BulkConfig = {
       batch: {
         company: company.data,
@@ -247,6 +250,9 @@ export async function loadDeps(companyId: string, usuarioId?: string): Promise<D
       precedentes,
       tablasBases,
       ...(historial ? { perfilesHistoricos: historial.perfiles } : {}),
+      ...(historial && precedenteDesde
+        ? { perfilesRecientes: aprenderPerfilesDesde(historial.compras, precedenteDesde) }
+        : {}),
     };
     return { config, knowledge };
   })();

@@ -22,6 +22,8 @@ export const LED_LIGHTS: PerfilEmpresa = {
   },
   // Instrucción del 2026-11-16: rendimientos financieros (42100501 Intereses) en un comprobante contable mensual por cuenta bancaria.
   cuentaRendimientosFinancieros: "42100501",
+  // Instrucción del 2026-11-16: desde abril de 2026 los proveedores tienen precedente claro y continuo mes a mes.
+  precedenteDesde: "2026-04-01",
   funciones: {
     // Instrucción del 2026-11-10: LED LIGHTS no usa ni causa el impoconsumo; su valor
     // se suma a la cuenta de gasto o costo relacionada con la compra.
