@@ -243,8 +243,8 @@ export async function diagnosticoCola(db: Db, companyId: string): Promise<string
   }
   const lista = [...m].map(([k, n]) => `${k} ${n}`).join(", ") || "vacía";
   const ej = filas
-    .filter((f) => f.status === "error" || f.status === "pending")
-    .slice(0, 2)
+    .filter((f) => f.status === "error")
+    .slice(0, 3)
     .map(
       (f) => `${(f.file_name ?? "?").slice(0, 40)}: ${(f.user_message ?? f.status).slice(0, 100)}`,
     );
