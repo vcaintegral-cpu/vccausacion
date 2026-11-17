@@ -45,22 +45,38 @@ export async function recalcularBorradoresMes(
 ): Promise<ResultadoRecalculo> {
   const { conClienteDeServicio } = await import("./db-contextual");
   return conClienteDeServicio(db, async () => {
-    const hace1h = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    const { data } = await db
-      .from("invoices")
-      .select("id")
+    // Solo las tareas que hoy están marcadas «necesita revisión»: son las que pueden cambiar de estado
+    // con el conocimiento actual. No se repite el cálculo de lo recalculado hace menos de 5 minutos.
+    const hace5m = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const { data: marcadas } = await db
+      .from("bulk_upload_items")
+      .select("invoice_id")
       .eq("company_id", companyId)
-      .eq("doc_kind", "compra")
-      .eq("status", "borrador")
-      .gte("issue_date", mes.desde)
-      .lte("issue_date", mes.hasta)
-      .is("siigo_id", null)
-      .is("siigo_number", null)
-      .is("processing_at", null)
-      .lt("updated_at", hace1h)
-      .order("updated_at")
-      .limit(limite);
-    const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+      .eq("status", "completed")
+      .eq("needs_review", true)
+      .not("invoice_id", "is", null)
+      .limit(300);
+    const candidatas = [
+      ...new Set(((marcadas ?? []) as Array<{ invoice_id: string }>).map((x) => x.invoice_id)),
+    ];
+    const ids: string[] = [];
+    for (let i = 0; i < candidatas.length && ids.length < limite; i += 100) {
+      const { data } = await db
+        .from("invoices")
+        .select("id")
+        .in("id", candidatas.slice(i, i + 100))
+        .eq("doc_kind", "compra")
+        .eq("status", "borrador")
+        .gte("issue_date", mes.desde)
+        .lte("issue_date", mes.hasta)
+        .is("siigo_id", null)
+        .is("siigo_number", null)
+        .is("processing_at", null)
+        .lt("updated_at", hace5m)
+        .order("updated_at")
+        .limit(limite - ids.length);
+      ids.push(...((data ?? []) as Array<{ id: string }>).map((r) => r.id));
+    }
     const r: ResultadoRecalculo = { evaluados: ids.length, recalculados: 0, fallidos: 0 };
     if (!ids.length) return r;
     const [{ recalcularCuentasBorrador }, { loadDeps, invalidateBulkDeps }] = await Promise.all([

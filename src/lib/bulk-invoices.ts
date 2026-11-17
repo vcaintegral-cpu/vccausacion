@@ -1197,13 +1197,14 @@ export async function recalcularCuentasBorrador(
 
   const motivo = [normalizado, acc.reason, ...acc.unresolvedAccounts, ...acc.alertas].filter(Boolean).join(" ");
   // Mismo criterio que al guardar la factura, pero con las decisiones finales (incluidas las manuales).
-  const puntajes = Object.values(acc.decisions as Record<string, { score?: number } | undefined>).map((d) => Number(d?.score ?? 1));
-  const peorPuntaje = puntajes.length ? Math.min(...puntajes) : 1;
+  // Para el piloto: necesita revisión si algún renglón no tiene cuenta, la decisión no es de confianza ALTA
+  // (precedente del proveedor, regla o producto) o hay una condición del proveedor por confirmar.
+  const dudosa = Object.values(acc.decisions as Record<string, { confidence?: string } | undefined>).some((d) => !!d?.confidence && String(d.confidence).toUpperCase() !== "ALTA");
   const sinCuenta = acc.lines.some((l) => !l.account_code);
   return {
     ok: true,
     message: motivo || "Cuentas recalculadas.",
-    needsReview: peorPuntaje < 0.95 || sinCuenta || !!acc.confirmarCondicion,
+    needsReview: dudosa || sinCuenta || !!acc.confirmarCondicion,
   };
 }
 
