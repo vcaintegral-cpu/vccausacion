@@ -447,7 +447,7 @@ async function ejecutarPaso(
       .join("; ");
     const quien = r.porRevisar
       .slice(0, 4)
-      .map((x) => `${x.etiqueta}: ${(x.motivos[0] ?? "").slice(0, 70)}`)
+      .map((x) => `${x.etiqueta}: ${(x.motivos[0] ?? "").slice(0, 230)}`)
       .join(" | ");
     const mesTxt = etiquetaMes(mes);
     if (!enviar)

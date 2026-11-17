@@ -24,7 +24,7 @@ export function motivosNoVerde(e: EntradaVerde): string[] {
   if (!e.tareaSinRevision)
     m.push(
       e.motivoRevision
-        ? `Necesita revisión: ${e.motivoRevision.slice(0, 220)}`
+        ? `Necesita revisión: ${e.motivoRevision.slice(0, 260)}`
         : "El motor la marcó para revisión.",
     );
   for (const a of e.alertas) {
