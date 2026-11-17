@@ -13,6 +13,7 @@
 // Nunca se causa ni se envía nada a Siigo desde aquí, y nada se modifica en la
 // carpeta de origen.
 import { funcionActiva } from "@/empresas/registro";
+import type { ExtractedInvoice } from "@/lib/extract.functions";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
@@ -68,6 +69,8 @@ export type SyncResult = {
   /** Lo que Drive listó por período: «NOVIEMBRE 2026: 23 PDF, 0 Excel, 8 carpetas». */
   resumenArchivos: string[];
   facturasEncoladas: number;
+  /** Facturas leídas desde su XML (sin IA) y encoladas. */
+  xmlEncolados: number;
   documentosExcel: number;
   egresosRecibidos: number;
   duplicados: number;
@@ -183,6 +186,7 @@ async function archivosBajo(
   objetivos: Objetivo[],
   proposito: Proposito,
   porMeses = false,
+  xmlFacturas = false,
 ): Promise<Archivo[]> {
   const out: Archivo[] = [];
   // Todas las carpetas objetivo se recorren juntas, nivel por nivel: una sola llamada de listado
@@ -224,7 +228,12 @@ async function archivosBajo(
         continue;
       }
       const contexto: ContextoArchivo | undefined = porMeses
-        ? { mes: padre.mes, enRaizDelMes: profundidad === 0, enExtractos: padre.enExtractos }
+        ? {
+            mes: padre.mes,
+            enRaizDelMes: profundidad === 0,
+            enExtractos: padre.enExtractos,
+            xmlFacturas,
+          }
         : undefined;
       const tipo = tipoDeArchivo(proposito, n.name, n.mimeType, contexto);
       if (tipo) out.push({ node: n, ruta: padre.ruta, periodo: padre.periodo, tipo });
@@ -255,9 +264,11 @@ function filaArchivo(source: DocumentSource, a: Archivo) {
 }
 
 const contentType = (a: Archivo) =>
-  a.tipo === "factura_pdf" || (a.tipo !== "recibidos_excel" && /\.pdf$/i.test(a.node.name))
-    ? "application/pdf"
-    : (a.node.mimeType ?? "application/octet-stream");
+  a.tipo === "factura_xml"
+    ? "application/xml"
+    : a.tipo === "factura_pdf" || (a.tipo !== "recibidos_excel" && /\.pdf$/i.test(a.node.name))
+      ? "application/pdf"
+      : (a.node.mimeType ?? "application/octet-stream");
 
 /** Huellas ya registradas en una tabla de la empresa (por lotes). */
 async function huellasExistentes(
@@ -391,6 +402,7 @@ export async function syncSource(
     encontrados: 0,
     resumenArchivos: [],
     facturasEncoladas: 0,
+    xmlEncolados: 0,
     documentosExcel: 0,
     egresosRecibidos: 0,
     duplicados: 0,
@@ -425,6 +437,7 @@ export async function syncSource(
       ),
       source.purpose,
       porMeses,
+      funcionActiva(empresa.nit, "facturas_xml"),
     );
     result.encontrados = archivos.length;
     {
@@ -568,12 +581,37 @@ export async function syncSource(
       for (const d of await descargar(excels)) {
         await comprasExcel(admin, source, ownerId, empresa.nit ?? "", d, filas, result);
       }
+      // 1b) Los XML de factura (función «facturas_xml»): valores, impuestos y retenciones exactos, sin IA.
+      const xmls = aProcesar.filter((a) => a.tipo === "factura_xml").slice(0, limite);
+      if (xmls.length)
+        await comprasXml(admin, source, ownerId, await descargar(xmls), filas, result);
+      // El PDF queda de respaldo: si su carpeta trae al menos tantos XML como PDF, el PDF no se lee.
+      const xmlPorCarpeta = new Map<string, number>();
+      const pdfPorCarpeta = new Map<string, number>();
+      for (const a of archivos) {
+        if (a.tipo === "factura_xml")
+          xmlPorCarpeta.set(a.ruta, (xmlPorCarpeta.get(a.ruta) ?? 0) + 1);
+        if (a.tipo === "factura_pdf")
+          pdfPorCarpeta.set(a.ruta, (pdfPorCarpeta.get(a.ruta) ?? 0) + 1);
+      }
+      const respaldo = (a: Archivo) =>
+        (xmlPorCarpeta.get(a.ruta) ?? 0) > 0 &&
+        (xmlPorCarpeta.get(a.ruta) ?? 0) >= (pdfPorCarpeta.get(a.ruta) ?? 0);
       // 2) Conciliación: un PDF cuya factura ya está en el Excel RECIBIDOS o causada en la
       //    app no se vuelve a cargar (no se descarga ni se lee con IA).
       const pdfsNuevos = aProcesar.filter((x) => x.tipo === "factura_pdf");
       const conocidas = pdfsNuevos.length ? await facturasConocidas(admin, source.company_id) : [];
       const pdfs: Archivo[] = [];
       for (const a of pdfsNuevos) {
+        if (respaldo(a)) {
+          filas.set(a.node.id, {
+            ...filaArchivo(source, a),
+            status: "duplicate",
+            message: "PDF de respaldo: la factura se causa desde el XML de la misma carpeta.",
+          });
+          result.conciliados += 1;
+          continue;
+        }
         const f = facturaEnNombre(a.node.name, conocidas);
         if (!f) {
           pdfs.push(a);
@@ -587,9 +625,10 @@ export async function syncSource(
         result.conciliados += 1;
       }
       // 3) Los PDF restantes (no están en el token ni en la app) se leen con IA.
-      const cupo = Math.max(0, limite - excels.length);
+      const cupo = Math.max(0, limite - excels.length - xmls.length);
       result.pendientesProximaEjecucion =
         Math.max(0, aProcesar.filter((a) => a.tipo === "recibidos_excel").length - excels.length) +
+        Math.max(0, aProcesar.filter((a) => a.tipo === "factura_xml").length - xmls.length) +
         Math.max(0, pdfs.length - cupo);
       await comprasPdf(admin, source, ownerId, await descargar(pdfs.slice(0, cupo)), filas, result);
     } else {
@@ -969,6 +1008,161 @@ async function comprasPdf(
     .eq("id", uploadId);
 }
 
+/** XML de factura (DIAN UBL) → una carga masiva con una tarea por factura nueva; se causan sin IA. */
+async function comprasXml(
+  admin: SupabaseClient,
+  source: DocumentSource,
+  ownerId: string,
+  xmls: Descargado[],
+  filas: Map<string, Record<string, unknown>>,
+  result: SyncResult,
+) {
+  if (!xmls.length) return;
+  const { leerFacturaXml } = await import("./factura-xml");
+  type Listo = { d: Descargado; clave: string; extracted: ExtractedInvoice };
+  const candidatos: Listo[] = [];
+  for (const d of xmls) {
+    const lectura = leerFacturaXml(new TextDecoder().decode(d.bytes));
+    if (!lectura.ok) {
+      // Notas crédito, otros documentos o XML dañado: no se reintenta hasta que el archivo cambie.
+      filas.set(d.node.id, {
+        ...filaArchivo(source, d),
+        fingerprint: d.huella,
+        status: "error",
+        message: lectura.motivo,
+      });
+      result.advertencias.push(`${d.ruta}/${d.node.name}: ${lectura.motivo}`);
+      continue;
+    }
+    if (!lectura.cufe) {
+      filas.set(d.node.id, {
+        ...filaArchivo(source, d),
+        fingerprint: d.huella,
+        status: "error",
+        message: "El XML no trae CUFE.",
+      });
+      result.advertencias.push(`${d.ruta}/${d.node.name}: el XML no trae CUFE.`);
+      continue;
+    }
+    candidatos.push({ d, clave: `xml:${lectura.cufe}`, extracted: lectura.extracted });
+  }
+  if (!candidatos.length) return;
+  // La CUFE identifica la factura: si ya hay una tarea con ella (o con el Excel de esa factura) no se repite.
+  const previos = await huellasExistentes(
+    admin,
+    "bulk_upload_items",
+    source.company_id,
+    candidatos.map((c) => c.clave),
+  );
+  const nuevos: Listo[] = [];
+  const enLote = new Set<string>();
+  for (const c of candidatos) {
+    if (previos.has(c.clave) || enLote.has(c.clave)) {
+      filas.set(c.d.node.id, {
+        ...filaArchivo(source, c.d),
+        fingerprint: c.d.huella,
+        status: "duplicate",
+        message: "La factura de este XML ya se había cargado.",
+      });
+      result.duplicados += 1;
+    } else {
+      enLote.add(c.clave);
+      nuevos.push(c);
+    }
+  }
+  if (!nuevos.length) return;
+
+  const { data: up, error: upError } = await admin
+    .from("bulk_uploads")
+    .insert({
+      company_id: source.company_id,
+      created_by: ownerId,
+      file_name: `Fuente automática · XML · ${result.periodos.join(" / ") || "carpeta"} · ${new Date().toISOString().slice(0, 10)}`,
+      size_bytes: nuevos.reduce((t, c) => t + c.d.bytes.byteLength, 0),
+      status: "extracting",
+      doc_kind: "compra",
+      started_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+  if (upError) throw new Error(upError.message);
+  const uploadId = (up as { id: string }).id;
+  result.uploadIds.push(uploadId);
+
+  const subidas = await enParalelo(nuevos, EN_PARALELO, async (c, i) => {
+    const path = `${ownerId}/${source.company_id}/xml/${uploadId}/${i}-${nombreSeguro(c.d.node.name)}`;
+    const { error } = await admin.storage
+      .from("facturas")
+      .upload(path, c.d.bytes, { upsert: true, contentType: "application/xml" });
+    return { c, path, error };
+  });
+  const items: Array<Record<string, unknown>> = [];
+  const subidos: Listo[] = [];
+  for (const { c, path, error } of subidas) {
+    if (error) {
+      result.errores.push(`${c.d.ruta}/${c.d.node.name}: ERROR_SUBIDA_XML ${error.message}`);
+      continue;
+    }
+    const e = c.extracted;
+    items.push({
+      upload_id: uploadId,
+      company_id: source.company_id,
+      file_name: `${[e.prefix, e.number].filter(Boolean).join("-")} · ${e.provider_name ?? e.provider_nit}`,
+      storage_path: path,
+      size_bytes: c.d.bytes.byteLength,
+      fingerprint: c.clave,
+      status: "pending",
+      mime_type: "xml_document",
+      provider_name: e.provider_name,
+      provider_nit: e.provider_nit,
+      buyer_name: e.buyer_name,
+      buyer_nit: e.buyer_nit,
+      invoice_number: [e.prefix, e.number].filter(Boolean).join("-") || null,
+      issue_date: e.issue_date,
+      position: items.length,
+    });
+    subidos.push(c);
+  }
+  let idPorClave = new Map<string, string>();
+  if (items.length) {
+    const { data, error } = await admin
+      .from("bulk_upload_items")
+      .insert(items)
+      .select("id, fingerprint");
+    if (error) throw new Error(error.message);
+    idPorClave = new Map(
+      ((data ?? []) as Array<{ id: string; fingerprint: string }>).map((r) => [
+        r.fingerprint,
+        r.id,
+      ]),
+    );
+    result.xmlEncolados += items.length;
+  }
+  for (const c of subidos)
+    filas.set(c.d.node.id, {
+      ...filaArchivo(source, c.d),
+      fingerprint: c.d.huella,
+      status: "queued",
+      upload_id: uploadId,
+      bulk_item_id: idPorClave.get(c.clave) ?? null,
+    });
+  await admin
+    .from("bulk_uploads")
+    .update({
+      status: items.length ? "processing" : "failed",
+      files_found: items.length,
+      pdf_found: items.length,
+      ...(items.length
+        ? {}
+        : {
+            error_message: "No se pudo guardar ningún XML.",
+            finished_at: new Date().toISOString(),
+          }),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", uploadId);
+}
+
 /** Excel RECIBIDOS → una carga masiva con una tarea por documento nuevo (igual que la carga manual del Excel). */
 async function comprasExcel(
   admin: SupabaseClient,
@@ -1003,10 +1197,17 @@ async function comprasExcel(
   }
 
   const claves = docs.map((doc) => `excel:${excelDocKey(doc)}`);
-  const previos = await huellasExistentes(admin, "bulk_upload_items", source.company_id, claves);
+  const clavesXml = docs.map((doc) =>
+    doc.header.cufe ? `xml:${doc.header.cufe.toLowerCase()}` : "",
+  );
+  const previos = await huellasExistentes(admin, "bulk_upload_items", source.company_id, [
+    ...claves,
+    ...clavesXml.filter(Boolean),
+  ]);
+  // Lo que ya se leyó desde su XML (misma CUFE) no se vuelve a cargar desde el Excel.
   const nuevos = docs
-    .map((doc, i) => ({ doc, clave: claves[i]! }))
-    .filter((x) => !previos.has(x.clave));
+    .map((doc, i) => ({ doc, clave: claves[i]!, claveXml: clavesXml[i]! }))
+    .filter((x) => !previos.has(x.clave) && !(x.claveXml && previos.has(x.claveXml)));
   result.duplicados += docs.length - nuevos.length;
   if (!nuevos.length) {
     filas.set(d.node.id, {

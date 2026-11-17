@@ -123,6 +123,12 @@ export const FUNCIONES = {
     porDefecto: false,
     agregada: "2026-11-16",
   },
+  facturas_xml: {
+    descripcion:
+      "Las facturas de compra de Drive se leen primero desde su XML (DIAN UBL, sin IA: valores, impuestos y retenciones exactos) y el PDF queda solo como respaldo cuando la carpeta no trae el XML; el Excel RECIBIDOS reconoce lo ya causado por su CUFE",
+    porDefecto: false,
+    agregada: "2026-11-17",
+  },
   piloto_automatico: {
     descripcion:
       "Piloto automático nocturno: desde la hora de inicio revisa la carpeta de Drive, causa y envía a Siigo lo que está en verde, sigue con egresos y conciliación, guarda la memoria del día, pregunta por correo lo que no puede decidir solo y envía el reporte al terminar",

@@ -53,6 +53,8 @@ export const LED_LIGHTS: PerfilEmpresa = {
     // Instrucción del 2026-11-13: trabajar solo desde las 7 p. m. toda la noche; enviar a
     // Siigo lo que esté en verde, preguntar por correo lo demás y enviar el reporte al final.
     drive_por_meses: true,
+    // Instrucción del 2026-11-17: leer primero los XML de las facturas (PDF como respaldo) y cruzar con el Excel de recibidos.
+    facturas_xml: true,
     piloto_automatico: true,
   },
   notas: [
