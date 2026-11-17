@@ -20,6 +20,8 @@ export const LED_LIGHTS: PerfilEmpresa = {
     // Instrucción del 2026-11-16: IVA descontable por servicios 19% (IVA de los cobros bancarios).
     iva_bancario: "24081501",
   },
+  // Instrucción del 2026-11-16: rendimientos financieros (42100501 Intereses) en un comprobante contable mensual por cuenta bancaria.
+  cuentaRendimientosFinancieros: "42100501",
   funciones: {
     // Instrucción del 2026-11-10: LED LIGHTS no usa ni causa el impoconsumo; su valor
     // se suma a la cuenta de gasto o costo relacionada con la compra.

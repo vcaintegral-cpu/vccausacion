@@ -60,6 +60,8 @@ export type PerfilEmpresa = {
    * 4x1000, iva_bancario). Una regla enseñada en pantalla siempre manda; esto va antes del precedente.
    */
   cuentasEgresosPorConcepto?: Record<string, string>;
+  /** Cuenta de ingreso de los rendimientos financieros (comprobante mensual por cuenta bancaria). */
+  cuentaRendimientosFinancieros?: string;
   /** Notas de contexto: software contable, particularidades, decisiones tomadas en el chat. */
   notas: string[];
 };
