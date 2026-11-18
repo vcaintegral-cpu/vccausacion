@@ -1101,3 +1101,39 @@ describe("recibo detallado: fecha de vencimiento y facturas no vigentes", () => 
     ).toMatch(/ya no está en las cuentas por pagar/);
   });
 });
+
+describe("completarTerceroDeGrupos", () => {
+  it("el movimiento bancario sin tercero toma el banco de su grupo y queda listo", async () => {
+    const { completarTerceroDeGrupos } = await import("./egresos.server");
+    const fila = (id: string, nit: string | null, motivos: string[] = []) =>
+      ({
+        id,
+        estado: nit ? "listo" : "por_revisar",
+        motivos,
+        tercero_nit: nit,
+        propuesta: {
+          tipo: "detallado",
+          grupo: "bancario|AHORROS",
+          terceroNit: nit,
+          motivos,
+          listo: !!nit,
+          cuentas: [{}, {}],
+        },
+      }) as never;
+    const filas = [
+      fila("1", "890903938"),
+      fila("2", "890903938"),
+      fila("3", null, ["Falta el tercero del pago."]),
+    ];
+    const r = completarTerceroDeGrupos(filas);
+    expect(r.listos).toBe(1);
+    const f3 = filas[2] as unknown as {
+      estado: string;
+      tercero_nit: string;
+      propuesta: { listo: boolean };
+    };
+    expect(f3.estado).toBe("listo");
+    expect(f3.tercero_nit).toBe("890903938");
+    expect(f3.propuesta.listo).toBe(true);
+  });
+});

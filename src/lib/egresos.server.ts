@@ -566,8 +566,44 @@ export async function proponerPeriodo(db: Db, companyId: string, periodo: string
       tercero_nit: p.terceroNit ?? f.tercero_nit,
     });
   }
+  const completados = completarTerceroDeGrupos(cambios);
+  listos += completados.listos;
+  porRevisar -= completados.listos;
   await guardarFilas(db, cambios);
   return { total: filas.length, listos, porRevisar };
+}
+
+/**
+ * Gastos bancarios del mes: un movimiento nuevo cuyo concepto no se reconoce queda sin tercero («Falta el tercero del
+ * pago»). Todos los de una misma cuenta bancaria van en UN RP del mismo banco, así que toma el tercero (el banco)
+ * que ya tienen los demás movimientos del grupo. Devuelve cuántos quedaron listos.
+ */
+export function completarTerceroDeGrupos(filas: FilaEgreso[]): { listos: number } {
+  const porGrupo = new Map<string, Map<string, number>>();
+  for (const f of filas) {
+    const p = f.propuesta as Propuesta | null;
+    if (!p?.grupo || p.tipo !== "detallado" || !p.terceroNit) continue;
+    const m = porGrupo.get(p.grupo) ?? new Map<string, number>();
+    m.set(p.terceroNit, (m.get(p.terceroNit) ?? 0) + 1);
+    porGrupo.set(p.grupo, m);
+  }
+  let listos = 0;
+  for (const f of filas) {
+    const p = f.propuesta as Propuesta | null;
+    if (!p?.grupo || p.tipo !== "detallado" || p.terceroNit) continue;
+    const nit = [...(porGrupo.get(p.grupo) ?? [])].sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (!nit) continue;
+    const motivos = (p.motivos ?? []).filter((m) => !/^Falta el tercero del pago/.test(m));
+    const listo = motivos.length === 0 && (p.cuentas?.length ?? 0) === 2;
+    f.propuesta = { ...p, terceroNit: nit, motivos, listo } as Propuesta;
+    f.tercero_nit = nit;
+    f.motivos = motivos;
+    if (listo && f.estado === "por_revisar") {
+      f.estado = "listo";
+      listos += 1;
+    }
+  }
+  return { listos };
 }
 
 /** Escribe filas completas en lotes (upsert por id): pocas llamadas aunque sean cientos de pagos. */
