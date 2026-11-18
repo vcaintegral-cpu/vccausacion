@@ -265,6 +265,27 @@ export function resolveLineAccount(params: ResolveParams): AccountDecision {
     }
   }
 
+  // Lo que la usuaria ya enseñó con el mismo concepto en OTROS proveedores (inventario, mantenimiento, implementos…):
+  // se sugiere con confianza media, para que se revise una vez y quede aprendido para el proveedor nuevo.
+  const deOtros = activas
+    .filter((r) => r.concept && similar(line.description, r.concept) >= 0.7)
+    .sort((a, b) => similar(line.description, b.concept) - similar(line.description, a.concept) || bySourcePriority(a, b))[0];
+  if (deOtros) {
+    const score = Math.min(0.8, 0.6 + Number(deOtros.times_used ?? 1) * 0.03);
+    return {
+      code: deOtros.account_code,
+      name: deOtros.account_name ?? nombrePuc(deOtros.account_code),
+      origin: "APRENDIZAJE",
+      reason: `Cuenta ${deOtros.account_code} aprendida con el mismo concepto "${deOtros.concept}" en otro proveedor (usada ${deOtros.times_used} vez/veces).`,
+      confidence: nivel(score),
+      score,
+      ruleId: deOtros.id,
+      itemType: deOtros.item_type,
+      costCenter: deOtros.cost_center,
+      error: null,
+    };
+  }
+
   const similares = cuentaMasUsada(historial.filter((h) => similar(line.description, h.concept) >= 0.6));
   if (similares) {
     const score = Math.min(0.8, 0.45 + Math.min(similares.count, 10) * 0.03);
