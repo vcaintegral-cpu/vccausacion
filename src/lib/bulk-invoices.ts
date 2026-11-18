@@ -143,7 +143,7 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
 }
 
 /** Versión de la lógica de causación: el piloto recalcula una vez los borradores guardados con otra versión. */
-export const MOTOR_VERSION = "2026-11-17.4";
+export const MOTOR_VERSION = "2026-11-18.1";
 
 export type BulkConfig = {
   accounts: PucAccount[];
@@ -985,6 +985,8 @@ export async function computeDraftAccounting(params: {
   let scoreFinal = score;
   let reasonFinal = reason;
   let precedenteMotivo: string | null = null;
+  if (!perfilRecienteBruto && config.perfilesRecientes && Object.values(decisions).some((d) => d.origin === "HISTORIAL"))
+    precedenteMotivo = "el proveedor no tiene compras FC/DS desde abril en el auxiliar importado (su historial es anterior o usa otro tipo de comprobante)";
   if (!perfilReciente && perfilRecienteBruto && Object.values(decisions).some((d) => d.origin === "HISTORIAL"))
     precedenteMotivo = `precedente reciente insuficiente: ${perfilRecienteBruto.compras} compra(s) del proveedor desde abril (mínimo ${MIN_COMPRAS_RECIENTES})`;
   if (perfilReciente) {
