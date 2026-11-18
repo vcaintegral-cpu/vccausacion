@@ -45,6 +45,32 @@ export async function recalcularBorradoresMes(
 ): Promise<ResultadoRecalculo> {
   const { conClienteDeServicio } = await import("./db-contextual");
   return conClienteDeServicio(db, async () => {
+    // Primero aprende de lo que la usuaria corrigió a mano (cuenta y tipo por proveedor y concepto).
+    try {
+      const { data: t0 } = await db
+        .from("bulk_upload_items")
+        .select("upload_id")
+        .eq("company_id", companyId)
+        .not("invoice_id", "is", null)
+        .limit(1)
+        .maybeSingle();
+      const { data: c0 } = t0
+        ? await db
+            .from("bulk_uploads")
+            .select("created_by")
+            .eq("id", (t0 as { upload_id: string }).upload_id)
+            .maybeSingle()
+        : { data: null };
+      const { aprenderDeBorradoresManuales } = await import("./aprender-borradores");
+      await aprenderDeBorradoresManuales(
+        db,
+        companyId,
+        mes,
+        (c0 as { created_by: string } | null)?.created_by ?? null,
+      );
+    } catch {
+      /* el aprendizaje es una mejora: si falla, el recálculo sigue */
+    }
     // Solo las tareas que hoy están marcadas «necesita revisión»: son las que pueden cambiar de estado
     // con el conocimiento actual. No se repite el cálculo de lo recalculado hace menos de 5 minutos.
     const hace5m = new Date(Date.now() - 5 * 60 * 1000).toISOString();

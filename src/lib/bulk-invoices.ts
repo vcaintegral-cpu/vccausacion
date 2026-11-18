@@ -143,7 +143,7 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
 }
 
 /** Versión de la lógica de causación: el piloto recalcula una vez los borradores guardados con otra versión. */
-export const MOTOR_VERSION = "2026-11-18.1";
+export const MOTOR_VERSION = "2026-11-18.2";
 
 export type BulkConfig = {
   accounts: PucAccount[];
@@ -579,7 +579,10 @@ export async function computeDraftAccounting(params: {
     const vecesInventario = cuentas14.reduce((s, g) => s + g.veces, 0);
     // Proveedor de inventario por historial, o confirmado por la usuaria (pregunta por correo).
     const confirmadoInventario = !!(provider as { purchase_tax_profile?: { es_inventario?: boolean } | null } | null)?.purchase_tax_profile?.es_inventario;
-    const proveedorInventario = confirmadoInventario || (!!perfilHistorico && vecesInventario > 0 && vecesInventario >= perfilHistorico.compras / 2);
+    // También cuando la usuaria ya le enseñó una regla con cuenta de inventario (14) a este proveedor.
+    const nitProv = String(header.provider_nit ?? "").replace(/\D/g, "");
+    const aprendidoInventario = !!nitProv && ((config.knowledge?.learning ?? []) as Array<{ active?: boolean; provider_nit?: string | null; account_code?: string }>).some((r) => r.active !== false && String(r.provider_nit ?? "").replace(/\D/g, "") === nitProv && /^14/.test(String(r.account_code ?? "")));
+    const proveedorInventario = confirmadoInventario || aprendidoInventario || (!!perfilHistorico && vecesInventario > 0 && vecesInventario >= perfilHistorico.compras / 2);
     // Cuenta 14 de la empresa más usada (para productos sin cuenta propia ni precedente del proveedor).
     const cuenta14Empresa = (() => {
       const uso = new Map<string, number>();
@@ -600,7 +603,8 @@ export async function computeDraftAccounting(params: {
       const d = decisions[i];
       if (d?.origin === "REGLA") return; // la regla del proveedor manda
       const r = buscarProducto(l.description ?? "", catalogo, { codigo: l.code ?? null, tipos: ["producto", "servicio"] });
-      if (!r.elegido && !proveedorInventario) return;
+      // Un renglón que ya trae cuenta 14 (por regla aprendida o por historial) también se cruza con el catálogo.
+      if (!r.elegido && !proveedorInventario && !/^14/.test(String(l.account_code ?? ""))) return;
       if (r.elegido) {
         const prod = r.elegido.producto;
         const cuenta =
@@ -622,9 +626,9 @@ export async function computeDraftAccounting(params: {
         code: cuenta.code,
         name: lines[i]!.account_name ?? "",
         origin: "PRODUCTO",
-        reason: `Producto nuevo ${codigo}: no hay uno parecido en el catálogo; se creará en Siigo al causar${grupo ? ` (grupo ${grupo})` : ""}${confirmadoInventario ? " (proveedor de inventario confirmado por la usuaria)" : ""}.${r.candidatos.length ? ` Más parecidos: ${r.candidatos.slice(0, 3).map((c) => c.producto.name).join(" · ")}.` : ""}`,
-        confidence: confirmadoInventario ? "ALTA" : "MEDIA",
-        score: confirmadoInventario ? 0.9 : 0.7,
+        reason: `Producto nuevo ${codigo}: no hay uno parecido en el catálogo; se creará en Siigo al causar${grupo ? ` (grupo ${grupo})` : ""}${confirmadoInventario || aprendidoInventario ? " (proveedor de inventario confirmado o enseñado por la usuaria)" : ""}.${r.candidatos.length ? ` Más parecidos: ${r.candidatos.slice(0, 3).map((c) => c.producto.name).join(" · ")}.` : ""}`,
+        confidence: confirmadoInventario || aprendidoInventario ? "ALTA" : "MEDIA",
+        score: confirmadoInventario || aprendidoInventario ? 0.9 : 0.7,
         error: null,
       };
     });

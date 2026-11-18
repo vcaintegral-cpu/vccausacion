@@ -11,7 +11,7 @@
 //  - Nunca se pregunta: si el aprendizaje automático está activo, se guarda.
 //  - Nunca se borra información válida: solo se actualiza el campo que cambió.
 //  - Nunca se duplica: misma empresa + proveedor + concepto + tipo => se actualiza.
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/db-contextual";
 import { normalizeItemType } from "@/lib/item-type";
 import type { RetBlocks, RetencionKind } from "@/lib/retenciones-multi";
 
