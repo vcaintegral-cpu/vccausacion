@@ -20,8 +20,9 @@ export const MODULOS_POR_DEFECTO: Record<ModuloId, boolean> = {
   fuentes: true,
   egresos: true,
   conciliacion: true,
-  // Solo empresas con la función piloto_automatico lo encienden en su perfil.
-  piloto: false,
+  // Instrucción del 2026-11-18: el piloto automático está disponible para todas las empresas; cada una lo activa
+  // (y elige su mes de trabajo) en su propia configuración; el envío a Siigo empieza apagado (modo prueba).
+  piloto: true,
   integraciones: true,
   administracion: true,
   empresas: true,
@@ -132,7 +133,7 @@ export const FUNCIONES = {
   piloto_automatico: {
     descripcion:
       "Piloto automático nocturno: desde la hora de inicio revisa la carpeta de Drive, causa y envía a Siigo lo que está en verde, sigue con egresos y conciliación, guarda la memoria del día, pregunta por correo lo que no puede decidir solo y envía el reporte al terminar",
-    porDefecto: false,
+    porDefecto: true,
     agregada: "2026-11-13",
   },
   reporte_conciliacion_firma: {

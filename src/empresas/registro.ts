@@ -119,3 +119,18 @@ export function validarRegistro(perfiles: readonly PerfilEmpresa[] = PERFILES): 
   }
   return errores;
 }
+
+/**
+ * Fecha (yyyy-MM-dd) desde la que el precedente de cada proveedor cuenta como «reciente» para verificar las cuentas,
+ * el IVA y las retenciones de un borrador (piloto automático). Una empresa con perfil propio la fija (LED LIGHTS:
+ * 2026-04-01); las demás usan los últimos 6 meses completos.
+ */
+export function precedenteDesdeDe(
+  nit: string | null | undefined,
+  ahora: Date = new Date(),
+): string {
+  const fija = perfilDeEmpresa(nit)?.precedenteDesde;
+  if (fija) return fija;
+  const d = new Date(Date.UTC(ahora.getUTCFullYear(), ahora.getUTCMonth() - 6, 1));
+  return d.toISOString().slice(0, 10);
+}

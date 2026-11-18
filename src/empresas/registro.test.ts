@@ -58,7 +58,6 @@ describe("alcance global vs. empresa", () => {
       expect(dif).toEqual(
         p.nit === "900470166"
           ? [
-              ["módulo", "piloto", true],
               ["función", "impoconsumo_al_gasto", true],
               ["función", "productos_inventario", true],
               ["función", "cargos_en_items", true],
@@ -69,7 +68,6 @@ describe("alcance global vs. empresa", () => {
               ["función", "reporte_conciliacion_firma", true],
               ["función", "drive_por_meses", true],
               ["función", "facturas_xml", true],
-              ["función", "piloto_automatico", true],
             ]
           : p.nit === "900088704"
             ? [
@@ -86,9 +84,7 @@ describe("alcance global vs. empresa", () => {
       );
     }
     for (const modulo of Object.keys(MODULOS) as Array<keyof typeof MODULOS>) {
-      expect(moduloActivo("900470166", modulo)).toBe(
-        modulo === "piloto" ? true : MODULOS_POR_DEFECTO[modulo],
-      );
+      expect(moduloActivo("900470166", modulo)).toBe(MODULOS_POR_DEFECTO[modulo]);
       expect(moduloActivo("999999999", modulo)).toBe(MODULOS_POR_DEFECTO[modulo]);
     }
   });
@@ -130,5 +126,15 @@ describe("alcance global vs. empresa", () => {
       'X: el módulo "inventado" no existe.',
       'X: la función "inventada" no está definida en global.ts.',
     ]);
+  });
+});
+
+describe("piloto automático para todas las empresas", () => {
+  it("está disponible por defecto; el precedente reciente usa 6 meses salvo perfil propio", async () => {
+    const { precedenteDesdeDe } = await import("./registro");
+    expect(moduloActivo("999999999", "piloto")).toBe(true);
+    expect(funcionActiva("999999999", "piloto_automatico")).toBe(true);
+    expect(precedenteDesdeDe("900470166")).toBe("2026-04-01");
+    expect(precedenteDesdeDe("999999999", new Date("2026-11-18T12:00:00Z"))).toBe("2026-05-01");
   });
 });

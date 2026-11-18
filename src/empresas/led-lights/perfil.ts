@@ -9,10 +9,6 @@ export const LED_LIGHTS: PerfilEmpresa = {
   nit: "900470166",
   dv: "4",
   carpeta: "led-lights",
-  modulos: {
-    // Instrucción del 2026-11-13: piloto automático nocturno.
-    piloto: true,
-  },
   // Instrucción del 2026-11-16: cuentas de los RP mensuales de gastos bancarios.
   cuentasEgresosPorConcepto: {
     gasto_bancario: "53050501",
@@ -59,7 +55,6 @@ export const LED_LIGHTS: PerfilEmpresa = {
     drive_por_meses: true,
     // Instrucción del 2026-11-17: leer primero los XML de las facturas (PDF como respaldo) y cruzar con el Excel de recibidos.
     facturas_xml: true,
-    piloto_automatico: true,
   },
   notas: [
     "Software contable: Siigo (comprobantes CE-1, RC-1, FC-1).",
