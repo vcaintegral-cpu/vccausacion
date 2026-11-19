@@ -20,6 +20,8 @@ import {
   type TablaBases,
 } from "@/lib/precedente-tributario";
 
+import { leerPaginas } from "@/lib/paginas-paralelas";
+
 const PAGINA = 1000;
 const VIGENCIA_MS = 5 * 60 * 1000;
 
@@ -29,15 +31,8 @@ async function todas<T>(
     hasta: number,
   ) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
 ) {
-  const out: T[] = [];
-  for (let desde = 0; ; desde += PAGINA) {
-    const { data, error } = await consulta(desde, desde + PAGINA - 1);
-    if (error) throw new Error(error.message);
-    const pagina = (data ?? []) as T[];
-    out.push(...pagina);
-    if (pagina.length < PAGINA) break;
-  }
-  return out;
+  // Varias páginas a la vez: antes cada una esperaba a la anterior y el historial grande tardaba minutos.
+  return leerPaginas<T>(consulta, { pagina: PAGINA });
 }
 
 const cache = new Map<string, { hasta: number; promesa: Promise<PrecedentesEmpresa> }>();
