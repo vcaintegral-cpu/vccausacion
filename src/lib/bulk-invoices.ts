@@ -143,7 +143,7 @@ export async function readZipContents(input: File[]): Promise<ZipContents> {
 }
 
 /** Versión de la lógica de causación: el piloto recalcula una vez los borradores guardados con otra versión. */
-export const MOTOR_VERSION = "2026-11-18.2";
+export const MOTOR_VERSION = "2026-11-19.1";
 
 export type BulkConfig = {
   accounts: PucAccount[];
@@ -565,6 +565,42 @@ export async function computeDraftAccounting(params: {
         error: null,
       };
     });
+  }
+  // Función «producto_del_historial»: proveedores que en Siigo se causan con PRODUCTOS genéricos (p. ej. «Madera»,
+  // «Pisos y cerámicas», «Tuberías», «Sanitarios»). Si por el historial el proveedor es de productos, cada renglón
+  // con cuenta de gasto/costo pasa a tipo «producto» con el producto del catálogo: el que el proveedor suele usar
+  // para esa cuenta o, si la cuenta tiene un único producto en el catálogo, ese. Corre aunque la cuenta la haya
+  // resuelto el motor (antes solo cuando la resolvía el bloque del auxiliar y no se aplicaba a los demás renglones).
+  if (funcionActiva(await nitDeEmpresa(companyId, config), "producto_del_historial")) {
+    const clave = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+    const catalogoP = (config.products as ProductoCatalogo[]).filter((p) => p.active !== false);
+    const habitual = (g: { descripciones?: Record<string, number> }) => Object.entries(g.descripciones ?? {}).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    const porNombre = (nombre: string | null) => {
+      if (!nombre) return undefined;
+      const n = clave(nombre);
+      return catalogoP.find((p) => clave(p.name) === n);
+    };
+    const operativaDe = (c: string) => (config.accounts.length ? resolveOperationalAccount(config.accounts, c).operationalAccount ?? c : c);
+    // ¿El historial del proveedor lo muestra causando con productos del catálogo?
+    const proveedorDeProductos = !!perfilHistorico && perfilHistorico.gastos.some((g) => !!porNombre(habitual(g)));
+    if (proveedorDeProductos) {
+      lines.forEach((l, i) => {
+        const cuenta = String(l.account_code ?? "").trim();
+        if (!cuenta || l.item_type === "producto" || !isValidExpenseAccount(cuenta)) return;
+        // 1) el producto con que el proveedor suele causar esa cuenta; 2) el único producto del catálogo de esa cuenta.
+        const gasto = perfilHistorico!.gastos.find((g) => operativaDe(g.cuenta) === cuenta || g.cuenta === cuenta);
+        let prod = gasto ? porNombre(habitual(gasto)) : undefined;
+        if (!prod) {
+          const deCuenta = catalogoP.filter((p) => p.account_code && operativaDe(String(p.account_code)) === cuenta);
+          if (deCuenta.length === 1) prod = deCuenta[0];
+        }
+        if (!prod) return;
+        const original = String(l.description ?? "").trim();
+        lines[i] = { ...l, item_type: "producto", code: prod.code, description: prod.name };
+        const d = decisions[i];
+        if (d) decisions[i] = { ...d, reason: `${d.reason} Producto ${prod.code} · ${prod.name} según el historial del proveedor; descripción original: «${original}».` };
+      });
+    }
   }
   // Inventario (función por empresa "productos_inventario"): renglones de proveedores que
   // en el historial van a la 14, o cuya descripción coincide claramente con un producto
