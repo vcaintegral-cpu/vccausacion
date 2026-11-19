@@ -4,6 +4,7 @@
 import { supabase } from "@/lib/db-contextual";
 import { recalcularCuentasBorrador, type BulkConfig } from "@/lib/bulk-invoices";
 import { isValidPurchaseAccount } from "@/lib/provider-rules";
+import { buscarProducto, type ProductoCatalogo } from "@/lib/producto-coincidencia";
 
 export type ResultadoAsignacion = { id: string; ok: boolean; message: string; renglones: number };
 
@@ -15,7 +16,14 @@ export async function asignarCuentaGasto(
   invoiceId: string,
   cuenta: { code: string; name: string | null },
   config: BulkConfig,
-  opciones: { inventario?: boolean; todos?: boolean; siNingunoTodos?: boolean } = {},
+  opciones: {
+    inventario?: boolean;
+    todos?: boolean;
+    siNingunoTodos?: boolean;
+    /** Clasificación del renglón: «producto» busca el producto en el catálogo por la descripción (o usa `producto`). */
+    tipo?: "producto" | "gasto";
+    producto?: { code: string; name: string | null } | null;
+  } = {},
 ): Promise<ResultadoAsignacion> {
   const code = cuenta.code.trim();
   if (!isValidPurchaseAccount(code, !!opciones.inventario))
@@ -82,17 +90,40 @@ export async function asignarCuentaGasto(
     (_, i) => !isValidPurchaseAccount(actual.get(i) ?? "", !!opciones.inventario),
   );
   const todos = !!opciones.todos || (!!opciones.siNingunoTodos && !hayPendientes);
-  ia.lines.forEach((_, i) => {
+  const catalogo = ((config?.products ?? []) as ProductoCatalogo[]).filter(
+    (p) => p.active !== false,
+  );
+  ia.lines.forEach((linea, i) => {
     const pendiente = !isValidPurchaseAccount(actual.get(i) ?? "", !!opciones.inventario);
-    if (!todos && !pendiente) return;
+    // Con clasificación (producto), también los renglones que ya tienen esa cuenta (p. ej. los que acaba de
+    // sincronizar el servidor) para que reciban el tipo y el producto.
+    if (!todos && !pendiente && !(opciones.tipo && actual.get(i) === code)) return;
+    // Producto: el del catálogo que mejor coincide con la descripción; si ninguno, el indicado (p. ej. el genérico de la factura de origen).
+    let producto: { code: string; name: string | null } | null = null;
+    if (opciones.tipo === "producto") {
+      const r = buscarProducto(
+        String((linea as { description?: string }).description ?? ""),
+        catalogo,
+        { tipos: ["producto"] },
+      );
+      producto = r.elegido
+        ? { code: r.elegido.producto.code, name: r.elegido.producto.name }
+        : (opciones.producto ?? null);
+    }
     decisiones[String(i)] = {
       code,
       name: cuenta.name,
       origin: "MANUAL",
-      reason: "Cuenta elegida en Borradores.",
+      reason:
+        opciones.tipo === "producto"
+          ? `Cuenta y clasificación «producto» elegidas en Borradores${producto ? ` (${producto.code})` : " (sin producto en el catálogo)"}.`
+          : "Cuenta elegida en Borradores.",
       confidence: "ALTA",
       score: 1,
       error: null,
+      ...(opciones.tipo === "producto" && producto
+        ? { itemType: "producto", productCode: producto.code, productName: producto.name }
+        : {}),
     };
     renglones += 1;
   });

@@ -1251,7 +1251,7 @@ export async function recalcularCuentasBorrador(
   if (fuente) data = { ...data, subtotal: fuente.subtotal / 100, iva: fuente.iva / 100, impoconsumo: fuente.impoconsumo / 100, total: fuente.total / 100, discount: fuente.discount / 100, surcharge: fuente.surcharge / 100, lines: data.lines.map((l, i) => ({ ...l, iva: fuente.lines[i] ? fuente.lines[i]!.iva / 100 : l.iva, iva_rate: fuente.lines[i]?.iva_rate ?? l.iva_rate ?? 0, iva_base: fuente.lines[i]?.iva_base != null ? fuente.lines[i]!.iva_base! / 100 : l.iva_base ?? 0, subtotal: (fuente.lines[i]?.subtotal ?? 0) / 100, total: (fuente.lines[i]?.subtotal ?? 0) / 100, impoconsumo: (fuente.lines[i]?.impoconsumo ?? Math.round(Number(l.impoconsumo || 0) * 100)) / 100, discount: fuente.source === "excel" ? 0 : l.discount })) };
   const { lines, ...header } = data;
   // Las cuentas elegidas manualmente por el usuario nunca se recalculan.
-  const manuales = Object.entries(((raw as Record<string, unknown> | null)?.["account_decisions"] ?? {}) as Record<string, { code?: string; origin?: string }>)
+  const manuales = Object.entries(((raw as Record<string, unknown> | null)?.["account_decisions"] ?? {}) as Record<string, { code?: string; origin?: string; itemType?: string; productCode?: string; productName?: string }>)
     .filter(([, d]) => d?.origin === "MANUAL" && d.code);
   // El IVA ya elegido en cada renglón se respeta; los que no tienen se resuelven con el precedente.
   const { data: ivaActual } = await supabase
@@ -1273,14 +1273,17 @@ export async function recalcularCuentasBorrador(
     const anterior = acc.lines[i]?.account_code;
     if (!acc.lines[i] || !d.code || anterior === d.code) continue;
     // Cuenta manual de gasto: el renglón vuelve a «gasto» y no se crea producto en Siigo.
-    const manualGasto = !/^14/.test(d.code);
+    // Si la usuaria clasificó el renglón como PRODUCTO (con su producto del catálogo), esa clasificación se conserva.
+    const comoProducto = d.itemType === "producto" && !!d.productCode;
+    const manualGasto = !/^14/.test(d.code) && !comoProducto;
     acc.lines[i] = {
       ...acc.lines[i]!,
       account_code: d.code,
       account_name: (d as { name?: string }).name ?? acc.lines[i]!.account_name ?? null,
       ...(manualGasto && acc.lines[i]!.item_type === "producto" ? { item_type: "gasto" } : {}),
+      ...(comoProducto ? { item_type: "producto", code: d.productCode!, ...(d.productName ? { description: d.productName } : {}) } : {}),
     };
-    if (manualGasto) delete acc.productosNuevos[i];
+    if (manualGasto || comoProducto) delete acc.productosNuevos[i];
     acc.decisions[i] = d as never;
     const j = acc.journal.find((x) => x.account_code === anterior && x.debit > 0);
     if (j) { j.account_code = d.code; j.account_name = (d as { name?: string }).name ?? j.account_name; }
