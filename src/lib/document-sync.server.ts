@@ -34,7 +34,7 @@ import {
 } from "@/lib/drive-sync";
 import { excelDocKey, excelDocLabel } from "@/lib/excel-invoice-adapter";
 import type { FileNode, FileProvider, ProveedorArchivos } from "@/lib/file-providers";
-import { parsePurchaseWorkbookDetailed, textoOmitidos } from "@/lib/purchase-excel";
+import { avisosOmitidos, parsePurchaseWorkbookDetailed } from "@/lib/purchase-excel";
 import { enParalelo } from "@/lib/concurrencia";
 
 /**
@@ -1177,10 +1177,9 @@ async function comprasExcel(
   try {
     const lectura = parsePurchaseWorkbookDetailed(d.bytes.slice().buffer, companyNit);
     docs = lectura.docs;
-    if (lectura.omitidos.length)
-      result.advertencias.push(
-        `${d.ruta}/${d.node.name}: ${lectura.omitidos.length} documento(s) de tipo desconocido no se procesaron (${textoOmitidos(lectura.omitidos)})`,
-      );
+    // Solo los documentos de tipo que no se sabe causar son una advertencia; las filas repetidas se causan con la más completa.
+    const avisos = avisosOmitidos(lectura.omitidos);
+    if (avisos.noProcesados) result.advertencias.push(`${d.ruta}/${d.node.name}: ${avisos.noProcesados}`);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     // Error permanente del archivo (otro formato u otra empresa): no se reintenta hasta que cambie.

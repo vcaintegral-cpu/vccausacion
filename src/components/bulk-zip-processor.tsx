@@ -32,7 +32,7 @@ import { cop, fechaHora } from "@/lib/format";
 import { codigoTecnico, mensajeAmigable } from "@/lib/bulk-messages";
 import { diagnoseItem, type BulkDiagnosis } from "@/lib/bulk-diagnostics";
 import { readZipContents, type BulkConfig } from "@/lib/bulk-invoices";
-import { parsePurchaseWorkbookDetailed, textoOmitidos } from "@/lib/purchase-excel";
+import { avisosOmitidos, parsePurchaseWorkbookDetailed } from "@/lib/purchase-excel";
 import { excelDocKey, excelDocLabel } from "@/lib/excel-invoice-adapter";
 import {
   cargaDeteniendose,
@@ -201,11 +201,9 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       try {
         const lectura = parsePurchaseWorkbookDetailed(await excel.arrayBuffer(), empresa?.nit ?? "");
         docs = lectura.docs;
-        if (lectura.omitidos.length)
-          toast.warning(
-            `${lectura.omitidos.length} documento(s) de un tipo que el sistema no sabe causar NO se procesaron: ${textoOmitidos(lectura.omitidos)}`,
-            { duration: 30000 },
-          );
+        const avisos = avisosOmitidos(lectura.omitidos);
+        if (avisos.noProcesados) toast.warning(avisos.noProcesados, { duration: 30000 });
+        if (avisos.repetidos) toast.info(avisos.repetidos, { duration: 15000 });
       } catch (error) {
         const message = error instanceof Error ? error.message : "No fue posible leer el Excel.";
         throw new Error(/comprador diferente/i.test(message) ? "El archivo no corresponde a la empresa seleccionada" : message);
@@ -251,7 +249,16 @@ export function BulkZipProcessor({ companyId, config, knowledge, extract, loadin
       setSelected([]);
       if (inputRef.current) inputRef.current.value = "";
       startBackgroundUpload({ uploadId: row.id, companyId, fileName: excel.name });
-      toast.success("Procesamiento iniciado en segundo plano. Puedes salir de este módulo.");
+      const yaCargados = rows.filter((r) => r.status === "duplicate").length;
+      if (yaCargados === rows.length)
+        toast.info(
+          `Los ${rows.length} documento(s) del Excel ya estaban cargados: no hay nada nuevo por causar. Marca «Reprocesar aunque el documento ya se haya cargado antes» si quieres volver a leerlos.`,
+          { duration: 20000 },
+        );
+      else
+        toast.success(
+          `Procesamiento iniciado en segundo plano: ${rows.length - yaCargados} documento(s) nuevo(s)${yaCargados ? ` y ${yaCargados} que ya estaban cargados` : ""}. Puedes salir de este módulo.`,
+        );
       void historial.refetch();
     } catch (error) {
       setBusy("");

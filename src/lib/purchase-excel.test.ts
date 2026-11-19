@@ -1,33 +1,511 @@
-import { describe,it,expect } from 'vitest';
-import * as XLSX from 'xlsx';
-import { calculatePurchase, parsePurchaseWorkbook, parsePurchaseWorkbookDetailed, textoOmitidos, documentAlerts, emptyPurchaseSettings, suggestHistoryAccount, nitDV, type PurchaseDocument, type PurchaseChoices } from './purchase-excel';
-const puc=['51959501','24080101','22050501','11050501','13300501','42100501','53959501','23650501','23670101','23680101'].map(code=>({code,name:code,active:true,is_movement:true}));
-const doc=():PurchaseDocument=>({rowNumber:4,kind:'purchase',type:'Factura electrónica',period:'2026-09',naturalPerson:false,rawHeader:{},rawLines:[],header:{prefix:'FE',number:'1',provider_nit:'890903407',provider_name:'Proveedor',buyer_nit:'800212838',buyer_name:'Empresa',cufe:'abc',issue_date:'2026-09-01',due_date:'2026-09-30',provider_address:'',provider_city:'',provider_phone:'',provider_email:'',payment_form:'Crédito',payment_method:'Transferencia',currency:'COP',notes:'',subtotal:100000,iva:19000,impoconsumo:0,total:119000,discount:0,advances:0,surcharge:0,retefuente:0,reteiva:0,reteica:0},lines:[{description:'Servicio',code:'',quantity:8,unit_value:12500,subtotal:100000,discount:0,surcharge:0,iva:19000,ivaBase:100000,ivaRate:19,impoconsumo:0,total:119000}]});
-const settings=()=>({...emptyPurchaseSettings(),year:2026,uvt:50000,purchaseVoucher:'CC',creditVoucher:'NC',equivalentVoucher:'DE',ivaAccount:'24080101',payableAccount:'22050501',cashAccount:'11050501',advanceAccount:'13300501',roundingIncomeAccount:'42100501',roundingExpenseAccount:'53959501',reteivaAccount:'23670101'});
-const choices=():PurchaseChoices=>({accounts:['51959501'],costCenter:'',payableAccount:'22050501',affectedInvoiceId:'',retentionSource:{}});
-const calc=(d=doc(),s=settings(),p={nonSubject:true},c=choices())=>calculatePurchase(d,s,p,c,puc,false);
-describe('RECIBIDOS purchase rules',()=>{
- it('uses 8 quantities and divides line subtotal by 8 without changing header totals',()=>{const d=doc();expect((d.lines[0]?.quantity??0)*(d.lines[0]?.unit_value??0)).toBe(100000);expect(calc(d).payable).toBe(119000);});
- it('INC adds to line expense, never a separate tax account',()=>{const d=doc();d.header.impoconsumo=8000;d.header.total=127000;const l=d.lines[0];if(l)l.impoconsumo=8000;const r=calc(d);expect(r.journal.find(l=>l.account_code==='51959501')?.debit).toBe(108000);expect(r.journal).toHaveLength(3);});
- it('IVA mayor gasto adds IVA to expense',()=>{const s=settings();s.ivaTreatment='gasto';const r=calc(doc(),s);expect(r.journal.find(l=>l.account_code==='51959501')?.debit).toBe(119000);expect(r.journal.some(l=>l.account_code==='24080101')).toBe(false);});
- it('full advance creates no payable credit',()=>{const d=doc();d.header.advances=119000;const r=calc(d);expect(r.payable).toBe(0);expect(r.journal.some(l=>l.account_code==='22050501')).toBe(false);expect(r.journal.find(l=>l.account_code==='13300501')?.credit).toBe(119000);});
- it('cash uses bank instead of payable',()=>{const d=doc();d.header.payment_form='Contado';const r=calc(d);expect(r.journal.find(l=>l.account_code==='11050501')?.credit).toBe(119000);expect(r.journal.some(l=>l.account_code==='22050501')).toBe(false);});
- it('XML discrepancy over $1 blocks',()=>{const d=doc();d.header.total+=1.01;expect(calc(d).errors).toContain('No cuadra con el XML');});
- it('XML discrepancy of $1 is adjusted to configured expense',()=>{const d=doc();d.header.total+=1;const r=calc(d);expect(r.errors).toEqual([]);expect(r.journal.find(l=>l.account_code==='53959501')?.debit).toBe(1);expect(r.journal.reduce((s,l)=>s+l.debit-l.credit,0)).toBe(0);});
- it('missing expense stays pending without invented account',()=>{const c=choices();c.accounts=[''];expect(calc(doc(),settings(),{nonSubject:true},c).errors).toContain('Pendiente de cuenta');expect(suggestHistoryAccount('Servicio','890903407',[],puc)).toBe('');});
- it('supplier history outranks description history',()=>{expect(suggestHistoryAccount('Servicio','890903407',[{provider_nit:'890903407',account_code:'51959501',weight:1},{provider_nit:'123',concept:'Servicio',account_code:'53959501',weight:100}],puc)).toBe('51959501');});
- it('base minima uses document subtotal and configurable UVT',()=>{const s=settings();s.retentionRules=[{concept:'Servicios',minUVT:4,declarantRate:4,nonDeclarantRate:6,account:'23650501'}];s.icaRules=[{municipality:'Medellín',activity:'Servicios',perThousand:0,account:'23680101'}];const r=calculatePurchase(doc(),s,{concept:'Servicios',municipality:'Medellín',activity:'Servicios',declarant:true},choices(),puc,false);expect(r.calculated.retefuente).toBe(0);expect(r.warnings).toContain('Bajo base mínima');});
- it('simultaneous retentions use configured rates and explicit XML selection',()=>{const s=settings();s.reteivaRate=15;s.retentionRules=[{concept:'Servicios',minUVT:0,declarantRate:4,nonDeclarantRate:6,account:'23650501'}];s.icaRules=[{municipality:'Medellín',activity:'Servicios',perThousand:10,account:'23680101'}];const c=choices();let r=calculatePurchase(doc(),s,{concept:'Servicios',municipality:'Medellín',activity:'Servicios',declarant:true},c,puc,false);expect(r.calculated).toEqual({retefuente:4000,reteiva:2850,reteica:1000});expect(r.errors).toContain('Retención difiere del XML: retefuente');c.retentionSource={retefuente:'calculated',reteiva:'calculated',reteica:'calculated'};r=calculatePurchase(doc(),s,{concept:'Servicios',municipality:'Medellín',activity:'Servicios',declarant:true},c,puc,false);expect(r.errors).toEqual([]);expect(r.payable).toBe(111150);});
- it('zero retention never creates retention lines',()=>{expect(calc().journal.some(l=>l.account_code.startsWith('236'))).toBe(false);});
- it('requires cost center only when company enables it and account requires it',()=>{const accounts=puc.map(a=>({...a,requires_cost_center:a.code==='51959501'}));expect(calculatePurchase(doc(),settings(),{nonSubject:true},choices(),accounts,true).errors).toContain('Esta cuenta requiere centro de costo.');expect(calculatePurchase(doc(),settings(),{nonSubject:true},choices(),accounts,false).errors).not.toContain('Esta cuenta requiere centro de costo.');});
- it('rejects parent expense accounts with active auxiliaries',()=>{const c=choices();c.accounts=['519595'];expect(calculatePurchase(doc(),settings(),{nonSubject:true},c,[...puc,{code:'519595',name:'Parent',active:true,is_movement:false,has_children:true}],false).errors.length).toBeGreaterThan(0);});
- it('credit note reverses debits credits and requires related invoice',()=>{const d=doc();d.kind='credit_note';const r=calc(d);expect(r.errors).toContain('Seleccione la factura afectada del mismo proveedor.');expect(r.journal.find(l=>l.account_code==='51959501')?.credit).toBe(100000);expect(r.journal.find(l=>l.account_code==='22050501')?.debit).toBe(119000);});
- it('AIU warning requires editable base approval',()=>{const d=doc();const l=d.lines[0];if(l)l.description='Administración AIU';expect(calc(d).errors).toContain('Revisar base AIU');});
- it('earlier month flags prior expense',()=>{const d=doc();const l=d.lines[0];if(l)l.description='Servicio Agosto';expect(documentAlerts(d).warnings).toContain('Posible gasto de periodo anterior');});
- it('natural person must define declarant flag',()=>{const d=doc();d.naturalPerson=true;expect(calc(d).errors).toContain('Definir si es declarante');});
- it('detail subtotal must match XML',()=>{const d=doc();const l=d.lines[0];if(l)l.subtotal=90000;expect(documentAlerts(d).errors).toContain('La suma del detalle no coincide con SUBTOTAL FACTURA.');});
- it('reads row 3 headers, joins by complete number plus CUFE and ignores totals',()=>{const w=XLSX.utils.book_new();const h=['TIPO DOC EMITIDO','NUMERO FACTURA COMPLETO','CUFE','NIT COMPRADOR','NIT EMISOR','NUMERO DE FACTURA','SUBTOTAL FACTURA','IVA','TOTAL FACTURA'];XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([['title'],['report'],h,['Factura electrónica','FE01','abc','800212838','890903407','01',100000,19000,119000],['','','','','','','TOTAL',19000,119000]]),'DOCUMENTOS');XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([['title'],['report'],['TIPO DOC EMITIDO','NUMERO FACTURA COMPLETO','CUFE','CANTIDAD','SUBTOTAL DE LA FACTURA','IVA'],['Factura electrónica','FE01','abc',8,100000,19000],['Factura electrónica','FE01','other',1,999,0]]),'DETALLE DE FACTURA');const buffer=XLSX.write(w,{type:'array',bookType:'xlsx'}) as ArrayBuffer;const docs=parsePurchaseWorkbook(buffer,'800212838');expect(docs).toHaveLength(1);expect(docs[0]?.header.number).toBe('01');expect(docs[0]?.lines).toHaveLength(1);expect(docs[0]?.lines[0]?.unit_value).toBe(12500);expect(()=>parsePurchaseWorkbook(buffer,'123')).toThrow('comprador diferente');});
- it('accepts «Factura de contingencia facturador» as a normal purchase and omits unknown types without rejecting the file',()=>{const mk=(tipo:string)=>{const w=XLSX.utils.book_new();const h=['TIPO DOC EMITIDO','NUMERO FACTURA COMPLETO','CUFE','NIT COMPRADOR','NIT EMISOR','NUMERO DE FACTURA','SUBTOTAL FACTURA','IVA','TOTAL FACTURA'];XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([['title'],['report'],h,[tipo,'FC01','abc','800212838','890903407','01',100000,19000,119000]]),'DOCUMENTOS');XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([['title'],['report'],['TIPO DOC EMITIDO','NUMERO FACTURA COMPLETO','CUFE','CANTIDAD','SUBTOTAL DE LA FACTURA','IVA'],[tipo,'FC01','abc',1,100000,19000]]),'DETALLE DE FACTURA');return XLSX.write(w,{type:'array',bookType:'xlsx'}) as ArrayBuffer;};const docs=parsePurchaseWorkbook(mk('Factura de contingencia facturador'),'800212838');expect(docs[0]?.kind).toBe('purchase');expect(docs[0]?.type).toBe('Factura de contingencia facturador');const raro=parsePurchaseWorkbookDetailed(mk('20'),'800212838');expect(raro.docs).toHaveLength(0);expect(raro.omitidos).toEqual([expect.objectContaining({rowNumber:4,type:'20',number:'FC01',total:119000})]);expect(textoOmitidos(raro.omitidos)).toContain('tipo «20»');});
- it('same document twice: keeps the most complete row and reports the incomplete one',()=>{const w=XLSX.utils.book_new();const h=['TIPO DOC EMITIDO','NUMERO FACTURA COMPLETO','CUFE','NIT COMPRADOR','NIT EMISOR','NUMERO DE FACTURA','SUBTOTAL FACTURA','IVA','TOTAL FACTURA'];XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([['title'],['report'],h,['Factura electrónica','FE01','abc','','890903407','01','','',119000],['Factura electrónica','FE02','def','800212838','890903407','02',50000,9500,59500],['Factura electrónica','FE01','abc','800212838','890903407','01',100000,19000,119000]]),'DOCUMENTOS');XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet([['title'],['report'],['TIPO DOC EMITIDO','NUMERO FACTURA COMPLETO','CUFE','CANTIDAD','SUBTOTAL DE LA FACTURA','IVA'],['Factura electrónica','FE01','abc',1,100000,19000],['Factura electrónica','FE02','def',1,50000,9500]]),'DETALLE DE FACTURA');const r=parsePurchaseWorkbookDetailed(XLSX.write(w,{type:'array',bookType:'xlsx'}) as ArrayBuffer,'800212838');expect(r.docs.map(d=>d.rowNumber)).toEqual([5,6]);expect(r.docs[1]?.header.subtotal).toBe(100000);expect(r.omitidos).toEqual([expect.objectContaining({rowNumber:4,motivo:expect.stringContaining('fila 6')})]);});
- it('DV uses Colombian NIT checksum',()=>{expect(nitDV('800212838')).toBe('7');});
+import { describe, it, expect } from "vitest";
+import * as XLSX from "xlsx";
+import {
+  calculatePurchase,
+  parsePurchaseWorkbook,
+  parsePurchaseWorkbookDetailed,
+  textoOmitidos,
+  documentAlerts,
+  emptyPurchaseSettings,
+  suggestHistoryAccount,
+  nitDV,
+  type PurchaseDocument,
+  type PurchaseChoices,
+} from "./purchase-excel";
+const puc = [
+  "51959501",
+  "24080101",
+  "22050501",
+  "11050501",
+  "13300501",
+  "42100501",
+  "53959501",
+  "23650501",
+  "23670101",
+  "23680101",
+].map((code) => ({ code, name: code, active: true, is_movement: true }));
+const doc = (): PurchaseDocument => ({
+  rowNumber: 4,
+  kind: "purchase",
+  type: "Factura electrónica",
+  period: "2026-09",
+  naturalPerson: false,
+  rawHeader: {},
+  rawLines: [],
+  header: {
+    prefix: "FE",
+    number: "1",
+    provider_nit: "890903407",
+    provider_name: "Proveedor",
+    buyer_nit: "800212838",
+    buyer_name: "Empresa",
+    cufe: "abc",
+    issue_date: "2026-09-01",
+    due_date: "2026-09-30",
+    provider_address: "",
+    provider_city: "",
+    provider_phone: "",
+    provider_email: "",
+    payment_form: "Crédito",
+    payment_method: "Transferencia",
+    currency: "COP",
+    notes: "",
+    subtotal: 100000,
+    iva: 19000,
+    impoconsumo: 0,
+    total: 119000,
+    discount: 0,
+    advances: 0,
+    surcharge: 0,
+    retefuente: 0,
+    reteiva: 0,
+    reteica: 0,
+  },
+  lines: [
+    {
+      description: "Servicio",
+      code: "",
+      quantity: 8,
+      unit_value: 12500,
+      subtotal: 100000,
+      discount: 0,
+      surcharge: 0,
+      iva: 19000,
+      ivaBase: 100000,
+      ivaRate: 19,
+      impoconsumo: 0,
+      total: 119000,
+    },
+  ],
+});
+const settings = () => ({
+  ...emptyPurchaseSettings(),
+  year: 2026,
+  uvt: 50000,
+  purchaseVoucher: "CC",
+  creditVoucher: "NC",
+  equivalentVoucher: "DE",
+  ivaAccount: "24080101",
+  payableAccount: "22050501",
+  cashAccount: "11050501",
+  advanceAccount: "13300501",
+  roundingIncomeAccount: "42100501",
+  roundingExpenseAccount: "53959501",
+  reteivaAccount: "23670101",
+});
+const choices = (): PurchaseChoices => ({
+  accounts: ["51959501"],
+  costCenter: "",
+  payableAccount: "22050501",
+  affectedInvoiceId: "",
+  retentionSource: {},
+});
+const calc = (d = doc(), s = settings(), p = { nonSubject: true }, c = choices()) =>
+  calculatePurchase(d, s, p, c, puc, false);
+describe("RECIBIDOS purchase rules", () => {
+  it("uses 8 quantities and divides line subtotal by 8 without changing header totals", () => {
+    const d = doc();
+    expect((d.lines[0]?.quantity ?? 0) * (d.lines[0]?.unit_value ?? 0)).toBe(100000);
+    expect(calc(d).payable).toBe(119000);
+  });
+  it("INC adds to line expense, never a separate tax account", () => {
+    const d = doc();
+    d.header.impoconsumo = 8000;
+    d.header.total = 127000;
+    const l = d.lines[0];
+    if (l) l.impoconsumo = 8000;
+    const r = calc(d);
+    expect(r.journal.find((l) => l.account_code === "51959501")?.debit).toBe(108000);
+    expect(r.journal).toHaveLength(3);
+  });
+  it("IVA mayor gasto adds IVA to expense", () => {
+    const s = settings();
+    s.ivaTreatment = "gasto";
+    const r = calc(doc(), s);
+    expect(r.journal.find((l) => l.account_code === "51959501")?.debit).toBe(119000);
+    expect(r.journal.some((l) => l.account_code === "24080101")).toBe(false);
+  });
+  it("full advance creates no payable credit", () => {
+    const d = doc();
+    d.header.advances = 119000;
+    const r = calc(d);
+    expect(r.payable).toBe(0);
+    expect(r.journal.some((l) => l.account_code === "22050501")).toBe(false);
+    expect(r.journal.find((l) => l.account_code === "13300501")?.credit).toBe(119000);
+  });
+  it("cash uses bank instead of payable", () => {
+    const d = doc();
+    d.header.payment_form = "Contado";
+    const r = calc(d);
+    expect(r.journal.find((l) => l.account_code === "11050501")?.credit).toBe(119000);
+    expect(r.journal.some((l) => l.account_code === "22050501")).toBe(false);
+  });
+  it("XML discrepancy over $1 blocks", () => {
+    const d = doc();
+    d.header.total += 1.01;
+    expect(calc(d).errors).toContain("No cuadra con el XML");
+  });
+  it("XML discrepancy of $1 is adjusted to configured expense", () => {
+    const d = doc();
+    d.header.total += 1;
+    const r = calc(d);
+    expect(r.errors).toEqual([]);
+    expect(r.journal.find((l) => l.account_code === "53959501")?.debit).toBe(1);
+    expect(r.journal.reduce((s, l) => s + l.debit - l.credit, 0)).toBe(0);
+  });
+  it("missing expense stays pending without invented account", () => {
+    const c = choices();
+    c.accounts = [""];
+    expect(calc(doc(), settings(), { nonSubject: true }, c).errors).toContain(
+      "Pendiente de cuenta",
+    );
+    expect(suggestHistoryAccount("Servicio", "890903407", [], puc)).toBe("");
+  });
+  it("supplier history outranks description history", () => {
+    expect(
+      suggestHistoryAccount(
+        "Servicio",
+        "890903407",
+        [
+          { provider_nit: "890903407", account_code: "51959501", weight: 1 },
+          { provider_nit: "123", concept: "Servicio", account_code: "53959501", weight: 100 },
+        ],
+        puc,
+      ),
+    ).toBe("51959501");
+  });
+  it("base minima uses document subtotal and configurable UVT", () => {
+    const s = settings();
+    s.retentionRules = [
+      {
+        concept: "Servicios",
+        minUVT: 4,
+        declarantRate: 4,
+        nonDeclarantRate: 6,
+        account: "23650501",
+      },
+    ];
+    s.icaRules = [
+      { municipality: "Medellín", activity: "Servicios", perThousand: 0, account: "23680101" },
+    ];
+    const r = calculatePurchase(
+      doc(),
+      s,
+      { concept: "Servicios", municipality: "Medellín", activity: "Servicios", declarant: true },
+      choices(),
+      puc,
+      false,
+    );
+    expect(r.calculated.retefuente).toBe(0);
+    expect(r.warnings).toContain("Bajo base mínima");
+  });
+  it("simultaneous retentions use configured rates and explicit XML selection", () => {
+    const s = settings();
+    s.reteivaRate = 15;
+    s.retentionRules = [
+      {
+        concept: "Servicios",
+        minUVT: 0,
+        declarantRate: 4,
+        nonDeclarantRate: 6,
+        account: "23650501",
+      },
+    ];
+    s.icaRules = [
+      { municipality: "Medellín", activity: "Servicios", perThousand: 10, account: "23680101" },
+    ];
+    const c = choices();
+    let r = calculatePurchase(
+      doc(),
+      s,
+      { concept: "Servicios", municipality: "Medellín", activity: "Servicios", declarant: true },
+      c,
+      puc,
+      false,
+    );
+    expect(r.calculated).toEqual({ retefuente: 4000, reteiva: 2850, reteica: 1000 });
+    expect(r.errors).toContain("Retención difiere del XML: retefuente");
+    c.retentionSource = { retefuente: "calculated", reteiva: "calculated", reteica: "calculated" };
+    r = calculatePurchase(
+      doc(),
+      s,
+      { concept: "Servicios", municipality: "Medellín", activity: "Servicios", declarant: true },
+      c,
+      puc,
+      false,
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.payable).toBe(111150);
+  });
+  it("zero retention never creates retention lines", () => {
+    expect(calc().journal.some((l) => l.account_code.startsWith("236"))).toBe(false);
+  });
+  it("requires cost center only when company enables it and account requires it", () => {
+    const accounts = puc.map((a) => ({ ...a, requires_cost_center: a.code === "51959501" }));
+    expect(
+      calculatePurchase(doc(), settings(), { nonSubject: true }, choices(), accounts, true).errors,
+    ).toContain("Esta cuenta requiere centro de costo.");
+    expect(
+      calculatePurchase(doc(), settings(), { nonSubject: true }, choices(), accounts, false).errors,
+    ).not.toContain("Esta cuenta requiere centro de costo.");
+  });
+  it("rejects parent expense accounts with active auxiliaries", () => {
+    const c = choices();
+    c.accounts = ["519595"];
+    expect(
+      calculatePurchase(
+        doc(),
+        settings(),
+        { nonSubject: true },
+        c,
+        [
+          ...puc,
+          { code: "519595", name: "Parent", active: true, is_movement: false, has_children: true },
+        ],
+        false,
+      ).errors.length,
+    ).toBeGreaterThan(0);
+  });
+  it("credit note reverses debits credits and requires related invoice", () => {
+    const d = doc();
+    d.kind = "credit_note";
+    const r = calc(d);
+    expect(r.errors).toContain("Seleccione la factura afectada del mismo proveedor.");
+    expect(r.journal.find((l) => l.account_code === "51959501")?.credit).toBe(100000);
+    expect(r.journal.find((l) => l.account_code === "22050501")?.debit).toBe(119000);
+  });
+  it("AIU warning requires editable base approval", () => {
+    const d = doc();
+    const l = d.lines[0];
+    if (l) l.description = "Administración AIU";
+    expect(calc(d).errors).toContain("Revisar base AIU");
+  });
+  it("earlier month flags prior expense", () => {
+    const d = doc();
+    const l = d.lines[0];
+    if (l) l.description = "Servicio Agosto";
+    expect(documentAlerts(d).warnings).toContain("Posible gasto de periodo anterior");
+  });
+  it("natural person must define declarant flag", () => {
+    const d = doc();
+    d.naturalPerson = true;
+    expect(calc(d).errors).toContain("Definir si es declarante");
+  });
+  it("detail subtotal must match XML", () => {
+    const d = doc();
+    const l = d.lines[0];
+    if (l) l.subtotal = 90000;
+    expect(documentAlerts(d).errors).toContain(
+      "La suma del detalle no coincide con SUBTOTAL FACTURA.",
+    );
+  });
+  it("reads row 3 headers, joins by complete number plus CUFE and ignores totals", () => {
+    const w = XLSX.utils.book_new();
+    const h = [
+      "TIPO DOC EMITIDO",
+      "NUMERO FACTURA COMPLETO",
+      "CUFE",
+      "NIT COMPRADOR",
+      "NIT EMISOR",
+      "NUMERO DE FACTURA",
+      "SUBTOTAL FACTURA",
+      "IVA",
+      "TOTAL FACTURA",
+    ];
+    XLSX.utils.book_append_sheet(
+      w,
+      XLSX.utils.aoa_to_sheet([
+        ["title"],
+        ["report"],
+        h,
+        [
+          "Factura electrónica",
+          "FE01",
+          "abc",
+          "800212838",
+          "890903407",
+          "01",
+          100000,
+          19000,
+          119000,
+        ],
+        ["", "", "", "", "", "", "TOTAL", 19000, 119000],
+      ]),
+      "DOCUMENTOS",
+    );
+    XLSX.utils.book_append_sheet(
+      w,
+      XLSX.utils.aoa_to_sheet([
+        ["title"],
+        ["report"],
+        [
+          "TIPO DOC EMITIDO",
+          "NUMERO FACTURA COMPLETO",
+          "CUFE",
+          "CANTIDAD",
+          "SUBTOTAL DE LA FACTURA",
+          "IVA",
+        ],
+        ["Factura electrónica", "FE01", "abc", 8, 100000, 19000],
+        ["Factura electrónica", "FE01", "other", 1, 999, 0],
+      ]),
+      "DETALLE DE FACTURA",
+    );
+    const buffer = XLSX.write(w, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+    const docs = parsePurchaseWorkbook(buffer, "800212838");
+    expect(docs).toHaveLength(1);
+    expect(docs[0]?.header.number).toBe("01");
+    expect(docs[0]?.lines).toHaveLength(1);
+    expect(docs[0]?.lines[0]?.unit_value).toBe(12500);
+    expect(() => parsePurchaseWorkbook(buffer, "123")).toThrow("comprador diferente");
+  });
+  it("accepts «Factura de contingencia facturador» as a normal purchase and omits unknown types without rejecting the file", () => {
+    const mk = (tipo: string) => {
+      const w = XLSX.utils.book_new();
+      const h = [
+        "TIPO DOC EMITIDO",
+        "NUMERO FACTURA COMPLETO",
+        "CUFE",
+        "NIT COMPRADOR",
+        "NIT EMISOR",
+        "NUMERO DE FACTURA",
+        "SUBTOTAL FACTURA",
+        "IVA",
+        "TOTAL FACTURA",
+      ];
+      XLSX.utils.book_append_sheet(
+        w,
+        XLSX.utils.aoa_to_sheet([
+          ["title"],
+          ["report"],
+          h,
+          [tipo, "FC01", "abc", "800212838", "890903407", "01", 100000, 19000, 119000],
+        ]),
+        "DOCUMENTOS",
+      );
+      XLSX.utils.book_append_sheet(
+        w,
+        XLSX.utils.aoa_to_sheet([
+          ["title"],
+          ["report"],
+          [
+            "TIPO DOC EMITIDO",
+            "NUMERO FACTURA COMPLETO",
+            "CUFE",
+            "CANTIDAD",
+            "SUBTOTAL DE LA FACTURA",
+            "IVA",
+          ],
+          [tipo, "FC01", "abc", 1, 100000, 19000],
+        ]),
+        "DETALLE DE FACTURA",
+      );
+      return XLSX.write(w, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+    };
+    const docs = parsePurchaseWorkbook(mk("Factura de contingencia facturador"), "800212838");
+    expect(docs[0]?.kind).toBe("purchase");
+    expect(docs[0]?.type).toBe("Factura de contingencia facturador");
+    const raro = parsePurchaseWorkbookDetailed(mk("20"), "800212838");
+    expect(raro.docs).toHaveLength(0);
+    expect(raro.omitidos).toEqual([
+      expect.objectContaining({ rowNumber: 4, type: "20", number: "FC01", total: 119000 }),
+    ]);
+    expect(textoOmitidos(raro.omitidos)).toContain("tipo «20»");
+  });
+  it("same document twice: keeps the most complete row and reports the incomplete one", () => {
+    const w = XLSX.utils.book_new();
+    const h = [
+      "TIPO DOC EMITIDO",
+      "NUMERO FACTURA COMPLETO",
+      "CUFE",
+      "NIT COMPRADOR",
+      "NIT EMISOR",
+      "NUMERO DE FACTURA",
+      "SUBTOTAL FACTURA",
+      "IVA",
+      "TOTAL FACTURA",
+    ];
+    XLSX.utils.book_append_sheet(
+      w,
+      XLSX.utils.aoa_to_sheet([
+        ["title"],
+        ["report"],
+        h,
+        ["Factura electrónica", "FE01", "abc", "", "890903407", "01", "", "", 119000],
+        ["Factura electrónica", "FE02", "def", "800212838", "890903407", "02", 50000, 9500, 59500],
+        [
+          "Factura electrónica",
+          "FE01",
+          "abc",
+          "800212838",
+          "890903407",
+          "01",
+          100000,
+          19000,
+          119000,
+        ],
+      ]),
+      "DOCUMENTOS",
+    );
+    XLSX.utils.book_append_sheet(
+      w,
+      XLSX.utils.aoa_to_sheet([
+        ["title"],
+        ["report"],
+        [
+          "TIPO DOC EMITIDO",
+          "NUMERO FACTURA COMPLETO",
+          "CUFE",
+          "CANTIDAD",
+          "SUBTOTAL DE LA FACTURA",
+          "IVA",
+        ],
+        ["Factura electrónica", "FE01", "abc", 1, 100000, 19000],
+        ["Factura electrónica", "FE02", "def", 1, 50000, 9500],
+      ]),
+      "DETALLE DE FACTURA",
+    );
+    const r = parsePurchaseWorkbookDetailed(
+      XLSX.write(w, { type: "array", bookType: "xlsx" }) as ArrayBuffer,
+      "800212838",
+    );
+    expect(r.docs.map((d) => d.rowNumber)).toEqual([5, 6]);
+    expect(r.docs[1]?.header.subtotal).toBe(100000);
+    expect(r.omitidos).toEqual([
+      expect.objectContaining({ rowNumber: 4, motivo: expect.stringContaining("fila 6") }),
+    ]);
+  });
+  it("DV uses Colombian NIT checksum", () => {
+    expect(nitDV("800212838")).toBe("7");
+  });
+});
+
+describe("avisosOmitidos", () => {
+  it("separa los documentos que no se causan de las filas repetidas", async () => {
+    const { avisosOmitidos } = await import("./purchase-excel");
+    const r = avisosOmitidos([
+      {
+        rowNumber: 26,
+        type: "Factura electrónica",
+        provider: "PROVEEDOR UNO",
+        number: "AB1",
+        total: 100,
+        motivo: "repetido: se usa la fila 84, que está más completa",
+      },
+      {
+        rowNumber: 49,
+        type: "20",
+        provider: "PROVEEDOR DOS",
+        number: "CD2",
+        total: 50,
+        motivo: "tipo de documento desconocido",
+      },
+    ]);
+    expect(r.noProcesados).toContain("NO se procesaron");
+    expect(r.noProcesados).toContain("PROVEEDOR DOS");
+    expect(r.noProcesados).not.toContain("PROVEEDOR UNO");
+    expect(r.repetidos).toContain("PROVEEDOR UNO");
+    expect(r.repetidos).toContain("nada se pierde");
+    expect(avisosOmitidos([])).toEqual({ noProcesados: null, repetidos: null });
+  });
 });

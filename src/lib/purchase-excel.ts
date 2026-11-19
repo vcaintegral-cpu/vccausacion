@@ -64,6 +64,18 @@ export function parsePurchaseWorkbookDetailed(buffer: ArrayBuffer, companyNit: s
 /** Texto para avisar a la usuaria de los documentos omitidos. */
 export const textoOmitidos = (o: DocumentoOmitido[]) =>
  o.map((x) => `fila ${x.rowNumber} · ${x.motivo} · tipo «${x.type}» · ${x.provider || 'sin proveedor'} · ${x.number || 'sin número'} · $${x.total}`).join('; ');
+/**
+ * Aviso para la usuaria sobre las filas omitidas, separando lo que NO se causó (tipo de documento que el sistema no
+ * sabe causar) de lo que solo es una fila repetida del mismo documento (se causa con la fila más completa).
+ */
+export function avisosOmitidos(o: DocumentoOmitido[]): { noProcesados: string | null; repetidos: string | null } {
+ const repetidos = o.filter((x) => /^repetido/.test(x.motivo));
+ const noProcesados = o.filter((x) => !/^repetido/.test(x.motivo));
+ return {
+  noProcesados: noProcesados.length ? `${noProcesados.length} documento(s) de un tipo que el sistema no sabe causar NO se procesaron: ${textoOmitidos(noProcesados)}` : null,
+  repetidos: repetidos.length ? `${repetidos.length} fila(s) repetida(s) del mismo documento (se causa con la fila más completa, nada se pierde): ${repetidos.map((x) => `fila ${x.rowNumber} · ${x.provider || 'sin proveedor'} · ${x.number || 'sin número'}`).join('; ')}` : null,
+ };
+}
 export function parsePurchaseWorkbook(buffer: ArrayBuffer, companyNit: string): PurchaseDocument[] {
  return parsePurchaseWorkbookDetailed(buffer, companyNit).docs;
 }
