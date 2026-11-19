@@ -261,6 +261,14 @@ export async function loadDeps(companyId: string, usuarioId?: string): Promise<D
   return promise;
 }
 
+/**
+ * Recarga liviana: olvida solo los catálogos de la carga (reglas, impuestos, PUC, productos). El precedente y el
+ * historial (lo más pesado) siguen vigentes sus 5 minutos, así subir un Excel no vuelve a leer todo el auxiliar.
+ */
+export function invalidateBulkCatalogs(companyId: string) {
+  depsCache.delete(companyId);
+}
+
 /** Fuerza recarga de catálogos (tras importar PUC, productos, impuestos, etc.). */
 export function invalidateBulkDeps(companyId?: string) {
   invalidarPrecedentes(companyId);
@@ -616,7 +624,7 @@ export const CONCURRENCIA = 5;
 async function runUpload(job: QueuedUpload) {
   if (detenciones.has(job.uploadId)) return;
   resetBulkBatch();
-  invalidateBulkDeps(job.companyId);
+  invalidateBulkCatalogs(job.companyId);
   const deps = await loadDeps(job.companyId);
   await updateUpload(job.uploadId, { status: "processing", finished_at: null });
 

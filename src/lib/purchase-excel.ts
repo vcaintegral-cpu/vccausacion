@@ -85,12 +85,12 @@ function parseDocs(buffer: ArrayBuffer, companyNit: string, omitidos: DocumentoO
  const sheet=wb.Sheets['DOCUMENTOS'];const periodText=sheet?String(sheet['B2']?.v??''):'';
  const match=periodText.match(/(\d{2})-(\d{2})-(\d{4})/);const period=match?`${match[3]}-${match[2]}`:'';
  const join=(r:Row)=>`${String(r['NUMERO FACTURA COMPLETO']).trim()}|${String(r['CUFE']).trim().toLowerCase()}`;
- const index=new Map<string,Row[]>();for(const {row} of details){const k=join(row);index.set(k,[...(index.get(k)??[]),row]);}
+ const index=new Map<string,Row[]>();for(const {row} of details){const k=join(row);const g=index.get(k);if(g)g.push(row);else index.set(k,[row]);}
  // Mismo documento (número + CUFE) en varias filas: se conserva la más completa (p. ej. la fila que
  // quedó vacía porque la DIAN no entregó el XML y la que se completó después) y las demás se informan.
  const llenas=(r:Row)=>Object.values(r).filter(v=>String(v??'').trim()!=='').length;
  const mejor=new Map<string,number>();const grupos=new Map<string,{row:Row;rowNumber:number}[]>();
- for(const x of docs){const k=join(x.row);grupos.set(k,[...(grupos.get(k)??[]),x]);}
+ for(const x of docs){const k=join(x.row);const g=grupos.get(k);if(g)g.push(x);else grupos.set(k,[x]);}
  for(const [k,g] of grupos){if(g.length>1)mejor.set(k,g.reduce((a,b)=>llenas(b.row)>llenas(a.row)?b:a).rowNumber);}
  return docs.map(({row:r,rowNumber})=>{
   const t=(key:string)=>String(r[key]??'').trim();const n=(key:string)=>abs(r[key]);const type=t('TIPO DOC EMITIDO');
