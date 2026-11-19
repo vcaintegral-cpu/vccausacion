@@ -19,7 +19,8 @@ export type SyncKind =
   | "reteica"
   | "otras"
   | "payable"
-  | "cost_center";
+  | "cost_center"
+  | "tipo";
 
 export const SYNC_LABEL: Record<SyncKind, string> = {
   gasto: "Cuenta de gasto/costo",
@@ -30,6 +31,7 @@ export const SYNC_LABEL: Record<SyncKind, string> = {
   otras: "Cuenta de otras retenciones",
   payable: "Cuenta por pagar",
   cost_center: "Centro de costo",
+  tipo: "Clasificación del renglón",
 };
 
 export type SyncChange = {
@@ -51,10 +53,11 @@ export type DraftSnapshot = {
   otras: string[];
   payable: string[];
   cost_center: string[];
+  tipos: string[];
 };
 
 const empty = (): DraftSnapshot => ({
-  gastos: [], iva: [], retefuente: [], reteiva: [], reteica: [], otras: [], payable: [], cost_center: [],
+  gastos: [], iva: [], retefuente: [], reteiva: [], reteica: [], otras: [], payable: [], cost_center: [], tipos: [],
 });
 
 const clean = (v: unknown) => String(v ?? "").trim();
@@ -68,6 +71,7 @@ export const nitNormalizado = (nit?: string | null) => clean(nit).split("-")[0]!
 
 type LineaSnapshot = {
   account_code?: string | null;
+  item_type?: string | null;
   iva_account_code?: string | null;
   iva_operational_account?: string | null;
   ret_account_code?: string | null;
@@ -82,7 +86,7 @@ export async function fetchDraftSnapshot(invoiceId: string): Promise<DraftSnapsh
     supabase.from("invoices").select("payable_account, cost_center").eq("id", invoiceId).maybeSingle(),
     supabase
       .from("invoice_lines")
-      .select("account_code, iva_account_code, iva_operational_account, ret_account_code, ret_operational_account, ret_tax_kind")
+      .select("account_code, item_type, iva_account_code, iva_operational_account, ret_account_code, ret_operational_account, ret_tax_kind")
       .eq("invoice_id", invoiceId)
       .order("position"),
   ]);
@@ -91,6 +95,7 @@ export async function fetchDraftSnapshot(invoiceId: string): Promise<DraftSnapsh
   push(out.cost_center, cabecera?.cost_center);
   for (const l of ((lines.data ?? []) as unknown as LineaSnapshot[])) {
     push(out.gastos, l.account_code);
+    push(out.tipos, l.item_type);
     push(out.iva, l.iva_operational_account || l.iva_account_code);
     const cuentaRet = l.ret_operational_account || l.ret_account_code;
     const kind = clean(l.ret_tax_kind).toLowerCase();
@@ -110,6 +115,10 @@ function cambiosDeCampo(kind: SyncKind, antes: string[], despues: string[]): Syn
   for (let i = 0; i < Math.min(quitados.length, agregados.length); i += 1) {
     out.push({ kind, label: SYNC_LABEL[kind], old: quitados[i]!, new: agregados[i]! });
   }
+  // Un renglón que estaba SIN cuenta y ahora tiene una: también es un cambio (antes no se detectaba, y los demás
+  // borradores del proveedor pendientes de cuenta nunca recibían la cuenta).
+  if (kind === "gasto" && antes.length === 0 && agregados.length > 0 && quitados.length === 0)
+    out.push({ kind, label: SYNC_LABEL[kind], old: "", new: agregados[0]! });
   return out;
 }
 
@@ -124,6 +133,7 @@ export function diffSnapshots(antes: DraftSnapshot, despues: DraftSnapshot): Syn
     ["otras", "otras"],
     ["payable", "payable"],
     ["cost_center", "cost_center"],
+    ["tipo", "tipos"],
   ];
   const out: SyncChange[] = [];
   for (const [kind, key] of kinds) out.push(...cambiosDeCampo(kind, antes[key], despues[key]));
@@ -186,7 +196,9 @@ export async function aplicarSincronizacion(params: {
 }): Promise<SyncResultado> {
   const { data, error } = await rpc("sync_provider_drafts", {
     _source_invoice_id: params.sourceInvoiceId,
-    _changes: params.changes.map((c) => ({ kind: c.kind, old: c.old, new: c.new, name: c.name ?? null })),
+    _changes: params.changes
+      .filter((c) => c.kind !== "tipo")
+      .map((c) => ({ kind: c.kind, old: c.old, new: c.new, name: c.name ?? null })),
     _event_key: params.eventKey,
     _known: params.known.map((k) => ({ id: k.id, updated_at: k.updated_at })),
   });
