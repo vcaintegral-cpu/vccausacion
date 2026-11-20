@@ -1,3 +1,4 @@
+import { productoDelCatalogo } from "./siigo-products-match";
 import { effectiveSource, validateStoredJournal } from "@/lib/source-values";
 import {
   adaptPurchaseItems,
@@ -33,6 +34,7 @@ import { resolveOperationalAccount, validarCuenta } from "@/lib/puc-hierarchy";
 import { mensajeSiigoAmigable } from "@/lib/siigo-errors";
 import {
   conciliableInformadoPorSiigo,
+  ajusteRedondeoSiigo,
   calculateNetPayable,
   validarCuadreNeto,
   mensajeDiferenciaPagos,
@@ -1526,12 +1528,24 @@ export async function siigoSyncInvoiceCore(
             const tipo = normalizeItemType(l.item_type);
             const cuenta = cuentaDelRenglon(l.account_code ?? "");
             const esProducto = tipo === "producto" || tipo === "servicio";
-            const productCode = String(l.code ?? "").trim();
+            let productCode = String(l.code ?? "").trim();
             if (esProducto) {
               if (!productCode) {
-                throw new Error(
-                  `Renglón ${i + 1}: el producto no tiene código válido de Siigo. Sincronice los productos con Siigo antes de causar.`,
+                // Renglón clasificado como producto sin producto elegido: se toma el producto
+                // activo del catálogo cuya cuenta es la del renglón (el más parecido a la
+                // descripción); si no hay uno claro, se pide elegirlo en el borrador.
+                const elegido = productoDelCatalogo(
+                  [...porCodigo.values()] as never,
+                  cuenta,
+                  String(l.description ?? ""),
                 );
+                if (!elegido) {
+                  throw new Error(
+                    `Renglón ${i + 1} («${String(l.description ?? "").slice(0, 60)}»): está como producto pero no tiene producto de Siigo asignado y no hay uno claro para la cuenta ${cuenta || "(sin cuenta)"}. Elija el producto en el borrador (o cámbielo a gasto) y vuelva a causar.`,
+                  );
+                }
+                productCode = elegido;
+                console.log("[siigo][productos] renglón sin código → producto del catálogo", elegido);
               }
               const prod = porCodigo.get(productCode);
               if (!prod) {
@@ -2724,6 +2738,8 @@ export async function siigoSyncInvoiceCore(
       let res: SiigoPurchaseResponse | null = null;
       let intentoValor = conciliableSiigo;
       let intentoExacto = false;
+      // Diferencia por redondeo a pesos enteros que Siigo aplicó a su total (tolerada en la verificación).
+      let redondeoSiigo = 0;
       let ultimoError: unknown = null;
       const intentos: Array<{ valor: number; error: string | null }> = [];
       for (let intento = 0; intento < 5 && res == null; intento += 1) {
@@ -2857,11 +2873,13 @@ export async function siigoSyncInvoiceCore(
           }
           if (!raw.includes("invalid_total_payments")) throw e;
           const exacto = conciliableInformadoPorSiigo(raw);
+          const ajusteRedondeo = ajusteRedondeoSiigo(exacto, valorCxP);
           if (
             exacto != null &&
-            toCents(exacto) === toCents(valorCxP) &&
+            ajusteRedondeo != null &&
             Math.abs(exacto - intentoValor) > 0.0001
           ) {
+            redondeoSiigo = ajusteRedondeo;
             console.log(
               "[siigo][payments] Siigo rechazó",
               intentoValor,
@@ -2945,6 +2963,7 @@ export async function siigoSyncInvoiceCore(
         returnedRetentions: retSiigo,
         payable: r2(valorCxP - (retencionesVerificacion - retenciones)),
         ivaIds: [...ivaSiigoPorPosicion.values(), ...(ivaTaxId == null ? [] : [ivaTaxId])],
+        toleranciaRedondeoSiigo: redondeoSiigo,
       });
       if (mismatches.length) {
         await supabase
@@ -2964,6 +2983,7 @@ export async function siigoSyncInvoiceCore(
                 returnedRetentions: retSiigo,
                 payable: r2(valorCxP - (retencionesVerificacion - retenciones)),
                 ivaIds: [...ivaSiigoPorPosicion.values(), ...(ivaTaxId == null ? [] : [ivaTaxId])],
+                toleranciaRedondeoSiigo: redondeoSiigo,
               }),
               siigo_request: payloadEnviado,
               siigo_respuesta: res,
@@ -3080,6 +3100,7 @@ export async function siigoSyncInvoiceCore(
         inc_como_costo: adaptacion.incAsCost,
         iva_capitalizado: ivaCapitalizado,
         redondeo_proveedor: redondeoProveedor,
+        redondeo_siigo: redondeoSiigo,
         representacion: adaptacion.notes,
         siigo_documento_id: siigoId,
         siigo_documento_numero: siigoNumber,
