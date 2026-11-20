@@ -298,3 +298,17 @@ export function conciliableInformadoPorSiigo(raw: string): number | null {
   }
   return null;
 }
+/** Máxima diferencia (pesos) que se acepta cuando Siigo redondea el total de la compra a pesos enteros. */
+export const TOLERANCIA_REDONDEO_SIIGO = 3;
+
+/**
+ * Siigo recalcula el total de la compra y, en algunos tenants, lo entrega en pesos enteros.
+ * Si el conciliable que informa difiere del nuestro solo por ese redondeo, se acepta su valor
+ * exacto (nunca se altera el asiento). Devuelve la diferencia (Siigo − origen) o null si no aplica.
+ */
+export function ajusteRedondeoSiigo(exacto: number | null, valorCxP: number): number | null {
+  if (exacto == null || !Number.isFinite(exacto) || exacto <= 0) return null;
+  const dif = Math.round((exacto - valorCxP) * 100) / 100;
+  if (Math.abs(dif) > TOLERANCIA_REDONDEO_SIIGO) return null;
+  return dif;
+}

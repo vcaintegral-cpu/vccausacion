@@ -54,6 +54,8 @@ export type PurchaseReadback = {
 export type ReadbackExpected = {
   total: number; iva: number; impoconsumo: number; retentions: number;
   returnedRetentions: number; payable: number; ivaIds: Array<string | number>;
+  /** Diferencia (en pesos) que Siigo introdujo al redondear el total a pesos enteros; se tolera en total, IVA y CxP. */
+  toleranciaRedondeoSiigo?: number;
 };
 export type ReadbackRow = { campo: string; origen: number; siigo: number | null; ok: boolean };
 
@@ -63,15 +65,20 @@ export function purchaseReadbackComparison(doc: PurchaseReadback, expected: Read
   const iva = sumCents(taxes.filter(t => expected.ivaIds.some(id => String(id) === String(t.id))).map(t => t.value));
   const inc = sumCents(taxes.filter(t => /consum/i.test(t.type ?? "")).map(t => t.value));
   const payable = doc.payments ? sumCents(doc.payments.map(p => p.value)) : null;
+  const tol = toCents(Math.abs(expected.toleranciaRedondeoSiigo ?? 0));
   const fields = [
     // Siigo purchase total is net of applied retentions; reconstruct the gross source total.
-    ["Total bruto", toCents(expected.total), doc.total === undefined ? null : toCents(doc.total) + toCents(expected.returnedRetentions)],
-    ["IVA", toCents(expected.iva), iva],
+    ["Total bruto", toCents(expected.total), doc.total === undefined ? null : toCents(doc.total) + toCents(expected.returnedRetentions), tol],
+    ["IVA", toCents(expected.iva), iva, tol],
     ["INC", toCents(expected.impoconsumo), inc],
     ["Retenciones", toCents(expected.retentions), toCents(expected.returnedRetentions)],
-    ["CxP (neto)", toCents(expected.payable), payable],
+    ["CxP (neto)", toCents(expected.payable), payable, tol],
   ] as const;
-  return fields.map(([campo, local, remote]) => ({ campo, origen: local / 100, siigo: remote === null ? null : remote / 100, ok: local === remote }));
+  return fields.map((f) => {
+    const [campo, local, remote] = f;
+    const t = (f as readonly unknown[])[3] as number | undefined ?? 0;
+    return { campo, origen: local / 100, siigo: remote === null ? null : remote / 100, ok: remote !== null && Math.abs(local - remote) <= t };
+  });
 }
 
 /** Compare actual remote amounts, never the submitted payload or a single default tax ID. */
