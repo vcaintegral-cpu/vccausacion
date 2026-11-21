@@ -150,3 +150,16 @@ describe("sin renglones diminutos por redondeo de IVA", () => {
     expect(r.items.length).toBe(2);
   });
 });
+
+import { resolveImpoconsumoAccount } from "./tax-selection";
+describe("cuenta del impuesto al consumo por perfil de empresa", () => {
+  const taxes = [{ id: "i1", kind: "impoconsumo", name: "INC 8%", rate: 8, account_code: "24950103", active: true }];
+  it("sin cuenta fija usa la del impuesto configurado", () => {
+    expect(resolveImpoconsumoAccount(taxes as never, []).code).toBe("24950103");
+  });
+  it("con cuenta fija del perfil manda sobre el impuesto", () => {
+    const puc = [{ code: "51157101", name: "Impuesto al consumo", level: "Auxiliar", is_movement: true, active: true }];
+    expect(resolveImpoconsumoAccount(taxes as never, puc as never, undefined, "51157101").code).toBe("51157101");
+    expect(resolveImpoconsumoAccount(taxes as never, [], undefined, "51157101").code).toBe("51157101");
+  });
+});

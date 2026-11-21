@@ -60,6 +60,12 @@ export type PerfilEmpresa = {
    * 4x1000, iva_bancario). Una regla enseñada en pantalla siempre manda; esto va antes del precedente.
    */
   cuentasEgresosPorConcepto?: Record<string, string>;
+  /**
+   * Cuenta de GASTO donde se causa el impuesto al consumo (INC) de las compras, en lugar de la cuenta por pagar de
+   * impuesto configurada en Administración → Retenciones (p. ej. 24950103, que la empresa no usa). Una regla por
+   * proveedor (inc_account) manda sobre esta.
+   */
+  cuentaImpoconsumoCompras?: string;
   /** Cuenta de ingreso de los rendimientos financieros (comprobante mensual por cuenta bancaria). */
   cuentaRendimientosFinancieros?: string;
   /**

@@ -461,7 +461,7 @@ function Revisar() {
   const incAlGasto = perfilActivo.funcion("impoconsumo_al_gasto");
   // Compras de inventario (p. ej. LED LIGHTS): los renglones de producto conservan su cuenta 14.
   const cuentasInventario = perfilActivo.funcion("productos_inventario");
-  const impoconsumoCuenta = useMemo(() => resolveImpoconsumoAccount(impuestos, puc), [impuestos, puc]);
+  const impoconsumoCuenta = useMemo(() => resolveImpoconsumoAccount(impuestos, puc, undefined, perfilActivo.perfil?.cuentaImpoconsumoCompras), [impuestos, puc, perfilActivo.perfil?.cuentaImpoconsumoCompras]);
   const journal: JournalLine[] = useMemo(
     () =>
       ((built) => source ? alignJournalToSource(built, source, retenciones.retefuente + retenciones.reteiva + retenciones.reteica) : built)(buildJournal({

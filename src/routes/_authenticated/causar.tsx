@@ -721,8 +721,8 @@ function Causar() {
   // Compras de inventario (p. ej. LED LIGHTS): los renglones de producto conservan su cuenta 14.
   const cuentasInventario = perfilActivo.funcion("productos_inventario");
   const impoconsumoCuenta = useMemo(
-    () => resolveImpoconsumoAccount(impuestos as TaxRecord[], (config?.accounts ?? []) as PucAccount[]),
-    [impuestos, config?.accounts],
+    () => resolveImpoconsumoAccount(impuestos as TaxRecord[], (config?.accounts ?? []) as PucAccount[], undefined, perfilActivo.perfil?.cuentaImpoconsumoCompras),
+    [impuestos, config?.accounts, perfilActivo.perfil?.cuentaImpoconsumoCompras],
   );
   const journal = useMemo(
     () =>

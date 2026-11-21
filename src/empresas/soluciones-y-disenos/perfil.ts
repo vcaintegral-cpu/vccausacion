@@ -10,6 +10,8 @@ export const SOLUCIONES_Y_DISENOS: PerfilEmpresa = {
   dv: "1",
   carpeta: "soluciones-y-disenos",
   modulos: {},
+  // Instrucción del 2026-11-21: el INC de las compras (p. ej. Colombia Móvil) va al gasto 51157101; la 24950103 no se usa.
+  cuentaImpoconsumoCompras: "51157101",
   funciones: {
     impuestos_excel_siigo: true,
     historial_solo_movimientos: true,
