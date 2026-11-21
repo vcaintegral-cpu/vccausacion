@@ -163,3 +163,26 @@ describe("cuenta del impuesto al consumo por perfil de empresa", () => {
     expect(resolveImpoconsumoAccount(taxes as never, [], undefined, "51157101").code).toBe("51157101");
   });
 });
+
+import { elegirIvaSiigoPorNombre } from "./siigo-purchase-validation";
+describe("IVA local sin id de Siigo", () => {
+  const cat = [
+    { id: 1, name: "IVA 19% Compras de bienes", type: "IVA", percentage: 19, active: true },
+    { id: 2, name: "IVA 19% Servicios y Gastos", type: "IVA", percentage: 19, active: true },
+    { id: 3, name: "IVA 5%", type: "IVA", percentage: 5, active: true },
+    { id: 4, name: "Retefuente 19", type: "Retefuente", percentage: 19, active: true },
+  ];
+  it("único del porcentaje", () => {
+    expect(elegirIvaSiigoPorNombre(cat, "IVA 5% compras", 5)).toMatchObject({ ok: true, id: 3 });
+  });
+  it("varios: elige por nombre", () => {
+    expect(elegirIvaSiigoPorNombre(cat, "IVA 19% Servicios y Gasto", 19)).toMatchObject({ ok: true, id: 2 });
+  });
+  it("ambiguo sin coincidencia: no adivina", () => {
+    const r = elegirIvaSiigoPorNombre(cat, "IVA 19%", 19);
+    expect(r.ok).toBe(false);
+  });
+  it("sin porcentaje en Siigo", () => {
+    expect(elegirIvaSiigoPorNombre(cat, "IVA 8%", 8).ok).toBe(false);
+  });
+});

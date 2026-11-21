@@ -488,3 +488,38 @@ export function cuentaAjustePesoCompra(
   if (elegida && elegida.length < 8) return "53958101";
   return elegida;
 }
+
+type ImpuestoSiigoCat = { id?: number | string | null; name?: string | null; type?: string | null; percentage?: number | null; active?: boolean | null };
+const sinTildesMin = (x: unknown) => String(x ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const palabrasClave = (x: unknown) => new Set(sinTildesMin(x).split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !/^(iva|del|los|las|por|para|con|compras?|tarifa)$/.test(w) && !/^\d+$/.test(w)));
+
+/**
+ * Impuesto de IVA de Siigo para un IVA local sin id de Siigo: mismo porcentaje; si hay varios, el nombre
+ * idéntico o, en su defecto, el de mayor coincidencia de palabras (p. ej. «Servicios», «Gastos»). Sin un
+ * ganador claro NO adivina.
+ */
+export function elegirIvaSiigoPorNombre(
+  catalogo: ImpuestoSiigoCat[],
+  nombre: string,
+  tarifa: number,
+): { ok: true; id: number | string; nombre: string } | { ok: false; motivo: string } {
+  const candidatos = catalogo.filter(
+    (t) =>
+      t.id != null &&
+      t.active !== false &&
+      /iva/i.test(`${t.type ?? ""} ${t.name ?? ""}`) &&
+      !/rete|withhold|consum/i.test(`${t.type ?? ""} ${t.name ?? ""}`) &&
+      Number(t.percentage) === Number(tarifa),
+  );
+  if (candidatos.length === 0) return { ok: false, motivo: `Siigo no tiene un IVA activo del ${tarifa} %.` };
+  if (candidatos.length === 1) return { ok: true, id: candidatos[0]!.id!, nombre: String(candidatos[0]!.name ?? "") };
+  const exacto = candidatos.filter((t) => sinTildesMin(t.name) === sinTildesMin(nombre));
+  if (exacto.length === 1) return { ok: true, id: exacto[0]!.id!, nombre: String(exacto[0]!.name ?? "") };
+  const mio = palabrasClave(nombre);
+  const puntuados = candidatos
+    .map((t) => ({ t, puntos: [...palabrasClave(t.name)].filter((w) => mio.has(w)).length }))
+    .sort((a, b) => b.puntos - a.puntos);
+  if (puntuados[0]!.puntos > 0 && puntuados[0]!.puntos > (puntuados[1]?.puntos ?? 0))
+    return { ok: true, id: puntuados[0]!.t.id!, nombre: String(puntuados[0]!.t.name ?? "") };
+  return { ok: false, motivo: `hay varios IVA del ${tarifa} % en Siigo (${candidatos.map((t) => t.name).join(", ")}) y no se puede elegir cuál corresponde.` };
+}

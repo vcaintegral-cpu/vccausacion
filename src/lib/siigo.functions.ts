@@ -6,6 +6,7 @@ import {
   cuentaAjustePesoCompra,
   ajustarPrecisionRenglones,
   ivaSiigoCentavos,
+  elegirIvaSiigoPorNombre,
   capitalizedIvaRow,
   motivoSinAjuste,
   retentionRowsExcluding,
@@ -1248,14 +1249,20 @@ export async function siigoSyncInvoiceCore(
       let ivaTaxName: string | null = null;
       // Cada renglón envía el ID de Siigo del impuesto exacto que se le seleccionó.
       const ivaSiigoPorPosicion = new Map<number, number | string>();
+      const ivaSinIdSiigo: Array<{ position: number; nombre: string; tarifa: number }> = [];
       for (const l of lineasImpuesto ?? []) {
         if (!(Number(l.iva ?? 0) > 0) || !l.iva_tax_id) continue;
         const registro = impuestoPorId.get(l.iva_tax_id);
         const siigoId = siigoIdDelImpuesto(l.iva_tax_id, l.iva_siigo_id);
         if (!siigoId) {
-          throw new Error(
-            `El impuesto de IVA "${l.iva_siigo_name ?? registro?.name ?? l.iva_tax_id}" no tiene su identificador de Siigo. Sincroniza los impuestos desde Integraciones.`,
-          );
+          // Impuesto local (p. ej. importado del Excel) sin id de Siigo: se resuelve más abajo contra el
+          // catálogo de impuestos de Siigo (misma tarifa y nombre más parecido).
+          ivaSinIdSiigo.push({
+            position: Number(l.position ?? 0),
+            nombre: String(l.iva_siigo_name ?? registro?.name ?? l.iva_tax_id),
+            tarifa: Number(l.iva_tax_rate ?? registro?.rate ?? 0),
+          });
+          continue;
         }
         ivaSiigoPorPosicion.set(Number(l.position ?? 0), siigoId);
         if (ivaTaxId == null) {
@@ -1278,6 +1285,21 @@ export async function siigoSyncInvoiceCore(
       const purchaseTaxes = (
         Array.isArray(taxResponse) ? taxResponse : (taxResponse.results ?? [])
       ).filter((t) => t.id != null && t.active !== false);
+      // IVA local sin id de Siigo: mismo porcentaje en el catálogo de Siigo; si hay varios, el de nombre más parecido.
+      for (const f of ivaSinIdSiigo) {
+        const elegido = elegirIvaSiigoPorNombre(purchaseTaxes, f.nombre, f.tarifa);
+        if (!elegido.ok)
+          throw new Error(
+            `El impuesto de IVA "${f.nombre}" no tiene su identificador de Siigo y ${elegido.motivo} Sincroniza los impuestos desde Integraciones.`,
+          );
+        ivaSiigoPorPosicion.set(f.position, elegido.id);
+        console.log("[siigo][iva] impuesto sin id resuelto por tarifa/nombre:", f.nombre, "→", elegido.id, elegido.nombre);
+        if (ivaTaxId == null) {
+          ivaTaxId = elegido.id;
+          ivaTaxRate = f.tarifa;
+          ivaTaxName = elegido.nombre;
+        }
+      }
       for (const line of lineasImpuesto ?? []) {
         const position = Number(line.position ?? 0);
         if (!(Number(line.iva) > 0) || ivaSiigoPorPosicion.has(position)) continue;
