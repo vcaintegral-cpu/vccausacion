@@ -2704,6 +2704,9 @@ export async function siigoSyncInvoiceCore(
             ...forecastErrors,
             ...(motivo ? [motivo] : []),
             ...(diagnosticoRedondeoIva ? [diagnosticoRedondeoIva] : []),
+            `Renglones enviados (cantidad × valor unitario − descuento): ${itemsConRetencion
+              .map((it) => `${it.quantity}×${it.price}${Number(it.discount) ? `−${it.discount}` : ""}`)
+              .join(" | ")}`,
           ].join("\n"),
         );
       }

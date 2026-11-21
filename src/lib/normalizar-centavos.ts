@@ -17,7 +17,32 @@ type DocN = { subtotal: number; iva: number; impoconsumo: number; discount: numb
 
 export type ResultadoNormalizacion<T> = { data: T; nota: string } | null;
 
-export function normalizarCentavos<T extends DocN>(d: T): ResultadoNormalizacion<T> {
+export function normalizarCentavos<T extends DocN>(d0: T): ResultadoNormalizacion<T> {
+  if (!d0.lines.length) return null;
+  // Descuento por renglón informativo: Siigo calcula cantidad × valor unitario − descuento. Si el valor unitario ya
+  // es neto (cantidad × unitario = subtotal del renglón) y el renglón trae además un descuento, Siigo lo restaría
+  // dos veces («Siigo calcularía» un subtotal menor): el descuento del renglón se anula.
+  let descuentosAnulados = 0;
+  const lineasSinDoble = d0.lines.map((l) => {
+    const descuento = Number(l.discount || 0);
+    if (!(descuento > 0)) return l;
+    const bruto = (Number(l.quantity || 0) || 1) * Number(l.unit_value || 0);
+    const subtotal = Number(l.subtotal ?? l.total ?? 0);
+    const cuadraConDescuento = Math.abs(bruto - descuento - subtotal) <= 0.02 + Math.abs(subtotal) * 1e-6;
+    const unitarioYaNeto = Math.abs(bruto - subtotal) <= 0.02 + Math.abs(subtotal) * 1e-6;
+    if (cuadraConDescuento || !unitarioYaNeto) return l;
+    descuentosAnulados += descuento;
+    return { ...l, discount: 0 };
+  });
+  const d = (descuentosAnulados > 0 ? { ...d0, lines: lineasSinDoble } : d0) as T;
+  const nota0 = descuentosAnulados > 0 ? `descuentos de renglón ${roundCOP(descuentosAnulados).toFixed(2)} anulados (el valor unitario ya es neto)` : "";
+  const resultado = normalizarEncabezado(d);
+  if (!resultado && !nota0) return null;
+  if (!resultado) return { data: d, nota: `Normalización de centavos: ${nota0}.` };
+  return nota0 ? { data: resultado.data, nota: resultado.nota.replace("Normalización de centavos: ", `Normalización de centavos: ${nota0}; `) } : resultado;
+}
+
+function normalizarEncabezado<T extends DocN>(d: T): ResultadoNormalizacion<T> {
   const n = d.lines.length;
   if (!n) return null;
   // Valor tal como se guarda: cada renglón redondeado a centavos.

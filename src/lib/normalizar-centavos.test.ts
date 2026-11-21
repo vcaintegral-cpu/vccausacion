@@ -55,3 +55,25 @@ describe("valores con más de 2 decimales (Excel de recibidos)", () => {
     expect(r.data.subtotal).toBe(42764.57);
   });
 });
+
+describe("descuento por renglón ya incluido en el valor unitario", () => {
+  it("anula el descuento del renglón si cantidad × unitario ya es el subtotal (Siigo lo restaría dos veces)", () => {
+    const d = {
+      subtotal: 200, iva: 38, impoconsumo: 0, discount: 0, surcharge: 0, total: 238,
+      lines: [
+        { subtotal: 100, total: 100, quantity: 1, unit_value: 100, discount: 20 },
+        { subtotal: 100, total: 100, quantity: 2, unit_value: 50, discount: 0 },
+      ],
+    };
+    const r = normalizarCentavos(d)!;
+    expect(r.data.lines[0]!.discount).toBe(0);
+    expect(r.nota).toContain("descuentos de renglón 20.00");
+  });
+  it("respeta el descuento cuando unitario bruto − descuento = subtotal", () => {
+    const d = {
+      subtotal: 100, iva: 19, impoconsumo: 0, discount: 0, surcharge: 0, total: 119,
+      lines: [{ subtotal: 100, total: 100, quantity: 1, unit_value: 120, discount: 20 }],
+    };
+    expect(normalizarCentavos(d)).toBeNull();
+  });
+});
