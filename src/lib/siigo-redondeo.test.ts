@@ -104,3 +104,21 @@ describe("subtotal impreso que no cuadra pero renglones + IVA = total", () => {
     expect(sourceErrors({ ...s, total: 6000000 }).length).toBeGreaterThan(0);
   });
 });
+
+import { cuentaAjustePesoCompra } from "./siigo-purchase-validation";
+describe("cuenta del ajuste al peso de compras", () => {
+  it("no usa una subcuenta de 6 dígitos: Siigo exige auxiliar", () => {
+    expect(cuentaAjustePesoCompra([{ code: "539581", name: "Ajuste al peso" }])).toBe("53958101");
+  });
+  it("prefiere el auxiliar de 8 dígitos", () => {
+    expect(
+      cuentaAjustePesoCompra([
+        { code: "539581", name: "Ajuste al peso" },
+        { code: "53958101", name: "Ajuste al peso" },
+      ]),
+    ).toBe("53958101");
+  });
+  it("sin cuenta en el PUC devuelve null", () => {
+    expect(cuentaAjustePesoCompra([{ code: "519595", name: "Otros" }])).toBeNull();
+  });
+});
