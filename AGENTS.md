@@ -188,3 +188,5 @@ Mapa completo: `docs/ARQUITECTURA.md`. Perfiles: `src/empresas/README.md`.
 - 2026-11-21 · Causar en Siigo (Alcance: todas las empresas). La verificación posterior tolera < $1 cuando Siigo devuelve IVA/total/CxP en pesos enteros (no retenciones ni INC). Renglón «producto» sin producto: primero el producto que el mismo proveedor usó antes con esa cuenta (historial, si está en el catálogo), luego `productoDelCatalogo`.
 
 - 2026-11-21 · Validación contra la fuente (Alcance: todas las empresas). `sourceErrors` tolera ~medio centavo por renglón (tope $1) entre la suma de renglones y el subtotal/IVA/INC del documento: precios unitarios con 3 decimales (p. ej. 2179,973 × 5) redondean cada renglón a centavos. La diferencia se concilia con el ajuste al peso 42958101.
+
+- 2026-11-21 · Validación contra la fuente (Alcance: todas las empresas). Si el documento trae descuento y la suma de los renglones coincide con subtotal − descuento (renglones ya netos; típico de PDF leídos con IA, p. ej. Madecentro), `sourceErrors` no marca diferencia. El mensaje de diferencia incluye las cifras comparadas.
