@@ -295,6 +295,13 @@
       "when": 1794854254312,
       "tag": "0040_piloto_enviar_a_siigo",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1795290719828,
+      "tag": "0041_guardas_fuente_tolerancia_redondeo",
+      "breakpoints": true
     }
   ]
 }
