@@ -61,7 +61,10 @@ export function sourceErrors(s: SourceValues): string[] {
     if (Math.abs(lineas - objetivo) > tolerancia) errors.push(`Diferencia con la fuente: suma de ${field === "impoconsumo" ? "INC" : field} de las líneas (renglones ${(lineas / 100).toFixed(2)}, documento ${(s[field] / 100).toFixed(2)}, ${s.lines.length} renglones).`);
   }
   const descuento = subtotalEfectivo(s) === s.subtotal ? s.discount : 0;
-  if (Math.abs(subtotalEfectivo(s) + s.iva + s.impoconsumo - descuento + s.surcharge - s.total) > 100)
+  const base = subtotalEfectivo(s) + s.iva + s.impoconsumo + s.surcharge;
+  // El subtotal puede venir ya neto del descuento (Excel de recibidos: el descuento es informativo):
+  // el total manda, y cuadra con o sin restar el descuento.
+  if (Math.abs(base - descuento - s.total) > 100 && Math.abs(base - s.total) > 100)
     errors.push(`Diferencia con la fuente: subtotal + impuestos − descuento + recargo no coincide con el total (subtotal ${(s.subtotal / 100).toFixed(2)}, IVA ${(s.iva / 100).toFixed(2)}, INC ${(s.impoconsumo / 100).toFixed(2)}, descuento ${(s.discount / 100).toFixed(2)}, recargo ${(s.surcharge / 100).toFixed(2)}, total ${(s.total / 100).toFixed(2)}, suma de renglones ${(s.lines.reduce((a, l) => a + l.subtotal, 0) / 100).toFixed(2)}).`);
   return errors;
 }
@@ -95,7 +98,9 @@ export function validateStoredJournal(inv: { source_override?: unknown; raw_extr
     // (un recargo de $1 o menos puede ir, en cambio, al ajuste al peso 42958101).
     const sinRecargo = subtotalEfectivo(source) + source.iva + source.impoconsumo;
     const conRecargo = sinRecargo + (source.surcharge ?? 0);
-    if (baseDebits !== conRecargo && !(baseDebits === sinRecargo && Math.abs(source.surcharge ?? 0) <= 100))
+    // Con ajuste al peso (42958101) en el asiento, los débitos pueden diferir del subtotal + IVA hasta $1.
+    const hayAjuste = journal.some(l => l.account_code === "42958101");
+    if (baseDebits !== conRecargo && !(baseDebits === sinRecargo && Math.abs(source.surcharge ?? 0) <= 100) && !(hayAjuste && Math.abs(baseDebits - conRecargo) <= 100))
       errors.push("Diferencia con la fuente: los débitos no conservan los importes de la factura.");
   }
   return errors;

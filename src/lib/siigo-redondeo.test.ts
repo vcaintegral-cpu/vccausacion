@@ -122,3 +122,17 @@ describe("cuenta del ajuste al peso de compras", () => {
     expect(cuentaAjustePesoCompra([{ code: "519595", name: "Otros" }])).toBeNull();
   });
 });
+
+describe("subtotal ya neto con descuento informativo (Excel recibidos)", () => {
+  const linea = (subtotal: number, iva: number) => ({ subtotal, iva, impoconsumo: 0, iva_base: null, iva_rate: null });
+  const s: SourceValues = {
+    source: "excel", subtotal: 4276457, iva: 812528, impoconsumo: 0, discount: 1169129, surcharge: 0, total: 5088985,
+    lines: [linea(1089987, 207098), linea(1089987, 207098), linea(1089987, 207098), linea(359071, 68223), linea(647426, 123011)],
+  };
+  it("no marca diferencia: el total cuadra sin restar el descuento", () => {
+    expect(sourceErrors(s)).toEqual([]);
+  });
+  it("marca si el total no cuadra de ninguna forma", () => {
+    expect(sourceErrors({ ...s, total: 9999999 }).length).toBeGreaterThan(0);
+  });
+});
