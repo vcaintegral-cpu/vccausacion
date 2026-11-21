@@ -20,17 +20,17 @@ describe("redondeo a pesos enteros de Siigo", () => {
       items: [{ taxes: [{ id: 1, type: "IVA", value: 18830 }] }],
     };
     const esperado = {
-      total: 117931.75,
-      iva: 18830.75,
+      total: 117933.75,
+      iva: 18832.75,
       impoconsumo: 0,
       retentions: 0,
       returnedRetentions: 0,
-      payable: 117931.75,
+      payable: 117933.75,
       ivaIds: [1],
     };
     expect(purchaseReadbackErrors(doc, esperado).length).toBe(3);
-    expect(purchaseReadbackErrors(doc, { ...esperado, toleranciaRedondeoSiigo: 0.75 })).toEqual([]);
-    expect(purchaseReadbackErrors(doc, { ...esperado, toleranciaRedondeoSiigo: 0.5 }).length).toBe(3);
+    expect(purchaseReadbackErrors(doc, { ...esperado, toleranciaRedondeoSiigo: 2.75 })).toEqual([]);
+    expect(purchaseReadbackErrors(doc, { ...esperado, toleranciaRedondeoSiigo: 2.5 }).length).toBe(3);
   });
 });
 
