@@ -53,3 +53,15 @@ describe("producto del catálogo para un renglón sin código", () => {
     expect(productoDelCatalogo(cat, "", "x")).toBeNull();
   });
 });
+
+describe("IVA en pesos enteros de Siigo", () => {
+  const base = { total: 100, iva: 6118.14, impoconsumo: 0, retentions: 0, returnedRetentions: 0, payable: 100, ivaIds: [1] };
+  it("tolera < $1 cuando Siigo entrega pesos enteros", () => {
+    const doc = { total: 100, payments: [{ value: 100 }], items: [{ taxes: [{ id: 1, type: "IVA", value: 6118 }] }] };
+    expect(purchaseReadbackErrors(doc, base)).toEqual([]);
+  });
+  it("no tolera $1 o más", () => {
+    const doc = { total: 100, payments: [{ value: 100 }], items: [{ taxes: [{ id: 1, type: "IVA", value: 6117 }] }] };
+    expect(purchaseReadbackErrors(doc, base).length).toBe(1);
+  });
+});
