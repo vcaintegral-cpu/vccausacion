@@ -32,7 +32,7 @@ function consulta(tabla: keyof typeof db) {
 vi.mock("@/lib/db-contextual", () => ({ supabase: { from: (t: keyof typeof db) => consulta(t) } }));
 vi.mock("@/lib/asignar-cuenta-gasto", () => ({
   asignarCuentaGasto: async (id: string, cuenta: { code: string }) => {
-    if (!sinEscribir.has(id)) db.invoice_lines.filter((l) => l.invoice_id === id).forEach((l) => (l.account_code = cuenta.code));
+    if (!sinEscribir.has(id)) db.invoice_lines.filter((l) => l['invoice_id'] === id).forEach((l) => (l['account_code'] = cuenta.code));
     return { id, ok: true, renglones: 1, message: "ok" };
   },
 }));
@@ -77,7 +77,7 @@ describe("cuenta por proveedor con varias facturas", () => {
     expect(r.verificadas).toBe(3);
     expect(r.fallidas).toEqual([]);
     expect(r.omitidas.map((x) => x.id).sort()).toEqual(["a4", "a5"]);
-    const cuentasDe = (id: string) => db.invoice_lines.filter((l) => l.invoice_id === id).map((l) => l.account_code);
+    const cuentasDe = (id: string) => db.invoice_lines.filter((l) => l['invoice_id'] === id).map((l) => l['account_code']);
     for (const id of ["a1", "a2", "a3"]) expect(cuentasDe(id).every((c) => c === "621029")).toBe(true);
     // Intactas: la aprobada, la causada y el otro proveedor.
     expect(cuentasDe("a4")).toEqual(["621008"]);
