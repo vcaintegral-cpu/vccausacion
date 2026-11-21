@@ -79,3 +79,14 @@ describe("suma de líneas vs documento", () => {
     expect(sourceErrors(fuente([linea(1000), linea(1000)], 2500)).length).toBe(1);
   });
 });
+
+describe("renglones ya netos del descuento", () => {
+  const linea = (subtotal: number) => ({ subtotal, iva: 0, impoconsumo: 0, iva_base: null, iva_rate: null });
+  const base: SourceValues = { source: "pdf", subtotal: 5445586, iva: 0, impoconsumo: 0, discount: 1169128, surcharge: 0, total: 4276458, lines: [linea(4276458)] };
+  it("acepta suma = subtotal − descuento", () => {
+    expect(sourceErrors(base)).toEqual([]);
+  });
+  it("sigue marcando si no cuadra de ninguna forma", () => {
+    expect(sourceErrors({ ...base, discount: 100000 }).length).toBeGreaterThan(0);
+  });
+});

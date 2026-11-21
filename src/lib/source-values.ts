@@ -39,6 +39,9 @@ export function sourceErrors(s: SourceValues): string[] {
     // Cantidad × valor unitario con 3 decimales hace que cada renglón se redondee a centavos: la suma puede
     // diferir del total del documento por ~medio centavo por renglón (tope $1). Se concilia con el ajuste al peso.
     const tolerancia = Math.min(100, Math.max(0, Math.ceil(s.lines.length / 2)));
+    // Renglones ya netos del descuento: PDF que imprime el subtotal bruto y el descuento aparte, con los renglones
+    // ya descontados. Si la suma coincide con subtotal − descuento, el documento es consistente.
+    if (field === "subtotal" && s.discount > 0 && Math.abs(lineas - (s.subtotal - s.discount)) <= tolerancia) continue;
     if (Math.abs(lineas - s[field]) > tolerancia) errors.push(`Diferencia con la fuente: suma de ${field === "impoconsumo" ? "INC" : field} de las líneas (renglones ${(lineas / 100).toFixed(2)}, documento ${(s[field] / 100).toFixed(2)}, ${s.lines.length} renglones).`);
   }
   if (Math.abs(s.subtotal + s.iva + s.impoconsumo - s.discount + s.surcharge - s.total) > 100)
