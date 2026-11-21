@@ -23,6 +23,8 @@ export async function asignarCuentaGasto(
     /** Clasificación del renglón: «producto» busca el producto en el catálogo por la descripción (o usa `producto`). */
     tipo?: "producto" | "gasto";
     producto?: { code: string; name: string | null } | null;
+    /** Deja constancia del cambio en la propia factura (raw_extraction.historial_cambios). */
+    historial?: { usuario: string | null; nota: string };
   } = {},
 ): Promise<ResultadoAsignacion> {
   const code = cuenta.code.trim();
@@ -84,6 +86,7 @@ export async function asignarCuentaGasto(
   });
   const decisiones = { ...((raw["account_decisions"] ?? {}) as Record<string, unknown>) };
   let renglones = 0;
+  const cuentasAnteriores = new Set<string>();
   // Elección explícita sobre una factura que la pantalla marca como pendiente: si no se detecta ningún
   // renglón pendiente, se aplica a todos para no quedarse sin hacer nada.
   const hayPendientes = ia.lines.some(
@@ -126,6 +129,7 @@ export async function asignarCuentaGasto(
         : {}),
     };
     renglones += 1;
+    cuentasAnteriores.add(actual.get(i) || "(sin cuenta)");
   });
   if (renglones === 0)
     return {
@@ -136,7 +140,29 @@ export async function asignarCuentaGasto(
     };
   const { error: upErr } = await supabase
     .from("invoices")
-    .update({ raw_extraction: { ...raw, account_decisions: decisiones } as never })
+    .update({
+      raw_extraction: {
+        ...raw,
+        account_decisions: decisiones,
+        ...(opciones.historial
+          ? {
+              historial_cambios: [
+                ...(Array.isArray(raw["historial_cambios"]) ? (raw["historial_cambios"] as unknown[]) : []),
+                {
+                  fecha: new Date().toISOString(),
+                  usuario: opciones.historial.usuario,
+                  campo: "cuenta_gasto",
+                  de: [...cuentasAnteriores],
+                  a: code,
+                  tipo: opciones.tipo ?? null,
+                  renglones,
+                  nota: opciones.historial.nota,
+                },
+              ],
+            }
+          : {}),
+      } as never,
+    })
     .eq("id", invoiceId);
   if (upErr) return { id: invoiceId, ok: false, renglones: 0, message: upErr.message };
   const rec = await recalcularCuentasBorrador(invoiceId, config);
