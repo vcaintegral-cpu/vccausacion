@@ -54,7 +54,11 @@ export function sourceErrors(s: SourceValues): string[] {
     if (field === "impoconsumo" && lineas === 0) continue;
     // Cantidad × valor unitario con 3 decimales hace que cada renglón se redondee a centavos: la suma puede
     // diferir del total del documento por ~medio centavo por renglón (tope $1). Se concilia con el ajuste al peso.
-    const tolerancia = Math.min(100, Math.max(0, Math.ceil(s.lines.length / 2)));
+    // El IVA (e INC) además se redondea a pesos enteros en el documento del proveedor: hasta medio peso por renglón
+    // (tope $2): 5.042 × 19 % = 957,98 y la factura dice 958.
+    const tolerancia = field === "subtotal"
+      ? Math.min(100, Math.max(0, Math.ceil(s.lines.length / 2)))
+      : Math.min(200, Math.max(1, s.lines.length * 50));
     // Renglones ya netos del descuento: PDF que imprime el subtotal bruto y el descuento aparte, con los renglones
     // ya descontados. Si la suma coincide con subtotal − descuento, el documento es consistente.
     if (field === "subtotal" && s.discount > 0 && Math.abs(lineas - (s.subtotal - s.discount)) <= tolerancia) continue;

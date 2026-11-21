@@ -194,3 +194,14 @@ describe("retenciones en pesos enteros de Siigo", () => {
     expect(r.filter((x) => x.startsWith("Retenciones"))).toEqual([]);
   });
 });
+
+describe("IVA redondeado a pesos por el proveedor", () => {
+  const linea = (subtotal: number, iva: number) => ({ subtotal, iva, impoconsumo: 0, iva_base: null, iva_rate: null });
+  const s: SourceValues = { source: "pdf", subtotal: 504200, iva: 95800, impoconsumo: 0, discount: 0, surcharge: 0, total: 600000, lines: [linea(504200, 95798)] };
+  it("5.042 × 19 % = 957,98 contra 958 del documento: no es diferencia", () => {
+    expect(sourceErrors(s)).toEqual([]);
+  });
+  it("una diferencia real de IVA sigue marcándose", () => {
+    expect(sourceErrors({ ...s, lines: [linea(504200, 95000)] }).length).toBe(1);
+  });
+});
