@@ -165,6 +165,48 @@ export async function listItemStatuses(
   return out;
 }
 
+/**
+ * Una tarea que quedó «con error» pero cuya factura SÍ existe como borrador (el guardado se completó
+ * aunque el registro de la tarea no) se marca como procesada y se recalculan los contadores de la carga.
+ */
+async function reconciliarConBorradores(uploadId: string, items: BulkItem[]): Promise<BulkItem[]> {
+  const conError = items.filter((i) => i.status === "error" && i.provider_nit && i.invoice_number);
+  if (conError.length === 0) return items;
+  try {
+    const nits = [...new Set(conError.map((i) => String(i.provider_nit)))];
+    const empresa = conError[0]!.company_id;
+    const existentes = new Map<string, { id: string; total: number | null }>();
+    for (let k = 0; k < nits.length; k += 100) {
+      const { data } = await supabase
+        .from("invoices")
+        .select("id, prefix, number, provider_nit, total")
+        .eq("company_id", empresa)
+        .in("provider_nit", nits.slice(k, k + 100))
+        .limit(5000);
+      for (const f of (data ?? []) as Array<{ id: string; prefix: string | null; number: string | null; provider_nit: string | null; total: number | null }>) {
+        const numero = [f.prefix, f.number].filter(Boolean).join("-");
+        existentes.set(`${f.provider_nit}|${numero}`, { id: f.id, total: f.total });
+      }
+    }
+    const arreglados: BulkItem[] = [];
+    for (const i of conError) {
+      const f = existentes.get(`${i.provider_nit}|${i.invoice_number}`);
+      if (f) arreglados.push({ ...i, status: "completed", stage: "guardado", invoice_id: f.id, error_message: null, user_message: null });
+    }
+    if (arreglados.length === 0) return items;
+    for (const a of arreglados) {
+      await updateItem(a.id, { status: "completed", stage: "guardado", invoice_id: a.invoice_id, error_message: null, user_message: null });
+    }
+    const porId = new Map(arreglados.map((a) => [a.id, a]));
+    const nuevos = items.map((i) => porId.get(i.id) ?? i);
+    await refreshUploadCounters(uploadId, nuevos);
+    return nuevos;
+  } catch (e) {
+    console.error("[bulk] no se pudo reconciliar la carga con los borradores", e);
+    return items;
+  }
+}
+
 /** Misma actualización para varias tareas en una sola consulta. */
 export async function updateItems(ids: string[], patch: Partial<BulkItem>) {
   for (let i = 0; i < ids.length; i += 200) {
@@ -221,7 +263,7 @@ export async function listItems(uploadId: string): Promise<BulkItem[]> {
     out.push(...page);
     if (page.length < PAGE) break;
   }
-  return out;
+  return reconciliarConBorradores(uploadId, out);
 }
 
 /** Cargas de compras de la empresa que aún pueden tener facturas por procesar (sin límite de antigüedad). */
