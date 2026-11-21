@@ -9,7 +9,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { FileUp, Loader2, Save, Sparkles, Trash2 } from "lucide-react";
+import { FileUp, Loader2, Pencil, Save, Sparkles, Trash2 } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
 import { ITEM_TYPES, normalizeItemType } from "@/lib/item-type";
@@ -1313,6 +1313,29 @@ function Causar() {
     <div className="space-y-6">
       {sourceIssues.map(issue => <p key={issue} className="text-sm text-destructive">{source?.source === "pdf" ? "Revisar lectura del PDF. " : ""}{issue}</p>)}
       {source && editingId && companyId && <SourceValuesCorrection source={source} invoiceId={editingId} companyId={companyId} />}
+      {source && !editingId && (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-card p-3 text-sm">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (
+                !window.confirm(
+                  "Los valores de esta factura vienen de la fuente (PDF/Excel/XML) y están bloqueados. ¿Editarlos manualmente? Se desactivan los controles contra la fuente y la factura se trata como manual: usted responde por los valores.",
+                )
+              )
+                return;
+              setSource(null);
+              toast.info("Valores desbloqueados: puede editar cantidades, valores, descuentos e IVA de los renglones.");
+            }}
+          >
+            <Pencil className="size-4" /> Editar valores manualmente
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            Cantidad, valor unitario, descuento e IVA están bloqueados porque vienen de la fuente. Al guardar el borrador, la corrección se hace con «Corregir valores con motivo».
+          </span>
+        </div>
+      )}
       {borrador?.invoice?.["value_modified"] && <p className="text-sm text-destructive">Valor modificado manualmente</p>}
       <div>
         <h1 className="text-xl font-semibold">{editingId ? "Editar borrador" : "Causar factura"}</h1>
