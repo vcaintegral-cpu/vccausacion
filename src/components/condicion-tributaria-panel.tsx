@@ -11,6 +11,8 @@ import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { invalidateBulkDeps } from "@/lib/bulk-runner";
 import { cop } from "@/lib/format";
+import { consultarHistorialProveedorSiigo, type HistorialProveedorSiigo } from "@/lib/historial-proveedor-siigo.functions";
+import { textoResumen } from "@/lib/historial-proveedor-siigo";
 import {
   MOTIVO_LABEL,
   RETENCIONES,
@@ -74,6 +76,8 @@ export function CondicionTributariaPanel(props: {
   const [kindsExentos, setKindsExentos] = useState<RetencionKind[]>(["retefuente"]);
   const [retenerCon, setRetenerCon] = useState<Partial<Record<RetencionKind, string>>>({});
   const [guardando, setGuardando] = useState(false);
+  const [consultando, setConsultando] = useState(false);
+  const [consulta, setConsulta] = useState<HistorialProveedorSiigo | null>(null);
 
   const precedentes = useQuery({
     queryKey: ["precedente-tributario", companyId, taxes.length],
@@ -118,6 +122,30 @@ export function CondicionTributariaPanel(props: {
     id ? (taxes.find((t) => String(t.id) === id)?.name ?? "impuesto no configurado") : null;
   const retencionesDisponibles = (kind: RetencionKind) =>
     taxes.filter((t) => t.kind === kind && t.active !== false);
+
+  /** Lee las compras anteriores del proveedor en Siigo y deja lista (sin guardar) la retención que se le practicó. */
+  async function consultarSiigo() {
+    setConsultando(true);
+    try {
+      const r = await consultarHistorialProveedorSiigo({ data: { companyId, nit: nit!, meses: 12 } });
+      setConsulta(r);
+      const elegidos: Partial<Record<RetencionKind, string>> = {};
+      for (const x of r.resumen.retenciones) {
+        if (x.taxId && !elegidos[x.kind] && r.resumen.conRetencion >= Math.ceil(r.resumen.compras / 2)) elegidos[x.kind] = x.taxId;
+      }
+      if (Object.keys(elegidos).length) {
+        setRetenerCon((prev) => ({ ...elegidos, ...prev }));
+        setModo("retener");
+        toast.success("Encontré retenciones en sus compras de Siigo: revise y pulse «Guardar condición».");
+      } else {
+        toast.message(textoResumen(r.resumen));
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No fue posible consultar Siigo.");
+    } finally {
+      setConsultando(false);
+    }
+  }
 
   async function guardar(nueva: CondicionTributaria | null) {
     setGuardando(true);
@@ -295,7 +323,19 @@ export function CondicionTributariaPanel(props: {
         >
           Retenerle siempre con…
         </Button>
+        <Button size="sm" variant="outline" disabled={consultando} onClick={() => void consultarSiigo()}>
+          {consultando ? <Loader2 className="mr-1 size-3.5 animate-spin" /> : <History className="mr-1 size-3.5" />}
+          Consultar compras anteriores en Siigo
+        </Button>
       </div>
+      {consulta ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {textoResumen(consulta.resumen)}{" "}
+          <span>
+            (Se revisaron {consulta.escaneadas} compras de los últimos 12 meses{consulta.completo ? "" : "; la búsqueda quedó incompleta"}; retenciones leídas de las {consulta.revisadas} más recientes.)
+          </span>
+        </p>
+      ) : null}
 
       {modo === "exento" ? (
         <div className="mt-3 grid gap-3 rounded-md border border-border p-3 sm:grid-cols-2">
