@@ -161,6 +161,8 @@ function Revisar() {
   const createProduct = useServerFn(siigoCreateProduct);
 
   const [header, setHeader] = useState<InvRow | null>(null);
+  const [cuentaTodos, setCuentaTodos] = useState("");
+  const [tipoTodos, setTipoTodos] = useState("");
   const [lines, setLines] = useState<LineRow[]>([]);
   const [sending, setSending] = useState(false);
   const [ok, setOk] = useState<{
@@ -840,6 +842,24 @@ function Revisar() {
    * Los impuestos se recalculan sobre la base propia de cada renglón para no
    * romper el cuadre de la factura.
    */
+  /** Pone la misma cuenta contable (y, si se elige, el mismo tipo de ítem) en todos los renglones; no toca descripciones ni valores. */
+  function aplicarCuentaATodos() {
+    if (!cuentaTodos) {
+      toast.info("Elija primero la cuenta contable.");
+      return;
+    }
+    const acc = (data?.accounts ?? []).find((a) => a.code === cuentaTodos);
+    setLines((prev) =>
+      prev.map((l) => ({
+        ...l,
+        account_code: cuentaTodos,
+        account_name: acc?.name ?? null,
+        ...(tipoTodos ? { item_type: normalizeItemType(tipoTodos) } : {}),
+      })),
+    );
+    toast.success(`Cuenta ${cuentaTodos} aplicada a ${lines.length} renglón(es). Revise y guarde.`);
+  }
+
   function aplicarATodos() {
     const first = lines[0];
     if (!first) return;
@@ -986,6 +1006,41 @@ function Revisar() {
           <h2 className="text-sm font-semibold">Renglones</h2>
           <Button size="sm" variant="outline" onClick={aplicarATodos}>
             <Sparkles className="size-4" /> Aplicar a todos
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-card p-3">
+          <div className="min-w-[260px] flex-1 space-y-1">
+            <label className="text-xs text-muted-foreground">Cuenta contable para todos los renglones</label>
+            <select
+              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+              value={cuentaTodos}
+              onChange={(e) => setCuentaTodos(e.target.value)}
+            >
+              <option value="">Seleccionar…</option>
+              {(data?.accounts ?? []).map((a) => (
+                <option key={a.code} value={a.code}>
+                  {a.code} · {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="w-44 space-y-1">
+            <label className="text-xs text-muted-foreground">Tipo de ítem (opcional)</label>
+            <select
+              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm capitalize"
+              value={tipoTodos}
+              onChange={(e) => setTipoTodos(e.target.value)}
+            >
+              <option value="">Sin cambio</option>
+              {ITEM_TYPES.map((it) => (
+                <option key={it} value={it}>
+                  {it}
+                </option>
+              ))}
+            </select>
+          </div>
+          <Button size="sm" className="border border-transparent bg-violet-600 text-white hover:bg-violet-700 hover:text-white" disabled={!cuentaTodos || lines.length === 0} onClick={aplicarCuentaATodos}>
+            Aplicar cuenta a todos los renglones
           </Button>
         </div>
         <div className="overflow-x-auto rounded-lg border border-border bg-card">
