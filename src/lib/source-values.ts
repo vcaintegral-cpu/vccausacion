@@ -36,7 +36,10 @@ export function sourceErrors(s: SourceValues): string[] {
     const lineas = s.lines.reduce((sum, l) => sum + l[field], 0);
     // El INC puede venir solo en el total del documento (sin discriminar por renglón).
     if (field === "impoconsumo" && lineas === 0) continue;
-    if (lineas !== s[field]) errors.push(`Diferencia con la fuente: suma de ${field === "impoconsumo" ? "INC" : field} de las líneas.`);
+    // Cantidad × valor unitario con 3 decimales hace que cada renglón se redondee a centavos: la suma puede
+    // diferir del total del documento por ~medio centavo por renglón (tope $1). Se concilia con el ajuste al peso.
+    const tolerancia = Math.min(100, Math.max(0, Math.ceil(s.lines.length / 2)));
+    if (Math.abs(lineas - s[field]) > tolerancia) errors.push(`Diferencia con la fuente: suma de ${field === "impoconsumo" ? "INC" : field} de las líneas.`);
   }
   if (Math.abs(s.subtotal + s.iva + s.impoconsumo - s.discount + s.surcharge - s.total) > 100)
     errors.push("Diferencia con la fuente: subtotal + impuestos − descuento + recargo no coincide con el total.");

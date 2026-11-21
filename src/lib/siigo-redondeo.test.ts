@@ -65,3 +65,17 @@ describe("IVA en pesos enteros de Siigo", () => {
     expect(purchaseReadbackErrors(doc, base).length).toBe(1);
   });
 });
+
+import { sourceErrors, type SourceValues } from "./source-values";
+describe("suma de líneas vs documento", () => {
+  const linea = (subtotal: number, iva = 0) => ({ subtotal, iva, impoconsumo: 0, iva_base: null, iva_rate: null });
+  const fuente = (lines: SourceValues["lines"], subtotal: number): SourceValues => ({
+    source: "excel", subtotal, iva: 0, impoconsumo: 0, discount: 0, surcharge: 0, total: subtotal, lines,
+  });
+  it("tolera el redondeo de centavos por renglón", () => {
+    expect(sourceErrors(fuente([linea(1089987), linea(1089987), linea(1089987), linea(359071), linea(647426)], 4276456))).toEqual([]);
+  });
+  it("no tolera diferencias grandes", () => {
+    expect(sourceErrors(fuente([linea(1000), linea(1000)], 2500)).length).toBe(1);
+  });
+});
