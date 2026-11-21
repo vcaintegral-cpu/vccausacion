@@ -61,7 +61,7 @@ describe("INC solo en el total y recargo global del documento", () => {
     expect(sourceErrors(fuente)).toEqual([]);
     // Pero un INC por renglón que no suma el total sigue siendo error.
     const malo = { ...fuente, lines: fuente.lines.map((l, i) => (i === 0 ? { ...l, impoconsumo: 500000 } : l)) };
-    expect(sourceErrors(malo)).toEqual(["Diferencia con la fuente: suma de INC de las líneas."]);
+    expect(sourceErrors(malo).map((m) => m.replace(/ \(renglones.*$/, "."))).toEqual(["Diferencia con la fuente: suma de INC de las líneas."]);
   });
 
   const lineas = [
