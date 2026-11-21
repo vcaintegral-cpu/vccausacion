@@ -16,6 +16,7 @@ import { fetchCompanyPuc } from "@/lib/puc-data";
 import { errorCode } from "@/lib/bulk-diagnostics";
 import {
   BulkInvoiceStageError,
+  errorComoTexto,
   FueraDeMesError,
   verificarMes,
   type RangoMes,
@@ -588,7 +589,7 @@ export async function processItem(
       });
       return;
     }
-    const message = error instanceof Error ? error.message : "Error al procesar";
+    const message = error instanceof Error ? error.message : errorComoTexto(error) || "Error al procesar";
     const duplicado = /duplicad|ya fue causada|ya existe|repetido/i.test(message);
     const staged = error instanceof BulkInvoiceStageError ? error : null;
     const trace = staged?.trace;

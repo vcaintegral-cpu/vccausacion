@@ -1693,7 +1693,7 @@ export async function saveExtractedInvoice(params: {
     await enqueueDraft({ invoice: invoiceRow, lines: lineRows, journal: journalRows });
   } else {
     const { error } = await supabase.from("invoices").insert(invoiceRow as never);
-    if (error) throw error;
+    if (error) throw new Error(errorComoTexto(error));
     const results = await Promise.all([supabase.from("invoice_lines").insert(lineRows), supabase.from("journal_lines").insert(journalRows)]);
     for (const result of results) if (result.error) throw result.error;
   }
@@ -1763,6 +1763,38 @@ async function flushDrafts(company: string) {
       const cleanup = await supabase.from("invoices").delete().eq("company_id", company).eq("status", "borrador").in("id", ids);
       if (cleanup.error) console.error("No se pudo limpiar el grupo incompleto de borradores.");
     }
-    for (const row of queue.rows) row.reject(error);
+    // Un documento con problema (duplicado, dato inválido) no debe tumbar a los demás del grupo:
+    // se reintenta cada uno por separado y solo falla el que tiene el problema real.
+    console.error("[bulk] grupo de borradores falló; se guarda uno por uno:", errorComoTexto(error));
+    for (const row of queue.rows) {
+      try {
+        const padre = await supabase.from("invoices").insert(row.draft.invoice as never);
+        if (padre.error) throw padre.error;
+        const hijos = await Promise.all([
+          supabase.from("invoice_lines").insert(row.draft.lines as never),
+          supabase.from("journal_lines").insert(row.draft.journal as never),
+        ]);
+        const falla = hijos.find((h) => h.error)?.error;
+        if (falla) {
+          await supabase.from("invoices").delete().eq("company_id", company).eq("status", "borrador").eq("id", String(row.draft.invoice['id']));
+          throw falla;
+        }
+        row.resolve();
+      } catch (e) {
+        row.reject(new Error(errorComoTexto(e)));
+      }
+    }
   }
+}
+
+/** Los errores de Supabase son objetos planos (no Error): se convierten a texto legible con su código. */
+export function errorComoTexto(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === "object") {
+    const o = e as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown };
+    const partes = [o.message, o.details, o.hint].filter((x) => typeof x === "string" && x).map(String);
+    const texto = partes.join(" · ") || JSON.stringify(e);
+    return o.code ? `${texto} (código ${String(o.code)})` : texto;
+  }
+  return String(e);
 }
