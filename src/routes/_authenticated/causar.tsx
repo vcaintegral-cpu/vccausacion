@@ -1,3 +1,4 @@
+import { normalizarCentavos } from "@/lib/normalizar-centavos";
 import { errorComoTexto } from "@/lib/bulk-invoices";
 import { captureSource, sourceFromRaw, sourceErrors, alignJournalToSource, type SourceValues } from "@/lib/source-values";
 import { SourceValuesCorrection } from "@/components/source-values-correction";
@@ -794,7 +795,7 @@ function Causar() {
     setReading(true);
     try {
       const content = await prepareInvoiceFile(file, password);
-      const data = (await extract({
+      let data = (await extract({
         data: { fileName: file.name, mimeType: file.type || "application/octet-stream", ...content },
       })) as ExtractedInvoice;
       // Las notas crédito de compra no se causan aquí: se registran manualmente en Siigo.
@@ -804,6 +805,15 @@ function Causar() {
         const numero = [data.prefix, data.number].filter(Boolean).join("") || null;
         toast.error(mensajeNotaCredito({ numero, proveedor: data.provider_name, nit: data.provider_nit, total: data.total, estado }), { duration: 30000 });
         return;
+      }
+      // Centavos de los renglones y descuento informativo: el documento queda consistente desde el origen
+      // (suma de renglones = subtotal; subtotal + IVA + INC + recargo = total), igual que en la carga masiva.
+      {
+        const norm = normalizarCentavos({ ...data, surcharge: data.surcharge ?? 0 } as never) as { data: ExtractedInvoice; nota: string } | null;
+        if (norm) {
+          data = { ...data, subtotal: norm.data.subtotal, discount: norm.data.discount, lines: norm.data.lines };
+          toast.info(norm.nota);
+        }
       }
       setSource(captureSource(data, "pdf"));
       const { lines: extracted, ...rest } = data;
