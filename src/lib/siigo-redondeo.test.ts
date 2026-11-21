@@ -136,3 +136,17 @@ describe("subtotal ya neto con descuento informativo (Excel recibidos)", () => {
     expect(sourceErrors({ ...s, total: 9999999 }).length).toBeGreaterThan(0);
   });
 });
+
+import { adaptPurchaseItems } from "./siigo-purchase-validation";
+describe("sin renglones diminutos por redondeo de IVA", () => {
+  const taxes = [{ id: 1, name: "IVA 19%", type: "IVA", percentage: 19, active: true }];
+  const item = (price: number) => ({ type: "Account" as const, code: "621025", account_code: "621025", description: "Cerámica", quantity: 1, price, discount: 0, tax_ids: [1], item_type: "gasto" });
+  it("resto no gravado de pocos pesos: no divide el renglón", () => {
+    const r = adaptPurchaseItems([item(136068.42)], [{ iva: 25852, impoconsumo: 0 }], taxes as never, { subtotal: 136068.42, iva: 25852, impoconsumo: 0, total: 161920.42 }, "53958101");
+    expect(r.items.length).toBe(1);
+  });
+  it("base parcial real (resto grande): sí divide", () => {
+    const r = adaptPurchaseItems([item(100000)], [{ iva: 1900, impoconsumo: 0 }], taxes as never, { subtotal: 100000, iva: 1900, impoconsumo: 0, total: 101900 }, "53958101");
+    expect(r.items.length).toBe(2);
+  });
+});
