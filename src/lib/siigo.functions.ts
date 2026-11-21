@@ -1989,18 +1989,21 @@ export async function siigoSyncInvoiceCore(
       // IVA que Siigo calcula renglón por renglón y que no se puede reproducir con los ajustes de precisión
       // (el proveedor redondeó distinto): se envía el IVA de Siigo, SIN renglón de ajuste al peso, y la
       // diferencia (hasta $5) queda registrada como redondeo del proveedor, pendiente al pago.
+      let diagnosticoRedondeoIva = "";
       {
         const ivaSiigo = ivaSiigoCentavos(items as never, purchaseTaxes);
         const dIva = toCents(iva) - ivaSiigo;
-        if (
-          dIva !== 0 &&
-          Math.abs(dIva) <= 500 &&
-          purchasePayloadErrors(items as never, purchaseTaxes, {
-            subtotal,
-            iva: ivaSiigo / 100,
-            impoconsumo,
-          }).length === 0
-        ) {
+        const erroresConIvaSiigo =
+          dIva !== 0 && Math.abs(dIva) <= 500
+            ? purchasePayloadErrors(items as never, purchaseTaxes, {
+                subtotal,
+                iva: ivaSiigo / 100,
+                impoconsumo,
+              })
+            : ["fuera del tope de $5"];
+        if (dIva !== 0 && erroresConIvaSiigo.length > 0)
+          diagnosticoRedondeoIva = `Redondeo de IVA no aplicado (diferencia ${dIva / 100}): ${erroresConIvaSiigo.join(" | ")}`;
+        if (dIva !== 0 && erroresConIvaSiigo.length === 0) {
           redondeoProveedor = r2(redondeoProveedor + dIva / 100);
           iva = r2(ivaSiigo / 100);
           adaptacion.notes.push(
@@ -2696,7 +2699,13 @@ export async function siigoSyncInvoiceCore(
           { subtotal, iva, impoconsumo },
           permitirAjustePrecision,
         );
-        throw new Error([...forecastErrors, ...(motivo ? [motivo] : [])].join("\n"));
+        throw new Error(
+          [
+            ...forecastErrors,
+            ...(motivo ? [motivo] : []),
+            ...(diagnosticoRedondeoIva ? [diagnosticoRedondeoIva] : []),
+          ].join("\n"),
+        );
       }
       const payload = construirPayload(totalDocumentoSiigo);
       siigoAttemptTrace = {

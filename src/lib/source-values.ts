@@ -62,7 +62,7 @@ export function sourceErrors(s: SourceValues): string[] {
   }
   const descuento = subtotalEfectivo(s) === s.subtotal ? s.discount : 0;
   if (Math.abs(subtotalEfectivo(s) + s.iva + s.impoconsumo - descuento + s.surcharge - s.total) > 100)
-    errors.push("Diferencia con la fuente: subtotal + impuestos − descuento + recargo no coincide con el total.");
+    errors.push(`Diferencia con la fuente: subtotal + impuestos − descuento + recargo no coincide con el total (subtotal ${(s.subtotal / 100).toFixed(2)}, IVA ${(s.iva / 100).toFixed(2)}, INC ${(s.impoconsumo / 100).toFixed(2)}, descuento ${(s.discount / 100).toFixed(2)}, recargo ${(s.surcharge / 100).toFixed(2)}, total ${(s.total / 100).toFixed(2)}, suma de renglones ${(s.lines.reduce((a, l) => a + l.subtotal, 0) / 100).toFixed(2)}).`);
   return errors;
 }
 export function compareSource(s: SourceValues, inv: { subtotal?: unknown; iva?: unknown; impoconsumo?: unknown; total?: unknown; discount?: unknown }): string[] {
