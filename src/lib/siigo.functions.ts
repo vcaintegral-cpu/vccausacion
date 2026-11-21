@@ -1549,6 +1549,7 @@ export async function siigoSyncInvoiceCore(
       // Renglones «producto» sin producto elegido: se busca el producto que ese proveedor ya usó
       // antes con la misma cuenta (historial de sus compras), si existe en el catálogo.
       const productoPorCuentaHistorial = new Map<string, string>();
+      const productosDelProveedor = new Set<string>();
       const sinProducto = (invoiceLines ?? []).filter((l) => {
         const t = normalizeItemType(l.item_type);
         const c = String(l.code ?? "").trim();
@@ -1579,6 +1580,7 @@ export async function siigoSyncInvoiceCore(
           for (const x of ordenadas) {
             const c = String(x.code ?? "").trim();
             const cta = String(x.account_code ?? "");
+            if (c && porCodigo.has(c)) productosDelProveedor.add(c);
             if (c && cta && porCodigo.has(c) && !productoPorCuentaHistorial.has(cta))
               productoPorCuentaHistorial.set(cta, c);
           }
@@ -1598,6 +1600,8 @@ export async function siigoSyncInvoiceCore(
                 // descripción); si no hay uno claro, se pide elegirlo en el borrador.
                 const elegido =
                   productoPorCuentaHistorial.get(cuenta) ??
+                  // El proveedor siempre ha usado un único producto: ese, aunque la cuenta del renglón sea otra.
+                  (productosDelProveedor.size === 1 ? [...productosDelProveedor][0] : undefined) ??
                   productoDelCatalogo(
                     [...porCodigo.values()] as never,
                     cuenta,
