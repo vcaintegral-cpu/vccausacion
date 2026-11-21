@@ -1,3 +1,4 @@
+import { normalizarCentavos } from "@/lib/normalizar-centavos";
 import { funcionActiva } from "@/empresas/registro";
 import { estadoFacturaAfectada, facturaReferidaEnTexto, facturaReferidaEnValor, mensajeNotaCredito, pareceNotaCredito } from "@/lib/nota-credito";
 import { unzipSync } from "fflate";
@@ -1449,6 +1450,17 @@ export async function saveExtractedInvoice(params: {
         ...params,
         data: { ...params.data, lines: params.data.lines.map((l, i) => ({ ...l, iva: cuadre.data.lines[i]!.iva, iva_rate: cuadre.data.lines[i]!.iva_rate ?? 0, iva_base: cuadre.data.lines[i]!.iva_base ?? 0 })) },
         rawExtraction: { ...(params.rawExtraction ?? {}), cuadre_iva: cuadre.motivo },
+      };
+  }
+  // Todas las empresas: centavos de redondeo de los renglones y descuento informativo. El documento queda
+  // consistente desde el origen (suma de renglones = subtotal, subtotal + IVA + INC + recargo = total).
+  {
+    const norm = normalizarCentavos({ ...params.data, surcharge: params.data.surcharge ?? 0 } as never) as { data: ExtractedInvoice; nota: string } | null;
+    if (norm)
+      params = {
+        ...params,
+        data: { ...params.data, subtotal: norm.data.subtotal, discount: norm.data.discount, lines: norm.data.lines as ExtractedInvoice["lines"] },
+        rawExtraction: { ...(params.rawExtraction ?? {}), normalizacion_centavos: norm.nota },
       };
   }
   // Todas las empresas: recargo y descuento global van a los ítems; el INC solo con «cargos_en_items» (LED).
