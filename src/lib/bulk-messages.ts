@@ -31,5 +31,9 @@ export function mensajeAmigable(item: BulkItem): string {
   if (codigoTecnico(item) === "CREDIT_NOTE") return TEXTOS["CREDIT_NOTE"]!;
   if (item.status === "requires_review") return "La factura se leyó pero necesita revisión manual antes de causarla.";
   if (item.status !== "error") return "";
-  return TEXTOS[codigoTecnico(item)] ?? TEXTOS["UNKNOWN_ERROR"]!;
+  const conocido = TEXTOS[codigoTecnico(item)];
+  if (conocido) return conocido;
+  // Error no clasificado: se muestra el motivo real para poder corregirlo (no solo «intente nuevamente»).
+  const motivo = String(item.error_message ?? "").replace(/\s+/g, " ").trim().slice(0, 240);
+  return motivo ? `Factura no procesada: ${motivo}` : TEXTOS["UNKNOWN_ERROR"]!;
 }
