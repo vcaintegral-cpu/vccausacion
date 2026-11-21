@@ -1608,6 +1608,10 @@ export async function siigoSyncInvoiceCore(
                     String(l.description ?? ""),
                   );
                 if (!elegido) {
+                  if (/^(621008|2408)/.test(cuenta))
+                    throw new Error(
+                      `Renglón ${i + 1} («${String(l.description ?? "").slice(0, 60)}»): tiene la cuenta ${cuenta}, que es de IVA y no de gasto/costo, y está como producto sin producto de Siigo. Cambie la cuenta del renglón (menú «Aplicar a todos» de la columna Cuenta contable) y elija el producto, o cámbielo a gasto.`,
+                    );
                   throw new Error(
                     `Renglón ${i + 1} («${String(l.description ?? "").slice(0, 60)}»): está como producto pero no tiene producto de Siigo asignado y no hay uno claro para la cuenta ${cuenta || "(sin cuenta)"}. Elija el producto en el borrador (o cámbielo a gasto) y vuelva a causar.`,
                   );
