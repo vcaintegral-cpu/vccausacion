@@ -113,7 +113,21 @@ export function resolveImpoconsumoAccount(
   taxes: TaxRecord[],
   puc: PucAccount[],
   fallbackCode = "521595",
+  /** Cuenta fija de la empresa (perfil «cuentaImpoconsumoCompras»): manda sobre el impuesto configurado. */
+  cuentaDelPerfil?: string | null,
 ): TaxAccountResolution {
+  const fija = String(cuentaDelPerfil ?? "").trim();
+  if (fija) {
+    if (puc.length === 0) return { code: fija, name: "Impuesto al consumo", error: null };
+    const r = resolveOperationalAccount(puc, fija);
+    if (r.valid && r.operationalAccount)
+      return { code: r.operationalAccount, name: r.operational?.name ?? "Impuesto al consumo", error: null };
+    return {
+      code: fija,
+      name: "Impuesto al consumo",
+      error: `Impoconsumo (cuenta ${fija}): ${r.message ?? "la cuenta no permite movimiento."}`,
+    };
+  }
   const tax = taxes.find(
     (t) => String(t.kind) === "impoconsumo" && t.active !== false && String(t.account_code ?? "").trim(),
   );

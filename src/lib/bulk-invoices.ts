@@ -1,5 +1,5 @@
 import { normalizarCentavos } from "@/lib/normalizar-centavos";
-import { funcionActiva } from "@/empresas/registro";
+import { funcionActiva, perfilDeEmpresa } from "@/empresas/registro";
 import { estadoFacturaAfectada, facturaReferidaEnTexto, facturaReferidaEnValor, mensajeNotaCredito, pareceNotaCredito } from "@/lib/nota-credito";
 import { unzipSync } from "fflate";
 import { supabase } from "@/lib/db-contextual";
@@ -985,7 +985,7 @@ export async function computeDraftAccounting(params: {
     // configurada, nunca a una cuenta mayor.
     impoconsumoAccount: reglaProveedor?.inc_account
       ? { code: reglaProveedor.inc_account, name: "Impuesto al consumo" }
-      : resolveImpoconsumoAccount(config.taxes as never, config.accounts),
+      : resolveImpoconsumoAccount(config.taxes as never, config.accounts, undefined, perfilDeEmpresa(await nitDeEmpresa(companyId, config))?.cuentaImpoconsumoCompras),
   });
   journal = alignJournalToSource(journal, captureSource({ ...header, lines: extracted }, "pdf"), sumCOP(retenciones.retefuente, retenciones.reteiva, retenciones.reteica));
   // Cuadre: diferencias de $1 o menos (centavos del XML o recargo global) van a
