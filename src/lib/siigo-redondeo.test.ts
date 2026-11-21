@@ -87,6 +87,20 @@ describe("renglones ya netos del descuento", () => {
     expect(sourceErrors(base)).toEqual([]);
   });
   it("sigue marcando si no cuadra de ninguna forma", () => {
-    expect(sourceErrors({ ...base, discount: 100000 }).length).toBeGreaterThan(0);
+    expect(sourceErrors({ ...base, discount: 100000, total: 9000000 }).length).toBeGreaterThan(0);
+  });
+});
+
+describe("subtotal impreso que no cuadra pero renglones + IVA = total", () => {
+  const linea = (subtotal: number, iva = 0) => ({ subtotal, iva, impoconsumo: 0, iva_base: null, iva_rate: null });
+  const s: SourceValues = {
+    source: "pdf", subtotal: 5445586, iva: 812528, impoconsumo: 0, discount: 0, surcharge: 0, total: 5088985,
+    lines: [linea(1089987, 207098), linea(1089987, 207098), linea(1089987, 207098), linea(359071, 68223), linea(647426, 123011)],
+  };
+  it("no marca diferencia: los renglones son la base real", () => {
+    expect(sourceErrors(s)).toEqual([]);
+  });
+  it("sí marca si ni los renglones cuadran con el total", () => {
+    expect(sourceErrors({ ...s, total: 6000000 }).length).toBeGreaterThan(0);
   });
 });

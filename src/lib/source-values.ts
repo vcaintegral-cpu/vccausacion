@@ -30,10 +30,26 @@ export function sourceFromRaw(raw: unknown): SourceValues | null {
   const inv = r.fuente === "excel_recibidos" ? { ...r.ia, lines: r.ia.lines.map(l => ({ ...l, subtotal: l.subtotal ?? l.quantity * l.unit_value })) } : r.ia;
   return captureSource(inv, r.fuente === "excel_recibidos" ? "excel" : "pdf");
 }
+
+/** Tolerancia (centavos) por redondeo de renglones: ~medio centavo por renglón, tope $1. */
+const toleranciaRenglones = (s: SourceValues) => Math.min(100, Math.max(0, Math.ceil(s.lines.length / 2)));
+/**
+ * Subtotal con el que se concilian los renglones. Si el subtotal impreso no cuadra con los renglones pero los
+ * renglones + impuestos sí dan el total del documento (descuento ya aplicado en los renglones, subtotal bruto
+ * leído del PDF), los renglones son la base real: el subtotal impreso es solo de presentación.
+ */
+export function subtotalEfectivo(s: SourceValues): number {
+  const lineas = s.lines.reduce((sum, l) => sum + l.subtotal, 0);
+  const tol = toleranciaRenglones(s);
+  if (Math.abs(lineas - s.subtotal) <= tol) return s.subtotal;
+  if (s.lines.length > 0 && Math.abs(lineas + s.iva + s.impoconsumo + (s.surcharge ?? 0) - s.total) <= tol + 1) return lineas;
+  return s.subtotal;
+}
 export function sourceErrors(s: SourceValues): string[] {
   const errors: string[] = [];
   for (const field of ["subtotal", "iva", "impoconsumo"] as const) {
     const lineas = s.lines.reduce((sum, l) => sum + l[field], 0);
+    const objetivo = field === "subtotal" ? subtotalEfectivo(s) : s[field];
     // El INC puede venir solo en el total del documento (sin discriminar por renglón).
     if (field === "impoconsumo" && lineas === 0) continue;
     // Cantidad × valor unitario con 3 decimales hace que cada renglón se redondee a centavos: la suma puede
@@ -42,9 +58,10 @@ export function sourceErrors(s: SourceValues): string[] {
     // Renglones ya netos del descuento: PDF que imprime el subtotal bruto y el descuento aparte, con los renglones
     // ya descontados. Si la suma coincide con subtotal − descuento, el documento es consistente.
     if (field === "subtotal" && s.discount > 0 && Math.abs(lineas - (s.subtotal - s.discount)) <= tolerancia) continue;
-    if (Math.abs(lineas - s[field]) > tolerancia) errors.push(`Diferencia con la fuente: suma de ${field === "impoconsumo" ? "INC" : field} de las líneas (renglones ${(lineas / 100).toFixed(2)}, documento ${(s[field] / 100).toFixed(2)}, ${s.lines.length} renglones).`);
+    if (Math.abs(lineas - objetivo) > tolerancia) errors.push(`Diferencia con la fuente: suma de ${field === "impoconsumo" ? "INC" : field} de las líneas (renglones ${(lineas / 100).toFixed(2)}, documento ${(s[field] / 100).toFixed(2)}, ${s.lines.length} renglones).`);
   }
-  if (Math.abs(s.subtotal + s.iva + s.impoconsumo - s.discount + s.surcharge - s.total) > 100)
+  const descuento = subtotalEfectivo(s) === s.subtotal ? s.discount : 0;
+  if (Math.abs(subtotalEfectivo(s) + s.iva + s.impoconsumo - descuento + s.surcharge - s.total) > 100)
     errors.push("Diferencia con la fuente: subtotal + impuestos − descuento + recargo no coincide con el total.");
   return errors;
 }
@@ -76,7 +93,7 @@ export function validateStoredJournal(inv: { source_override?: unknown; raw_extr
     const baseDebits = sumCents(journal.filter(l => l.account_code !== "42958101").map(l => l.debit));
     // El recargo global del documento también es un débito (se suma a la cuenta del ítem principal).
     // (un recargo de $1 o menos puede ir, en cambio, al ajuste al peso 42958101).
-    const sinRecargo = source.subtotal + source.iva + source.impoconsumo;
+    const sinRecargo = subtotalEfectivo(source) + source.iva + source.impoconsumo;
     const conRecargo = sinRecargo + (source.surcharge ?? 0);
     if (baseDebits !== conRecargo && !(baseDebits === sinRecargo && Math.abs(source.surcharge ?? 0) <= 100))
       errors.push("Diferencia con la fuente: los débitos no conservan los importes de la factura.");
