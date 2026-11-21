@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, History, Loader2, Pencil, RefreshCw, RotateCcw, Send, Stamp, Trash2, Undo2, Wallet } from "lucide-react";
+import { CheckCircle2, History, Layers, Loader2, Pencil, RefreshCw, RotateCcw, Send, Stamp, Trash2, Undo2, Wallet } from "lucide-react";
 
 
 import { supabase } from "@/integrations/supabase/client";
@@ -24,6 +24,7 @@ import { SIIGO_KIND_LABEL, SiigoErrorActions, useSiigoRecovery } from "@/compone
 import { IVA_TREATMENT_LABEL, treatmentForAccount } from "@/lib/iva-treatment";
 import { PAYABLE_SOURCE_LABEL, isPayableCode, learnPayableAccount, type PayableSource } from "@/lib/payable-account";
 import { AccountCombobox } from "@/components/account-combobox";
+import { CuentaProveedorDialog } from "@/components/cuenta-proveedor-dialog";
 import { METODO_LABEL, usePaymentTypes } from "@/lib/payment-types";
 
 import { deshacerSincronizacion, fetchSyncHistory, type SyncEvento } from "@/lib/draft-sync";
@@ -151,6 +152,7 @@ function Borradores() {
   // Función por empresa: elegir la cuenta de gasto/costo pendiente, por factura o en lote.
   const cuentaEnBorradores = usePerfilActivo().funcion("cuenta_gasto_en_borradores");
   const [cuentaMasiva, setCuentaMasiva] = useState<{ code: string; name: string | null } | null>(null);
+  const [proveedorDialogo, setProveedorDialogo] = useState(false);
 
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [q, setQ] = useState("");
@@ -390,6 +392,11 @@ function Borradores() {
   const proveedores = useMemo(
     () => [...new Set(invoices.map((i) => i.provider_name).filter((x): x is string => !!x))].sort(),
     [invoices],
+  );
+
+  const nitProveedorFiltrado = useMemo(
+    () => (proveedor ? (invoices.find((i) => i.provider_name === proveedor)?.provider_nit ?? null) : null),
+    [proveedor, invoices],
   );
 
   const rows = useMemo(
@@ -785,6 +792,17 @@ function Borradores() {
               </Button>
             </div>
           ) : null}
+          {cuentaEnBorradores ? (
+            <Button
+              variant="outline"
+              className="border border-fuchsia-300 bg-fuchsia-50 text-fuchsia-800 hover:bg-fuchsia-100 hover:text-fuchsia-900 dark:border-fuchsia-800 dark:bg-fuchsia-950/40 dark:text-fuchsia-200 dark:hover:bg-fuchsia-950/60"
+              disabled={!!busy || !nitProveedorFiltrado}
+              onClick={() => setProveedorDialogo(true)}
+              title={nitProveedorFiltrado ? "Aplica una cuenta a todas las facturas en borrador de este proveedor" : "Primero elija un proveedor en el filtro «Todos los proveedores»"}
+            >
+              <Layers className="size-4" /> Cuenta para todo el proveedor
+            </Button>
+          ) : null}
           <Button
             variant="destructive"
             onClick={() => setBorrarOpen(true)}
@@ -1139,6 +1157,22 @@ function Borradores() {
           </tbody>
         </table>
       </div>
+
+      <CuentaProveedorDialog
+        open={proveedorDialogo}
+        onClose={(cambios) => {
+          setProveedorDialogo(false);
+          if (cambios) {
+            void queryClient.invalidateQueries({ queryKey: ["borradores", companyId] });
+            void queryClient.invalidateQueries({ queryKey: ["invoices", companyId] });
+          }
+        }}
+        companyId={companyId ?? ""}
+        nit={nitProveedorFiltrado}
+        nombre={proveedor || null}
+        cuentas={cuentasGasto}
+        inventario={inventario}
+      />
 
       <Dialog open={borrarOpen} onOpenChange={(o) => !borrando && setBorrarOpen(o)}>
         <DialogContent className="max-w-md">
