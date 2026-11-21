@@ -186,3 +186,11 @@ describe("IVA local sin id de Siigo", () => {
     expect(elegirIvaSiigoPorNombre(cat, "IVA 8%", 8).ok).toBe(false);
   });
 });
+
+describe("retenciones en pesos enteros de Siigo", () => {
+  it("tolera < $1 en las retenciones cuando Siigo devuelve pesos enteros", () => {
+    const exp = { total: 1000 + 1366, iva: 0, impoconsumo: 0, retentions: 1365.55, returnedRetentions: 1366, payable: 998634, ivaIds: [1] };
+    const r = purchaseReadbackErrors({ total: 1000, payments: [{ value: 998634 }], items: [{ taxes: [{ id: 9, type: "ReteFuente", value: 1366 }] }] } as never, exp);
+    expect(r.filter((x) => x.startsWith("Retenciones"))).toEqual([]);
+  });
+});

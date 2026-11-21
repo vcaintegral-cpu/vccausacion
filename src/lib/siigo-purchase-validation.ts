@@ -78,7 +78,7 @@ export function purchaseReadbackComparison(doc: PurchaseReadback, expected: Read
     const [campo, local, remote] = f;
     const t = (f as readonly unknown[])[3] as number | undefined ?? 0;
     // Siigo entrega IVA/total/CxP en pesos enteros: una diferencia menor a $1 contra un valor entero es solo redondeo.
-    const redondeoAPesos = remote !== null && remote % 100 === 0 && Math.abs(local - remote) < 100 && campo !== "Retenciones" && campo !== "INC";
+    const redondeoAPesos = remote !== null && remote % 100 === 0 && Math.abs(local - remote) < 100;
     return { campo, origen: local / 100, siigo: remote === null ? null : remote / 100, ok: remote !== null && (Math.abs(local - remote) <= t || redondeoAPesos) };
   });
 }
