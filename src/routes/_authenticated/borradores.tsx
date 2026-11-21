@@ -750,14 +750,15 @@ function Borradores() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" disabled={!seleccionadas.length} onClick={() => void conciliarFuente()}><RefreshCw className="size-4" /> Conciliar con la fuente</Button>
-          <Button variant="outline" onClick={() => marcarTodas(true)} disabled={rows.length === 0}>Seleccionar todos</Button>
-          <Button variant="outline" onClick={() => setSel({})} disabled={seleccionadas.length === 0}>Deseleccionar todos</Button>
-          <Button onClick={() => void ejecutar("aprobar")} disabled={!!busy || elegibles("aprobar").length === 0}>
+          <Button variant="outline" className="border border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100 hover:text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200 dark:hover:bg-sky-950/60" disabled={!seleccionadas.length} onClick={() => void conciliarFuente()}><RefreshCw className="size-4" /> Conciliar con la fuente</Button>
+          <Button variant="outline" className="border border-blue-300 bg-blue-50 text-blue-800 hover:bg-blue-100 hover:text-blue-900 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200 dark:hover:bg-blue-950/60" onClick={() => marcarTodas(true)} disabled={rows.length === 0}>Seleccionar todos</Button>
+          <Button variant="outline" className="border border-slate-300 bg-slate-50 text-slate-800 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200 dark:hover:bg-slate-950/60" onClick={() => setSel({})} disabled={seleccionadas.length === 0}>Deseleccionar todos</Button>
+          <Button className="border border-transparent bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white" onClick={() => void ejecutar("aprobar")} disabled={!!busy || elegibles("aprobar").length === 0}>
             {busy === "aprobar" ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Aprobar ({elegibles("aprobar").length})
           </Button>
           <Button
             variant="outline"
+            className="border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 hover:text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-950/60"
             onClick={() => void recalcular()}
             disabled={!!busy || seleccionadas.filter((r) => r.status === "borrador" || r.status === "error").length === 0}
             title="Vuelve a aplicar el motor de cuentas (reglas por proveedor, aprendizaje e histórico) a los borradores seleccionados, sin borrar sus datos"
@@ -775,6 +776,7 @@ function Borradores() {
               />
               <Button
                 variant="outline"
+                className="border border-violet-300 bg-violet-50 text-violet-800 hover:bg-violet-100 hover:text-violet-900 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200 dark:hover:bg-violet-950/60"
                 disabled={!!busy || !cuentaMasiva || seleccionadas.filter((r) => r.status === "borrador" || r.status === "error").length === 0}
                 onClick={() => cuentaMasiva && void asignarCuenta(seleccionadas, cuentaMasiva)}
                 title="Pone esta cuenta en los renglones pendientes de cuenta de las facturas seleccionadas; no cambia los que ya tienen una cuenta válida"
@@ -792,20 +794,21 @@ function Borradores() {
             <Trash2 className="size-4" /> Eliminar ({eliminables.length})
           </Button>
 
-          <Button variant="secondary" onClick={() => void ejecutar("causar")} disabled={!!busy || elegibles("causar").length === 0}>
+          <Button variant="secondary" className="border border-transparent bg-indigo-600 text-white hover:bg-indigo-700 hover:text-white" onClick={() => void ejecutar("causar")} disabled={!!busy || elegibles("causar").length === 0}>
             {busy === "causar" ? <Loader2 className="size-4 animate-spin" /> : <Stamp className="size-4" />} Causar ({elegibles("causar").length})
           </Button>
-          <Button variant="outline" onClick={() => void ejecutar("siigo")} disabled={!!busy || elegibles("siigo").length === 0}>
+          <Button variant="outline" className="border border-transparent bg-blue-600 text-white hover:bg-blue-700 hover:text-white" onClick={() => void ejecutar("siigo")} disabled={!!busy || elegibles("siigo").length === 0}>
             {busy === "siigo" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} Causar en Siigo ({elegibles("siigo").length})
           </Button>
-          <Button variant="ghost" onClick={() => void ejecutar("devolver")} disabled={!!busy || elegibles("devolver").length === 0}>
+          <Button variant="ghost" className="border border-orange-300 bg-orange-50 text-orange-800 hover:bg-orange-100 hover:text-orange-900 dark:border-orange-800 dark:bg-orange-950/40 dark:text-orange-200 dark:hover:bg-orange-950/60" onClick={() => void ejecutar("devolver")} disabled={!!busy || elegibles("devolver").length === 0}>
             {busy === "devolver" ? <Loader2 className="size-4 animate-spin" /> : <Undo2 className="size-4" />} Devolver a borrador ({elegibles("devolver").length})
           </Button>
-          <Button variant="ghost" onClick={() => void ejecutar("revertir")} disabled={!!busy || elegibles("revertir").length === 0}>
+          <Button variant="ghost" className="border border-rose-300 bg-rose-50 text-rose-800 hover:bg-rose-100 hover:text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200 dark:hover:bg-rose-950/60" onClick={() => void ejecutar("revertir")} disabled={!!busy || elegibles("revertir").length === 0}>
             {busy === "revertir" ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />} Revertir causación ({elegibles("revertir").length})
           </Button>
           <Button
             variant="secondary"
+            className="border border-transparent bg-teal-600 text-white hover:bg-teal-700 hover:text-white"
             onClick={() => abrirPago(seleccionadas.filter((r) => r.payment_enabled))}
             disabled={!!busy || seleccionadas.filter((r) => r.payment_enabled && pagable(r)).length === 0}
           >
