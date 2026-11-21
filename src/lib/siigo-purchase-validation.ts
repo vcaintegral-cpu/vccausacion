@@ -167,6 +167,9 @@ export function adaptPurchaseItems<T extends AdaptableItem>(
         const pct = Number(tax.percentage);
         const taxed = roundCOP(line.iva * 100 / pct);
         if (toCents(taxed * pct / 100) !== toCents(line.iva) || !(taxed > 0) || toCents(taxed) >= toCents(base)) continue;
+        // Un resto «no gravado» de unos pocos pesos no es una base parcial real (AIU, etc.): es el redondeo del
+        // IVA del proveedor. No se crean renglones diminutos; la diferencia se concilia como redondeo.
+        if (toCents(base) - toCents(taxed) < 1000) continue;
         const otros = item.tax_ids.filter(id => String(id) !== String(ivaTax.id));
         parts = [
           { ...item, quantity: 1, price: taxed, discount: 0, tax_ids: [tax.id!, ...otros], description: `${item.description} (base gravada)` },
