@@ -983,9 +983,15 @@ export async function computeDraftAccounting(params: {
     payableAccount: payable,
     // El impoconsumo va a la cuenta de la regla del proveedor o a la auxiliar
     // configurada, nunca a una cuenta mayor.
-    impoconsumoAccount: reglaProveedor?.inc_account
-      ? { code: reglaProveedor.inc_account, name: "Impuesto al consumo" }
-      : resolveImpoconsumoAccount(config.taxes as never, config.accounts, undefined, perfilDeEmpresa(await nitDeEmpresa(companyId, config))?.cuentaImpoconsumoCompras),
+    impoconsumoAccount: await (async () => {
+      const fija = perfilDeEmpresa(await nitDeEmpresa(companyId, config))?.cuentaImpoconsumoCompras;
+      // La cuenta fija de la empresa (p. ej. gasto 51157101) manda sobre una regla de proveedor que apunte a una
+      // cuenta del pasivo (grupo 2, p. ej. 24950103): la empresa no la usa para el INC de compras.
+      const regla = reglaProveedor?.inc_account && !(fija && /^2/.test(reglaProveedor.inc_account)) ? reglaProveedor.inc_account : null;
+      return regla
+        ? { code: regla, name: "Impuesto al consumo" }
+        : resolveImpoconsumoAccount(config.taxes as never, config.accounts, undefined, fija);
+    })(),
   });
   journal = alignJournalToSource(journal, captureSource({ ...header, lines: extracted }, "pdf"), sumCOP(retenciones.retefuente, retenciones.reteiva, retenciones.reteica));
   // Cuadre: diferencias de $1 o menos (centavos del XML o recargo global) van a
