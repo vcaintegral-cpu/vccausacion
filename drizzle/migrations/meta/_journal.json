@@ -302,6 +302,20 @@
       "when": 1795290719828,
       "tag": "0041_guardas_fuente_tolerancia_redondeo",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1795303028579,
+      "tag": "0042_guardas_fuente_debitos_subtotal_efectivo",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1795303045230,
+      "tag": "0043_guardas_fuente_iva_pesos_enteros",
+      "breakpoints": true
     }
   ]
 }
