@@ -468,10 +468,20 @@ export function cuentaAjustePesoCompra(
 ): string | null {
   const mov = puc.filter((a) => a.active !== false && a.is_movement !== false && a.has_children !== true && /^\d+$/.test(a.code));
   const ajuste = (a: { name?: string | null }) => /ajuste\s+al\s+peso|redondeo/i.test(String(a.name ?? ""));
-  return (
-    mov.find((a) => a.code.startsWith("5395") && ajuste(a))?.code ??
-    mov.find((a) => /^5/.test(a.code) && ajuste(a))?.code ??
-    mov.find((a) => a.code.startsWith("539581"))?.code ??
-    null
-  );
+  // Siigo solo admite cuentas del último nivel (auxiliares, p. ej. 53958101): si la elegida tiene
+  // subcuentas en el PUC se usa la más específica; entre varias candidatas gana la de código más largo.
+  const masEspecifica = (code: string) =>
+    mov.filter((a) => a.code.startsWith(code) && a.code.length > code.length).sort((x, y) => y.code.length - x.code.length)[0]?.code ?? code;
+  const elegir = (lista: typeof mov) => {
+    const c = [...lista].sort((x, y) => y.code.length - x.code.length)[0]?.code;
+    return c ? masEspecifica(c) : null;
+  };
+  const elegida =
+    elegir(mov.filter((a) => a.code.startsWith("5395") && ajuste(a))) ??
+    elegir(mov.filter((a) => /^5/.test(a.code) && ajuste(a))) ??
+    elegir(mov.filter((a) => a.code.startsWith("539581")));
+  // Las cuentas de Siigo que aceptan movimiento son auxiliares de 8 dígitos; una de 6 (539581) es
+  // una subcuenta y Siigo la rechaza («transactional characteristic not allowed»): se usa 53958101.
+  if (elegida && elegida.length < 8) return "53958101";
+  return elegida;
 }

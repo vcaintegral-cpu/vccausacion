@@ -1528,7 +1528,9 @@ export async function siigoSyncInvoiceCore(
       const productoPorCuentaHistorial = new Map<string, string>();
       const sinProducto = (invoiceLines ?? []).filter((l) => {
         const t = normalizeItemType(l.item_type);
-        return (t === "producto" || t === "servicio") && !String(l.code ?? "").trim();
+        const c = String(l.code ?? "").trim();
+        // Sin código, o con un código que no es un producto de Siigo (p. ej. el código interno del proveedor).
+        return (t === "producto" || t === "servicio") && (!c || !porCodigo.has(c));
       });
       if (sinProducto.length && inv.provider_nit) {
         const { data: previas } = await supabase
@@ -1567,7 +1569,7 @@ export async function siigoSyncInvoiceCore(
             const esProducto = tipo === "producto" || tipo === "servicio";
             let productCode = String(l.code ?? "").trim();
             if (esProducto) {
-              if (!productCode) {
+              if (!productCode || !porCodigo.has(productCode)) {
                 // Renglón clasificado como producto sin producto elegido: se toma el producto
                 // activo del catálogo cuya cuenta es la del renglón (el más parecido a la
                 // descripción); si no hay uno claro, se pide elegirlo en el borrador.
