@@ -1000,7 +1000,17 @@ export async function computeDraftAccounting(params: {
   const ajuste = ajusteAlPeso(cuadre.debito, cuadre.credito);
   if (ajuste.linea) journal.push({ ...ajuste.linea, cost_center: centroFactura ?? null });
   if (reglaProveedor?.id && !config.batch) void marcarUsoRegla(reglaProveedor.id);
-  const unresolvedAccounts: string[] = lines.flatMap((l, i) => isValidPurchaseAccount(l.account_code, inventario) ? [] : [`Pendiente de cuenta: línea ${i + 1}.`]);
+  // Cuentas de IVA de los impuestos de la empresa (p. ej. 621008 «IVA de costo»): nunca son la cuenta de gasto/costo de un renglón.
+  const cuentasDeIva = new Set(
+    (impuestos as Array<{ kind?: string; account_code?: string | null }>)
+      .filter((t) => String(t.kind) === "iva" && String(t.account_code ?? "").trim())
+      .map((t) => String(t.account_code).trim()),
+  );
+  const unresolvedAccounts: string[] = lines.flatMap((l, i) =>
+    cuentasDeIva.has(String(l.account_code ?? "").trim())
+      ? [`Pendiente de cuenta: línea ${i + 1} (la cuenta ${l.account_code} es de IVA, no de gasto/costo).`]
+      : isValidPurchaseAccount(l.account_code, inventario) ? [] : [`Pendiente de cuenta: línea ${i + 1}.`],
+  );
   unresolvedAccounts.push(...erroresRetencion);
   if (ajuste.descuadre)
     unresolvedAccounts.push(
