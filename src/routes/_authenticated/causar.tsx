@@ -1,3 +1,4 @@
+import { errorComoTexto } from "@/lib/bulk-invoices";
 import { captureSource, sourceFromRaw, sourceErrors, alignJournalToSource, type SourceValues } from "@/lib/source-values";
 import { SourceValuesCorrection } from "@/components/source-values-correction";
 import { usePerfilActivo } from "@/empresas/use-perfil";
@@ -1249,7 +1250,7 @@ function Causar() {
       }
       navigate({ to: "/borradores" });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "No fue posible guardar el comprobante.";
+      const msg = errorComoTexto(err) || "No fue posible guardar el comprobante.";
       toast.error(
         /duplicate key|ux_invoices_company/.test(msg)
           ? "Esta factura ya está registrada en esta empresa."
