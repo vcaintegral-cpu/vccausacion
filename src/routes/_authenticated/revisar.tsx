@@ -1,3 +1,4 @@
+import { BulkApply } from "@/components/bulk-apply";
 import { sourceFromRaw, alignJournalToSource, sourceErrors } from "@/lib/source-values";
 import { SourceValuesCorrection } from "@/components/source-values-correction";
 import type { SourceValues } from "@/lib/source-values";
@@ -161,8 +162,6 @@ function Revisar() {
   const createProduct = useServerFn(siigoCreateProduct);
 
   const [header, setHeader] = useState<InvRow | null>(null);
-  const [cuentaTodos, setCuentaTodos] = useState("");
-  const [tipoTodos, setTipoTodos] = useState("");
   const [lines, setLines] = useState<LineRow[]>([]);
   const [sending, setSending] = useState(false);
   const [ok, setOk] = useState<{
@@ -842,22 +841,36 @@ function Revisar() {
    * Los impuestos se recalculan sobre la base propia de cada renglón para no
    * romper el cuadre de la factura.
    */
-  /** Pone la misma cuenta contable (y, si se elige, el mismo tipo de ítem) en todos los renglones; no toca descripciones ni valores. */
-  function aplicarCuentaATodos() {
-    if (!cuentaTodos) {
-      toast.info("Elija primero la cuenta contable.");
-      return;
-    }
-    const acc = (data?.accounts ?? []).find((a) => a.code === cuentaTodos);
+  // «Aplicar a todos» por columna (menú del encabezado, igual que en Causar factura): no tocan descripciones ni valores.
+  function aplicarCuentaTodos(code: string) {
+    const acc = (data?.accounts ?? []).find((a) => a.code === code);
+    setLines((prev) => prev.map((l) => ({ ...l, account_code: code, account_name: acc?.name ?? null })));
+    toast.success(`Cuenta ${code} aplicada a ${lines.length} renglón(es). Revise y guarde.`);
+  }
+  function aplicarTipoTodos(tipo: string) {
+    setLines((prev) => prev.map((l) => ({ ...l, item_type: normalizeItemType(tipo) })));
+    toast.success(`Tipo «${tipo}» aplicado a ${lines.length} renglón(es).`);
+  }
+  function aplicarIvaTodos(id: string) {
+    const tx = findTaxById(impuestosIva, id || null);
     setLines((prev) =>
-      prev.map((l) => ({
-        ...l,
-        account_code: cuentaTodos,
-        account_name: acc?.name ?? null,
-        ...(tipoTodos ? { item_type: normalizeItemType(tipoTodos) } : {}),
-      })),
+      prev.map((l) => {
+        const baseLinea = Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+        return { ...l, iva_tax_id: id || null, ...(!source ? { iva: tx ? roundCOP((baseLinea * Number(tx.rate)) / 100) : 0 } : {}) };
+      }),
     );
-    toast.success(`Cuenta ${cuentaTodos} aplicada a ${lines.length} renglón(es). Revise y guarde.`);
+  }
+  function aplicarRetencionTodos(id: string) {
+    const tx = findTaxById(impuestosRet, id || null);
+    setLines((prev) =>
+      prev.map((l) => {
+        const baseLinea =
+          String(tx?.kind) === "reteiva"
+            ? Number(l.iva || 0)
+            : Number(l.quantity || 0) * Number(l.unit_value || 0) - Number(l.discount || 0);
+        return { ...l, ret_tax_id: id || null, retention: tx ? roundCOP((baseLinea * Number(tx.rate)) / 100) : 0 };
+      }),
+    );
   }
 
   function aplicarATodos() {
@@ -1008,50 +1021,89 @@ function Revisar() {
             <Sparkles className="size-4" /> Aplicar a todos
           </Button>
         </div>
-        <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-card p-3">
-          <div className="min-w-[260px] flex-1 space-y-1">
-            <label className="text-xs text-muted-foreground">Cuenta contable para todos los renglones</label>
-            <select
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-              value={cuentaTodos}
-              onChange={(e) => setCuentaTodos(e.target.value)}
-            >
-              <option value="">Seleccionar…</option>
-              {(data?.accounts ?? []).map((a) => (
-                <option key={a.code} value={a.code}>
-                  {a.code} · {a.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="w-44 space-y-1">
-            <label className="text-xs text-muted-foreground">Tipo de ítem (opcional)</label>
-            <select
-              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm capitalize"
-              value={tipoTodos}
-              onChange={(e) => setTipoTodos(e.target.value)}
-            >
-              <option value="">Sin cambio</option>
-              {ITEM_TYPES.map((it) => (
-                <option key={it} value={it}>
-                  {it}
-                </option>
-              ))}
-            </select>
-          </div>
-          <Button size="sm" className="border border-transparent bg-violet-600 text-white hover:bg-violet-700 hover:text-white" disabled={!cuentaTodos || lines.length === 0} onClick={aplicarCuentaATodos}>
-            Aplicar cuenta a todos los renglones
-          </Button>
-        </div>
         <div className="overflow-x-auto rounded-lg border border-border bg-card">
           <table className="w-full min-w-[1000px] text-sm">
             <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-medium">Descripción</th>
-                <th className="px-3 py-2 font-medium">Cuenta contable</th>
-                <th className="px-3 py-2 font-medium">Tipo de ítem</th>
-                <th className="px-3 py-2 font-medium">IVA</th>
-                <th className="px-3 py-2 font-medium">Retención</th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    Cuenta contable
+                    <BulkApply title="Cuenta contable" className="w-96 space-y-2 p-3">
+                      {(close) => (
+                        <>
+                          <select
+                            className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs normal-case tracking-normal"
+                            defaultValue=""
+                            onChange={(e) => { if (e.target.value) { aplicarCuentaTodos(e.target.value); close(); } }}
+                          >
+                            <option value="" disabled>Selecciona la cuenta…</option>
+                            {(data?.accounts ?? []).map((a) => (
+                              <option key={a.code} value={a.code}>{a.code} · {a.name}</option>
+                            ))}
+                          </select>
+                          <p className="text-xs normal-case tracking-normal text-muted-foreground">Se aplica a todos los renglones; no cambia descripciones ni valores.</p>
+                        </>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    Tipo de ítem
+                    <BulkApply title="Tipo de ítem" className="w-64 space-y-2 p-3">
+                      {(close) => (
+                        <div className="grid gap-1">
+                          {ITEM_TYPES.map((k) => (
+                            <Button key={k} type="button" variant="outline" size="sm" className="justify-start text-xs normal-case capitalize tracking-normal" onClick={() => { aplicarTipoTodos(k); close(); }}>
+                              {k}
+                            </Button>
+                          ))}
+                        </div>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    IVA
+                    <BulkApply title="IVA" className="w-72 space-y-2 p-3">
+                      {(close) => (
+                        <select
+                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs normal-case tracking-normal"
+                          defaultValue=""
+                          onChange={(e) => { aplicarIvaTodos(e.target.value); close(); }}
+                        >
+                          <option value="" disabled>Selecciona un impuesto…</option>
+                          <option value="">Sin impuesto</option>
+                          {impuestosIva.map((t) => (
+                            <option key={String(t.id)} value={String(t.id)}>{t.name} {Number(t.rate)}%</option>
+                          ))}
+                        </select>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
+                <th className="px-3 py-2 font-medium">
+                  <span className="inline-flex items-center">
+                    Retención
+                    <BulkApply title="Retención" className="w-72 space-y-2 p-3">
+                      {(close) => (
+                        <select
+                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs normal-case tracking-normal"
+                          defaultValue=""
+                          onChange={(e) => { aplicarRetencionTodos(e.target.value); close(); }}
+                        >
+                          <option value="" disabled>Selecciona una retención…</option>
+                          <option value="">Sin retención</option>
+                          {impuestosRet.map((t) => (
+                            <option key={String(t.id)} value={String(t.id)}>{t.name} {Number(t.rate)}%</option>
+                          ))}
+                        </select>
+                      )}
+                    </BulkApply>
+                  </span>
+                </th>
                 <th className="px-3 py-2 text-right font-medium">Valor</th>
               </tr>
             </thead>
