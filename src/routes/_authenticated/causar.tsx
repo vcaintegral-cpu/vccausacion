@@ -525,6 +525,30 @@ function Causar() {
     toast.success(tx ? `${tx.name} aplicada a todos los renglones.` : "Todos los renglones quedaron sin retención.");
   }
 
+  /**
+   * La retención de la sección RETENCIONES es la que contabiliza; la columna «Retención» de cada renglón debe
+   * mostrarla igual (impuesto y valor), porque el envío a Siigo la toma de los renglones. Con una sola retención
+   * aplicada se refleja en todos los renglones; sin ninguna, se limpian; con varias no se puede representar en una
+   * sola columna y se deja como está.
+   */
+  function sincronizarRetencionLineas(next: RetBlocks) {
+    const aplicadas = (["retefuente", "reteiva", "reteica"] as const).filter((k) => next[k].apply && next[k].taxId);
+    if (aplicadas.length > 1) return;
+    const tx = aplicadas.length === 1 ? impuestosRet.find((t) => String(t.id) === String(next[aplicadas[0]!].taxId)) : undefined;
+    if (aplicadas.length === 1 && !tx) return;
+    setLines((prev) =>
+      prev.map((l) => {
+        const base = String(tx?.kind) === "reteiva" ? Number(l.iva || 0) : baseDe(l);
+        return { ...l, retention: tx ? roundCOP((base * Number(tx.rate)) / 100) : 0 };
+      }),
+    );
+    setLineTax((prev) => {
+      const out = { ...prev };
+      lines.forEach((_, i) => { out[i] = { ...out[i], ret: tx ? String(tx.id) : undefined }; });
+      return out;
+    });
+  }
+
   /** Aplica manualmente la misma cuenta PUC a todos los renglones. */
   function aplicarCuentaTodos(code: string, name: string | null) {
     setLines((prev) => prev.map((l) => ({ ...l, account_code: code, account_name: name })));
@@ -1745,6 +1769,7 @@ function Causar() {
               onApply={(next) => {
                 setRetTocado(true);
                 setRetBlocks(next);
+                sincronizarRetencionLineas(next);
               }}
             />
           ) : null}
@@ -1756,7 +1781,7 @@ function Causar() {
             baseGravable={baseGravable}
             ivaTotal={ivaTotal}
             errors={erroresRet}
-            onChange={(next) => { setRetTocado(true); setRetBlocks(next); }}
+            onChange={(next) => { setRetTocado(true); setRetBlocks(next); sincronizarRetencionLineas(next); }}
           />
 
           <IvaTreatmentPanel
