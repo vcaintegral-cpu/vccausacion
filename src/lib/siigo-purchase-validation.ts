@@ -319,7 +319,7 @@ export function ajustarPrecisionRenglones<T extends AdaptableItem>(
 }
 
 /** IVA en centavos que Siigo calcularía: renglón por renglón, redondeado a 2 decimales. */
-function ivaSiigoCentavos(items: AdaptableItem[], taxes: PurchaseTax[]): number {
+export function ivaSiigoCentavos(items: AdaptableItem[], taxes: PurchaseTax[]): number {
   let iva = 0;
   for (const it of items) {
     for (const id of it.tax_ids) {

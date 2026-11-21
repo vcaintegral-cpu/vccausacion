@@ -5,6 +5,7 @@ import {
   ajusteAlPesoSiigo,
   cuentaAjustePesoCompra,
   ajustarPrecisionRenglones,
+  ivaSiigoCentavos,
   capitalizedIvaRow,
   motivoSinAjuste,
   retentionRowsExcluding,
@@ -1764,7 +1765,7 @@ export async function siigoSyncInvoiceCore(
           `IVA capitalizado ${ivaCapitalizado} enviado como renglón sin impuestos en ${cuentaActivo}.`,
         );
       }
-      const redondeoProveedor = adaptacion.providerRounding;
+      let redondeoProveedor = adaptacion.providerRounding;
       if (adaptacion.notes.length) console.log("[siigo][representacion]", adaptacion.notes);
 
       // La configuración del tipo de documento FC en Siigo manda sobre la configuración
@@ -1953,7 +1954,7 @@ export async function siigoSyncInvoiceCore(
                 recargoEnviado,
             )
           : r2(subtotalItems);
-      const iva = r2(Number(inv.iva) - ivaCapitalizado);
+      let iva = r2(Number(inv.iva) - ivaCapitalizado);
       // El total de la compra permanece bruto. Siigo exige que payments concilie
       // contra ese total y contabiliza las retenciones enviadas por separado.
       // Impoconsumo: igual que subtotal e IVA, manda el valor del encabezado de la
@@ -1983,6 +1984,30 @@ export async function siigoSyncInvoiceCore(
         items.splice(0, items.length, ...precision.items);
         adaptacion.notes.push(...precision.notas);
         console.log("[siigo][precision]", precision.notas);
+      }
+
+      // IVA que Siigo calcula renglón por renglón y que no se puede reproducir con los ajustes de precisión
+      // (el proveedor redondeó distinto): se envía el IVA de Siigo, SIN renglón de ajuste al peso, y la
+      // diferencia (hasta $5) queda registrada como redondeo del proveedor, pendiente al pago.
+      {
+        const ivaSiigo = ivaSiigoCentavos(items as never, purchaseTaxes);
+        const dIva = toCents(iva) - ivaSiigo;
+        if (
+          dIva !== 0 &&
+          Math.abs(dIva) <= 500 &&
+          purchasePayloadErrors(items as never, purchaseTaxes, {
+            subtotal,
+            iva: ivaSiigo / 100,
+            impoconsumo,
+          }).length === 0
+        ) {
+          redondeoProveedor = r2(redondeoProveedor + dIva / 100);
+          iva = r2(ivaSiigo / 100);
+          adaptacion.notes.push(
+            `IVA de Siigo ${iva} (el proveedor facturó ${r2(iva + dIva / 100)}): la diferencia de ${r2(dIva / 100)} queda como redondeo pendiente al pago.`,
+          );
+          console.log("[siigo][redondeo-iva]", { iva, dIva });
+        }
       }
 
       const totalesSiigo = calculateSiigoPurchaseTotals({
