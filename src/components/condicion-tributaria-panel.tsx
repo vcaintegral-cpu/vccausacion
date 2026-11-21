@@ -1,6 +1,6 @@
 // Condición tributaria del proveedor: precedente aprendido de Siigo, condición
 // confirmada (memoria) y sugerencia de retenciones para la factura abierta.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, History, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -56,6 +56,15 @@ export function bloquesDesdeDecision(
   return next;
 }
 
+/** Aplica una sola vez la retención decidida por el precedente/condición del proveedor (sin pintar nada). */
+function AplicarAutomatico({ onAplicar }: { onAplicar: () => void }) {
+  useEffect(() => {
+    onAplicar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
+
 export function CondicionTributariaPanel(props: {
   companyId: string;
   nit: string | null | undefined;
@@ -77,6 +86,7 @@ export function CondicionTributariaPanel(props: {
   const [retenerCon, setRetenerCon] = useState<Partial<Record<RetencionKind, string>>>({});
   const [guardando, setGuardando] = useState(false);
   const [consultando, setConsultando] = useState(false);
+  const autoAplicadas = useRef<Set<string>>(new Set());
   const [consulta, setConsulta] = useState<HistorialProveedorSiigo | null>(null);
 
   const precedentes = useQuery({
@@ -196,8 +206,29 @@ export function CondicionTributariaPanel(props: {
     }
   }
 
+  // Retención automática: si el proveedor tiene precedente (o condición «retener siempre») y la base cumple, se aplica
+  // sola al abrir la factura, una vez por proveedor/factura, siempre que no haya ya una retención aplicada. Si el
+  // usuario la quita a mano, no se vuelve a poner.
+  const claveAuto = `${nit}|${props.fecha ?? ""}|${Math.round(props.baseGravable)}`;
+  const cargado = !precedentes.isLoading && !tablas.isLoading && !proveedor.isLoading;
+  const yaHayRetencion = RETENCIONES.some((k) => props.blocks[k]?.apply);
+  const aplicarAuto =
+    cargado && decision.aplicar.length > 0 && !yaHayRetencion && props.baseGravable > 0 && !autoAplicadas.current.has(claveAuto);
+
   return (
     <div className="rounded-lg border border-border bg-card p-5">
+      {aplicarAuto ? (
+        <AplicarAutomatico
+          key={claveAuto}
+          onAplicar={() => {
+            autoAplicadas.current.add(claveAuto);
+            props.onApply(bloquesDesdeDecision(props.blocks, decision, condicion, props.puc));
+            toast.success(
+              `Retención aplicada automáticamente: ${decision.aplicar.map((r) => `${r.tax.name} ${cop(r.amount)}`).join(" · ")}. Revise la base mínima y los demás datos.`,
+            );
+          }}
+        />
+      ) : null}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold">Condición tributaria del proveedor</h2>
