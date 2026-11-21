@@ -1523,6 +1523,43 @@ export async function siigoSyncInvoiceCore(
         item_type: string;
       };
 
+      // Renglones «producto» sin producto elegido: se busca el producto que ese proveedor ya usó
+      // antes con la misma cuenta (historial de sus compras), si existe en el catálogo.
+      const productoPorCuentaHistorial = new Map<string, string>();
+      const sinProducto = (invoiceLines ?? []).filter((l) => {
+        const t = normalizeItemType(l.item_type);
+        return (t === "producto" || t === "servicio") && !String(l.code ?? "").trim();
+      });
+      if (sinProducto.length && inv.provider_nit) {
+        const { data: previas } = await supabase
+          .from("invoices")
+          .select("id")
+          .eq("company_id", inv.company_id)
+          .eq("provider_nit", inv.provider_nit)
+          .neq("id", inv.id)
+          .order("created_at", { ascending: false })
+          .limit(60);
+        const ids = (previas ?? []).map((x) => x.id);
+        if (ids.length) {
+          const { data: lineas } = await supabase
+            .from("invoice_lines")
+            .select("invoice_id, account_code, code, item_type")
+            .in("invoice_id", ids)
+            .in("item_type", ["producto", "servicio"])
+            .not("code", "is", null);
+          const orden = new Map(ids.map((id, k) => [id, k]));
+          const ordenadas = [...(lineas ?? [])].sort(
+            (a, b) => (orden.get(a.invoice_id) ?? 99) - (orden.get(b.invoice_id) ?? 99),
+          );
+          for (const x of ordenadas) {
+            const c = String(x.code ?? "").trim();
+            const cta = String(x.account_code ?? "");
+            if (c && cta && porCodigo.has(c) && !productoPorCuentaHistorial.has(cta))
+              productoPorCuentaHistorial.set(cta, c);
+          }
+        }
+      }
+
       const items: Renglon[] = (invoiceLines ?? []).length
         ? (invoiceLines ?? []).map((l, i) => {
             const tipo = normalizeItemType(l.item_type);
@@ -1534,11 +1571,13 @@ export async function siigoSyncInvoiceCore(
                 // Renglón clasificado como producto sin producto elegido: se toma el producto
                 // activo del catálogo cuya cuenta es la del renglón (el más parecido a la
                 // descripción); si no hay uno claro, se pide elegirlo en el borrador.
-                const elegido = productoDelCatalogo(
-                  [...porCodigo.values()] as never,
-                  cuenta,
-                  String(l.description ?? ""),
-                );
+                const elegido =
+                  productoPorCuentaHistorial.get(cuenta) ??
+                  productoDelCatalogo(
+                    [...porCodigo.values()] as never,
+                    cuenta,
+                    String(l.description ?? ""),
+                  );
                 if (!elegido) {
                   throw new Error(
                     `Renglón ${i + 1} («${String(l.description ?? "").slice(0, 60)}»): está como producto pero no tiene producto de Siigo asignado y no hay uno claro para la cuenta ${cuenta || "(sin cuenta)"}. Elija el producto en el borrador (o cámbielo a gasto) y vuelva a causar.`,

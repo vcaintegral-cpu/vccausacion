@@ -184,3 +184,5 @@ Mapa completo: `docs/ARQUITECTURA.md`. Perfiles: `src/empresas/README.md`.
 - 2026-11-21 · Carga masiva (Alcance: todas las empresas). Los borradores se guardan en grupos de 5 (`flushDrafts`); si un documento del grupo falla (duplicado, dato inválido) ya NO tumba a los otros 4: se reintenta uno por uno y solo falla el culpable. Los errores de Supabase son objetos planos: `errorComoTexto` (bulk-invoices.ts) los vuelve texto con código y el runner/`mensajeAmigable` muestran el motivo real en vez de «Factura no procesada».
 
 - 2026-11-21 · Carga masiva (Alcance: todas las empresas). `listItems` reconcilia: una tarea «con error» cuyo borrador SÍ existe (mismo NIT + número) se marca procesada y se recalculan los contadores de la carga (`reconciliarConBorradores` en bulk-upload-store.ts).
+
+- 2026-11-21 · Causar en Siigo (Alcance: todas las empresas). La verificación posterior tolera < $1 cuando Siigo devuelve IVA/total/CxP en pesos enteros (no retenciones ni INC). Renglón «producto» sin producto: primero el producto que el mismo proveedor usó antes con esa cuenta (historial, si está en el catálogo), luego `productoDelCatalogo`.
