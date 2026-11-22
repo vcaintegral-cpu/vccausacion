@@ -189,12 +189,16 @@ export async function enviarVerdesASiigo(
       .select("*")
       .eq("company_id", companyId)
       .eq("doc_kind", "compra")
-      .eq("status", "borrador")
+      // Borradores, y también las que quedaron APROBADAS o CAUSADAS sin llegar a Siigo (aprobadas a mano o que se
+      // detuvieron a medio camino): continúan solas hasta SINCRONIZADA.
+      .in("status", ["borrador", "aprobado", "causada"])
       .gte("issue_date", op.mes.desde)
       .lte("issue_date", op.mes.hasta)
       .is("siigo_id", null)
       .is("siigo_number", null)
       .is("processing_at", null)
+      // Un envío que ya falló no se reintenta solo (queda para revisión).
+      .or("siigo_status.is.null,siigo_status.neq.error")
       .order("issue_date")
       .order("id")
       .limit(300);
@@ -273,6 +277,11 @@ export async function enviarVerdesASiigo(
           } | null
         )?.account_decisions ?? {}) as Record<string, { confidence?: string }>,
       );
+      // Ya aprobada/causada: pasó la revisión (a mano o del propio piloto); solo falta completar el camino.
+      if (String(f["status"]) !== "borrador") {
+        verdes.push({ f, acc, etiqueta });
+        continue;
+      }
       const motivos = motivosNoVerde({
         alertas: alertasBorrador(f as never, acc, pucCodes, inventario),
         tareaSinRevision: !!t && t.status === "completed" && !t.needs_review,
@@ -308,11 +317,17 @@ export async function enviarVerdesASiigo(
     const turno = verdes.slice(0, op.limite ?? 2);
     for (const { f, acc, etiqueta } of turno) {
       try {
-        const ap = await aprobarBorrador(f as never, acc, pucCodes, etiqueta, dueno, inventario);
-        if (!ap.ok) throw new Error(`No se pudo aprobar: ${ap.message}`);
-        const { data: fresca } = await db.from("invoices").select("*").eq("id", f.id).single();
-        const ca = await causarFactura(fresca as never, etiqueta);
-        if (!ca.ok) throw new Error(`No se pudo causar: ${ca.message}`);
+        if (String(f["status"]) === "borrador") {
+          const ap = await aprobarBorrador(f as never, acc, pucCodes, etiqueta, dueno, inventario);
+          if (!ap.ok) throw new Error(`No se pudo aprobar: ${ap.message}`);
+        }
+        if (!f["voucher_number"] || String(f["status"]) !== "causada") {
+          const { data: fresca } = await db.from("invoices").select("*").eq("id", f.id).single();
+          if (!(fresca as { voucher_number?: string | null } | null)?.voucher_number) {
+            const ca = await causarFactura(fresca as never, etiqueta);
+            if (!ca.ok) throw new Error(`No se pudo causar: ${ca.message}`);
+          }
+        }
         const r = await siigoSyncInvoiceCore(db as never, dueno, f.id);
         if (!r.ok) throw new Error(`Siigo: ${r.error ?? "no se pudo crear el documento"}`);
         resultado.enviadas += 1;
