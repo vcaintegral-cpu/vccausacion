@@ -1,4 +1,8 @@
 # Compras desde Excel RECIBIDOS
+## Monitoring review — 2026-11-22 (scope: all companies)
+- [x] Verify the cents/payment finding: current code already retries both reported amounts within the existing $3 tolerance; 30 rounding/readback tests pass. Finding marked stale; no Siigo documents sent.
+- [ ] Fix supplier-sync inventory overwrites and make account/classification changes undoable: confirmed; awaiting approval of the transactional synchronization plan. Do not alter existing invoices during review.
+
 - [x] Recuperación con formulario de solo correo, resultados persistentes y reintento; enlace vencido bloqueado, pruebas de pantalla con respuestas simuladas sin errores.
 - [ ] Comprobar entrega real del correo y cambio de contraseña: requiere que Maira solicite el enlace y lo abra; no se cambió su contraseña.
 - [ ] Envío DS en lote: comprobar configuración actual; confirmar prueba guardada sin transmisión DIAN antes de habilitar.
