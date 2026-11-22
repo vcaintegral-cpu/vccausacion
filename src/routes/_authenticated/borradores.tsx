@@ -600,7 +600,20 @@ function Borradores() {
       for (const inv of objetivo) {
         const etiqueta = etiquetaFactura(inv);
         try {
-          if (tipo === "aprobar") out.push(await aprobarBorrador(inv, accounts.get(inv.id), pucCodes, etiqueta, userId, inventario));
+          if (tipo === "aprobar") {
+            const ap = await aprobarBorrador(inv, accounts.get(inv.id), pucCodes, etiqueta, userId, inventario);
+            if (!ap.ok) out.push(ap);
+            else {
+              // Aprobar continúa solo hasta CAUSADA (comprobante interno); el paso a SINCRONIZADA ocurre al enviarla a Siigo.
+              const { data: fresca } = await supabase.from("invoices").select("*").eq("id", inv.id).single();
+              const ca = await causarFactura(fresca as unknown as DraftInvoice, etiqueta);
+              out.push(
+                ca.ok
+                  ? { ...ca, message: `Aprobada y causada. ${ca.message}`.trim() }
+                  : { ...ca, ok: false, message: `Quedó aprobada, pero no se pudo causar: ${ca.message}` },
+              );
+            }
+          }
           else if (tipo === "causar") out.push(await causarFactura(inv, etiqueta));
           else if (tipo === "devolver") out.push(await devolverABorrador(inv, etiqueta));
           else if (tipo === "revertir") out.push(await revertirCausacion(inv, etiqueta));
