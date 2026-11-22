@@ -3583,6 +3583,7 @@ export type Database = {
         }
         Returns: Json
       }
+      draft_sync_state_v2: { Args: { _id: string }; Returns: Json }
       history_iva_treatment: {
         Args: { _company_id: string; _limit?: number; _nits?: string[] }
         Returns: {
@@ -3660,7 +3661,22 @@ export type Database = {
         }
         Returns: Json
       }
+      sync_provider_drafts_v2: {
+        Args: {
+          _changes: Json
+          _event_key: string
+          _inventory_enabled?: boolean
+          _known: Json
+          _plans?: Json
+          _source_invoice_id: string
+        }
+        Returns: Json
+      }
       undo_provider_draft_sync: { Args: { _event_id: string }; Returns: Json }
+      undo_provider_draft_sync_v2: {
+        Args: { _event_id: string }
+        Returns: Json
+      }
     }
     Enums: {
       [_ in never]: never

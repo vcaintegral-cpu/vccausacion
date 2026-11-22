@@ -1,7 +1,7 @@
 # Compras desde Excel RECIBIDOS
 ## Monitoring review — 2026-11-22 (scope: all companies)
 - [x] Verify the cents/payment finding: current code already retries both reported amounts within the existing $3 tolerance; 30 rounding/readback tests pass. Finding marked stale; no Siigo documents sent.
-- [ ] Fix supplier-sync inventory overwrites and make account/classification changes undoable: confirmed; awaiting approval of the transactional synchronization plan. Do not alter existing invoices during review.
+- [x] Fix supplier-sync inventory overwrites and make account/classification changes undoable: applied migration 0045; company-feature eligibility, atomic snapshots and conflict-safe undo verified with isolated PostgreSQL regressions and the authenticated dialog on temporary saved drafts (removed afterward); 46 unit/integration tests passed. No existing invoices repaired and no documents sent to Siigo.
 
 - [x] Recuperación con formulario de solo correo, resultados persistentes y reintento; enlace vencido bloqueado, pruebas de pantalla con respuestas simuladas sin errores.
 - [ ] Comprobar entrega real del correo y cambio de contraseña: requiere que Maira solicite el enlace y lo abra; no se cambió su contraseña.

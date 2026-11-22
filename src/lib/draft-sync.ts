@@ -10,6 +10,8 @@
 //    (`sync_provider_drafts`), que valida, registra historial y es idempotente.
 import { supabase } from "@/integrations/supabase/client";
 import { FIELD_LABEL } from "@/lib/learning-rules";
+import { funcionActiva } from "@/empresas/registro";
+import { planSyncLines, type SyncLine } from "./draft-sync-lines";
 
 export type SyncKind =
   | "gasto"
@@ -194,21 +196,44 @@ export async function aplicarSincronizacion(params: {
   known: BorradorRelacionado[];
   eventKey: string;
 }): Promise<SyncResultado> {
-  const { data, error } = await rpc("sync_provider_drafts", {
+  const plans: Array<{ invoice_id: string; lines: ReturnType<typeof planSyncLines> }> = [];
+  let inventoryEnabled = false;
+  if (params.changes.some((c) => c.kind === "gasto" || c.kind === "tipo")) {
+    const sourceInvoice = await supabase.from("invoices").select("company_id").eq("id", params.sourceInvoiceId).single();
+    if (sourceInvoice.error) return { ok: false, message: sourceInvoice.error.message };
+    const companyId = sourceInvoice.data.company_id;
+    const [company, source] = await Promise.all([
+      supabase.from("companies").select("nit").eq("id", companyId).single(),
+      supabase.from("invoice_lines").select("*").eq("invoice_id", params.sourceInvoiceId).order("position"),
+    ]);
+    if (company.error || source.error) return { ok: false, message: company.error?.message ?? source.error?.message ?? "No se pudo leer el borrador." };
+    inventoryEnabled = funcionActiva(company.data.nit, "productos_inventario");
+    const { loadDeps } = await import("./bulk-runner");
+    const { config } = await loadDeps(companyId);
+    for (const draft of params.known) {
+      const target = await supabase.from("invoice_lines").select("*").eq("invoice_id", draft.id).order("position");
+      if (target.error) return { ok: false, message: target.error.message };
+      plans.push({ invoice_id: draft.id, lines: planSyncLines(params.changes, source.data as SyncLine[], target.data as SyncLine[], inventoryEnabled, config.products) });
+    }
+  }
+  const { data, error } = await rpc("sync_provider_drafts_v2", {
     _source_invoice_id: params.sourceInvoiceId,
     _changes: params.changes
-      .filter((c) => c.kind !== "tipo")
       .map((c) => ({ kind: c.kind, old: c.old, new: c.new, name: c.name ?? null })),
     _event_key: params.eventKey,
     _known: params.known.map((k) => ({ id: k.id, updated_at: k.updated_at })),
+    _plans: plans,
+    _inventory_enabled: inventoryEnabled,
   });
-  if (error) return { ok: false, message: error.message };
+  if (error) return { ok: false, message: /schema cache|does not exist|could not find/i.test(error.message)
+    ? "La sincronización segura aún no está disponible. No se aplicaron cambios; actualice la aplicación e inténtelo de nuevo."
+    : error.message };
   return data ?? { ok: false, message: "Sin respuesta del servidor." };
 }
 
 /** Deshace una sincronización restaurando solo lo que ella cambió. */
 export async function deshacerSincronizacion(eventId: string): Promise<SyncResultado & { restored?: number }> {
-  const { data, error } = await rpc("undo_provider_draft_sync", { _event_id: eventId });
+  const { data, error } = await rpc("undo_provider_draft_sync_v2", { _event_id: eventId });
   if (error) return { ok: false, message: error.message };
   return (data as (SyncResultado & { restored?: number }) | null) ?? { ok: false, message: "Sin respuesta del servidor." };
 }

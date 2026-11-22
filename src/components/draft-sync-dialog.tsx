@@ -63,12 +63,8 @@ export function DraftSyncDialog({
       const eventKey = `${request.invoiceId}:${request.drafts.map((d) => d.id).sort().join(",")}:${request.changes
         .map((c) => `${c.kind}=${c.old}>${c.new}`)
         .join("|")}`;
-      // El servidor solo cambia cuentas que coinciden con la anterior; la clasificación (producto) y los borradores
-      // que estaban SIN cuenta se completan aquí, con el mismo motor de «Asignar cuenta» de Borradores.
-      const soloTipo = request.changes.every((c) => c.kind === "tipo");
-      const res = soloTipo
-        ? ({ ok: true, updated: 0, conflicts: [] } as SyncResultado)
-        : await aplicarSincronizacion({
+      // Todas las escrituras, incluida la clasificación y las decisiones manuales, pertenecen al mismo evento.
+      const res: SyncResultado = await aplicarSincronizacion({
             sourceInvoiceId: request.invoiceId,
             changes: request.changes,
             known: request.drafts,
@@ -76,13 +72,9 @@ export function DraftSyncDialog({
           });
       if (!res.ok) { toast.error(res.message ?? "No fue posible sincronizar los borradores."); return; }
       const conflictos = (res.conflicts ?? []).map((c) => ({ label: c.label, message: c.message }));
-      const extra = await completarCuentaYClasificacion(
-        request,
-        new Set((res.conflicts ?? []).map((c) => c.invoice_id)),
-      );
       setResultado({
         eventId: res.event_id ?? null,
-        updated: Math.min(total, (res.updated ?? 0) + extra),
+        updated: res.updated ?? 0,
         conflicts: conflictos,
       });
       // Aprendizaje contable: la decisión confirmada queda como regla del proveedor.
@@ -196,60 +188,6 @@ export function DraftSyncDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-/**
- * Complemento de la sincronización: pone la cuenta (y la clasificación «producto» con su producto del catálogo) en los
- * renglones SIN cuenta de los demás borradores del proveedor y el tipo en los que ya la tienen. Devuelve cuántos
- * borradores se completaron.
- */
-async function completarCuentaYClasificacion(
-  request: DraftSyncRequest,
-  omitir: Set<string>,
-): Promise<number> {
-  try {
-    const cambioCuenta = request.changes.find((c) => c.kind === "gasto");
-    const { data: lin } = await supabase
-      .from("invoice_lines")
-      .select("position, description, account_code, account_name, item_type, code")
-      .eq("invoice_id", request.invoiceId)
-      .order("position");
-    const origen = (lin ?? []) as Array<{
-      description: string | null;
-      account_code: string | null;
-      account_name: string | null;
-      item_type: string | null;
-      code: string | null;
-    }>;
-    const cuenta = cambioCuenta?.new || String(origen.find((l) => l.item_type === "producto")?.account_code ?? "").trim();
-    if (!cuenta) return 0;
-    const linea = origen.find((l) => String(l.account_code ?? "").trim() === cuenta);
-    const nombre = cambioCuenta?.name ?? linea?.account_name ?? null;
-    const esProducto = linea?.item_type === "producto";
-    const { loadDeps } = await import("@/lib/bulk-runner");
-    const { asignarCuentaGasto } = await import("@/lib/asignar-cuenta-gasto");
-    const { config } = await loadDeps(request.companyId);
-    let completados = 0;
-    for (const d of request.drafts) {
-      if (omitir.has(d.id)) continue;
-      const r = await asignarCuentaGasto(
-        d.id,
-        { code: cuenta, name: nombre },
-        config,
-        {
-          inventario: /^14/.test(cuenta),
-          ...(esProducto
-            ? { tipo: "producto" as const, producto: linea?.code ? { code: linea.code, name: linea.description } : null }
-            : {}),
-        },
-      );
-      if (r.ok && r.renglones > 0) completados += 1;
-    }
-    return completados;
-  } catch (e) {
-    console.warn("[sincronizacion] no se pudo completar la cuenta en los demás borradores", e);
-    return 0;
-  }
 }
 
 function Fila({ k, v }: { k: string; v: string }) {
