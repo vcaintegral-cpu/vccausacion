@@ -316,6 +316,13 @@
       "when": 1795303045230,
       "tag": "0043_guardas_fuente_iva_pesos_enteros",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1795310455491,
+      "tag": "0044_post_invoice_rol_servicio",
+      "breakpoints": true
     }
   ]
 }
